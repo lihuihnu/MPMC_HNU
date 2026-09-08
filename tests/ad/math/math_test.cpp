@@ -357,7 +357,7 @@ void test_double_scale_regressions() {
     near(ad::pow(Number::variable(1e-200, 0), 2).derivative(0), 2e-200, 0.0);
     const double exponential = std::exp(400.0);
     near(ad::tanh(Number{400.0, {exponential}}).derivative(0), 4.0 / exponential, 0.0);
-    if (std::numeric_limits<double>::has_denorm == std::denorm_present) {
+    if constexpr (std::numeric_limits<double>::has_denorm == std::denorm_present) {
         const double subnormal = std::numeric_limits<double>::denorm_min();
         near(ad::log(Number{subnormal, {subnormal}}).derivative(0), 1.0);
     }
