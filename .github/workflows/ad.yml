@@ -16,7 +16,7 @@ on:
       suite:
         description: 'Audited test scope; all is the default for infrastructure changes'
         type: choice
-        options: [all, arithmetic, math]
+        options: [all, arithmetic, math, jacobian]
         default: all
 
 permissions:
@@ -53,6 +53,8 @@ jobs:
           import os
           import subprocess
 
+          all_suites = ["arithmetic", "jacobian", "math"]
+
           def suites_for(paths):
               selected = set()
               infrastructure = False
@@ -66,37 +68,51 @@ jobs:
                   if path == ".github/workflows/ad.yml":
                       infrastructure = True
                   elif path in shared:
-                      selected.update(("arithmetic", "math"))
-                  elif path == "modules/ad/include/mpmc/ad/math.hpp" or path.startswith("tests/ad/math/"):
+                      selected.update(all_suites)
+                  elif path == "modules/ad/include/mpmc/ad/differentiate.hpp" or path.startswith("tests/ad/jacobian/"):
+                      selected.add("jacobian")
+                  elif path == "modules/ad/include/mpmc/ad/math.hpp":
+                      selected.update(("jacobian", "math"))  # New integration tests use math.hpp.
+                  elif path.startswith("tests/ad/math/"):
                       selected.add("math")
                   elif path.startswith("tests/ad/"):
                       selected.add("arithmetic")
                   else:
-                      selected.update(("arithmetic", "math"))  # Unknown dependency: be conservative.
-              # Workflow-only changes require both suites. When a workflow change
+                      selected.update(all_suites)  # Unknown dependency: be conservative.
+              # Workflow-only changes require all suites. When a workflow change
               # accompanies code, audit its scope: compiler/flags/environment changes
               # affecting an additional suite MUST dispatch 'all' before integration.
               if infrastructure and not selected:
-                  selected.update(("arithmetic", "math"))
+                  selected.update(all_suites)
               return sorted(selected)
 
           # Necessary regression checks for this newly introduced selection logic.
           checks = [
-              (["modules/ad/include/mpmc/ad/math.hpp"], ["math"]),
+              (["modules/ad/include/mpmc/ad/math.hpp"], ["jacobian", "math"]),
               (["tests/ad/math/math_test.cpp", ".github/workflows/ad.yml"], ["math"]),
-              (["modules/ad/include/mpmc/ad/dual.hpp"], ["arithmetic", "math"]),
+              (["modules/ad/include/mpmc/ad/dual.hpp"], all_suites),
               (["tests/ad/dual_test.cpp"], ["arithmetic"]),
-              ([".github/workflows/ad.yml"], ["arithmetic", "math"]),
-              (["modules/ad/include/mpmc/ad/unknown.hpp"], ["arithmetic", "math"]),
+              ([".github/workflows/ad.yml"], all_suites),
+              (["modules/ad/include/mpmc/ad/unknown.hpp"], all_suites),
               (["README.md"], []),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["jacobian"]),
+              (["tests/ad/jacobian/jacobian_test.cpp", ".github/workflows/ad.yml"], ["jacobian"]),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp", "AGENTS.md"], ["jacobian"]),
+              (["tests/ad/math/math_test.cpp", "tests/ad/jacobian/header_self_contained.cpp"],
+               ["jacobian", "math"]),
+              (["CMakeLists.txt"], all_suites),
           ]
           for paths, expected in checks:
               if suites_for(paths) != expected:
                   raise RuntimeError(f"Invalid suite selection for {paths}")
 
+          print(f"Suite-selection regressions: {len(checks)}/{len(checks)} passed")
+
           if os.environ["EVENT_NAME"] == "workflow_dispatch":
               requested = os.environ.get("REQUESTED_SUITE") or "all"
-              selected = ["arithmetic", "math"] if requested == "all" else [requested]
+              if requested not in ["all", *all_suites]:
+                  raise ValueError("Unknown requested AD suite")
+              selected = all_suites if requested == "all" else [requested]
           else:
               raw = subprocess.check_output([
                   "git", "diff", "--name-only", "-z",
@@ -139,17 +155,20 @@ jobs:
         run: |
           source_dir=.
           if [ "${{ matrix.suite }}" = math ]; then source_dir=tests/ad/math; fi
+          if [ "${{ matrix.suite }}" = jacobian ]; then source_dir=tests/ad/jacobian; fi
           cmake -S "$source_dir" -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             ${{ matrix.compiler }} -DMPMC_AD_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Compile only the selected target
         run: |
           target=mpmc_ad_tests
           if [ "${{ matrix.suite }}" = math ]; then target=mpmc_ad_math_tests; fi
+          if [ "${{ matrix.suite }}" = jacobian ]; then target=mpmc_ad_jacobian_tests; fi
           cmake --build build --target "$target" --config ${{ matrix.build_type }} --parallel 2
       - name: Run only the selected tests
         run: |
           pattern='^ad[.]dual$'
           if [ "${{ matrix.suite }}" = math ]; then pattern='^ad[.]math[.]'; fi
+          if [ "${{ matrix.suite }}" = jacobian ]; then pattern='^ad[.]jacobian[.]'; fi
           ctest --test-dir build -C ${{ matrix.build_type }} -R "$pattern" --verbose --no-tests=error
       - name: Arithmetic standalone consumer
         if: matrix.suite == 'arithmetic'
