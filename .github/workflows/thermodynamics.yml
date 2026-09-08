@@ -1,0 +1,71 @@
+name: Thermodynamics contracts
+
+# One independent suite. Documentation-only edits do not compile it, and this
+# workflow does not invoke the AD workflow. Required-check policy is not changed.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/thermodynamics/**/*.hpp'
+      - 'modules/thermodynamics/**/CMakeLists.txt'
+      - 'tests/thermodynamics/contracts/**/*.cpp'
+      - 'tests/thermodynamics/contracts/**/*.hpp'
+      - 'tests/thermodynamics/contracts/CMakeLists.txt'
+      - '.github/workflows/thermodynamics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: thermo-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: contracts / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Existing audited pin.
+        with:
+          persist-credentials: false
+      - name: Configure independent contracts
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/thermodynamics/contracts -B build/thermo-contracts \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_THERMO_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Compile only contracts
+        run: |
+          cmake --build build/thermo-contracts --target mpmc_thermodynamics_contract_tests \
+            --config ${{ matrix.config }} --parallel 2
+      - name: Run only contract increments
+        run: |
+          ctest --test-dir build/thermo-contracts -C ${{ matrix.config }} \
+            -R '^thermo[.]contracts[.]' --verbose --no-tests=error
