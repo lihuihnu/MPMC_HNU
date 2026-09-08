@@ -46,15 +46,18 @@ concept CanEvaluate = requires(Function&& function, const Inputs& inputs) {
     ad::value_and_jacobian(std::forward<Function>(function), inputs);
 };
 
-// Declarations alone suffice: these checks inspect the interface, not execution.
+// Auto return deduction instantiates the wrapper body during callability checks.
+// Define probes even though no test should execute them.
 using Number2 = ad::Dual<double, 2>;
 using Seed2 = std::array<Number2, 2>;
 template <typename Output>
 struct Returns {
-    Output operator()(const Seed2&) const;
+    Output operator()(const Seed2&) const {
+        throw std::logic_error("signature probe must not be executed");
+    }
 };
 struct MutableInput {
-    Seed2 operator()(Seed2&) const;
+    Seed2 operator()(Seed2& input) const { return input; }
 };
 struct Identity {
     template <typename Number, std::size_t N>
@@ -154,10 +157,10 @@ void test_single_input_output() {
 }
 
 template <typename T>
-struct MoveOnlyFunction {
-    explicit MoveOnlyFunction(int& calls) : calls_(calls) {}
-    MoveOnlyFunction(const MoveOnlyFunction&) = delete;
-    MoveOnlyFunction& operator=(const MoveOnlyFunction&) = delete;
+struct NoncopyableFunction {
+    explicit NoncopyableFunction(int& calls) : calls_(calls) {}
+    NoncopyableFunction(const NoncopyableFunction&) = delete;
+    NoncopyableFunction& operator=(const NoncopyableFunction&) = delete;
 
     auto operator()(const std::array<ad::Dual<T>, 1>& p) & {
         ++calls_;
@@ -178,9 +181,9 @@ template <typename T>
 void test_callable_forwarding() {
     const std::array<T, 1> input{T{2}};
     int calls = 0;
-    MoveOnlyFunction<T> function{calls};
+    NoncopyableFunction<T> function{calls};
     const auto left = ad::value_and_jacobian(function, input);
-    const auto right = ad::value_and_jacobian(MoveOnlyFunction<T>{calls}, input);
+    const auto right = ad::value_and_jacobian(NoncopyableFunction<T>{calls}, input);
     const auto reference = ad::value_and_jacobian(std::ref(function), input);
     const auto pointer = ad::value_and_jacobian(&free_function<T>, input);
     require(calls == 3, "callback copied, retained, or evaluated more than once");
