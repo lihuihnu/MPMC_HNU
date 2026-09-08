@@ -72,7 +72,7 @@
 | 模型 | 规划与实施前提 |
 | --- | --- |
 | PR（Peng–Robinson） | 作为首个候选基线；明确采用的版本、alpha 函数、混合规则、二元相互作用参数和是否使用体积修正。不能把普通 PR 等同于已验证的含水互溶模型。[S1] |
-| SW（全称待用户确认） | 不擅自把缩写等同于某个模型，也不替换为 SRK。水/烃问题中 Søreide–Whitson 是需要核对的候选参考，但未确认前不建立公式或参数实现。[S2] |
+| SW（Søreide–Whitson） | 用户已确认模型全称；实现前仍须核对具体版本、原始公式、混合规则、参数和适用范围，不擅自替换为 SRK 或另一模型。[S2] |
 | CPA（Cubic-Plus-Association） | 明确立方项版本、缔合位点方案、缔合参数、交叉缔合及混合规则；缔合子问题须同时满足残差与导数要求。[S3] |
 
 原始论文、官方物性资料或有许可的数据集应在实现前核对。仅有摘要、搜索结果或二手转述时，不声称已核验完整公式和参数表。缺少全文、勘误、组分数据、交互参数或商业软件访问时，应明确缺口并向项目负责人索取，不猜测、不伪造、不绕过许可。
@@ -114,7 +114,7 @@ beta_alpha >= 0，x_i_alpha >= 0
 | M1：AD 最小基础 | 最小构建与测试入口、值/导数语义、基础算术 | 解析导数、边界行为和必要编译验证；每项分开小步提交。 |
 | M2：AD 可用能力 | 逐项补齐物性计算需要的函数和导数访问 | 独立交叉验证、导数保真与必要资源检查。 |
 | M3：PR 与两相基线 | 参数契约、PR 物性、稳定性、两相闪蒸，逐项实现 | 来源明确的适用体系，守恒、相平衡与稳定性回归。 |
-| M4：含水模型与互溶 | 确认 SW；逐一实现所需 SW/CPA 能力和含水两相验证 | 合法且可追溯的参数与含水基准；不宣称所有模型适用于所有体系。 |
+| M4：含水模型与互溶 | 核对 SW 版本与资料；逐一实现所需 SW/CPA 能力和含水两相验证 | 合法且可追溯的参数与含水基准；不宣称所有模型适用于所有体系。 |
 | M5：三相闪蒸 | 联合三相平衡、相数变化与退化处理 | 三相参考证据、稳定性、守恒及可用导数核验。 |
 | M6：网格与输入 | 创建、导入、拓扑/几何校验，逐一支持格式 | 小型已知网格、非法输入、单位与索引检查。 |
 | M7：流动与数值计算 | 水独立/互溶物理模型、离散、时间推进、求解器，逐项开发 | 守恒、制造解或解析解、收敛性与相关耦合回归。 |
@@ -132,7 +132,7 @@ beta_alpha >= 0，x_i_alpha >= 0
 
 ## 9. 待确认事项与参考资料
 
-当前需要确认的是 **SW 的全称、版本或指定参考文献**。首次使用各模型前还需取得对应的原文、必要参数与合法验证资料；资料暂缺只阻塞依赖该资料的实现，不阻塞无关的 AD 工作。项目许可尚未确定，不能因参考成熟开源软件就自动采用其代码或许可证。
+用户已确认 **SW 指 Søreide–Whitson 模型**，全称不再是待确认事项。具体实现版本及所需资料仍须在实现前核验。首次使用各模型前还需取得对应的原文、必要参数与合法验证资料；资料暂缺只阻塞依赖该资料的实现，不阻塞无关的 AD 工作。项目许可尚未确定，不能因参考成熟开源软件就自动采用其代码或许可证。
 
 工程参考用于借鉴边界、接口和验证方法，不代表这些软件已成为依赖。原始科学文献列为后续核验入口，不代表全文、公式、数据表已全部获取。
 
@@ -145,7 +145,7 @@ beta_alpha >= 0，x_i_alpha >= 0
 - [E7] [GitHub-hosted runners 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 - [E8] [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines)；[OPM 模块说明](https://opm-project.org/?page_id=274)；[DuMux 官方文档](https://dumux.org/docs/doxygen/master/)。借鉴规范、分层与科学软件工程，复用代码前另行审计许可。
 - [S1] Peng, D.-Y.; Robinson, D. B. (1976). *A New Two-Constant Equation of State*. DOI: [10.1021/i160057a011](https://doi.org/10.1021/i160057a011)。
-- [S2] Søreide, I.; Whitson, C. H. (1992). *Peng-Robinson predictions for hydrocarbons, CO2, N2, and H2S with pure water and NaCl brine*. DOI: [10.1016/0378-3812(92)85105-H](https://doi.org/10.1016/0378-3812(92)85105-H)。仅为 SW 待确认候选。
+- [S2] Søreide, I.; Whitson, C. H. (1992). *Peng-Robinson predictions for hydrocarbons, CO2, N2, and H2S with pure water and NaCl brine*. DOI: [10.1016/0378-3812(92)85105-H](https://doi.org/10.1016/0378-3812(92)85105-H)。SW 的文献核验入口；列出该文献不代表已选定实现版本或已获取、核验全文及参数。
 - [S3] Kontogeorgis, G. M.; Voutsas, E. C.; Yakoumis, I. V.; Tassios, D. P. (1996). *An Equation of State for Associating Fluids*. DOI: [10.1021/ie9600203](https://doi.org/10.1021/ie9600203)。
 - [S4] Michelsen, M. L. (1982). *The isothermal flash problem. Part I. Stability*. DOI: [10.1016/0378-3812(82)85001-2](https://doi.org/10.1016/0378-3812(82)85001-2)。
 - [S5] Michelsen, M. L. (1982). *The isothermal flash problem. Part II. Phase-split calculation*. DOI: [10.1016/0378-3812(82)85002-4](https://doi.org/10.1016/0378-3812(82)85002-4)。
