@@ -2,7 +2,7 @@
 
 `mpmc::ad::Dual<T, N>` 是提供给其他数值模块的一阶前向自动微分数值类型。实现只有标准库头文件依赖，**不依赖 `core`、其他项目模块、Eigen、Ceres、autodiff 或 CppAD**。CMake 目标为 `mpmc::ad`；也可只复制 `include/` 并启用 C++20 使用。
 
-已提供固定维数的值/导数语义、种子和算术，并在独立的 `<mpmc/ad/math.hpp>` 中增加常见初等函数；逐函数定义域、异常、导数与独立增量测试入口见 [初等函数契约](math.md)。不宣称已经完成全部 AD 能力。测试结果以对应提交的 GitHub Actions 日志为准；未做性能基准，也没有热力学或实验数据验证。
+已提供固定维数的值/导数语义、种子和算术，并在独立的 `<mpmc/ad/math.hpp>` 中增加常见初等函数；逐函数定义域、异常、导数与独立增量测试入口见 [初等函数契约](math.md)。另有固定维数 [value_and_jacobian 接口](differentiate.md)，负责自动播种和结果提取；不宣称已经完成全部 AD 能力。测试结果以对应提交的 GitHub Actions 日志为准；未做性能基准，也没有热力学或实验数据验证。
 
 ## 1. 设计取舍与参考
 
@@ -86,7 +86,7 @@ ctest --preset ad-debug
 
 首轮 CI 覆盖 Linux/GCC Debug + AddressSanitizer/UndefinedBehaviorSanitizer、Linux/Clang Release、Windows/MSVC Release；每个作业运行上述单元测试和独立消费者。它们用于验证新公共模板与初始跨编译器构建，不是通用全量平台矩阵；macOS、其他架构、其他编译器版本和 HPC 性能尚未验证。没有已实现的热力学/闪蒸下游，因此本次没有虚构下游测试。
 
-CI 在相关路径的 PR 上按受影响套件运行，合入后不重复执行同一树；手动 `workflow_dispatch` 可对指定 ref 选择 `all`、`arithmetic` 或 `math`。代码变更应通过 PR 完成官方验证再集成，不能依靠直接推送 `main` 触发本工作流。本次没有修改分支保护；**将来设置必需检查前，必须把当前事件级路径筛选改成始终报告状态的门禁，避免纯文档 PR 永久等待。**
+CI 在相关路径的 PR 上按受影响套件运行，合入后不重复执行同一树；手动 `workflow_dispatch` 可对指定 ref 选择 `all`、`arithmetic`、`math` 或 `jacobian`。代码变更应通过 PR 完成官方验证再集成，不能依靠直接推送 `main` 触发本工作流。本次没有修改分支保护；**将来设置必需检查前，必须把当前事件级路径筛选改成始终报告状态的门禁，避免纯文档 PR 永久等待。**
 
 ## 5. 原始参考入口
 
