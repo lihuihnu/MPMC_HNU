@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.21)
+project(mpmc_ad_standalone_consumer LANGUAGES CXX)
+
+set(MPMC_AD_SOURCE_DIR "" CACHE PATH "Path to the standalone AD module")
+if(NOT EXISTS "${MPMC_AD_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "Set MPMC_AD_SOURCE_DIR to the modules/ad directory")
+endif()
+# Only the AD module is added: the platform root and other modules are absent.
+add_subdirectory("${MPMC_AD_SOURCE_DIR}" ad-library)
+add_executable(ad_consumer main.cpp)
+target_link_libraries(ad_consumer PRIVATE mpmc::ad)
+set_target_properties(ad_consumer PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(ad_consumer PRIVATE /W4 /WX /permissive- /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(ad_consumer PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+endif()
+enable_testing()
+add_test(NAME ad.standalone COMMAND ad_consumer)
+set_tests_properties(ad.standalone PROPERTIES TIMEOUT 30)
