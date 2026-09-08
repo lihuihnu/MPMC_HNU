@@ -1,12 +1,10 @@
 name: AD correctness
 
-# Validate on a PR before integration; do not rerun the same tree on merge.
-# Manual runs remain available for a specific ref. No self-hosted runners.
+# Validate affected suites on the PR; do not rerun the same tree on merge.
 on:
   pull_request:
     branches: [main]
-    # No required status checks are configured. Before making this workflow a
-    # required check, replace event path filtering with an always-reporting gate.
+    # Before configuring required checks, use an always-reporting outer gate.
     paths:
       - 'modules/ad/**'
       - 'tests/ad/**'
@@ -14,6 +12,12 @@ on:
       - 'CMakePresets.json'
       - '.github/workflows/ad.yml'
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Audited test scope; all is the default for infrastructure changes'
+        type: choice
+        options: [all, arithmetic, math]
+        default: all
 
 permissions:
   contents: read
@@ -23,29 +27,107 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select:
+    name: Select affected AD suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+      has_work: ${{ steps.scope.outputs.has_work }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A PR merge commit and its two parents suffice for a two-tree diff.
+          fetch-depth: 2
+      - name: Select by audited dependency boundaries
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUESTED_SUITE: ${{ inputs.suite }}
+        shell: python
+        run: |
+          import json
+          import os
+          import subprocess
+
+          def suites_for(paths):
+              selected = set()
+              infrastructure = False
+              shared = {
+                  "modules/ad/include/mpmc/ad/dual.hpp", "modules/ad/CMakeLists.txt",
+                  "CMakeLists.txt", "CMakePresets.json",
+              }
+              for path in paths:
+                  if path.endswith(".md"):
+                      continue
+                  if path == ".github/workflows/ad.yml":
+                      infrastructure = True
+                  elif path in shared:
+                      selected.update(("arithmetic", "math"))
+                  elif path == "modules/ad/include/mpmc/ad/math.hpp" or path.startswith("tests/ad/math/"):
+                      selected.add("math")
+                  elif path.startswith("tests/ad/"):
+                      selected.add("arithmetic")
+                  else:
+                      selected.update(("arithmetic", "math"))  # Unknown dependency: be conservative.
+              # Workflow-only changes require both suites. When a workflow change
+              # accompanies code, audit its scope: compiler/flags/environment changes
+              # affecting an additional suite MUST dispatch 'all' before integration.
+              if infrastructure and not selected:
+                  selected.update(("arithmetic", "math"))
+              return sorted(selected)
+
+          # Necessary regression checks for this newly introduced selection logic.
+          checks = [
+              (["modules/ad/include/mpmc/ad/math.hpp"], ["math"]),
+              (["tests/ad/math/math_test.cpp", ".github/workflows/ad.yml"], ["math"]),
+              (["modules/ad/include/mpmc/ad/dual.hpp"], ["arithmetic", "math"]),
+              (["tests/ad/dual_test.cpp"], ["arithmetic"]),
+              ([".github/workflows/ad.yml"], ["arithmetic", "math"]),
+              (["modules/ad/include/mpmc/ad/unknown.hpp"], ["arithmetic", "math"]),
+              (["README.md"], []),
+          ]
+          for paths, expected in checks:
+              if suites_for(paths) != expected:
+                  raise RuntimeError(f"Invalid suite selection for {paths}")
+
+          if os.environ["EVENT_NAME"] == "workflow_dispatch":
+              requested = os.environ.get("REQUESTED_SUITE") or "all"
+              selected = ["arithmetic", "math"] if requested == "all" else [requested]
+          else:
+              raw = subprocess.check_output([
+                  "git", "diff", "--name-only", "-z",
+                  os.environ["BASE_SHA"], os.environ["HEAD_SHA"],
+              ])
+              paths = [p for p in raw.decode("utf-8").split("\0") if p]
+              print("Changed paths:", json.dumps(paths, ensure_ascii=False))
+              selected = suites_for(paths)
+          platforms = [
+              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "build_type": "Debug",
+               "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
+              {"name": "Clang Release", "os": "ubuntu-24.04", "build_type": "Release",
+               "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
+              {"name": "MSVC Release", "os": "windows-2022", "build_type": "Release",
+               "compiler": "", "sanitizer": "OFF"},
+          ]
+          matrix = {"include": [{**p, "suite": s} for s in selected for p in platforms]}
+          print("Selected suites:", selected)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("matrix=" + json.dumps(matrix) + "\n")
+              output.write("has_work=" + str(bool(selected)).lower() + "\n")
+
   ad:
-    name: ${{ matrix.name }}
+    needs: select
+    if: needs.select.outputs.has_work == 'true'
+    name: ${{ matrix.suite }} / ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: Linux GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            build_type: Debug
-            compiler: -DCMAKE_CXX_COMPILER=g++
-            sanitizer: -DMPMC_AD_ENABLE_SANITIZERS=ON
-          - name: Linux Clang Release
-            os: ubuntu-24.04
-            build_type: Release
-            compiler: -DCMAKE_CXX_COMPILER=clang++
-            sanitizer: -DMPMC_AD_ENABLE_SANITIZERS=OFF
-          - name: Windows MSVC Release
-            os: windows-2022
-            build_type: Release
-            compiler: ''
-            sanitizer: -DMPMC_AD_ENABLE_SANITIZERS=OFF
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     defaults:
       run:
         shell: bash
@@ -53,16 +135,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure AD tests
-        run: >-
-          cmake -S . -B build -DBUILD_TESTING=ON
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          ${{ matrix.compiler }} ${{ matrix.sanitizer }}
-      - name: Compile with strict diagnostics
-        run: cmake --build build --target mpmc_ad_tests --config ${{ matrix.build_type }} --parallel 2
-      - name: Run necessary AD tests
-        run: ctest --test-dir build -C ${{ matrix.build_type }} -L ad --verbose --no-tests=error
-      - name: Build and test a standalone consumer
+      - name: Configure the selected suite
+        run: |
+          source_dir=.
+          if [ "${{ matrix.suite }}" = math ]; then source_dir=tests/ad/math; fi
+          cmake -S "$source_dir" -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            ${{ matrix.compiler }} -DMPMC_AD_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Compile only the selected target
+        run: |
+          target=mpmc_ad_tests
+          if [ "${{ matrix.suite }}" = math ]; then target=mpmc_ad_math_tests; fi
+          cmake --build build --target "$target" --config ${{ matrix.build_type }} --parallel 2
+      - name: Run only the selected tests
+        run: |
+          pattern='^ad[.]dual$'
+          if [ "${{ matrix.suite }}" = math ]; then pattern='^ad[.]math[.]'; fi
+          ctest --test-dir build -C ${{ matrix.build_type }} -R "$pattern" --verbose --no-tests=error
+      - name: Arithmetic standalone consumer
+        if: matrix.suite == 'arithmetic'
         run: |
           cmake -S tests/ad/standalone -B build/standalone \
             "-DMPMC_AD_SOURCE_DIR=${{ github.workspace }}/modules/ad" \
