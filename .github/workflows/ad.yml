@@ -16,7 +16,7 @@ on:
       suite:
         description: 'Audited test scope; all is the default for infrastructure changes'
         type: choice
-        options: [all, arithmetic, math, jacobian]
+        options: [all, arithmetic, math, jacobian, runtime]
         default: all
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
           import os
           import subprocess
 
-          all_suites = ["arithmetic", "jacobian", "math"]
+          all_suites = ["arithmetic", "jacobian", "math", "runtime"]
 
           def suites_for(paths):
               selected = set()
@@ -69,10 +69,14 @@ jobs:
                       infrastructure = True
                   elif path in shared:
                       selected.update(all_suites)
-                  elif path == "modules/ad/include/mpmc/ad/differentiate.hpp" or path.startswith("tests/ad/jacobian/"):
+                  elif path == "modules/ad/include/mpmc/ad/runtime_differentiate.hpp" or path.startswith("tests/ad/runtime/"):
+                      selected.add("runtime")
+                  elif path == "modules/ad/include/mpmc/ad/differentiate.hpp":
+                      selected.update(("jacobian", "runtime"))  # Runtime crosscheck uses the fixed API.
+                  elif path.startswith("tests/ad/jacobian/"):
                       selected.add("jacobian")
                   elif path == "modules/ad/include/mpmc/ad/math.hpp":
-                      selected.update(("jacobian", "math"))  # New integration tests use math.hpp.
+                      selected.update(("jacobian", "math", "runtime"))  # Integration tests use math.hpp.
                   elif path.startswith("tests/ad/math/"):
                       selected.add("math")
                   elif path.startswith("tests/ad/"):
@@ -88,19 +92,26 @@ jobs:
 
           # Necessary regression checks for this newly introduced selection logic.
           checks = [
-              (["modules/ad/include/mpmc/ad/math.hpp"], ["jacobian", "math"]),
+              (["modules/ad/include/mpmc/ad/math.hpp"], ["jacobian", "math", "runtime"]),
               (["tests/ad/math/math_test.cpp", ".github/workflows/ad.yml"], ["math"]),
               (["modules/ad/include/mpmc/ad/dual.hpp"], all_suites),
               (["tests/ad/dual_test.cpp"], ["arithmetic"]),
               ([".github/workflows/ad.yml"], all_suites),
               (["modules/ad/include/mpmc/ad/unknown.hpp"], all_suites),
               (["README.md"], []),
-              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["jacobian"]),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["jacobian", "runtime"]),
               (["tests/ad/jacobian/jacobian_test.cpp", ".github/workflows/ad.yml"], ["jacobian"]),
-              (["modules/ad/include/mpmc/ad/differentiate.hpp", "AGENTS.md"], ["jacobian"]),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp", "AGENTS.md"], ["jacobian", "runtime"]),
               (["tests/ad/math/math_test.cpp", "tests/ad/jacobian/header_self_contained.cpp"],
                ["jacobian", "math"]),
               (["CMakeLists.txt"], all_suites),
+              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp"], ["runtime"]),
+              (["tests/ad/runtime/runtime_test.cpp", ".github/workflows/ad.yml"], ["runtime"]),
+              (["tests/ad/runtime/header_self_contained.cpp"], ["runtime"]),
+              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp", "AGENTS.md"], ["runtime"]),
+              (["modules/ad/include/mpmc/ad/math.hpp", "tests/ad/runtime/runtime_test.cpp"],
+               ["jacobian", "math", "runtime"]),
+              (["modules/ad/runtime_differentiate.md"], []),
           ]
           for paths, expected in checks:
               if suites_for(paths) != expected:
@@ -156,6 +167,7 @@ jobs:
           source_dir=.
           if [ "${{ matrix.suite }}" = math ]; then source_dir=tests/ad/math; fi
           if [ "${{ matrix.suite }}" = jacobian ]; then source_dir=tests/ad/jacobian; fi
+          if [ "${{ matrix.suite }}" = runtime ]; then source_dir=tests/ad/runtime; fi
           cmake -S "$source_dir" -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             ${{ matrix.compiler }} -DMPMC_AD_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Compile only the selected target
@@ -163,12 +175,14 @@ jobs:
           target=mpmc_ad_tests
           if [ "${{ matrix.suite }}" = math ]; then target=mpmc_ad_math_tests; fi
           if [ "${{ matrix.suite }}" = jacobian ]; then target=mpmc_ad_jacobian_tests; fi
+          if [ "${{ matrix.suite }}" = runtime ]; then target=mpmc_ad_runtime_tests; fi
           cmake --build build --target "$target" --config ${{ matrix.build_type }} --parallel 2
       - name: Run only the selected tests
         run: |
           pattern='^ad[.]dual$'
           if [ "${{ matrix.suite }}" = math ]; then pattern='^ad[.]math[.]'; fi
           if [ "${{ matrix.suite }}" = jacobian ]; then pattern='^ad[.]jacobian[.]'; fi
+          if [ "${{ matrix.suite }}" = runtime ]; then pattern='^ad[.]runtime[.]'; fi
           ctest --test-dir build -C ${{ matrix.build_type }} -R "$pattern" --verbose --no-tests=error
       - name: Arithmetic standalone consumer
         if: matrix.suite == 'arithmetic'
