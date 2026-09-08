@@ -1,0 +1,71 @@
+name: AD correctness
+
+# Validate on a PR before integration; do not rerun the same tree on merge.
+# Manual runs remain available for a specific ref. No self-hosted runners.
+on:
+  pull_request:
+    branches: [main]
+    # No required status checks are configured. Before making this workflow a
+    # required check, replace event path filtering with an always-reporting gate.
+    paths:
+      - 'modules/ad/**'
+      - 'tests/ad/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/ad.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ad-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ad:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            build_type: Debug
+            compiler: -DCMAKE_CXX_COMPILER=g++
+            sanitizer: -DMPMC_AD_ENABLE_SANITIZERS=ON
+          - name: Linux Clang Release
+            os: ubuntu-24.04
+            build_type: Release
+            compiler: -DCMAKE_CXX_COMPILER=clang++
+            sanitizer: -DMPMC_AD_ENABLE_SANITIZERS=OFF
+          - name: Windows MSVC Release
+            os: windows-2022
+            build_type: Release
+            compiler: ''
+            sanitizer: -DMPMC_AD_ENABLE_SANITIZERS=OFF
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure AD tests
+        run: >-
+          cmake -S . -B build -DBUILD_TESTING=ON
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          ${{ matrix.compiler }} ${{ matrix.sanitizer }}
+      - name: Compile with strict diagnostics
+        run: cmake --build build --target mpmc_ad_tests --config ${{ matrix.build_type }} --parallel 2
+      - name: Run necessary AD tests
+        run: ctest --test-dir build -C ${{ matrix.build_type }} -L ad --verbose --no-tests=error
+      - name: Build and test a standalone consumer
+        run: |
+          cmake -S tests/ad/standalone -B build/standalone \
+            "-DMPMC_AD_SOURCE_DIR=${{ github.workspace }}/modules/ad" \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} ${{ matrix.compiler }}
+          cmake --build build/standalone --config ${{ matrix.build_type }} --parallel 2
+          ctest --test-dir build/standalone -C ${{ matrix.build_type }} --verbose --no-tests=error
