@@ -1,8 +1,8 @@
-# 独立 AD 模块：算术与初等函数
+# 独立 AD 模块：数值类型与 Jacobian 接口
 
 `mpmc::ad::Dual<T, N>` 是提供给其他数值模块的一阶前向自动微分数值类型。实现只有标准库头文件依赖，**不依赖 `core`、其他项目模块、Eigen、Ceres、autodiff 或 CppAD**。CMake 目标为 `mpmc::ad`；也可只复制 `include/` 并启用 C++20 使用。
 
-已提供固定维数的值/导数语义、种子和算术，并在独立的 `<mpmc/ad/math.hpp>` 中增加常见初等函数；逐函数定义域、异常、导数与独立增量测试入口见 [初等函数契约](math.md)。另有固定维数 [value_and_jacobian 接口](differentiate.md)，负责自动播种和结果提取；不宣称已经完成全部 AD 能力。测试结果以对应提交的 GitHub Actions 日志为准；未做性能基准，也没有热力学或实验数据验证。
+已提供固定维数的值/导数语义、种子和算术，并在独立的 `<mpmc/ad/math.hpp>` 中增加常见初等函数；逐函数定义域、异常、导数与独立增量测试入口见 [初等函数契约](math.md)。另有固定维数 [value_and_jacobian 接口](differentiate.md)，负责自动播种和结果提取；同时提供 [运行期维数的分块 Jacobian](runtime_differentiate.md)，复用固定宽度 Dual 与工作区，不改变旧接口。不宣称已经完成全部 AD 能力。测试结果以对应提交的 GitHub Actions 日志为准；未做性能基准，也没有热力学或实验数据验证。
 
 ## 1. 设计取舍与参考
 
@@ -36,7 +36,7 @@
 
 对 NaN、Inf、溢出和下溢，保留所用浮点运算的行为，不生成虚假的有限结果；不承诺非有限输入有有效导数。乘积、中间量和导数仍可能溢出，固定表达式也可能存在相消；上述除法安排不是对任意动态范围的稳定性证明。禁止用 `fast-math` 或默认 flush-to-zero 改写已测试的数值语义。
 
-比较/分支运算、动态维数、高阶/嵌套 AD、反向模式、稀疏 Jacobian 容器或 Eigen 适配仍未提供。`exp/log/sqrt/pow` 等初等函数须显式包含 `<mpmc/ad/math.hpp>`；不能把 `std::log(x.value())` 等剥离数值的计算冒充 AD。新增数学头的有限原值检查比基础算术更严格，详见 [初等函数契约](math.md)。
+比较/分支运算、每个标量的动态导数存储、高阶/嵌套 AD、反向模式、稀疏 Jacobian 容器或 Eigen 适配仍未提供；运行期变量数量由独立的分块驱动支持。`exp/log/sqrt/pow` 等初等函数须显式包含 `<mpmc/ad/math.hpp>`；不能把 `std::log(x.value())` 等剥离数值的计算冒充 AD。新增数学头的有限原值检查比基础算术更严格，详见 [初等函数契约](math.md)。
 
 ## 3. 用法
 
@@ -86,7 +86,7 @@ ctest --preset ad-debug
 
 首轮 CI 覆盖 Linux/GCC Debug + AddressSanitizer/UndefinedBehaviorSanitizer、Linux/Clang Release、Windows/MSVC Release；每个作业运行上述单元测试和独立消费者。它们用于验证新公共模板与初始跨编译器构建，不是通用全量平台矩阵；macOS、其他架构、其他编译器版本和 HPC 性能尚未验证。没有已实现的热力学/闪蒸下游，因此本次没有虚构下游测试。
 
-CI 在相关路径的 PR 上按受影响套件运行，合入后不重复执行同一树；手动 `workflow_dispatch` 可对指定 ref 选择 `all`、`arithmetic`、`math` 或 `jacobian`。代码变更应通过 PR 完成官方验证再集成，不能依靠直接推送 `main` 触发本工作流。本次没有修改分支保护；**将来设置必需检查前，必须把当前事件级路径筛选改成始终报告状态的门禁，避免纯文档 PR 永久等待。**
+CI 在相关路径的 PR 上按受影响套件运行，合入后不重复执行同一树；手动 `workflow_dispatch` 可对指定 ref 选择 `all`、`arithmetic`、`math`、`jacobian` 或 `runtime`。代码变更应通过 PR 完成官方验证再集成，不能依靠直接推送 `main` 触发本工作流。本次没有修改分支保护；**将来设置必需检查前，必须把当前事件级路径筛选改成始终报告状态的门禁，避免纯文档 PR 永久等待。**
 
 ## 5. 原始参考入口
 
