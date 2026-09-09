@@ -1,25 +1,26 @@
-name: PT stability
+name: PT phase split
 on:
   pull_request:
     branches: [main, feat/pt-stability-tpd]
     paths:
       - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
-      - 'modules/flash/**/CMakeLists.txt'
-      - 'tests/flash/stability/**'
+      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_split.hpp'
+      - 'modules/flash/CMakeLists.txt'
       - 'modules/thermodynamics/**/*.hpp'
       - 'modules/thermodynamics/**/CMakeLists.txt'
-      - 'modules/ad/include/mpmc/ad/**'
-      - 'modules/ad/CMakeLists.txt'
-      - '.github/workflows/stability.yml'
+      - 'tests/flash/pt_split/**'
+      - '.github/workflows/pt_split.yml'
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: pt-stability-${{ github.ref }}
+  group: pt-phase-split-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  stability:
+  split:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -46,21 +47,21 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Existing audited repository pin.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Configure only stability integration
+      - name: Configure only phase split integration
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
             config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
           fi
-          cmake -S tests/flash/stability -B build/flash-stability \
+          cmake -S tests/flash/pt_split -B build/pt-split \
             "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_FLASH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Compile only stability integration
-        run: cmake --build build/flash-stability --target mpmc_flash_stability_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run necessary stability increment
-        run: ctest --test-dir build/flash-stability -C ${{ matrix.config }} -R '^flash[.]stability[.]' --verbose --no-tests=error
-      - name: Regenerate independent fixed-state references
-        run: python tests/flash/stability/reference_decimal.py
+            -DMPMC_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Compile phase split
+        run: cmake --build build/pt-split --target mpmc_pt_split_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run phase split increment
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
+      - name: Independently regenerate binary equilibrium references
+        run: python tests/flash/pt_split/reference_split_decimal.py
