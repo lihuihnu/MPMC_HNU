@@ -1,18 +1,26 @@
 name: Thermodynamics contracts
 
-# One independent suite. Documentation-only edits do not compile it, and this
-# workflow does not invoke the AD workflow. Required-check policy is not changed.
+# Keep the existing workflow identity. Select the necessary suite(s) after a
+# two-tree diff; a new PR76 kernel alone must not rerun the old contract/AD suites.
 on:
   pull_request:
     branches: [main]
     paths:
       - 'modules/thermodynamics/**/*.hpp'
       - 'modules/thermodynamics/**/CMakeLists.txt'
-      - 'tests/thermodynamics/contracts/**/*.cpp'
-      - 'tests/thermodynamics/contracts/**/*.hpp'
-      - 'tests/thermodynamics/contracts/CMakeLists.txt'
+      - 'tests/thermodynamics/**/*.cpp'
+      - 'tests/thermodynamics/**/*.hpp'
+      - 'tests/thermodynamics/**/CMakeLists.txt'
+      - 'modules/ad/include/mpmc/ad/**'
+      - 'modules/ad/CMakeLists.txt'
       - '.github/workflows/thermodynamics.yml'
   workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Audited scope; shared environment changes require all affected suites'
+        type: choice
+        options: [all, contracts, pr76]
+        default: all
 
 permissions:
   contents: read
@@ -22,29 +30,116 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select:
+    name: Select affected thermodynamics suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+      has_work: ${{ steps.scope.outputs.has_work }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Existing audited pin.
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Select by audited dependency boundaries
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUESTED_SUITE: ${{ inputs.suite }}
+        shell: python
+        run: |
+          import json
+          import os
+          import subprocess
+
+          all_suites = ["contracts", "pr76"]
+          prefix = "modules/thermodynamics/include/mpmc/thermodynamics/"
+
+          def suites_for(paths):
+              selected = set()
+              infrastructure = False
+              for path in paths:
+                  if path.endswith(".md"):
+                      continue
+                  if path == ".github/workflows/thermodynamics.yml":
+                      infrastructure = True
+                  elif path == prefix + "pr76_pure.hpp" or path.startswith("tests/thermodynamics/pr76/"):
+                      selected.add("pr76")
+                  elif path.startswith("tests/thermodynamics/contracts/"):
+                      selected.add("contracts")
+                  elif path.startswith("modules/ad/"):
+                      selected.add("pr76")  # New integration tests, not a rerun of AD unit suites.
+                  else:
+                      selected.update(all_suites)  # Shared contracts/build or unknown dependency.
+              # Workflow-only changes are conservative. With code, audit the workflow
+              # diff: changing another suite's flags/compiler/environment requires
+              # explicitly dispatching that affected suite before integration.
+              if infrastructure and not selected:
+                  selected.update(all_suites)
+              return sorted(selected)
+
+          checks = [
+              ([prefix + "pr76_pure.hpp"], ["pr76"]),
+              (["tests/thermodynamics/pr76/pr76_test.cpp"], ["pr76"]),
+              (["tests/thermodynamics/pr76/CMakeLists.txt"], ["pr76"]),
+              ([prefix + "pr76_pure.hpp", ".github/workflows/thermodynamics.yml"], ["pr76"]),
+              ([prefix + "components.hpp"], all_suites),
+              ([prefix + "pr_parameters.hpp"], all_suites),
+              (["modules/thermodynamics/CMakeLists.txt"], all_suites),
+              (["tests/thermodynamics/contracts/contracts_test.cpp"], ["contracts"]),
+              (["modules/ad/include/mpmc/ad/dual.hpp"], ["pr76"]),
+              (["modules/ad/include/mpmc/ad/math.hpp"], ["pr76"]),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["pr76"]),
+              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp"], ["pr76"]),
+              (["modules/ad/CMakeLists.txt"], ["pr76"]),
+              ([".github/workflows/thermodynamics.yml"], all_suites),
+              (["modules/thermodynamics/README.md", "README.md"], []),
+              ([prefix + "unknown.hpp"], all_suites),
+              (["tests/thermodynamics/contracts/contracts_test.cpp", prefix + "pr76_pure.hpp"], all_suites),
+          ]
+          for paths, expected in checks:
+              if suites_for(paths) != expected:
+                  raise RuntimeError(f"Incorrect suite selection: {paths}")
+          print(f"Suite-selection regressions: {len(checks)}/{len(checks)} passed")
+          if os.environ["EVENT_NAME"] == "workflow_dispatch":
+              requested = os.environ.get("REQUESTED_SUITE") or "all"
+              if requested not in ["all", *all_suites]:
+                  raise ValueError("Unknown thermodynamics suite")
+              selected = all_suites if requested == "all" else [requested]
+          else:
+              raw = subprocess.check_output([
+                  "git", "diff", "--name-only", "-z", os.environ["BASE_SHA"], os.environ["HEAD_SHA"],
+              ])
+              paths = [p for p in raw.decode("utf-8").split("\0") if p]
+              print("Changed paths:", json.dumps(paths, ensure_ascii=False))
+              selected = suites_for(paths)
+          platforms = [
+              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "config": "Debug",
+               "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
+              {"name": "Clang Release", "os": "ubuntu-24.04", "config": "Release",
+               "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
+              {"name": "MSVC Release", "os": "windows-2022", "config": "Release",
+               "compiler": "", "sanitizer": "OFF"},
+          ]
+          targets = {"contracts": "mpmc_thermodynamics_contract_tests", "pr76": "mpmc_thermodynamics_pr76_tests"}
+          matrix = {"include": [{**p, "suite": s, "target": targets[s]} for s in selected for p in platforms]}
+          print("Selected suites:", selected)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("matrix=" + json.dumps(matrix) + "\n")
+              output.write("has_work=" + str(bool(selected)).lower() + "\n")
+
   contracts:
-    name: contracts / ${{ matrix.name }}
+    needs: select
+    if: needs.select.outputs.has_work == 'true'
+    name: ${{ matrix.suite }} / ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            config: Debug
-            compiler: '-DCMAKE_CXX_COMPILER=g++'
-            sanitizer: 'ON'
-          - name: Clang Release
-            os: ubuntu-24.04
-            config: Release
-            compiler: '-DCMAKE_CXX_COMPILER=clang++'
-            sanitizer: 'OFF'
-          - name: MSVC Release
-            os: windows-2022
-            config: Release
-            compiler: ''
-            sanitizer: 'OFF'
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     defaults:
       run:
         shell: bash
@@ -52,20 +147,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Existing audited pin.
         with:
           persist-credentials: false
-      - name: Configure independent contracts
+      - name: Configure only the selected suite
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
             config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
           fi
-          cmake -S tests/thermodynamics/contracts -B build/thermo-contracts \
+          cmake -S tests/thermodynamics/${{ matrix.suite }} -B build/thermo-${{ matrix.suite }} \
             "${config_arg[@]}" ${{ matrix.compiler }} \
             -DMPMC_THERMO_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Compile only contracts
+      - name: Compile only the selected target
         run: |
-          cmake --build build/thermo-contracts --target mpmc_thermodynamics_contract_tests \
+          cmake --build build/thermo-${{ matrix.suite }} --target ${{ matrix.target }} \
             --config ${{ matrix.config }} --parallel 2
-      - name: Run only contract increments
+      - name: Run only the selected increments
         run: |
-          ctest --test-dir build/thermo-contracts -C ${{ matrix.config }} \
-            -R '^thermo[.]contracts[.]' --verbose --no-tests=error
+          ctest --test-dir build/thermo-${{ matrix.suite }} -C ${{ matrix.config }} \
+            -R '^thermo[.]${{ matrix.suite }}[.]' --verbose --no-tests=error

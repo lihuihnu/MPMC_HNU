@@ -1,6 +1,6 @@
 # 热力学模块：有序组分与 PR 数据契约
 
-本增量仅提供 C++20 数据契约、校验与有序快照，不计算 EOS 参数、物性、EOS 根或闪蒸。CMake 目标 `mpmc::thermodynamics` 仅依赖标准库；不依赖 AD、core、网络、数据库或第三方框架。所有数值输入仍须有独立科学依据，构造成功不等于物理模型已验证。
+本页描述 C++20 数据契约、校验与有序快照。后续已新增[PR76 纯组分 a(T)、b 数值核](pr76_pure.md)及解析/AD 温度导数测试；尚无混合参数、物性、EOS 根或闪蒸。CMake 目标 `mpmc::thermodynamics` 仅依赖标准库；不依赖 AD、core、网络、数据库或第三方框架。所有数值输入仍须有独立科学依据，构造成功不等于物理模型已验证。
 
 ## 1. 模型范围与资料核验
 
@@ -12,7 +12,7 @@ PR76/classical-vdw/constant-kij/no-translation
 
 该标识固定为 1976 年 Peng–Robinson 原始 alpha 形式，经典二次吸引项/线性共体积混合规则，常数、对称的二元交互参数，且不做体积平移。[R1][R2] 不使用 PR78 的高偏心因子分段修正，也不自动选择其他 alpha、SW、CPA、PRSV 或温度相关 kij。模型 ID 和参数数据集的 `dataset_id/revision` 是不同的身份，不能相互代替。
 
-审阅了 Peng 作者上传原文的网页转录中模型参数及混合规则所在部分（含式 18、20–22）、NIST teqp 官方参数接口及 whitson 官方说明。PR 原始 alpha 中的 kappa 为 `0.37464 + 1.54226*omega - 0.26992*omega^2`；这里只用于区分版本，没有实现此公式。PR 原文清晰 PDF 尚未取得：ACS 返回访问限制，作者页 PDF 链接无法读取；转录可能损失上下标，不能据此声称已经核验全部公式、表格与勘误。进入 EOS 实现前须补齐可核验原文，明确数值系数精度与气体常数约定。本次没有录入任何真实组分参数表。
+审阅了 Peng 作者上传原文的网页转录中模型参数及混合规则所在部分（含式 18、20–22）、NIST teqp 官方参数接口及 whitson 官方说明。此前只有网页转录；用户随后提供了清晰的 PR76 PDF。本轮已对照渲染页核验期刊第 60 页的纯组分式 (9)、(10)、(12)、(13)、(17)、(18)，采用印刷系数与单独声明的现代 SI 气体常数。文件摘要、公式及核验范围见[数值核说明](pr76_pure.md)；不将这次局部核验说成全文全部表格/勘误或真实物性已验证。本次没有录入任何真实组分参数表。
 
 SW 是 Søreide–Whitson 含水体系的 PR 修改，不是所有“改进 PR”的统称。whitson 官方水物性说明区分水相/非水相参数，并涉及温度、盐度及水 alpha 修改；该现代页面同时引用 Yan 等后续关联式，不能整体当作 1992 原版 SW 参数表。[R3] 后续应明确选择原始 SW 还是有单独版本号的扩展。
 
@@ -109,17 +109,17 @@ ctest --test-dir build/thermo-contracts -C Debug -R '^thermo[.]contracts[.]' --o
 
 新增 13 个独立 CTest 条目：有序身份、增减替换、4 组分全部 24 种排列、身份错误、缺失参数、重复/非法 pair、值/单位、来源策略、模型/数据版本、范围声明、所有权/失败恢复、限额、公共头。参考为手工指定的人工 ID 映射与矩阵，不从被测输出生成期望值；无需浮点近似容差，因为这里只做校验和数据搬运。两个公共头分别以首个/重复包含编译，再与主测试跨翻译单元链接；Release 使用正常检查而非可禁用 assert。
 
-正式执行仅用 GitHub 官方托管 runner：独立工作流 `Thermodynamics contracts`，独立配置本测试工程，不构建或运行任何旧 AD 测试。新增公共接口与所有权需要必要 GCC/Clang/MSVC 编译覆盖及 Linux ASan/UBSan。仅文档改动不启动该工作流；启用必需检查前仍须设计始终回报状态的外层门禁，本轮不修改分支保护。运行结果以实际提交的 Actions 日志为准。
+正式执行仅用 GitHub 官方托管 runner：工作流 `Thermodynamics contracts` 已增加按依赖选择 contracts/pr76 的路由；独立配置所选工程，不构建或运行无关旧套件。新增公共接口与所有权需要必要 GCC/Clang/MSVC 编译覆盖及 Linux ASan/UBSan。仅文档改动不启动该工作流；启用必需检查前仍须设计始终回报状态的外层门禁，本轮不修改分支保护。运行结果以实际提交的 Actions 日志为准。
 
-没有进行真实物性验证、AD 导数集成、跨 EOS 参数转移验证、序列化/前端测试、并发竞态、OOM 注入、macOS/其他架构或性能基准。旧 AD 代码、测试、构建、工作流及 AGENTS 均保持不变。
+原契约增量没有进行真实物性验证、AD 导数集成、跨 EOS 参数转移验证、序列化/前端测试、并发竞态、OOM 注入、macOS/其他架构或性能基准。旧 AD 代码、测试、构建、工作流及 AGENTS 均保持不变。
 
 ## 7. 参考与待取得资料
 
 本次独立实现，不复制成熟软件源码、参数表或论文全文，不新增第三方依赖或项目许可证。
 
-- [R1] Peng, D.-Y.; Robinson, D. B. (1976). *A New Two-Constant Equation of State*, 15(1), 59–64. [DOI:10.1021/i160057a011](https://doi.org/10.1021/i160057a011)。[作者上传的全文转录入口](https://www.researchgate.net/publication/231293953_New_Two-Constant_Equation_of_State)。审阅参数/alpha/混合规则段落；清晰 PDF 与表格尚未核验。
+- [R1] Peng, D.-Y.; Robinson, D. B. (1976). *A New Two-Constant Equation of State*, 15(1), 59–64. [DOI:10.1021/i160057a011](https://doi.org/10.1021/i160057a011)。[作者上传的全文转录入口](https://www.researchgate.net/publication/231293953_New_Two-Constant_Equation_of_State)。原契约增量审阅转录；随后取得用户提供 PDF 并核验纯组分公式，定位与 SHA256 见 [pr76_pure.md](pr76_pure.md)。未复核表格数值或全部勘误。
 - [R2] [NIST teqp — General cubics](https://pages.nist.gov/teqp-docs/en/main/models/cubics.html)。核对 Tc/Pc/omega 输入、SI 示例和模型/参数分离。其接口也允许非对称矩阵；本契约选择对称常数 kij 是明确限定，不宣称所有立方模型都要求如此。
 - [R3] [whitson 官方 Water bot 说明](https://manual.whitson.com/methods/water-bot/)。用于核验相别/温度/盐度相关扩展边界，未移植表中的数值。原始 SW：Søreide & Whitson (1992), [DOI:10.1016/0378-3812(92)85105-H](https://doi.org/10.1016/0378-3812(92)85105-H)，原文尚需补齐。
 - [R4] Vinhal, Yan & Kontogeorgis (2020), *Modeling the Critical and Phase Equilibrium Properties of Pure Fluids and Mixtures with the Crossover Cubic-Plus-Association Equation of State*, [DOI:10.1021/acs.jced.9b00492](https://doi.org/10.1021/acs.jced.9b00492)。[DTU 作者稿](https://backend.orbit.dtu.dk/ws/files/199155034/Vinhal_et_al_Article_New_clean.pdf)，已查看 PDF 第 3 页（文内第 2 页）经典 CPA 参数说明；不将 crossover 扩展选为项目 CPA 版本。原始 CPA 1996 年论文 [DOI:10.1021/ie9600203](https://doi.org/10.1021/ie9600203) 的全部公式与参数表未核验。
 
-下一次实现 EOS 前，需要负责人提供或指定合法、清晰的 PR76 原文/版本；实际组分应用前需要 Tc/Pc/omega、所选 pair 的 kij 与可追溯验证资料。缺乏数据只阻塞依赖它的数据录入/物理验证，不能由合成测试数据替代。SW/CPA 的原文、位点/关联式方案与参数版本在各自实现前单独补齐。
+纯组分实现所需 PR76 原文已由用户提供并核验；实际组分应用前仍需要 Tc/Pc/omega、所选 pair 的 kij 与可追溯验证资料。缺乏数据只阻塞依赖它的数据录入/物理验证，不能由合成测试数据替代。SW/CPA 的原文、位点/关联式方案与参数版本在各自实现前单独补齐。
