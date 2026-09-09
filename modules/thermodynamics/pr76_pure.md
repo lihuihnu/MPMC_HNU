@@ -73,7 +73,24 @@ db/dT = 0
 T = Tc: a = a_c, da/dT = -a_c*kappa/Tc, db/dT = 0
 ```
 
-生产代码不调用解析导数函数。测试另用展开式 `a_c*((1+k)^2 - 2*k*(1+k)*sqrt(T/Tc) + k^2*T/Tc)` 及其解析导数；还用独立 Decimal 70 位计算核对固定参考：制造的 Tc=400 K、Pc=4e6 Pa、omega=0.2、T=100/400/900 K。数字来自纸面公式的独立十进制运算，不来自待测 C++ 输出，也不是实际流体或论文实验数据。
+生产代码不调用解析导数函数。测试另用展开式 `a_c*((1+k)^2 - 2*k*(1+k)*sqrt(T/Tc) + k^2*T/Tc)` 及其解析导数；还用独立 Decimal 80 位计算核对固定参考：制造的 Tc=400 K、Pc=4e6 Pa、T=100/400/900 K；omega 使用参数契约实际存储的 binary64 `0.2`，通过 `Decimal.from_float(0.2)` 精确导入，不能当作理想十进制 1/5。`0.6` 的系数参考同样处理。数字来自纸面公式的独立高精度运算，不来自待测 C++ 输出，也不是实际流体或论文实验数据。
+
+参考计算可按以下独立过程复现（Python binary64 浮点输入、Decimal 80 位运算）：
+
+```python
+from decimal import Decimal as D, localcontext
+with localcontext() as ctx:
+    ctx.prec = 80
+    r, tc, pc, w = D("8.31446261815324"), D(400), D(4000000), D.from_float(0.2)
+    k = D("0.37464") + D("1.54226")*w - D("0.26992")*w*w
+    ac = D("0.45724")*r*r*tc*tc/pc
+    for temperature in (100, 400, 900):
+        t = D(temperature)
+        q = 1 + k*(1-(t/tc).sqrt())
+        print(ac*q*q, -ac*k*q/(t*tc).sqrt())
+```
+
+首轮官方测试暴露了三个参考比较把 double 的 0.2/0.6 当作精确十进制数的问题：两者对 kappa 的相对影响约为 2.37e-17/2.25e-17，超过所用 long double 的 128*epsilon。修正仅使参考遵循实际输入语义；保留全部原输入、数值域检查与容差，未从生产结果回填、删除用例或修改数值核。参数输入精度、数值计算精度和物理数据准确度须分别理解。
 
 新增 `tests/thermodynamics/pr76`，11 个 CTest：printed_reference、analytic_temperature、chain_rule、fixed_jacobian、runtime_jacobian、snapshot_lifetime、temperature_domain、declared_bounds、algebraic_extension、numerical_range、headers。前十项覆盖三种基础浮点精度，header 项使用独立普通浮点翻译单元。
 
