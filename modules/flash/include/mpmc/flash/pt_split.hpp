@@ -35,11 +35,12 @@ struct PtSplitIterationOptions {
     double log_k_separation{1e-7};
     double relative_z_separation{1e-8};
     double max_log_step{2};
-    double residual_decrease{1e-4};
+    double residual_decrease{1e-4}; // Unresolved-Gibbs step progress, not a stopping tolerance.
     int max_iterations{512};
     int max_backtracks{24};
     std::size_t max_evaluations{20000}; // Single-phase property calls, including failures.
     RachfordRiceOptions rr;
+    double gibbs_armijo{1e-4};
 };
 struct PtSplitOptions {
     PtSplitIterationOptions iteration;
@@ -65,6 +66,7 @@ struct PtSplitAttempt {
     std::size_t evaluations{}, backtracks{}, rejected_evaluations{};
     std::optional<StabilityPropertyIssue> property_issue;
     std::string diagnostic;
+    std::size_t gibbs_descent_steps{}, residual_increase_steps{};
 };
 enum class PtSplitStatus {
     single_phase_no_instability_found, two_phase_no_instability_found,
@@ -86,9 +88,13 @@ struct PtSplitResult {
     // reference disagreement allowance, not a rigorous error bound to exact equilibrium.
     double common_reference_allowance{};
     std::string diagnostic;
-    [[nodiscard]] bool equations_converged() const noexcept { return selected_attempt.has_value(); }
+    [[nodiscard]] bool equations_converged() const noexcept {
+        return selected_attempt && *selected_attempt < attempts.size() &&
+            attempts[*selected_attempt].status == PtSplitAttemptStatus::converged &&
+            attempts[*selected_attempt].point.has_value();
+    }
     [[nodiscard]] const PtSplitState* candidate() const & noexcept {
-        return selected_attempt ? &*attempts[*selected_attempt].point : nullptr;
+        return equations_converged() ? &*attempts[*selected_attempt].point : nullptr;
     }
     const PtSplitState* candidate() const && = delete;
 };
@@ -101,6 +107,7 @@ inline void split_check_options(const PtSplitIterationOptions& o) {
         o.minimum_phase_fraction >= 0.5 || !positive(o.log_k_separation) ||
         !positive(o.relative_z_separation) || o.relative_z_separation >= 1 ||
         !positive(o.max_log_step) || !positive(o.residual_decrease) || o.residual_decrease >= 1 ||
+        !positive(o.gibbs_armijo) || o.gibbs_armijo >= 1 ||
         o.max_iterations < 0 || o.max_backtracks <= 0) {
         throw std::invalid_argument("PT split: invalid tolerance or iteration option");
     }
@@ -129,6 +136,43 @@ inline void split_check_phase(const PtSplitPhase& phase, std::size_t n) {
 inline bool split_balance_ok(const PtSplitState& state, const PtSplitIterationOptions& o) {
     return state.fractions.mass_absolute <= o.mass_absolute_tolerance &&
            state.fractions.mass_relative <= o.mass_relative_tolerance;
+}
+// For material-balanced RR states, c_i=x_i*y_i/z_i and H=sum((y_i-x_i)^2/z_i).
+// RR gives d(beta)=sum(c_i*d(logK_i))/H. Writing vapor amounts v_i=beta*y_i,
+// d(v_i)=c_i*[d(beta)+beta*(1-beta)*d(logK_i)]. Gibbs-Duhem then yields
+// dG=-sum(r_i*dv_i). Along d(logK)=r/scale this is a nonpositive quadratic form.
+// No EOS derivatives or numerical differentiation are needed for this slope.
+inline double split_gibbs_slope(const PtSplitState& point, std::span<const double> feed, double scale) {
+    double h = 0, hc = 0, first = 0, fc = 0, second = 0, sc = 0;
+    for (std::size_t i = 0; i < feed.size(); ++i) {
+        if (feed[i] == 0) { continue; }
+        const double x = point.fractions.liquid[i], y = point.fractions.vapor[i];
+        const double c = (x/feed[i])*y;
+        const double difference = y-x;
+        const double r = point.fugacity_residual[i];
+        stability_add(difference*(difference/feed[i]), h, hc);
+        stability_add(c*r, first, fc);
+        stability_add((c*r)*r, second, sc);
+    }
+    if (!(h > 0) || !std::isfinite(h) || !std::isfinite(first) ||
+        !std::isfinite(second) || !std::isfinite(scale) || !(scale >= 1)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double beta = point.fractions.vapor_fraction;
+    return -(beta*(1-beta)*second + (first/h)*first)/scale;
+}
+inline bool split_accept_step(const PtSplitState& point, const PtSplitState& next,
+                               double predicted, double relative_step, const PtSplitIterationOptions& o) {
+    const double guard = point.gibbs_roundoff_guard + next.gibbs_roundoff_guard;
+    if (predicted > guard) {
+        return next.reduced_gibbs <= point.reduced_gibbs-o.gibbs_armijo*predicted;
+    }
+    // An unresolved objective reduction cannot be accepted merely because the
+    // rounded Gibbs values compare equal. Require actual residual progress.
+    return next.reduced_gibbs <= point.reduced_gibbs+guard &&
+        (next.fugacity_norm <= o.fugacity_tolerance ||
+         point.fugacity_norm-next.fugacity_norm >
+             o.residual_decrease*relative_step*point.fugacity_norm);
 }
 inline std::optional<std::vector<double>> split_seed(
     std::span<const double> z, std::span<const double> w, bool as_vapor) {
@@ -253,6 +297,12 @@ template <typename Provider>
             result.status = PtSplitAttemptStatus::iteration_limit; return result;
         }
         const double scale = std::max(1.0, point.fugacity_norm/options.max_log_step);
+        const double slope = detail::split_gibbs_slope(point, feed, scale);
+        if (!std::isfinite(slope) || !(slope < 0)) {
+            result.status = PtSplitAttemptStatus::line_search_failed;
+            result.diagnostic = "PT split: degenerate or unrepresentable Gibbs descent slope";
+            return result;
+        }
         bool accepted = false;
         double alpha = 1;
         result.status = PtSplitAttemptStatus::line_search_failed;
@@ -264,8 +314,12 @@ template <typename Provider>
             }
             try {
                 PtSplitState next = evaluate(next_log_k);
-                if (next.fugacity_norm <= options.fugacity_tolerance ||
-                    next.fugacity_norm < point.fugacity_norm*(1-options.residual_decrease*alpha/scale)) {
+                const double predicted = -alpha*slope;
+                if (detail::split_accept_step(point, next, predicted, alpha/scale, options)) {
+                    if (predicted > point.gibbs_roundoff_guard+next.gibbs_roundoff_guard) {
+                        ++result.gibbs_descent_steps;
+                    }
+                    if (next.fugacity_norm > point.fugacity_norm) { ++result.residual_increase_steps; }
                     result.point = std::move(next); accepted = true; break;
                 }
                 ++result.rejected_evaluations;

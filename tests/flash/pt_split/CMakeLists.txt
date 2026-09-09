@@ -22,7 +22,8 @@ set(cases rr_binary rr_zero_trace rr_extreme rr_boundary rr_domains_budget
     imposed_equivalent imposed_common_tangent imposed_domains_budget balanced_seed
     iterate_exact iterate_refine iterate_limits iterate_callbacks split_ideal split_zero_trace
     split_single split_initial_unknown split_final_unknown split_third_phase split_disappearance
-    split_domains pr_nitrogen pr_carbon pr_order pr_ownership pr_failure headers)
+    split_domains pr_nitrogen pr_carbon pr_order pr_ownership pr_failure headers
+    gibbs_slope gibbs_roundoff pr_gibbs_progress result_guard)
 foreach(case IN LISTS cases)
     add_test(NAME flash.pt_split.${case} COMMAND mpmc_pt_split_tests ${case})
     set_tests_properties(flash.pt_split.${case} PROPERTIES LABELS "flash;flash.pt_split;unit" TIMEOUT 60)
