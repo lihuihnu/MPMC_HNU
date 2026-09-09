@@ -28,3 +28,24 @@ foreach(case IN LISTS cases)
     add_test(NAME flash.pt_split.${case} COMMAND mpmc_pt_split_tests ${case})
     set_tests_properties(flash.pt_split.${case} PROPERTIES LABELS "flash;flash.pt_split;unit" TIMEOUT 60)
 endforeach()
+
+# Separate executable: existing test code and its reference literals are untouched.
+add_executable(mpmc_pt_boundary_tests boundary_test.cpp)
+target_link_libraries(mpmc_pt_boundary_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pt_boundary_tests PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(mpmc_pt_boundary_tests PRIVATE /W4 /WX /permissive- /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(mpmc_pt_boundary_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+endif()
+if(MPMC_SPLIT_ENABLE_SANITIZERS)
+    target_compile_options(mpmc_pt_boundary_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(mpmc_pt_boundary_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+foreach(case composition_nitrogen composition_carbon pressure_nitrogen pressure_carbon
+        disappearance_nitrogen disappearance_carbon assisted_neighborhoods ulp_endpoints
+        budget_paths component_order)
+    add_test(NAME flash.pt_split.boundary_${case} COMMAND mpmc_pt_boundary_tests ${case})
+    set_tests_properties(flash.pt_split.boundary_${case} PROPERTIES
+        LABELS "flash;flash.pt_split;boundary" TIMEOUT 120)
+endforeach()
