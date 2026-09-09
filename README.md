@@ -2,7 +2,7 @@
 
 面向多相、多组分计算的模块化高性能计算平台，采用可移植的 C++ 计算后端与独立 Web 前端。
 
-> **当前状态：AD、热力学数据契约与 PR76 纯组分系数。** 已提供独立的 C++20 `mpmc::ad::Dual<T, N>`、常见初等函数、`value_and_jacobian`、分块 `value_and_jacobian_runtime<K>`、独立增量测试入口与官方 runner 工作流；功能边界和使用方法见 [AD 模块说明](modules/ad/README.md)。已新增[有序组分与 PR76 数据契约](modules/thermodynamics/README.md)，并提供经原文核验的[纯组分 a(T)、b 数值核](modules/thermodynamics/pr76_pure.md)及温度导数增量测试；尚无混合参数、EOS 根或闪蒸计算；没有已验证物理模型或性能达标结论；测试结果以具体提交的 GitHub Actions 日志为准。开发约束见 [AGENTS.md](AGENTS.md)。
+> **当前状态：AD、热力学数据契约与 PR76 纯/混合组分系数。** 已提供独立的 C++20 `mpmc::ad::Dual<T, N>`、常见初等函数、`value_and_jacobian`、分块 `value_and_jacobian_runtime<K>`、独立增量测试入口与官方 runner 工作流；功能边界和使用方法见 [AD 模块说明](modules/ad/README.md)。已新增[有序组分与 PR76 数据契约](modules/thermodynamics/README.md)，并提供经原文核验的[纯组分 a(T)、b 数值核](modules/thermodynamics/pr76_pure.md)及温度导数增量测试；已增加[运行期经典混合参数](modules/thermodynamics/pr76_mixture.md)，区分完整/约化组成导数并验证顺序与变维数；尚无 EOS 根或闪蒸计算；没有已验证物理模型或性能达标结论；测试结果以具体提交的 GitHub Actions 日志为准。开发约束见 [AGENTS.md](AGENTS.md)。
 
 ## 1. 项目目标与基本原则
 
@@ -18,7 +18,7 @@
 
 | 层次 | 初始选择 | 边界与理由 |
 | --- | --- | --- |
-| 计算核心 | C++20，标准库优先 | AD 算术和初等函数已实现，且只依赖标准库；已增加 PR76 纯组分系数核，其余计算能力待开发；不将 GPU、MPI 或专有指令集作为基础依赖。 |
+| 计算核心 | C++20，标准库优先 | AD 算术和初等函数已实现，且只依赖标准库；已增加 PR76 纯组分与经典混合系数核，其余计算能力待开发；不将 GPU、MPI 或专有指令集作为基础依赖。 |
 | 构建与测试入口 | CMake 3.21+、CMake Presets、CTest | 已提供独立 `mpmc::ad`、`mpmc::thermodynamics` 目标及各自增量测试入口；闪蒸待开发。[E1] |
 | 前端 | React + TypeScript + Vite 单页应用 | 前后端独立开发与部署；不为计算平台默认引入 SSR 或另一套服务端业务逻辑。[E2] |
 | 服务通信 | Protocol Buffers + gRPC；浏览器通过 gRPC-Web 适配层接入 | 契约先行、消息版本化；传输对象与计算核心类型分离。[E3][E4] |
@@ -34,7 +34,7 @@
 
 ## 3. 模块架构与依赖方向
 
-下表描述目标职责；**当前 AD 已有计算代码，`modules/thermodynamics` 已有数据契约与 PR76 纯组分 a(T)/b 数值核，其他模块尚未创建**。只在对应增量需要时创建文件与构建目标，不预生成空模块、占位实现或插件框架。
+下表描述目标职责；**当前 AD 已有计算代码，`modules/thermodynamics` 已有数据契约、PR76 纯组分与运行期混合 a/b 数值核，其他模块尚未创建**。只在对应增量需要时创建文件与构建目标，不预生成空模块、占位实现或插件框架。
 
 | 模块 | 职责 |
 | --- | --- |
@@ -69,7 +69,7 @@
 
 ## 5. 热力学模型与科学边界
 
-当前已实现的[PR76 数据契约](modules/thermodynamics/README.md)按稳定组分 ID 绑定参数并形成运行期有序快照；公共来源、单位与身份层供后续 SW/CPA 复用，不将 PR 的常数对称 kij 规则强加给它们。已增加纯组分 a(T)、b 及温度导数验证，尚不计算混合参数、EOS 根或闪蒸。
+当前已实现的[PR76 数据契约](modules/thermodynamics/README.md)按稳定组分 ID 绑定参数并形成运行期有序快照；公共来源、单位与身份层供后续 SW/CPA 复用，不将 PR 的常数对称 kij 规则强加给它们。已增加纯组分与经典混合 a/b、温度及组成导数验证，尚不计算 EOS 根或闪蒸。
 
 模型选择通过能力目录与配置完成，不把 EOS 公式硬编码进闪蒸算法。每个模型应报告模型 ID/版本、可用组分、允许相态、所需参数、混合规则、导数能力、适用范围及资料来源；不支持的组合显式拒绝，不静默回退到另一模型。
 

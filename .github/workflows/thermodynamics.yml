@@ -1,7 +1,7 @@
 name: Thermodynamics contracts
 
 # Keep the existing workflow identity. Select the necessary suite(s) after a
-# two-tree diff; a new PR76 kernel alone must not rerun the old contract/AD suites.
+# two-tree diff; a new mixture kernel alone must not rerun old pure/contract/AD suites.
 on:
   pull_request:
     branches: [main]
@@ -19,7 +19,7 @@ on:
       suite:
         description: 'Audited scope; shared environment changes require all affected suites'
         type: choice
-        options: [all, contracts, pr76]
+        options: [all, contracts, pr76, pr76_mixture]
         default: all
 
 permissions:
@@ -55,7 +55,7 @@ jobs:
           import os
           import subprocess
 
-          all_suites = ["contracts", "pr76"]
+          all_suites = ["contracts", "pr76", "pr76_mixture"]
           prefix = "modules/thermodynamics/include/mpmc/thermodynamics/"
 
           def suites_for(paths):
@@ -66,12 +66,16 @@ jobs:
                       continue
                   if path == ".github/workflows/thermodynamics.yml":
                       infrastructure = True
-                  elif path == prefix + "pr76_pure.hpp" or path.startswith("tests/thermodynamics/pr76/"):
+                  elif path == prefix + "pr76_mixture.hpp" or path.startswith("tests/thermodynamics/pr76_mixture/"):
+                      selected.add("pr76_mixture")
+                  elif path == prefix + "pr76_pure.hpp":
+                      selected.update(("pr76", "pr76_mixture"))
+                  elif path.startswith("tests/thermodynamics/pr76/"):
                       selected.add("pr76")
                   elif path.startswith("tests/thermodynamics/contracts/"):
                       selected.add("contracts")
                   elif path.startswith("modules/ad/"):
-                      selected.add("pr76")  # New integration tests, not a rerun of AD unit suites.
+                      selected.update(("pr76", "pr76_mixture"))  # Downstream integration, not AD unit reruns.
                   else:
                       selected.update(all_suites)  # Shared contracts/build or unknown dependency.
               # Workflow-only changes are conservative. With code, audit the workflow
@@ -82,23 +86,30 @@ jobs:
               return sorted(selected)
 
           checks = [
-              ([prefix + "pr76_pure.hpp"], ["pr76"]),
+              ([prefix + "pr76_pure.hpp"], ["pr76", "pr76_mixture"]),
               (["tests/thermodynamics/pr76/pr76_test.cpp"], ["pr76"]),
               (["tests/thermodynamics/pr76/CMakeLists.txt"], ["pr76"]),
-              ([prefix + "pr76_pure.hpp", ".github/workflows/thermodynamics.yml"], ["pr76"]),
+              ([prefix + "pr76_pure.hpp", ".github/workflows/thermodynamics.yml"], ["pr76", "pr76_mixture"]),
               ([prefix + "components.hpp"], all_suites),
               ([prefix + "pr_parameters.hpp"], all_suites),
               (["modules/thermodynamics/CMakeLists.txt"], all_suites),
               (["tests/thermodynamics/contracts/contracts_test.cpp"], ["contracts"]),
-              (["modules/ad/include/mpmc/ad/dual.hpp"], ["pr76"]),
-              (["modules/ad/include/mpmc/ad/math.hpp"], ["pr76"]),
-              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["pr76"]),
-              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp"], ["pr76"]),
-              (["modules/ad/CMakeLists.txt"], ["pr76"]),
+              (["modules/ad/include/mpmc/ad/dual.hpp"], ["pr76", "pr76_mixture"]),
+              (["modules/ad/include/mpmc/ad/math.hpp"], ["pr76", "pr76_mixture"]),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["pr76", "pr76_mixture"]),
+              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp"], ["pr76", "pr76_mixture"]),
+              (["modules/ad/CMakeLists.txt"], ["pr76", "pr76_mixture"]),
               ([".github/workflows/thermodynamics.yml"], all_suites),
               (["modules/thermodynamics/README.md", "README.md"], []),
               ([prefix + "unknown.hpp"], all_suites),
               (["tests/thermodynamics/contracts/contracts_test.cpp", prefix + "pr76_pure.hpp"], all_suites),
+              ([prefix + "pr76_mixture.hpp"], ["pr76_mixture"]),
+              (["tests/thermodynamics/pr76_mixture/mixture_test.cpp"], ["pr76_mixture"]),
+              (["tests/thermodynamics/pr76_mixture/CMakeLists.txt"], ["pr76_mixture"]),
+              ([prefix + "pr76_mixture.hpp", ".github/workflows/thermodynamics.yml"], ["pr76_mixture"]),
+              (["tests/thermodynamics/pr76/pr76_test.cpp", prefix + "pr76_mixture.hpp"],
+               ["pr76", "pr76_mixture"]),
+              (["modules/thermodynamics/pr76_mixture.md"], []),
           ]
           for paths, expected in checks:
               if suites_for(paths) != expected:
@@ -124,7 +135,9 @@ jobs:
               {"name": "MSVC Release", "os": "windows-2022", "config": "Release",
                "compiler": "", "sanitizer": "OFF"},
           ]
-          targets = {"contracts": "mpmc_thermodynamics_contract_tests", "pr76": "mpmc_thermodynamics_pr76_tests"}
+          targets = {"contracts": "mpmc_thermodynamics_contract_tests",
+                     "pr76": "mpmc_thermodynamics_pr76_tests",
+                     "pr76_mixture": "mpmc_thermodynamics_pr76_mixture_tests"}
           matrix = {"include": [{**p, "suite": s, "target": targets[s]} for s in selected for p in platforms]}
           print("Selected suites:", selected)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
