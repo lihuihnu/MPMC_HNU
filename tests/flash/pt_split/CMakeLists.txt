@@ -49,3 +49,22 @@ foreach(case composition_nitrogen composition_carbon pressure_nitrogen pressure_
     set_tests_properties(flash.pt_split.boundary_${case} PROPERTIES
         LABELS "flash;flash.pt_split;boundary" TIMEOUT 120)
 endforeach()
+
+# Stronger, fixed-state TPD regressions; reuse the unchanged PR11 oracle.
+add_executable(mpmc_tpd_stagnation_tests stagnation_test.cpp)
+target_link_libraries(mpmc_tpd_stagnation_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_tpd_stagnation_tests PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(mpmc_tpd_stagnation_tests PRIVATE /W4 /WX /permissive- /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(mpmc_tpd_stagnation_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+endif()
+if(MPMC_SPLIT_ENABLE_SANITIZERS)
+    target_compile_options(mpmc_tpd_stagnation_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(mpmc_tpd_stagnation_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+foreach(case progress_guard flat_convex initial_co2 common_co2 flash_co2 budgets)
+    add_test(NAME flash.pt_split.stagnation_${case} COMMAND mpmc_tpd_stagnation_tests ${case})
+    set_tests_properties(flash.pt_split.stagnation_${case} PROPERTIES
+        LABELS "flash;flash.pt_split;stagnation" TIMEOUT 120)
+endforeach()
