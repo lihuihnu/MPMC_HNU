@@ -341,7 +341,7 @@ void normalization() {
     require(value.b > pure.b, "accepted near-normalized input was silently normalized");
     const std::array<T, 2> bad{T{0.5}, T{0.5}+T{128}*eps};
     expect_error<std::domain_error>([&] { (void)mix.evaluate_full(T{300}, bad, work); });
-    for (T v : std::array<T, 6>{T{-0.01}, T{1.01},
+    for (T v : std::array<T, 6>{static_cast<T>(-0.01), static_cast<T>(1.01),
             std::numeric_limits<T>::quiet_NaN(), std::numeric_limits<T>::infinity(),
             -std::numeric_limits<T>::infinity(), -std::numeric_limits<T>::min()}) {
         const std::array<T, 2> invalid{v, T{0.5}};
