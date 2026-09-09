@@ -25,7 +25,7 @@ namespace fl = mpmc::flash;
 namespace th = mpmc::thermodynamics;
 namespace ref = boundary_reference;
 using Vec = std::vector<double>;
-constexpr double eps = std::numeric_limits<double>::epsilon();
+constexpr double boundary_eps = std::numeric_limits<double>::epsilon();
 // Error budgets declared before production runs: the outer 1e-11 chemical
 // residual is not an x/y/beta forward-error bound near saturation. References
 // retain 40 decimal digits; these comparison budgets do not replace acceptance.
@@ -105,15 +105,15 @@ void inspect_pair(const fl::PtSplitState& c, std::span<const double> z,
     require(c.fractions.status == fl::RachfordRiceStatus::interior, "candidate RR not interior");
     require(std::isfinite(beta) && beta > 0 && beta < 1, "invalid nonzero fraction");
     require(c.fractions.liquid.size() == 2 && c.fractions.vapor.size() == 2, "dimension");
-    near(std::accumulate(c.fractions.liquid.begin(), c.fractions.liquid.end(), 0.0), 1, 64*eps, "sum x");
-    near(std::accumulate(c.fractions.vapor.begin(), c.fractions.vapor.end(), 0.0), 1, 64*eps, "sum y");
+    near(std::accumulate(c.fractions.liquid.begin(), c.fractions.liquid.end(), 0.0), 1, 64*boundary_eps, "sum x");
+    near(std::accumulate(c.fractions.vapor.begin(), c.fractions.vapor.end(), 0.0), 1, 64*boundary_eps, "sum y");
     require(c.fugacity_norm <= o.fugacity_tolerance, "stored fugacity acceptance");
     require(c.fractions.mass_absolute <= o.mass_absolute_tolerance &&
             c.fractions.mass_relative <= o.mass_relative_tolerance, "stored mass acceptance");
     const auto liquid = eval(p, t, c.fractions.liquid, fl::PtPhaseRole::liquid_candidate);
     const auto vapor = eval(p, t, c.fractions.vapor, fl::PtPhaseRole::vapor_candidate);
-    near(liquid.z, c.liquid.z, 32*eps, "fresh liquid Z");
-    near(vapor.z, c.vapor.z, 32*eps, "fresh vapor Z");
+    near(liquid.z, c.liquid.z, 32*boundary_eps, "fresh liquid Z");
+    near(vapor.z, c.vapor.z, 32*boundary_eps, "fresh vapor Z");
     double contrast = 0;
     for (std::size_t i = 0; i < 2; ++i) {
         const double x = c.fractions.liquid[i], y = c.fractions.vapor[i];
@@ -124,7 +124,7 @@ void inspect_pair(const fl::PtSplitState& c, std::span<const double> z,
                 "fresh independent material balance");
         const double mu_l = std::log(x)+liquid.activity.ln_phi[i];
         const double mu_v = std::log(y)+vapor.activity.ln_phi[i];
-        require(std::isfinite(mu_l-mu_v) && std::abs(mu_l-mu_v) <= o.fugacity_tolerance+32*eps,
+        require(std::isfinite(mu_l-mu_v) && std::abs(mu_l-mu_v) <= o.fugacity_tolerance+32*boundary_eps,
                 "fresh unweighted chemical residual");
         contrast = std::max(contrast, std::abs(std::log(y)-std::log(x)));
     }
@@ -132,6 +132,23 @@ void inspect_pair(const fl::PtSplitState& c, std::span<const double> z,
         require(beta > o.minimum_phase_fraction && 1-beta > o.minimum_phase_fraction, "disappearing phase accepted");
         require(contrast > o.log_k_separation && vapor.z-liquid.z >
                 o.relative_z_separation*std::max(vapor.z, liquid.z), "trivial pair accepted");
+    }
+}
+
+// One failed trial per stage is enough to locate an unresolved path without
+// logging every inner iteration. These diagnostics do not alter acceptance.
+void report_unresolved_stage(std::string_view name, const fl::StabilityResult& result) {
+    if (result.status != fl::StabilityStatus::indeterminate) { return; }
+    std::cout << "unresolved " << name << " evaluations=" << result.evaluations
+              << " reason=" << result.diagnostic << '\n';
+    for (const auto& trial : result.trials) {
+        if (trial.status == fl::StabilityTrialStatus::stationary ||
+            trial.status == fl::StabilityTrialStatus::negative_tpd) { continue; }
+        std::cout << "  trial_status=" << static_cast<int>(trial.status)
+                  << " iterations=" << trial.iterations << " residual="
+                  << (trial.point ? trial.point->stationarity : -1.0)
+                  << " reason=" << trial.diagnostic << '\n';
+        break;
     }
 }
 
@@ -153,7 +170,7 @@ Observation inspect(const fl::Pr76PtSplitResult& r, double p, double t, const Ve
             "baseline accuracy or disappearance defaults changed");
     require(s.initial_stability.feed.size() == z.size(), "missing original feed");
     for (std::size_t i = 0; i < z.size(); ++i) {
-        near(s.initial_stability.feed[i], z[i], 64*eps, "feed snapshot");
+        near(s.initial_stability.feed[i], z[i], 64*boundary_eps, "feed snapshot");
     }
     require(s.equations_converged() == (s.candidate() != nullptr), "candidate/convergence disagreement");
     if (must_two) { require(s.status == fl::PtSplitStatus::two_phase_no_instability_found, "resolved interior not accepted"); }
@@ -171,9 +188,9 @@ Observation inspect(const fl::Pr76PtSplitResult& r, double p, double t, const Ve
         require(s.final_stability.has_value(), "converged pair without final review");
         require(!s.final_stability->reference && s.final_stability->imposed_log_activity.size() == 2 &&
                 !s.final_stability->global_stability_proven, "not a common-tangent review");
-        near(s.common_reference_allowance, .5*c->fugacity_norm, 4*eps, "reference allowance");
+        near(s.common_reference_allowance, .5*c->fugacity_norm, 4*boundary_eps, "reference allowance");
         near(s.final_stability->options.tpd_tolerance,
-             s.options.final_stability.tpd_tolerance+s.common_reference_allowance, 4*eps, "effective TPD tolerance");
+             s.options.final_stability.tpd_tolerance+s.common_reference_allowance, 4*boundary_eps, "effective TPD tolerance");
         observation.beta = c->fractions.vapor_fraction;
         observation.bulk_z = (1-observation.beta)*c->liquid.z+observation.beta*c->vapor.z;
     }
@@ -195,6 +212,10 @@ Observation inspect(const fl::Pr76PtSplitResult& r, double p, double t, const Ve
     }
     case fl::PtSplitStatus::indeterminate:
         require(!s.diagnostic.empty(), "unresolved result lacks diagnostic");
+        std::cout << "unresolved split p=" << std::setprecision(17) << p
+                  << " T=" << t << " reason=" << s.diagnostic << '\n';
+        report_unresolved_stage("initial TPD", s.initial_stability);
+        if (s.final_stability) { report_unresolved_stage("final TPD", *s.final_stability); }
         if (s.candidate()) {
             require(s.final_stability->status == fl::StabilityStatus::indeterminate,
                     "unexpected unresolved reason on reference path");
@@ -294,7 +315,7 @@ void disappearance(bool carbon) {
             const auto r = fl::iterate_pt_split(static_cast<double>(a.p), static_cast<double>(a.t), z, lk, eval);
             require(r.point.has_value(), "oracle-seeded small phase lacks iterate");
             inspect_pair(*r.point, z, static_cast<double>(a.p), static_cast<double>(a.t), eval, {}, amount > 1e-10L);
-            near(r.point->fractions.vapor_fraction, beta, 256*eps, "small-phase RR beta");
+            near(r.point->fractions.vapor_fraction, beta, 256*boundary_eps, "small-phase RR beta");
             require(r.status == (amount < 1e-10L ? fl::PtSplitAttemptStatus::phase_disappearance
                                                : fl::PtSplitAttemptStatus::converged), "disappearance gate misreported");
             std::cout << "disappearance carbon=" << carbon << " dew=" << dew << " amount=" << amount
