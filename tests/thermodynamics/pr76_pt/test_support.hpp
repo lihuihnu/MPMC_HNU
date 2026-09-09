@@ -54,7 +54,7 @@ void near(T actual, long double expected,
 struct Spec { double tc, pc, omega; };
 inline constexpr std::array<Spec, 4> specs{{{400, 4e6, -.125}, {500, 3e6, .25},
                                            {600, 5e6, .5}, {350, 2.5e6, .125}}};
-inline constexpr double kij[4][4] = {{0,.125,-.0625,.03125}, {.125,0,.0625,-.125},
+inline constexpr double fixture_kij[4][4] = {{0,.125,-.0625,.03125}, {.125,0,.0625,-.125},
                                      {-.0625,.0625,0,.25}, {.03125,-.125,.25,0}};
 inline std::string id(std::size_t i) { return "test:pt:" + std::to_string(i); }
 inline th::Provenance source(std::string locator) {
@@ -79,7 +79,7 @@ struct Fixture {
                                   datum(specs[i].pc, th::Unit::pascal),
                                   datum(specs[i].omega, th::Unit::dimensionless)});
             for (std::size_t j = 0; j < i; ++j) {
-                input.binary.push_back({id(i), id(j), datum(kij[i][j], th::Unit::dimensionless)});
+                input.binary.push_back({id(i), id(j), datum(fixture_kij[i][j], th::Unit::dimensionless)});
             }
         }
     }
@@ -127,6 +127,7 @@ struct ReferencePhase {
     long double z{};
     std::vector<long double> ln_phi, dz;
     std::vector<std::vector<long double>> dln; // [component][p,T,w_0,...].
+    std::vector<std::vector<long double>> dln_absolute_terms; // Cancellation scale, not the small sum.
 };
 template <std::floating_point T>
 std::vector<ReferencePhase> reference(T pressure, T temperature, const std::vector<T>& w,
@@ -141,7 +142,7 @@ std::vector<ReferencePhase> reference(T pressure, T temperature, const std::vect
     for (std::size_t i = 0; i < n; ++i) {
         b += static_cast<long double>(w[i])*pure[i].b;
         for (std::size_t j = 0; j < n; ++j) {
-            aij[i][j] = (1-static_cast<long double>(kij[order[i]][order[j]]))*
+            aij[i][j] = (1-static_cast<long double>(fixture_kij[order[i]][order[j]]))*
                          std::sqrt(pure[i].a)*std::sqrt(pure[j].a);
             const long double derivative = aij[i][j]*(pure[i].da/pure[i].a+pure[j].da/pure[j].a)/2;
             s[i] += static_cast<long double>(w[j])*aij[i][j];
@@ -159,6 +160,7 @@ std::vector<ReferencePhase> reference(T pressure, T temperature, const std::vect
         result.ln_phi.resize(n);
         result.dz.resize(columns);
         result.dln.assign(n, std::vector<long double>(columns));
+        result.dln_absolute_terms.assign(n, std::vector<long double>(columns));
         const long double g = A/(2*sqrt2*B);
         const long double plus = z+(1+sqrt2)*B, minus = z+(1-sqrt2)*B;
         const long double L = std::log(plus/minus);
@@ -185,6 +187,9 @@ std::vector<ReferencePhase> reference(T pressure, T temperature, const std::vect
                 const long double de = 2*(ds*a-s[i]*da)/(a*a)-dratio;
                 result.dln[i][column] = dratio*(z-1)+ratio*dz-(dz-dB)/(z-B)-
                                        (dg*e+g*de)*L-g*e*dL;
+                result.dln_absolute_terms[i][column] = std::abs(dratio*(z-1)) +
+                    std::abs(ratio*dz) + std::abs((dz-dB)/(z-B)) +
+                    std::abs(dg*e*L) + std::abs(g*de*L) + std::abs(g*e*dL);
             }
         }
         phases.push_back(std::move(result));

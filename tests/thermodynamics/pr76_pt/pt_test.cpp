@@ -190,7 +190,7 @@ void low_pressure() {
     for(std::size_t i=0;i<3;++i) {
         b+=static_cast<long double>(w[i])*pure[i].b;
         for(std::size_t j=0;j<3;++j) {
-            rows[i]+=static_cast<long double>(w[j])*(1-static_cast<long double>(kij[i][j]))*
+            rows[i]+=static_cast<long double>(w[j])*(1-static_cast<long double>(fixture_kij[i][j]))*
                      std::sqrt(pure[i].a)*std::sqrt(pure[j].a);
         }
         a+=static_cast<long double>(w[i])*rows[i];
@@ -240,7 +240,33 @@ void zero_trace() {
         const auto result=model.evaluate_full(D::variable(T{1000000},0),D::variable(T{450},1),x,k,work);
         for(std::size_t i=0;i<3;++i) {
             near(result.ln_phi[i].value(),ref[k].ln_phi[i]);
-            for(std::size_t c=2;c<5;++c) { near(result.ln_phi[i].derivative(c),ref[k].dln[i][c]); }
+            for(std::size_t c=2;c<5;++c) {
+                const T actual = result.ln_phi[i].derivative(c);
+                const long double expected = ref[k].dln[i][c];
+                if(i == 0) {
+                    // At w=(1,0,0), differentiating Eq.(19) gives exactly zero
+                    // for the present component in EVERY full-composition column:
+                    // dg*e+g*de=0, and the remaining Z/B terms cancel by the EOS.
+                    // With an epsilon trace the derivative is O(epsilon), while
+                    // those individual terms remain O(1). A relative error divided
+                    // by the cancelled sum (or reference roundoff) is undefined.
+                    // Use the SAME 4096*epsilon budget on the independently
+                    // derived sum of absolute analytic terms; no arbitrary floor.
+                    const long double scale = ref[k].dln_absolute_terms[i][c];
+                    require(std::isfinite(actual) && scale > 0 && std::isfinite(scale),
+                            "finite boundary derivative and analytic scale");
+                    require(std::abs(static_cast<long double>(actual)-expected) <=
+                            4096.0L*std::numeric_limits<T>::epsilon()*scale,
+                            "boundary derivative cancellation residual");
+                    if(w[1] == T{0}) {
+                        require(std::abs(expected) <=
+                                4096.0L*std::numeric_limits<long double>::epsilon()*scale,
+                                "independent reference must satisfy the exact pure-vertex identity");
+                    }
+                } else {
+                    near(actual, expected); // Nonzero solute insertion derivatives.
+                }
+            }
         }
     }
 }
