@@ -158,13 +158,14 @@ inline bool stability_accept_step(const TpdPoint& point, const TpdPoint& next,
                                   double predicted, double armijo, double relative_step) {
     const double arithmetic_guard = point.roundoff_guard + next.roundoff_guard;
     if (predicted <= arithmetic_guard) {
-        return next.value <= point.value + arithmetic_guard &&
-               // The log-step cap can make alpha/scale very small even for an ideal
-               // trace component. Require progress proportional to that actual
-               // step, not an impossible fixed 10% reduction. The subtraction
-               // form still rejects exact no-ops when the bound underflows.
-               point.stationarity - next.stationarity >
-                   (0.1 * relative_step) * point.stationarity;
+        // No model-independent lower bound on residual contraction exists, even
+        // for a strictly convex TPD. Requiring 0.1*(alpha/scale)*R rejects valid
+        // low-curvature steps at every backtrack. Keep strict representable
+        // progress (no no-op or growing residual), not an assumed curvature.
+        // This is NOT convergence: the driver must still reach its unchanged
+        // stationarity threshold within the unchanged resource limits.
+        return next.value <= point.value + arithmetic_guard && relative_step > 0 &&
+               next.stationarity < point.stationarity;
     }
     return next.value <= point.value - armijo * predicted;
 }
