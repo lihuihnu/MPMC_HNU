@@ -23,7 +23,7 @@ if(MPMC_FLASH_ENABLE_SANITIZERS)
         -fsanitize=address,undefined -fno-sanitize-recover=all)
 endif()
 set(cases ideal_distance ideal_search regular_distance regular_search trivial_is_not_proof
-    zero_trace input_domains budgets failure_semantics backtracking_recovery underflow_guard
+    zero_trace input_domains budgets failure_semantics backtracking_recovery roundoff_descent underflow_guard
     nonsmooth ownership_recovery
     minimum_gibbs_root pr_gradient pr_failure pr_permutations_shapes literature_nitrogen
     literature_carbon decimal_anchors headers)

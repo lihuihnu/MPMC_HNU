@@ -146,6 +146,19 @@ inline std::vector<double> stability_normalize(std::span<const double> x, double
 inline bool stability_negative(const TpdPoint& point, const StabilityOptions& o) {
     return point.value < -o.tpd_tolerance - point.roundoff_guard;
 }
+// When the predicted reduction is unresolved, Armijo alone can accept an
+// unchanged or uphill iterate because of cancellation in the objective. The
+// residual-progress branch must REPLACE it, not be OR-ed with it. This is step
+// acceptance only; stationarity still uses the original stopping tolerance.
+inline bool stability_accept_step(const TpdPoint& point, const TpdPoint& next,
+                                  double predicted, double armijo) {
+    const double arithmetic_guard = point.roundoff_guard + next.roundoff_guard;
+    if (predicted <= arithmetic_guard) {
+        return next.value <= point.value + arithmetic_guard &&
+               next.stationarity < 0.9 * point.stationarity;
+    }
+    return next.value <= point.value - armijo * predicted;
+}
 } // namespace detail
 
 // Normalized tangent-plane distance. Boundary w_i=0 uses lim w_i*log(w_i)=0;
@@ -397,12 +410,7 @@ template <typename Provider>
                         accepted = true;
                         break;
                     }
-                    const double arithmetic_guard = point.roundoff_guard + next.roundoff_guard;
-                    const double predicted = -alpha * slope;
-                    const bool roundoff_progress = predicted <= arithmetic_guard &&
-                        next.value <= point.value + arithmetic_guard &&
-                        next.stationarity < 0.9 * point.stationarity;
-                    if (next.value <= point.value + options.armijo * alpha * slope || roundoff_progress) {
+                    if (detail::stability_accept_step(point, next, -alpha * slope, options.armijo)) {
                         trial.point = std::move(next);
                         accepted = true;
                         break;

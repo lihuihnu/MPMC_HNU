@@ -269,10 +269,40 @@ void backtracking_recovery() {
         return RegularSolution{-10}(p,t,w);
     };
     const auto result=fl::test_pt_stability(1e5,300,Vec{.5,.5},provider,options,starts);
+    const auto& trial=result.trials[0];
+    std::cout << std::setprecision(17) << "recovery status=" << static_cast<int>(trial.status)
+              << " iterations=" << trial.iterations << " backtracks=" << trial.backtracks
+              << " rejected=" << trial.rejected_property_evaluations
+              << " residual=" << (trial.point ? trial.point->stationarity : -1.0) << '\n';
     require(result.status==fl::StabilityStatus::no_instability_found,"failed to recover by backtracking");
     require(result.trials[0].backtracks>=2 && result.trials[0].rejected_property_evaluations>=1,
             "backtracking path not exercised");
     require(result.trials[0].point->stationarity<=options.stationarity_tolerance,"premature stopping");
+}
+void roundoff_descent() {
+    fl::TpdPoint old_point, next;
+    old_point.value=1; old_point.roundoff_guard=1e-12; old_point.stationarity=2e-8;
+    next=old_point;
+    // Manufactured acceptance states: even a rounded Armijo equality must not
+    // accept a no-op or a residual increase when predicted decrease is unresolved.
+    require(!fl::detail::stability_accept_step(old_point,next,1e-18,1e-4),"roundoff no-op accepted");
+    next.stationarity=4e-8;
+    require(!fl::detail::stability_accept_step(old_point,next,1e-18,1e-4),"growing residual accepted");
+    next.stationarity=1e-8;
+    require(fl::detail::stability_accept_step(old_point,next,1e-18,1e-4),"resolved residual progress rejected");
+    // Ordinary resolved Armijo descent remains available without a residual rule.
+    next.value=.9; next.stationarity=4e-8;
+    require(fl::detail::stability_accept_step(old_point,next,.2,1e-4),"resolved descent rejected");
+    fl::StabilityOptions options; options.automatic_starts=false;
+    for (int numerator : {91,92,93,256}) {
+        const double x=.5+std::ldexp(static_cast<double>(numerator),-36);
+        const std::vector<Vec> starts{{x,1-x}};
+        const auto result=fl::test_pt_stability(1e5,300,Vec{.5,.5},RegularSolution{-10},options,starts);
+        require(result.status==fl::StabilityStatus::no_instability_found,"near-stationary convex search stalled");
+        require(result.trials[0].point->stationarity<=options.stationarity_tolerance,
+                "step acceptance was substituted for convergence");
+        near(result.trials[0].point->composition[0],.5L,0,1e-9);
+    }
 }
 void underflow_guard() {
     const Vec z{1,std::numeric_limits<double>::denorm_min()};
@@ -413,7 +443,8 @@ constexpr Test cases[]={{"ideal_distance",ideal_distance},{"ideal_search",ideal_
     {"regular_distance",regular_distance},{"regular_search",regular_search},
     {"trivial_is_not_proof",trivial_is_not_proof},{"zero_trace",zero_trace},
     {"input_domains",input_domains},{"budgets",budgets},{"failure_semantics",failure_semantics},
-    {"backtracking_recovery",backtracking_recovery},{"underflow_guard",underflow_guard},
+    {"backtracking_recovery",backtracking_recovery},{"roundoff_descent",roundoff_descent},
+    {"underflow_guard",underflow_guard},
     {"nonsmooth",nonsmooth},{"ownership_recovery",ownership_recovery},
     {"minimum_gibbs_root",minimum_gibbs_root},{"pr_gradient",pr_gradient},{"pr_failure",pr_failure},
     {"pr_permutations_shapes",pr_permutations_shapes},{"literature_nitrogen",literature_nitrogen},
