@@ -1,7 +1,7 @@
 name: PT stability
 on:
   pull_request:
-    branches: [main, feat/pt-stability-tpd]
+    branches: [main, feat/pt-stability-tpd, test/pt-boundary-regression]
     paths:
       - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'

@@ -1,7 +1,7 @@
 name: PT phase split
 on:
   pull_request:
-    branches: [main, feat/pt-stability-tpd, feat/pt-vle-split]
+    branches: [main, feat/pt-stability-tpd, feat/pt-vle-split, test/pt-boundary-regression]
     paths:
       - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
@@ -60,7 +60,7 @@ jobs:
             "${config_arg[@]}" ${{ matrix.compiler }} \
             -DMPMC_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Compile phase split and boundary regression
-        run: cmake --build build/pt-split --target mpmc_pt_split_tests mpmc_pt_boundary_tests --config ${{ matrix.config }} --parallel 2
+        run: cmake --build build/pt-split --target mpmc_pt_split_tests mpmc_pt_boundary_tests mpmc_tpd_stagnation_tests --config ${{ matrix.config }} --parallel 2
       - name: Run phase split increment
         run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
       - name: Independently regenerate binary equilibrium references
