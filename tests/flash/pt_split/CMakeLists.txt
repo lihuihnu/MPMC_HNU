@@ -68,3 +68,22 @@ foreach(case progress_guard flat_convex initial_co2 common_co2 flash_co2 budgets
     set_tests_properties(flash.pt_split.stagnation_${case} PROPERTIES
         LABELS "flash;flash.pt_split;stagnation" TIMEOUT 120)
 endforeach()
+
+# Isolate the near-dew disappearance gate without modifying production or old tests.
+add_executable(mpmc_dew_limit_tests dew_limit_test.cpp)
+target_link_libraries(mpmc_dew_limit_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_dew_limit_tests PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(mpmc_dew_limit_tests PRIVATE /W4 /WX /permissive- /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(mpmc_dew_limit_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+endif()
+if(MPMC_SPLIT_ENABLE_SANITIZERS)
+    target_compile_options(mpmc_dew_limit_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(mpmc_dew_limit_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+foreach(case reference_resolution initialization seeded_threshold neighbors budgets)
+    add_test(NAME flash.pt_split.dew_limit_${case} COMMAND mpmc_dew_limit_tests ${case})
+    set_tests_properties(flash.pt_split.dew_limit_${case} PROPERTIES
+        LABELS "flash;flash.pt_split;dew_limit" TIMEOUT 120)
+endforeach()
