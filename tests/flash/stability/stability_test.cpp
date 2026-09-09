@@ -285,14 +285,21 @@ void roundoff_descent() {
     next=old_point;
     // Manufactured acceptance states: even a rounded Armijo equality must not
     // accept a no-op or a residual increase when predicted decrease is unresolved.
-    require(!fl::detail::stability_accept_step(old_point,next,1e-18,1e-4),"roundoff no-op accepted");
+    require(!fl::detail::stability_accept_step(old_point,next,1e-18,1e-4,1.0),"roundoff no-op accepted");
     next.stationarity=4e-8;
-    require(!fl::detail::stability_accept_step(old_point,next,1e-18,1e-4),"growing residual accepted");
+    require(!fl::detail::stability_accept_step(old_point,next,1e-18,1e-4,1.0),"growing residual accepted");
     next.stationarity=1e-8;
-    require(fl::detail::stability_accept_step(old_point,next,1e-18,1e-4),"resolved residual progress rejected");
+    require(fl::detail::stability_accept_step(old_point,next,1e-18,1e-4,1.0),"resolved residual progress rejected");
     // Ordinary resolved Armijo descent remains available without a residual rule.
     next.value=.9; next.stationarity=4e-8;
-    require(fl::detail::stability_accept_step(old_point,next,.2,1e-4),"resolved descent rejected");
+    require(fl::detail::stability_accept_step(old_point,next,.2,1e-4,1.0),"resolved descent rejected");
+    old_point.value=0; old_point.stationarity=500;
+    next=old_point; next.stationarity=496;
+    require(fl::detail::stability_accept_step(old_point,next,1e-200,1e-4,4.0/500),
+            "capped ideal-trace progress rejected by a fixed relative threshold");
+    next=old_point;
+    require(!fl::detail::stability_accept_step(old_point,next,1e-200,1e-4,4.0/500),
+            "scaled progress rule accepted a no-op");
     fl::StabilityOptions options; options.automatic_starts=false;
     for (int numerator : {91,92,93,256}) {
         const double x=.5+std::ldexp(static_cast<double>(numerator),-36);
