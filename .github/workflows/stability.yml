@@ -1,0 +1,65 @@
+name: PT stability
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/**/*.hpp'
+      - 'modules/flash/**/CMakeLists.txt'
+      - 'tests/flash/stability/**'
+      - 'modules/thermodynamics/**/*.hpp'
+      - 'modules/thermodynamics/**/CMakeLists.txt'
+      - 'modules/ad/include/mpmc/ad/**'
+      - 'modules/ad/CMakeLists.txt'
+      - '.github/workflows/stability.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pt-stability-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  stability:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Existing audited repository pin.
+        with:
+          persist-credentials: false
+      - name: Configure only stability integration
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/stability -B build/flash-stability \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_FLASH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Compile only stability integration
+        run: cmake --build build/flash-stability --target mpmc_flash_stability_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run necessary stability increment
+        run: ctest --test-dir build/flash-stability -C ${{ matrix.config }} -R '^flash[.]stability[.]' --verbose --no-tests=error
+      - name: Regenerate independent fixed-state references
+        run: python tests/flash/stability/reference_decimal.py
