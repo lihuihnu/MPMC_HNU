@@ -88,6 +88,10 @@ struct StabilityResult {
     std::vector<StabilityTrial> trials;
     std::optional<TpdPoint> lowest_sampled; // NOT a global or necessarily stationary minimum.
     std::size_t evaluations{};
+    // Empty for the original feed-phase test. Otherwise stores the explicitly
+    // supplied ln(x_i*phi_i), NOT a physical phase at feed composition; reference
+    // remains empty. Absent components must use finite placeholders (normally 0).
+    std::vector<double> imposed_log_activity;
 };
 
 namespace detail {
@@ -214,16 +218,17 @@ inline bool stability_accept_step(const TpdPoint& point, const TpdPoint& next,
     return result;
 }
 
-// Provider is called synchronously as provider(p_Pa,T_K,normalized_w).
-// It must be repeatable, must not retain spans, and must follow StabilityPhase's
-// thermodynamic contract. Only StabilityPropertyError is converted to diagnostic
-// failure; invalid inputs, programming errors and allocation exceptions propagate.
-// double-only first increment; no AD through the search or solver sensitivities.
+namespace detail {
+// Common driver. An imposed reference only changes the reference construction:
+// ln(phi_equivalent_i)=d_i-ln(z_i), hence q_i=ln(w_i)+ln(phi_i(w))-d_i.
+// This is an algebraic gauge conversion, NOT a model evaluation at z. The old
+// feed-phase path and the entire descent/termination logic are unchanged.
 template <typename Provider>
-[[nodiscard]] StabilityResult test_pt_stability(
+[[nodiscard]] StabilityResult test_pt_stability_impl(
     double pressure_pa, double temperature_k, std::span<const double> feed,
-    Provider&& provider, StabilityOptions options = {},
-    std::span<const std::vector<double>> extra_starts = {}) {
+    Provider&& provider, StabilityOptions options,
+    std::span<const std::vector<double>> extra_starts,
+    std::span<const double> imposed) {
     detail::stability_check_options(options);
     if (!std::isfinite(pressure_pa) || pressure_pa <= 0 ||
         !std::isfinite(temperature_k) || temperature_k <= 0) {
@@ -234,6 +239,12 @@ template <typename Provider>
         throw std::length_error("stability: invalid component count or quota exceeded");
     }
     const double input_sum = detail::stability_check_composition(feed);
+    if (!imposed.empty()) {
+        if (imposed.size() != n) { throw std::invalid_argument("stability: reference dimension mismatch"); }
+        for (double value : imposed) {
+            if (!std::isfinite(value)) { throw std::domain_error("stability: finite reference activities required"); }
+        }
+    }
     std::size_t active = 0;
     for (double value : feed) { if (value > 0) { ++active; } }
     if (active > std::numeric_limits<std::size_t>::max() - 2) {
@@ -264,6 +275,7 @@ template <typename Provider>
     result.temperature_k = temperature_k;
     result.input_feed_sum = input_sum;
     result.feed = detail::stability_normalize(feed, input_sum);
+    result.imposed_log_activity.assign(imposed.begin(), imposed.end());
     for (std::size_t i = 0; i < n; ++i) {
         if (feed[i] > 0 && result.feed[i] == 0) {
             result.diagnostic = "roundoff normalization lost an active feed component";
@@ -296,10 +308,19 @@ template <typename Provider>
         }
     }
     for (const auto& start : extra_starts) { add_start(start); }
+    StabilityPhase imposed_phase;
     try {
-        ++result.evaluations;
-        result.reference = provider(pressure_pa, temperature_k, std::span<const double>{result.feed});
-        detail::stability_check_phase(*result.reference, n);
+        if (imposed.empty()) {
+            ++result.evaluations;
+            result.reference = provider(pressure_pa, temperature_k, std::span<const double>{result.feed});
+            detail::stability_check_phase(*result.reference, n);
+        } else {
+            imposed_phase.ln_phi.resize(n);
+            for (std::size_t i = 0; i < n; ++i) {
+                imposed_phase.ln_phi[i] = result.feed[i] > 0 ? imposed[i] - std::log(result.feed[i]) : 0;
+            }
+            detail::stability_check_phase(imposed_phase, n);
+        }
     } catch (const StabilityPropertyError& error) {
         result.reference.reset();
         result.reference_issue = error.issue();
@@ -311,6 +332,7 @@ template <typename Provider>
         }
         return result;
     }
+    const StabilityPhase& distance_reference = imposed.empty() ? *result.reference : imposed_phase;
     const auto remember = [&](const TpdPoint& point) {
         if (!result.lowest_sampled || point.value < result.lowest_sampled->value) {
             result.lowest_sampled = point;
@@ -322,7 +344,7 @@ template <typename Provider>
             ++result.evaluations;
             ++trial.evaluations;
             const StabilityPhase phase = provider(pressure_pa, temperature_k, w);
-            return tangent_plane_distance(w, result.feed, phase, *result.reference);
+            return tangent_plane_distance(w, result.feed, phase, distance_reference);
         };
         bool support_lost = false;
         for (std::size_t i = 0; i < n; ++i) {
@@ -359,7 +381,7 @@ template <typename Provider>
                 break;
             }
             if (trial.point->stationarity <= options.stationarity_tolerance) {
-                trial.status = StabilityTrialStatus::stationary; // May be a saddle, NOT certified minimum.
+                trial.status = StabilityTrialStatus::stationary;
                 break;
             }
             if (trial.iterations >= options.max_iterations) {
@@ -402,14 +424,14 @@ template <typename Provider>
                     candidate[i] /= sum;
                     positive = positive && (result.feed[i] == 0 || candidate[i] > 0);
                 }
-                if (!positive) { continue; } // Reject, never replace by epsilon.
+                if (!positive) { continue; }
                 if (result.evaluations >= options.max_evaluations) {
                     trial.status = StabilityTrialStatus::evaluation_limit;
                     break;
                 }
                 try {
                     TpdPoint next = evaluate(candidate);
-                    remember(next); // Any feasible negative point is evidence, even before convergence.
+                    remember(next);
                     if (detail::stability_negative(next, options)) {
                         trial.point = std::move(next);
                         accepted = true;
@@ -435,6 +457,34 @@ template <typename Provider>
     result.status = negative_found ? StabilityStatus::unstable :
         (all_stationary ? StabilityStatus::no_instability_found : StabilityStatus::indeterminate);
     return result;
+}
+} // namespace detail
+
+// Original API: reference is the least-Gibbs feed phase supplied by provider.
+// Provider must be repeatable and must not retain spans. Only numerical
+// StabilityPropertyError is converted to diagnostics; programming errors propagate.
+template <typename Provider>
+[[nodiscard]] StabilityResult test_pt_stability(
+    double pressure_pa, double temperature_k, std::span<const double> feed,
+    Provider&& provider, StabilityOptions options = {},
+    std::span<const std::vector<double>> extra_starts = {}) {
+    return detail::test_pt_stability_impl(pressure_pa, temperature_k, feed,
+        std::forward<Provider>(provider), options, extra_starts, {});
+}
+
+// Explicit common tangent for a phase SET. log_activity_i=ln(x_i*phi_i), omitting
+// the common ln(p) and component reference-state terms at the SAME p,T/model.
+// The feed only fixes support and default starts, not the reference chemical
+// potentials. Caller owns consistency and the numerical uncertainty of this
+// reference. No reference provider evaluation is charged or fabricated.
+template <typename Provider>
+[[nodiscard]] StabilityResult test_pt_stability_against(
+    double pressure_pa, double temperature_k, std::span<const double> feed,
+    std::span<const double> log_activity, Provider&& provider,
+    StabilityOptions options = {}, std::span<const std::vector<double>> extra_starts = {}) {
+    if (log_activity.empty()) { throw std::invalid_argument("stability: empty imposed reference"); }
+    return detail::test_pt_stability_impl(pressure_pa, temperature_k, feed,
+        std::forward<Provider>(provider), options, extra_starts, log_activity);
 }
 
 } // namespace mpmc::flash
