@@ -100,6 +100,74 @@ struct PtSplitResult {
 };
 
 namespace detail {
+// Human-readable summaries of EXISTING termination states, not new solver
+// decisions or a machine-readable protocol. No provider calls, residual
+// recomputation, candidate selection, or copying of unbounded callback messages.
+// Count terminal outcomes, not historical rejected-property diagnostics.
+inline std::string split_stability_summary(const StabilityResult& stability) {
+    if (stability.reference_issue) {
+        return "reference property failure; trial searches not started";
+    }
+    std::string summary = "trial outcomes";
+    constexpr std::pair<StabilityTrialStatus, const char*> names[] = {
+        {StabilityTrialStatus::negative_tpd, "negative_tpd"},
+        {StabilityTrialStatus::stationary, "stationary"},
+        {StabilityTrialStatus::iteration_limit, "iteration_limit"},
+        {StabilityTrialStatus::evaluation_limit, "evaluation_limit"},
+        {StabilityTrialStatus::line_search_failed, "line_search_failed"},
+        {StabilityTrialStatus::property_failure, "property_failure"},
+        {StabilityTrialStatus::nonsmooth, "nonsmooth"},
+        {StabilityTrialStatus::unrepresentable_composition, "unrepresentable_composition"}
+    };
+    for (const auto& [status, name] : names) {
+        const auto count = std::count_if(stability.trials.begin(), stability.trials.end(),
+            [status](const StabilityTrial& trial) { return trial.status == status; });
+        if (count == 0) { continue; }
+        summary += "; "; summary += name; summary += "="; summary += std::to_string(count);
+    }
+    if (stability.trials.empty()) { summary += "; none started (see stability diagnostic)"; }
+    return summary;
+}
+inline std::string split_attempt_summary(const PtSplitResult& result) {
+    std::string summary = "no acceptable two-phase candidate; attempts=" + std::to_string(result.attempts.size());
+    constexpr std::pair<PtSplitAttemptStatus, const char*> names[] = {
+        {PtSplitAttemptStatus::converged, "converged"},
+        {PtSplitAttemptStatus::phase_disappearance, "phase_disappearance"},
+        {PtSplitAttemptStatus::unrepresentable_seed, "unrepresentable_seed"},
+        {PtSplitAttemptStatus::no_interior_rr_root, "no_interior_rr_root"},
+        {PtSplitAttemptStatus::rr_failure, "rr_failure"},
+        {PtSplitAttemptStatus::indistinguishable_phases, "indistinguishable_phases"},
+        {PtSplitAttemptStatus::balance_failure, "balance_failure"},
+        {PtSplitAttemptStatus::property_failure, "property_failure"},
+        {PtSplitAttemptStatus::iteration_limit, "iteration_limit"},
+        {PtSplitAttemptStatus::evaluation_limit, "evaluation_limit"},
+        {PtSplitAttemptStatus::line_search_failed, "line_search_failed"}
+    };
+    for (const auto& [status, name] : names) {
+        const auto count = std::count_if(result.attempts.begin(), result.attempts.end(),
+            [status](const PtSplitAttempt& attempt) { return attempt.status == status; });
+        if (count == 0) { continue; }
+        summary += "; "; summary += name; summary += "="; summary += std::to_string(count);
+        // iterate_pt_split emits this status only AFTER its balance/fugacity
+        // checks. A small positive phase is not proof of a stable single phase.
+        if (status == PtSplitAttemptStatus::phase_disappearance) {
+            summary += " (balance and fugacity tolerances met; phase fraction at or below minimum_phase_fraction)";
+        }
+    }
+    // The existing flag covers two independent quotas; do not call zero work
+    // an initialization failure, or infer a blocked attempt from counts alone.
+    if (result.attempt_limit_reached) {
+        if (result.attempts.size() >= result.options.max_split_attempts) {
+            summary += "; split attempt limit reached";
+        }
+        if (result.split_evaluations >= result.options.iteration.max_evaluations) {
+            summary += "; split property-evaluation limit reached";
+        }
+    }
+    summary += "; final phase-set stability not evaluated";
+    return summary;
+}
+
 inline void split_check_options(const PtSplitIterationOptions& o) {
     const auto positive = [](double a) { return std::isfinite(a) && a > 0; };
     if (!positive(o.fugacity_tolerance) || !positive(o.mass_absolute_tolerance) ||
@@ -384,7 +452,8 @@ template <typename StabilityProvider, typename PhaseProvider>
         result.status = PtSplitStatus::single_phase_no_instability_found; return result;
     }
     if (result.initial_stability.status != StabilityStatus::unstable) {
-        result.diagnostic = "initial feed stability is indeterminate"; return result;
+        result.diagnostic = "initial feed stability is indeterminate; " +
+            detail::split_stability_summary(result.initial_stability); return result;
     }
     const auto& z = result.initial_stability.feed;
     for (std::size_t k = 0; k < result.initial_stability.trials.size(); ++k) {
@@ -416,7 +485,7 @@ template <typename StabilityProvider, typename PhaseProvider>
         if (result.attempt_limit_reached) { break; }
     }
     if (!result.selected_attempt) {
-        result.diagnostic = "no witnessed seed produced a distinct, balanced, fugacity-converged pair"; return result;
+        result.diagnostic = detail::split_attempt_summary(result); return result;
     }
     const auto& candidate = *result.candidate();
     double feed_g = 0, correction = 0, magnitude = 1;
@@ -448,7 +517,10 @@ template <typename StabilityProvider, typename PhaseProvider>
         result.diagnostic = "converged pair has higher Gibbs energy than the original feed";
     } else if (result.final_stability->status == StabilityStatus::no_instability_found) {
         result.status = PtSplitStatus::two_phase_no_instability_found;
-    } else { result.diagnostic = "split equations converged; final phase-set stability is indeterminate"; }
+    } else {
+        result.diagnostic = "split equations converged; final phase-set stability is indeterminate; " +
+            detail::split_stability_summary(*result.final_stability);
+    }
     return result;
 }
 

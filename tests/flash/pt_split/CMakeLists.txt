@@ -87,3 +87,22 @@ foreach(case reference_resolution initialization seeded_threshold neighbors budg
     set_tests_properties(flash.pt_split.dew_limit_${case} PROPERTIES
         LABELS "flash;flash.pt_split;dew_limit" TIMEOUT 120)
 endforeach()
+
+# Reporting-only regression; old numerical tests and references stay unchanged.
+add_executable(mpmc_pt_diagnostic_tests diagnostic_summary_test.cpp)
+target_link_libraries(mpmc_pt_diagnostic_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pt_diagnostic_tests PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(mpmc_pt_diagnostic_tests PRIVATE /W4 /WX /permissive- /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(mpmc_pt_diagnostic_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+endif()
+if(MPMC_SPLIT_ENABLE_SANITIZERS)
+    target_compile_options(mpmc_pt_diagnostic_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(mpmc_pt_diagnostic_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+foreach(case attempt_outcomes stability_outcomes dew_and_neighbor limits reference_failure)
+    add_test(NAME flash.pt_split.diagnostic_${case} COMMAND mpmc_pt_diagnostic_tests ${case})
+    set_tests_properties(flash.pt_split.diagnostic_${case} PROPERTIES
+        LABELS "flash;flash.pt_split;diagnostic" TIMEOUT 120)
+endforeach()
