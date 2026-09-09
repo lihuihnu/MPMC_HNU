@@ -1,7 +1,7 @@
 name: Thermodynamics contracts
 
-# Keep the existing workflow identity. Select the necessary suite(s) after a
-# two-tree diff; a new mixture kernel alone must not rerun old pure/contract/AD suites.
+# Preserve the workflow identity and existing compiler environments. A mixture
+# implementation change affects mixture + PT, not old pure/contract/AD suites.
 on:
   pull_request:
     branches: [main]
@@ -10,6 +10,7 @@ on:
       - 'modules/thermodynamics/**/CMakeLists.txt'
       - 'tests/thermodynamics/**/*.cpp'
       - 'tests/thermodynamics/**/*.hpp'
+      - 'tests/thermodynamics/**/*.py'
       - 'tests/thermodynamics/**/CMakeLists.txt'
       - 'modules/ad/include/mpmc/ad/**'
       - 'modules/ad/CMakeLists.txt'
@@ -19,7 +20,7 @@ on:
       suite:
         description: 'Audited scope; shared environment changes require all affected suites'
         type: choice
-        options: [all, contracts, pr76, pr76_mixture]
+        options: [all, contracts, pr76, pr76_mixture, pr76_pt]
         default: all
 
 permissions:
@@ -55,7 +56,7 @@ jobs:
           import os
           import subprocess
 
-          all_suites = ["contracts", "pr76", "pr76_mixture"]
+          all_suites = ["contracts", "pr76", "pr76_mixture", "pr76_pt"]
           prefix = "modules/thermodynamics/include/mpmc/thermodynamics/"
 
           def suites_for(paths):
@@ -66,50 +67,60 @@ jobs:
                       continue
                   if path == ".github/workflows/thermodynamics.yml":
                       infrastructure = True
-                  elif path == prefix + "pr76_mixture.hpp" or path.startswith("tests/thermodynamics/pr76_mixture/"):
+                  elif path in [prefix + "pr76_phase.hpp", prefix + "pr76_roots.hpp"] or path.startswith("tests/thermodynamics/pr76_pt/"):
+                      selected.add("pr76_pt")
+                  elif path == prefix + "pr76_mixture.hpp":
+                      selected.update(("pr76_mixture", "pr76_pt"))
+                  elif path.startswith("tests/thermodynamics/pr76_mixture/"):
                       selected.add("pr76_mixture")
                   elif path == prefix + "pr76_pure.hpp":
-                      selected.update(("pr76", "pr76_mixture"))
+                      selected.update(("pr76", "pr76_mixture", "pr76_pt"))
                   elif path.startswith("tests/thermodynamics/pr76/"):
                       selected.add("pr76")
                   elif path.startswith("tests/thermodynamics/contracts/"):
                       selected.add("contracts")
                   elif path.startswith("modules/ad/"):
-                      selected.update(("pr76", "pr76_mixture"))  # Downstream integration, not AD unit reruns.
+                      selected.update(("pr76", "pr76_mixture", "pr76_pt"))
                   else:
-                      selected.update(all_suites)  # Shared contracts/build or unknown dependency.
-              # Workflow-only changes are conservative. With code, audit the workflow
-              # diff: changing another suite's flags/compiler/environment requires
-              # explicitly dispatching that affected suite before integration.
+                      selected.update(all_suites)
+              # With code, audit environment changes affecting additional suites;
+              # explicitly dispatch those suites before integration if needed.
               if infrastructure and not selected:
                   selected.update(all_suites)
               return sorted(selected)
 
           checks = [
-              ([prefix + "pr76_pure.hpp"], ["pr76", "pr76_mixture"]),
+              ([prefix + "pr76_pure.hpp"], ["pr76", "pr76_mixture", "pr76_pt"]),
               (["tests/thermodynamics/pr76/pr76_test.cpp"], ["pr76"]),
               (["tests/thermodynamics/pr76/CMakeLists.txt"], ["pr76"]),
-              ([prefix + "pr76_pure.hpp", ".github/workflows/thermodynamics.yml"], ["pr76", "pr76_mixture"]),
+              ([prefix + "pr76_pure.hpp", ".github/workflows/thermodynamics.yml"], ["pr76", "pr76_mixture", "pr76_pt"]),
               ([prefix + "components.hpp"], all_suites),
               ([prefix + "pr_parameters.hpp"], all_suites),
               (["modules/thermodynamics/CMakeLists.txt"], all_suites),
               (["tests/thermodynamics/contracts/contracts_test.cpp"], ["contracts"]),
-              (["modules/ad/include/mpmc/ad/dual.hpp"], ["pr76", "pr76_mixture"]),
-              (["modules/ad/include/mpmc/ad/math.hpp"], ["pr76", "pr76_mixture"]),
-              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["pr76", "pr76_mixture"]),
-              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp"], ["pr76", "pr76_mixture"]),
-              (["modules/ad/CMakeLists.txt"], ["pr76", "pr76_mixture"]),
+              (["modules/ad/include/mpmc/ad/dual.hpp"], ["pr76", "pr76_mixture", "pr76_pt"]),
+              (["modules/ad/include/mpmc/ad/math.hpp"], ["pr76", "pr76_mixture", "pr76_pt"]),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["pr76", "pr76_mixture", "pr76_pt"]),
+              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp"], ["pr76", "pr76_mixture", "pr76_pt"]),
+              (["modules/ad/CMakeLists.txt"], ["pr76", "pr76_mixture", "pr76_pt"]),
               ([".github/workflows/thermodynamics.yml"], all_suites),
               (["modules/thermodynamics/README.md", "README.md"], []),
               ([prefix + "unknown.hpp"], all_suites),
               (["tests/thermodynamics/contracts/contracts_test.cpp", prefix + "pr76_pure.hpp"], all_suites),
-              ([prefix + "pr76_mixture.hpp"], ["pr76_mixture"]),
+              ([prefix + "pr76_mixture.hpp"], ["pr76_mixture", "pr76_pt"]),
               (["tests/thermodynamics/pr76_mixture/mixture_test.cpp"], ["pr76_mixture"]),
               (["tests/thermodynamics/pr76_mixture/CMakeLists.txt"], ["pr76_mixture"]),
-              ([prefix + "pr76_mixture.hpp", ".github/workflows/thermodynamics.yml"], ["pr76_mixture"]),
-              (["tests/thermodynamics/pr76/pr76_test.cpp", prefix + "pr76_mixture.hpp"],
-               ["pr76", "pr76_mixture"]),
+              ([prefix + "pr76_mixture.hpp", ".github/workflows/thermodynamics.yml"], ["pr76_mixture", "pr76_pt"]),
+              (["tests/thermodynamics/pr76/pr76_test.cpp", prefix + "pr76_mixture.hpp"], ["pr76", "pr76_mixture", "pr76_pt"]),
               (["modules/thermodynamics/pr76_mixture.md"], []),
+              ([prefix + "pr76_phase.hpp"], ["pr76_pt"]),
+              ([prefix + "pr76_roots.hpp"], ["pr76_pt"]),
+              (["tests/thermodynamics/pr76_pt/pt_test.cpp"], ["pr76_pt"]),
+              (["tests/thermodynamics/pr76_pt/test_support.hpp"], ["pr76_pt"]),
+              (["tests/thermodynamics/pr76_pt/reference_decimal.py"], ["pr76_pt"]),
+              (["tests/thermodynamics/pr76_pt/CMakeLists.txt"], ["pr76_pt"]),
+              ([prefix + "pr76_phase.hpp", ".github/workflows/thermodynamics.yml"], ["pr76_pt"]),
+              (["modules/thermodynamics/pr76_phase.md"], []),
           ]
           for paths, expected in checks:
               if suites_for(paths) != expected:
@@ -137,7 +148,8 @@ jobs:
           ]
           targets = {"contracts": "mpmc_thermodynamics_contract_tests",
                      "pr76": "mpmc_thermodynamics_pr76_tests",
-                     "pr76_mixture": "mpmc_thermodynamics_pr76_mixture_tests"}
+                     "pr76_mixture": "mpmc_thermodynamics_pr76_mixture_tests",
+                     "pr76_pt": "mpmc_thermodynamics_pr76_pt_tests"}
           matrix = {"include": [{**p, "suite": s, "target": targets[s]} for s in selected for p in platforms]}
           print("Selected suites:", selected)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -177,3 +189,6 @@ jobs:
         run: |
           ctest --test-dir build/thermo-${{ matrix.suite }} -C ${{ matrix.config }} \
             -R '^thermo[.]${{ matrix.suite }}[.]' --verbose --no-tests=error
+      - name: Independently regenerate PT reference anchors
+        if: matrix.suite == 'pr76_pt'
+        run: python tests/thermodynamics/pr76_pt/reference_decimal.py

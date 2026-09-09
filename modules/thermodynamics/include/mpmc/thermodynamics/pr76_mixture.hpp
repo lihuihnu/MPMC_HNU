@@ -19,6 +19,10 @@ template <std::floating_point T>
     requires std::same_as<T, std::remove_cv_t<T>>
 class Pr76Mixture;
 
+template <std::floating_point T>
+    requires std::same_as<T, std::remove_cv_t<T>>
+class Pr76Phase;
+
 /// Private scratch storage, independent of the prepared model and returned values.
 /// Reuse one workspace sequentially; concurrent evaluations need different workspaces.
 /// No cached thermodynamic values survive a call: every root is recomputed, so AD
@@ -110,13 +114,25 @@ public:
     }
 
 private:
-    template <bool Reduced, typename Number>
+    template <std::floating_point U>
+        requires std::same_as<U, std::remove_cv_t<U>>
+    friend class Pr76Phase;
+
+    // Private extension for PT fugacity evaluation. The phase workspace owns
+    // disjoint output storage. Old public paths instantiate WithSums=false:
+    // no new allocations, row work, or changed accumulation order for a/b.
+    template <bool Reduced, bool WithSums = false, typename Number>
     [[nodiscard]] Pr76MixtureValues<Number> evaluate_impl(
         const Number& temperature_k, std::span<const Number> fractions,
-        Pr76MixtureWorkspace<Number>& workspace) const {
+        Pr76MixtureWorkspace<Number>& workspace, std::span<Number> sums = {}) const {
         const std::size_t n = size();
         if (n == 0 || fractions.size() != n - (Reduced ? 1U : 0U)) {
             throw std::invalid_argument("Pr76Mixture: composition dimension mismatch");
+        }
+        if constexpr (WithSums) {
+            if (sums.size() != n) {
+                throw std::invalid_argument("Pr76Mixture: internal row-sum size mismatch");
+            }
         }
         Number last{T{1}};
         if constexpr (Reduced) {
@@ -157,6 +173,7 @@ private:
             const auto value = pure_[i].evaluate(temperature_k);
             attraction += (x(i) * value.a) * x(i); // Diagonal: use ai, not sqrt(ai)^2.
             covolume += x(i) * value.b;
+            if constexpr (WithSums) { sums[i] = x(i) * value.a; }
             if (n > 1) {
                 // At ai=0, sqrt(ai(T)) may have a cusp. This minimal differentiable
                 // multi-component kernel rejects it uniformly, even when xi=0 or kij=1.
@@ -177,11 +194,24 @@ private:
                                       (x(j) * workspace.roots_[j])) * factors_[i * n + j];
                 attraction += cross;
                 attraction += cross;
+                if constexpr (WithSums) {
+                    const Number aij = (workspace.roots_[i] * factors_[i * n + j]) *
+                                       workspace.roots_[j];
+                    sums[i] += x(j) * aij;
+                    sums[j] += x(i) * aij;
+                }
             }
         }
         if (!detail::pr76_finite(attraction) || !detail::pr76_finite(covolume) ||
             !(detail::pr76_value(covolume) > T{0})) {
             throw std::range_error("Pr76Mixture: nonrepresentable coefficient or derivative");
+        }
+        if constexpr (WithSums) {
+            for (const auto& sum : sums) {
+                if (!detail::pr76_finite(sum)) {
+                    throw std::range_error("Pr76Mixture: nonrepresentable fugacity row sum");
+                }
+            }
         }
         // Arbitrary finite kij can yield negative/zero a_mix. Preserve the algebraic
         // result, not an unrequested stability judgement or a clipped positive value.
