@@ -1,0 +1,65 @@
+name: SW92 asymmetric stability
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp'
+      - 'modules/flash/CMakeLists.txt'
+      - 'modules/thermodynamics/**/*.hpp'
+      - 'modules/thermodynamics/**/CMakeLists.txt'
+      - 'tests/flash/sw92_asymmetric_stability/**'
+      - '.github/workflows/sw92_asymmetric_stability.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sw92-asymmetric-stability-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  asymmetric-stability:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure only SW92 asymmetric stability integration
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_asymmetric_stability -B build/sw92-asymmetric-stability \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_ASYMMETRIC_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Compile only SW92 asymmetric stability regression
+        run: cmake --build build/sw92-asymmetric-stability --target mpmc_sw92_asymmetric_stability_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run SW92 asymmetric stability increment
+        run: ctest --test-dir build/sw92-asymmetric-stability -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_stability[.]' --verbose --no-tests=error
+      - name: Regenerate independent Decimal(80) asymmetric stability references
+        run: python tests/flash/sw92_asymmetric_stability/reference_decimal.py
