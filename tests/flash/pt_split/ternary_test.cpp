@@ -23,8 +23,8 @@ namespace fl = mpmc::flash;
 namespace th = mpmc::thermodynamics;
 using Vec = std::vector<double>;
 
-constexpr double pressure_pa = 4.0e6;
-constexpr double temperature_k = 220.0;
+constexpr double ternary_pressure_pa = 4.0e6;
+constexpr double ternary_temperature_k = 220.0;
 constexpr double reference_tolerance = 2e-9;
 constexpr std::string_view dataset_id =
     "DeitersBell-aic16730-PengRobinson1976-ternary";
@@ -193,10 +193,10 @@ void check_reference(
 
     th::Pr76PhaseWorkspace<double> workspace;
     const auto liquid = model.evaluate_full(
-        pressure_pa, temperature_k, candidate.fractions.liquid,
+        ternary_pressure_pa, ternary_temperature_k, candidate.fractions.liquid,
         candidate.liquid.activity.branch, workspace);
     const auto vapor = model.evaluate_full(
-        pressure_pa, temperature_k, candidate.fractions.vapor,
+        ternary_pressure_pa, ternary_temperature_k, candidate.fractions.vapor,
         candidate.vapor.activity.branch, workspace);
     near(liquid.z, reference.liquid_z);
     near(vapor.z, reference.vapor_z);
@@ -251,7 +251,7 @@ void parameters_runtime() {
         const Vec composition(
             order.size(), 1.0 / static_cast<double>(order.size()));
         const auto roots =
-            model.roots_full(pressure_pa, temperature_k, composition, workspace);
+            model.roots_full(ternary_pressure_pa, ternary_temperature_k, composition, workspace);
         require(
             roots.status == th::Pr76RootStatus::success && roots.count > 0,
             "runtime component-shape PR76 evaluation failed");
@@ -271,7 +271,7 @@ void flash_reference() {
             feed.push_back(static_cast<double>(value));
         }
         const auto result = fl::solve_pr76_pt_vle(
-            pressure_pa, temperature_k, feed, evaluator);
+            ternary_pressure_pa, ternary_temperature_k, feed, evaluator);
         check_reference(result, model, reference, identity);
         require(
             std::string_view(result.dataset_id) == dataset_id &&
@@ -307,7 +307,7 @@ void permutations() {
         const auto model = make_model(order);
         fl::Pr76VleEvaluator evaluator(model);
         const auto result = fl::solve_pr76_pt_vle(
-            pressure_pa, temperature_k, feed, evaluator);
+            ternary_pressure_pa, ternary_temperature_k, feed, evaluator);
         check_reference(result, model, reference, permutation);
         require(result.component_ids == order, "permuted component IDs lost");
     }
@@ -327,7 +327,7 @@ void final_indeterminate() {
     options.final_stability.max_evaluations = 1;
 
     const auto result = fl::solve_pr76_pt_vle(
-        pressure_pa, temperature_k, feed, evaluator, options);
+        ternary_pressure_pa, ternary_temperature_k, feed, evaluator, options);
     const auto& solution = result.solution;
     check_default_thresholds(solution);
     require(
