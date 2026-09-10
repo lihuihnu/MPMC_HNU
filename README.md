@@ -2,7 +2,7 @@
 
 面向多相、多组分计算的模块化高性能计算平台，采用可移植的 C++ 计算后端与独立 Web 前端。
 
-> **当前状态：AD、PR76 汽液 PT 闪蒸/隐式灵敏度、SW92 thermodynamics kernel 与首个 physics thermodynamic closure。** 已提供独立的 C++20 `mpmc::ad::Dual<T, N>`、常见初等函数、`value_and_jacobian`、分块 `value_and_jacobian_runtime<K>`、独立增量测试入口与官方 runner 工作流；功能边界和使用方法见 [AD 模块说明](modules/ad/README.md)。已新增[有序组分与 PR76 数据契约](modules/thermodynamics/README.md)，并提供经原文核验的[纯组分 a(T)、b 数值核](modules/thermodynamics/pr76_pure.md)及温度导数增量测试；已增加[运行期经典混合参数](modules/thermodynamics/pr76_mixture.md)，区分完整/约化组成导数并验证顺序与变维数；已增加 [PT 候选相性质核](modules/thermodynamics/pr76_phase.md)，给定 p、T、相组成求可用 Z 根与 ln(phi)，含局部隐式导数和退化诊断；已实现 [TPD 相稳定性搜索](modules/flash/README.md) 与 [汽液 PT 相分裂基线](modules/flash/pt_split.md)，给定 p、T、总体摩尔组成 z，联合检查物料守恒与逸度平衡，并对候选两相作共同切平面复核；包含边界回归、TPD 回溯停滞修复和[未确定原因摘要](modules/flash/diagnostic_summary.md)，并增加[模型无关 PT phase-set 表示契约](modules/flash/phase_set.md)。已增加[内部两相收敛解隐式灵敏度](modules/flash/pt_sensitivity.md)，并由首个 [physics thermodynamic-closure consumption contract](modules/physics/README.md) 将已接受两相状态映射为相摩尔分率、组成、Z、摩尔密度及其局部线性化，同时把 residual 可用性与 Newton 基点可用性分开。现已新增经 Søreide–Whitson 1992 原文及作者勘误核验的 [SW92/corrected-original thermodynamics kernel](modules/thermodynamics/sw92.md)，提供显式 aqueous/nonaqueous phase-family、固定 NaCl molality、对应 a/b、Z 与 ln(phi) 候选物性；该内核当前仅为 floating-point primal thermodynamics，不等于 SW92 稳定性、相分裂或三相闪蒸。有限搜索不是全局稳定性认证；SW92 stability/flash、联合三相、完整含水互溶 flash、CPA、单相 closure、网格、离散与全局求解器尚未实现。已有软件与模型数值回归不等于实验验证或性能达标；测试结果以具体提交的 GitHub Actions 日志为准。开发约束见 [AGENTS.md](AGENTS.md)。
+> **当前状态：AD、PR76 汽液 PT 闪蒸/隐式灵敏度、SW92 corrected-original fixed-family stability / one-family VLE / Whitson dual-model observables，以及首个 physics thermodynamic closure。** 已提供独立的 C++20 `mpmc::ad::Dual<T, N>`、常见初等函数、`value_and_jacobian`、分块 `value_and_jacobian_runtime<K>`、独立增量测试入口与官方 runner 工作流；功能边界和使用方法见 [AD 模块说明](modules/ad/README.md)。已新增[有序组分与 PR76 数据契约](modules/thermodynamics/README.md)，并提供经原文核验的[纯组分 a(T)、b 数值核](modules/thermodynamics/pr76_pure.md)及温度导数增量测试；已增加[运行期经典混合参数](modules/thermodynamics/pr76_mixture.md)，区分完整/约化组成导数并验证顺序与变维数；已增加 [PT 候选相性质核](modules/thermodynamics/pr76_phase.md)，给定 p、T、相组成求可用 Z 根与 ln(phi)，含局部隐式导数和退化诊断；已实现 [TPD 相稳定性搜索](modules/flash/README.md) 与 [汽液 PT 相分裂基线](modules/flash/pt_split.md)，给定 p、T、总体摩尔组成 z，联合检查物料守恒与逸度平衡，并对候选两相作共同切平面复核；包含边界回归、TPD 回溯停滞修复和[未确定原因摘要](modules/flash/diagnostic_summary.md)，并增加[模型无关 PT phase-set 表示契约](modules/flash/phase_set.md)。已增加[内部两相收敛解隐式灵敏度](modules/flash/pt_sensitivity.md)，并由首个 [physics thermodynamic-closure consumption contract](modules/physics/README.md) 将已接受两相状态映射为相摩尔分率、组成、Z、摩尔密度及其局部线性化，同时把 residual 可用性与 Newton 基点可用性分开。SW92 已依据 Søreide–Whitson 1992 原文及作者勘误实现 [corrected-original thermodynamics kernel](modules/thermodynamics/sw92.md)，并接入[同一 phase-family 的 PT stability](modules/flash/sw92_stability.md)和[one-family PT VLE](modules/flash/sw92_family_vle.md)；在此基础上已实现 [Whitson dual-model observable orchestration](modules/flash/sw92_dual_model.md)，从同一个 ordered snapshot 分别执行完整 AQ 与 NA family run，并仅在已审计的二元情形按 water-rich / water-poor 提取兼容性 observable。该双模型 Profile **不是** AQ/NA 联合热力学 phase set：两次 run 的 phase fraction、material balance、common tangent 与 Gibbs 判据保持独立，不得拼接成共同守恒结果。SW92 当前仍是 floating-point primal 路径，没有 SW92 flash derivatives、联合 asymmetric AQ/NA equilibrium、salt-inventory conservation 或三相闪蒸。有限搜索不是全局稳定性认证；联合三相、完整共同守恒的含水互溶 flash、CPA、单相 closure、网格、离散与全局求解器尚未实现。已有软件与模型数值回归不等于实验验证或性能达标；测试结果以具体提交的 GitHub Actions 日志为准。开发约束见 [AGENTS.md](AGENTS.md)。
 
 ## 1. 项目目标与基本原则
 
@@ -18,8 +18,8 @@
 
 | 层次 | 初始选择 | 边界与理由 |
 | --- | --- | --- |
-| 计算核心 | C++20，标准库优先 | AD 算术和初等函数已实现，且只依赖标准库；已增加 PR76 纯组分、经典混合系数、PT 候选相性质核、C++20/double 汽液 PT 闪蒸、内部两相收敛解灵敏度、SW92 corrected-original floating-point thermodynamics kernel 及最小 physics thermodynamic closure，其余计算能力按路线开发；不将 GPU、MPI 或专有指令集作为基础依赖。 |
-| 构建与测试入口 | CMake 3.21+、CMake Presets、CTest | 已提供独立 `mpmc::ad`、`mpmc::thermodynamics`、`mpmc::flash`、opt-in `mpmc::flash_sensitivity` 与 `mpmc::physics` 目标及对应增量测试入口；PR76 汽液 PT、灵敏度、physics closure 与 SW92 thermodynamics 均有独立验证，SW92 flash、三相和后续含水扩展待开发。[E1] |
+| 计算核心 | C++20，标准库优先 | AD 算术和初等函数已实现，且只依赖标准库；已增加 PR76 纯组分、经典混合系数、PT 候选相性质核、C++20/double 汽液 PT 闪蒸、内部两相收敛解灵敏度、SW92 corrected-original thermodynamics、fixed-family stability / one-family VLE、Whitson dual-model observable orchestration 及最小 physics thermodynamic closure，其余计算能力按路线开发；不将 GPU、MPI 或专有指令集作为基础依赖。 |
+| 构建与测试入口 | CMake 3.21+、CMake Presets、CTest | 已提供独立 `mpmc::ad`、`mpmc::thermodynamics`、`mpmc::flash`、opt-in `mpmc::flash_sensitivity` 与 `mpmc::physics` 目标及对应增量测试入口；PR76 汽液 PT、灵敏度、physics closure、SW92 thermodynamics、fixed-family stability / VLE 与 dual-model compatibility observables 均有独立验证。SW92 asymmetric joint equilibrium、三相和后续含水扩展待开发。[E1] |
 | 前端 | React + TypeScript + Vite 单页应用 | 前后端独立开发与部署；不为计算平台默认引入 SSR 或另一套服务端业务逻辑。[E2] |
 | 服务通信 | Protocol Buffers + gRPC；浏览器通过 gRPC-Web 适配层接入 | 契约先行、消息版本化；传输对象与计算核心类型分离。[E3][E4] |
 | 大体量结果传输 | 独立 HTTP 二进制分块通道 | 网格、场变量不默认转为 JSON 数组或 Base64；支持有界缓冲、按需读取和校验。具体格式在结果模块开发时确定。 |
@@ -34,7 +34,7 @@
 
 ## 3. 模块架构与依赖方向
 
-下表描述目标职责；**当前 AD 已有计算代码，`modules/thermodynamics` 已有通用数据/来源基础、完整 PR76 基线以及 SW92 corrected-original floating-point phase-family PT 候选物性核；`modules/flash` 已有有限多初值相稳定性搜索、PR76 汽液 PT 相分裂、最终共同切平面复核、模型无关 phase-set 表示、未确定诊断与已接受内部两相收敛解隐式灵敏度，`modules/physics` 已有最小 PR76 thermodynamic-closure consumption contract；其余模块尚未创建**。当前 SW92 只在 thermodynamics 层提供显式 AQ/NA family 候选物性，不表示已接入 TPD、相分裂或 physics。当前 physics 只消费已接受内部 PR76 两相状态并提供相摩尔分率、组成、Z、摩尔密度及局部线性化，不等于已实现守恒方程、flux、饱和度、网格、离散或求解器。只在对应增量需要时创建文件与构建目标，不预生成空模块、占位实现或插件框架。
+下表描述目标职责；**当前 AD 已有计算代码，`modules/thermodynamics` 已有通用数据/来源基础、完整 PR76 基线以及 SW92 corrected-original floating-point phase-family PT 候选物性核；`modules/flash` 已有有限多初值相稳定性搜索、PR76 汽液 PT 相分裂、最终共同切平面复核、模型无关 phase-set 表示、未确定诊断、已接受内部两相收敛解隐式灵敏度，以及 SW92 fixed-family stability / one-family VLE / Whitson dual-model observable orchestration；`modules/physics` 已有最小 PR76 thermodynamic-closure consumption contract；其余模块尚未创建**。当前 SW92 flash 路径保留显式 AQ/NA family 与 cubic-root branch 分离：fixed-family stability / VLE 是单模型内部自洽 primitive；Whitson dual-model Profile 则保留 AQ/NA 两个完整 run 并提取兼容性 observable，不表示已实现共同 AQ/NA material balance、asymmetric Gibbs equilibrium、三相或 physics。当前 physics 只消费已接受内部 PR76 两相状态并提供相摩尔分率、组成、Z、摩尔密度及局部线性化，不等于已实现守恒方程、flux、饱和度、网格、离散或求解器。只在对应增量需要时创建文件与构建目标，不预生成空模块、占位实现或插件框架。
 
 | 模块 | 职责 |
 | --- | --- |
@@ -69,16 +69,16 @@
 
 ## 5. 热力学模型与科学边界
 
-当前已实现的[PR76 数据契约](modules/thermodynamics/README.md)按稳定组分 ID 绑定参数并形成运行期有序快照；公共来源、单位与身份层可由其他热力学模型复用，不将 PR 的常数对称 kij 规则强加给它们。PR76 已增加纯组分、经典混合 a/b 与 [PT 候选相性质](modules/thermodynamics/pr76_phase.md)，支持 Z、ln(phi) 和简单根分支的局部导数；根数不等于相数。在此基础上已实现 [TPD 相稳定性搜索](modules/flash/README.md)、[PR76 汽液 PT 基线](modules/flash/pt_split.md)与[已接受内部两相收敛解隐式灵敏度](modules/flash/pt_sensitivity.md)，联合验收守恒、逸度与最终相集合的有限稳定性搜索结果，并为固定相集合/根分支提供局部一阶导数；不提供全局稳定性或跨相边界光滑性认证，也不等于已实现三相或含水闪蒸。首个 [physics thermodynamic closure](modules/physics/README.md) 仅消费上述 PR76 能力并增加 Z/相摩尔密度及其链式导数，不新增经验热力学模型。
+当前已实现的[PR76 数据契约](modules/thermodynamics/README.md)按稳定组分 ID 绑定参数并形成运行期有序快照；公共来源、单位与身份层可由其他热力学模型复用，不将 PR 的常数对称 kij 规则强加给它们。PR76 已增加纯组分、经典混合 a/b 与 [PT 候选相性质](modules/thermodynamics/pr76_phase.md)，支持 Z、ln(phi) 和简单根分支的局部导数；根数不等于相数。在此基础上已实现 [TPD 相稳定性搜索](modules/flash/README.md)、[PR76 汽液 PT 基线](modules/flash/pt_split.md)与[已接受内部两相收敛解隐式灵敏度](modules/flash/pt_sensitivity.md)，联合验收守恒、逸度与最终相集合的有限稳定性搜索结果，并为固定相集合/根分支提供局部一阶导数；不提供全局稳定性或跨相边界光滑性认证，也不等于已实现三相或含水联合闪蒸。首个 [physics thermodynamic closure](modules/physics/README.md) 仅消费上述 PR76 能力并增加 Z/相摩尔密度及其链式导数，不新增经验热力学模型。
 
-[SW92/corrected-original thermodynamics kernel](modules/thermodynamics/sw92.md) 已依据 Søreide–Whitson 1992 原论文及其作者勘误实现：水/brine alpha、AQ water-pair correlations、显式 NA water-pair 数据/H2S Eq.(17)、family-specific non-water BIP、经典 PR mixing、Z 根与 ln(phi) 候选物性。`SwPhaseFamily::{aqueous,nonaqueous}` 与 cubic root index 明确分离；NaCl 在当前 profile 中是外部 fixed molality，不作为守恒的 Na+/Cl- EOS 组分。当前 SW92 kernel 仅支持 floating-point primal thermodynamics，不声称 TPD/stability、两相/三相 flash、相切换导数或 physics closure 已实现。
+[SW92/corrected-original thermodynamics kernel](modules/thermodynamics/sw92.md) 已依据 Søreide–Whitson 1992 原论文及其作者勘误实现：水/brine alpha、AQ water-pair correlations、显式 NA water-pair 数据/H2S Eq.(17)、family-specific non-water BIP、经典 PR mixing、Z 根与 ln(phi) 候选物性。`SwPhaseFamily::{aqueous,nonaqueous}` 与 cubic root index 明确分离；NaCl 在当前 profile 中是外部 fixed molality，不作为守恒的 Na+/Cl- EOS 组分。该 floating-point primal thermodynamics 已接入 [fixed-family PT stability](modules/flash/sw92_stability.md) 与 [one-family PT VLE](modules/flash/sw92_family_vle.md)：一次 run 固定同一 family/molality，stability 在该 family 内选择 mechanically admissible minimum-Gibbs root，split 继续把 lowest/highest-Z 仅作为请求的数值 candidate role，并复用 generic TPD / Rachford-Rice / material-balance / fugacity / final common-tangent 逻辑。[equilibrium-algorithm contract](modules/flash/sw92_equilibrium_algorithm.md) 进一步区分模型身份与算法身份；当前已实现的 [Whitson dual-model observable Profile](modules/flash/sw92_dual_model.md) 从同一 ordered snapshot 独立执行 AQ 与 NA 两个完整 run，只在二元 compatibility scope 内提取 water-rich AQ 与 water-poor NA observable，并显式输出 `cross_model_equilibrium_ratio`。这不构成共同 material balance 或 joint AQ/NA Gibbs equilibrium，也没有 SW92 derivatives、salt inventory 或三相能力。
 
 模型选择通过能力目录与配置完成，不把 EOS 公式硬编码进闪蒸算法。每个模型应报告模型 ID/版本、可用组分、允许相态、所需参数、混合规则、导数能力、适用范围及资料来源；不支持的组合显式拒绝，不静默回退到另一模型。
 
 | 模型 | 当前状态与实施约束 |
-| --- | --- |
+| --- | --- | 
 | PR（Peng–Robinson） | PR76 已作为首个完整基线实现至汽液 PT、内部两相灵敏度和最小 physics closure；仍须明确版本、alpha、混合规则、BIP 与任何体积修正，不能把普通 PR 等同于已验证的含水互溶模型。[S1] |
-| SW（Søreide–Whitson） | 已实现 `SW92/corrected-original/PR76-base/NaCl-molality` 的 thermodynamics-only floating-point phase-family PT 候选物性核；后续 stability/flash 必须保留 AQ/NA family 语义、固定 molality 坐标和一致化学势/逸度参考，不能用根次序替代相族选择。[S2] |
+| SW（Søreide–Whitson） | 已实现 `SW92/corrected-original/PR76-base/NaCl-molality` floating-point thermodynamics、fixed-family stability / one-family VLE，以及 `SW92-equilibrium/whitson-dual-model-observables/v1` compatibility orchestration。AQ/NA family 与 root role 保持分离；dual-model 结果保留两次独立 run，不得解释为共同守恒的 phase set。联合 AQ/NA equilibrium、SW92 derivatives、salt-inventory conservation 与三相仍未实现。[S2] |
 | CPA（Cubic-Plus-Association） | 尚未实现；实现时须明确立方项版本、缔合位点方案、缔合参数、交叉缔合及混合规则；缔合子问题须同时满足残差与导数要求。[S3] |
 
 原始论文、官方物性资料或有许可的数据集应在实现前核对。仅有摘要、搜索结果或二手转述时，不声称已核验完整公式和参数表。缺少全文、勘误、组分数据、交互参数或商业软件访问时，应明确缺口并向项目负责人索取，不猜测、不伪造、不绕过许可。
@@ -87,7 +87,7 @@
 
 ## 6. 两相、三相闪蒸与水的处理
 
-### 6.1 当前可用：PR76 汽液 PT 调用、诊断与内部两相灵敏度
+### 6.1 当前可用：PR76 汽液 PT 与 SW92 fixed-family / dual-model compatibility
 
 现有 `solve_pr76_pt_vle` 输入压力 p（Pa）、温度 T（K）和总体摩尔组成 z，依次执行进料 TPD、失稳试探组成的守恒初始化、汽液相分裂和最终共同切平面复核。使用 CMake 目标 `mpmc::flash`，无需前端或网络服务；完整接口、选项、数值门槛与构建入口见 [汽液 PT 契约](modules/flash/pt_split.md)。对最终接受的内部两相状态，可通过 opt-in `mpmc::flash_sensitivity` 和 [隐式灵敏度契约](modules/flash/pt_sensitivity.md) 获取 `beta/x/y/logK` 对 `(p,T,z_reduced)` 的局部一阶导数；该导数不跨泡露点、相消失、临界/根切换或相集合变化外推。
 
@@ -116,7 +116,9 @@ const auto& solution = result.solution;
 
 所有结果的 `global_stability_proven` 均为 `false`；“未检出”不是全局认证。`solution.diagnostic` 的分阶段摘要、`attempts` 与初始／最终 TPD 的 trial 记录用法见 [未确定原因摘要](modules/flash/diagnostic_summary.md)。机器分流应读取已有枚举、候选与配额字段，不匹配整条诊断字符串；`phase_disappearance` 不等于物理上严格不存在该相。结果拥有数据，候选指针随结果对象存活；evaluator 仅顺序复用，不能并发共用同一实例。
 
-[泡点／露点邻域回归](modules/flash/boundary_regression.md) 和[极近露点门槛审计](modules/flash/dew_limit_audit.md) 记录有限采样范围、独立高精度二元参考与相消失边界；原边界文档中的 TPD 停滞是历史记录，后续修复依据与回归见 [TPD 模块说明](modules/flash/README.md)。这些是软件和模型数值验证，不是实验数据或全局稳定性证书。当前不提供 LLE 专用求解、联合三相、SW92 stability/flash、CPA flash、生产泡点／露点 API、单相 closure 或跨泡露点/相消失/临界/根切换的闪蒸导数；SW92 thermodynamics 候选物性核已经存在，但尚未接入本节 PR76 flash 路径。
+SW92 当前提供两级入口。`solve_sw92_pt_family_vle` 只处理一个显式 `SwPhaseFamily`，结果的算法身份为 `SW92-equilibrium/fixed-family-vle-primitive/v1`，可作为内部自洽的一模型 PT VLE 使用。[`solve_sw92_whitson_dual_model_observables`](modules/flash/sw92_dual_model.md) 的算法身份为 `SW92-equilibrium/whitson-dual-model-observables/v1`，会从同一个 `Sw92Phase<double>` snapshot 分别执行 AQ 和 NA 两次完整 one-family run，并完整保留两套状态、phase fraction、composition 与诊断。自动 target-phase extraction 当前仅对二元 water+gas compatibility case 开放：AQ 取 water-richer accepted phase，NA 取 water-poorer accepted phase，不使用固定 water-fraction cutoff；多组分会保留两次完整 run，但明确报告 physical target-phase labeling 尚未实现。任何 `cross_model_equilibrium_ratio` 都是跨两个独立模型结果的兼容性 observable，不得当作一个共同 Rachford-Rice 问题的普通 `K`，也不得把两次 run 的 phase fraction 拼成共同守恒。
+
+[泡点／露点邻域回归](modules/flash/boundary_regression.md) 和[极近露点门槛审计](modules/flash/dew_limit_audit.md) 记录有限采样范围、独立高精度二元参考与相消失边界；原边界文档中的 TPD 停滞是历史记录，后续修复依据与回归见 [TPD 模块说明](modules/flash/README.md)。这些是软件和模型数值验证，不是实验数据或全局稳定性证书。当前不提供 LLE 专用求解、联合 AQ/NA asymmetric equilibrium、联合三相、CPA flash、生产泡点／露点 API、SW92 flash derivatives、SW92 physics closure、单相 closure 或跨泡露点/相消失/临界/根切换的闪蒸导数。
 
 ### 6.2 后续目标：多相与水处理约束
 
@@ -145,7 +147,7 @@ beta_alpha >= 0，x_i_alpha >= 0
 
 其中 `beta` 为摩尔相分率，`x` 与 `z` 为摩尔组成。迹量或零含量组分、消失相不能靠无条件取对数或硬裁剪处理。除守恒、组成与逸度/化学势一致性外，还要进行相稳定性判定，例如有明确搜索范围与容差的切平面距离（TPD）分析；求得一个方程根不等于证明全局稳定。[S4]
 
-先建立可靠两相求解，再扩展联合三相平衡、相出现/消失与降阶；三相不得用两个互不一致的两相结果拼凑。失败必须返回结构化诊断，区分输入/参数错误、模型越界、未收敛、稳定性未确认与成功状态。近平衡退化点、临界区和相切换处的导数有效性须明确，不把固定相分支导数解释为跨相边界的光滑导数。
+先建立可靠两相求解，再扩展联合三相平衡、相出现/消失与降阶；三相不得用两个互不一致的两相结果拼凑。SW92 的 Whitson dual-model observable Profile 正是两个独立 model pass，因此只能作为 compatibility/observable 路径与后续 joint solver 的比较证据或初值来源，不能冒充本节 `mutual_solubility` 的共同守恒结果。失败必须返回结构化诊断，区分输入/参数错误、模型越界、未收敛、稳定性未确认与成功状态。近平衡退化点、临界区和相切换处的导数有效性须明确，不把固定相分支导数解释为跨相边界的光滑导数。
 
 ## 7. 递进路线与验收关口
 
@@ -155,7 +157,7 @@ beta_alpha >= 0，x_i_alpha >= 0
 | M1：AD 最小基础 | 已提供最小构建与测试入口、固定维数值/导数语义、基础算术 | 解析导数、边界行为和必要编译验证；每项分开小步提交。 |
 | M2：AD 可用能力 | 已提供常见初等函数及逐函数测试入口；继续按需补齐函数和导数访问 | 独立交叉验证、导数保真与必要资源检查。 |
 | M3：PR 与两相基线 | 已提供有序组分/PR76 参数契约、纯/混合系数、PT 候选相性质、有限 TPD 搜索、汽液 PT 相分裂、模型无关 phase-set 表示、内部两相收敛解灵敏度及最小 physics thermodynamic closure；已集成边界回归、TPD 停滞修复、露点门槛审计及诊断摘要 | 已有解析与独立高精度二元/三元参考的守恒、逸度、边界、未确定状态、隐式导数与 closure 链式导数回归；进一步扩展前仍需适用体系证据，不作全局、跨相边界或实验验证声明。 |
-| M4：含水模型与互溶 | SW92 corrected-original thermodynamics-only phase-family kernel 已实现；下一步审计并接入 SW92 stability/phase split，再逐一实现所需 CPA 与含水两相能力 | 合法且可追溯的参数、含水基准、稳定性与守恒证据；不宣称所有模型适用于所有体系。 |
+| M4：含水模型与互溶 | 已实现 SW92 corrected-original thermodynamics、fixed-family stability、one-family VLE 与 Whitson dual-model compatibility observables；下一科学 Gate 是在确有 joint mutual-solubility 需求时先审计 AQ/NA reference-state/domain compatibility，再实现独立算法身份的 asymmetric joint equilibrium；CPA 仍需单独建模与验证 | 已有可追溯 SW92 参数、二元高精度 thermodynamics/stability/VLE/dual-model observable 锚点、相消失与失败语义回归；进入共同守恒含水 equilibrium 前仍需 cross-family Gibbs/reference-state 独立证据，不把 dual-model observables 误标为 joint phase set。 |
 | M5：三相闪蒸 | 联合三相平衡、相数变化与退化处理 | 三相参考证据、稳定性、守恒及可用导数核验。 |
 | M6：网格与输入 | 创建、导入、拓扑与几何校验，逐一支持格式 | 小型已知网格、非法输入、单位与索引检查。 |
 | M7：流动与数值计算 | 水独立/互溶物理模型、离散、时间推进、求解器，逐项开发 | 守恒、制造解或解析解、收敛性与相关耦合回归。 |
@@ -169,13 +171,13 @@ beta_alpha >= 0，x_i_alpha >= 0
 
 纯文档变更仅做必要的内容、格式、引用和差异审查；AD、共享数值核心、公共接口、构建或编译选项变更必须扩展到受影响的已有下游。跨平台风险变更运行必要平台组合；平台未经实际测试不得宣称通过。共享托管 runner 上的计时不能单独证明 HPC 性能收益。
 
-文档初始化阶段没有创建代码或 CI。当前 AD、热力学数据契约、PR76 纯/混合系数、PT 候选相性质核、TPD 稳定性搜索、汽液 PT 基线、模型无关 phase-set 表示、内部两相收敛解灵敏度、SW92 corrected-original thermodynamics kernel 和最小 physics thermodynamic closure 均有增量测试入口与官方 runner 工作流；相分裂集成覆盖边界、停滞、露点门槛和诊断回归，并保留独立高精度二元/三元参考，灵敏度和 closure 另有独立 Decimal 高精度导数交叉核验，SW92 thermodynamics 有独立 Decimal(80) 候选物性锚点。SW92 stability/flash、联合三相、CPA、单相 closure、网格、离散与全局求解器尚未实现，未创建许可证或占位目录。具体执行结果查阅对应 PR/提交的 Actions 日志，不能将配置了工作流视为测试已通过。完整审计、提交与验证规则以 [AGENTS.md](AGENTS.md) 为准。
+文档初始化阶段没有创建代码或 CI。当前 AD、热力学数据契约、PR76 纯/混合系数、PT 候选相性质核、TPD 稳定性搜索、汽液 PT 基线、模型无关 phase-set 表示、内部两相收敛解灵敏度、SW92 corrected-original thermodynamics、fixed-family stability / one-family VLE、Whitson dual-model observables 和最小 physics thermodynamic closure 均有增量测试入口与官方 runner 工作流；PR76 相分裂集成覆盖边界、停滞、露点门槛和诊断回归，并保留独立高精度二元/三元参考，灵敏度和 closure 另有独立 Decimal 高精度导数交叉核验。SW92 thermodynamics、fixed-family stability、one-family VLE 与 dual-model Profile 分别保留独立 Decimal(80) 数值锚点/回归；dual-model 验证在同一状态独立求 AQ/NA 两套 family VLE 并检查 cross-model observable，不将其当作实验数据或 joint equilibrium 证据。联合 AQ/NA asymmetric equilibrium、联合三相、CPA、SW92 derivatives/physics closure、单相 closure、网格、离散与全局求解器尚未实现。具体执行结果查阅对应 PR/提交的 Actions 日志，不能将配置了工作流视为测试已通过。完整审计、提交与验证规则以 [AGENTS.md](AGENTS.md) 为准。
 
 ## 9. 待确认事项与参考资料
 
-**SW 已由用户确认为 Søreide–Whitson 模型。** 当前已对 `SW92/corrected-original/PR76-base/NaCl-molality` thermodynamics kernel 核验并实现所需原文公式与作者勘误；后续 stability/flash 仍需单独审计相族/根选择、共同化学势参考、稳定性与相分裂验证。若引入不同 SW 版本、刷新相关式、新参数集或不同盐处理坐标，必须作为新的模型/数据 profile 重新核验。首次使用其他模型前仍需取得对应原文、必要参数与合法验证资料；资料暂缺只阻塞依赖该资料的实现，不阻塞无关工作。项目许可尚未确定，不能因参考成熟开源软件就自动采用其代码或许可证。
+**SW 已由用户确认为 Søreide–Whitson 模型。** 当前已对 `SW92/corrected-original/PR76-base/NaCl-molality` thermodynamics kernel 核验并实现所需原文公式与作者勘误；fixed-family root/Gibbs stability、one-family PT VLE 及 `SW92-equilibrium/whitson-dual-model-observables/v1` 均已单独审计、实现并保留各自算法身份与验证边界。Whitson dual-model Profile 采用当前工程资料支持的“两次独立 AQ/NA model pass”编排模式，但仓库没有引入当前 refresh 项目的新拟合相关式、参数、salinity 方法或第三方源代码；这些若未来采用必须作为新的模型/数据 profile 重新核验。若项目要求真正共同守恒的 AQ/NA mutual-solubility phase set，下一步必须先完成 `SW92-equilibrium/xu-asymmetric-gibbs/v1` 所要求的 component reference-state、composition-domain、fixed-molality 与 cross-family Gibbs/TPD 审计，再实现独立 joint solver，不能把现有两个 model pass 拼接替代。首次使用其他模型前仍需取得对应原文、必要参数与合法验证资料；资料暂缺只阻塞依赖该资料的实现，不阻塞无关工作。项目许可尚未确定，不能因参考成熟开源软件就自动采用其代码或许可证。
 
-工程参考用于借鉴边界、接口和验证方法，不代表这些软件已成为依赖。原始科学文献列为后续核验入口，不代表所有模型、所有公式与所有数据表均已获取；对已实现的 SW92 corrected-original profile，其核验范围和来源见 [SW92 thermodynamics 文档](modules/thermodynamics/sw92.md)。
+工程参考用于借鉴边界、接口和验证方法，不代表这些软件已成为依赖。原始科学文献列为后续核验入口，不代表所有模型、所有公式与所有数据表均已获取；对已实现的 SW92 corrected-original profile，其核验范围和来源见 [SW92 thermodynamics 文档](modules/thermodynamics/sw92.md)，稳定性、一模型 VLE 和双模型 observable 编排分别见 [SW92 stability](modules/flash/sw92_stability.md)、[SW92 one-family VLE](modules/flash/sw92_family_vle.md)与[SW92 dual-model Profile](modules/flash/sw92_dual_model.md)。
 
 - [E1] [CMake Presets 官方文档](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html)。
 - [E2] [React：从头构建应用](https://react.dev/learn/build-a-react-app-from-scratch)；[Vite 官方指南](https://vite.dev/guide/)。
