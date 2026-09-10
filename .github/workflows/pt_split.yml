@@ -8,6 +8,9 @@ on:
       - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
       - 'modules/flash/include/mpmc/flash/pt_split.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_split.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_phase_set.hpp'
       - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_sensitivity.hpp'
       - 'modules/flash/include/mpmc/flash/detail/**'
@@ -65,8 +68,8 @@ jobs:
           cmake -S tests/flash/pt_split -B build/pt-split \
             "${config_arg[@]}" ${{ matrix.compiler }} \
             -DMPMC_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Compile phase split, boundary, ternary and sensitivity regression
-        run: cmake --build build/pt-split --target mpmc_pt_split_tests mpmc_pt_boundary_tests mpmc_tpd_stagnation_tests mpmc_dew_limit_tests mpmc_pt_diagnostic_tests mpmc_pt_ternary_tests mpmc_pt_sensitivity_tests --config ${{ matrix.config }} --parallel 2
+      - name: Compile phase split, boundary, ternary, sensitivity and phase-set regression
+        run: cmake --build build/pt-split --target mpmc_pt_split_tests mpmc_pt_boundary_tests mpmc_tpd_stagnation_tests mpmc_dew_limit_tests mpmc_pt_diagnostic_tests mpmc_pt_ternary_tests mpmc_pt_sensitivity_tests mpmc_pt_phase_set_tests --config ${{ matrix.config }} --parallel 2
       - name: Run phase split increment
         run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
       - name: Independently regenerate binary equilibrium references

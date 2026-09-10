@@ -145,3 +145,25 @@ foreach(case binary_reference ternary_reference guards invariants)
     set_tests_properties(flash.pt_split.sensitivity_${case} PROPERTIES
         LABELS "flash;flash.pt_split;sensitivity" TIMEOUT 180)
 endforeach()
+
+# Generic candidate/accepted phase-set representation. This is a structural
+# projection test only; the established VLE solver tests above remain untouched.
+add_executable(mpmc_pt_phase_set_tests phase_set_test.cpp)
+target_link_libraries(mpmc_pt_phase_set_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pt_phase_set_tests PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(mpmc_pt_phase_set_tests PRIVATE /W4 /WX /permissive- /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(mpmc_pt_phase_set_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+endif()
+if(MPMC_SPLIT_ENABLE_SANITIZERS)
+    target_compile_options(mpmc_pt_phase_set_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(mpmc_pt_phase_set_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+foreach(case accepted_single accepted_two_exact unstable_candidate_retained
+        indeterminate_candidate_retained malformed_success_is_not_fabricated
+        pr76_metadata_projection)
+    add_test(NAME flash.pt_split.phase_set_${case} COMMAND mpmc_pt_phase_set_tests ${case})
+    set_tests_properties(flash.pt_split.phase_set_${case} PROPERTIES
+        LABELS "flash;flash.pt_split;phase_set" TIMEOUT 60)
+endforeach()
