@@ -195,16 +195,27 @@ void feed_reference_and_common_tangent() {
                 result.nonaqueous.search->imposed_log_activity == result.common_log_activity,
             "AQ/NA searches did not receive the exact same tangent");
 
-    // Automatic starts are feed, uniform, and active-vertex blends. At the feed,
-    // selected AQ has D=0 while NA has the positive family Gibbs gap.
+    // The generic trial object stores its final accepted iterate, so an NA feed
+    // start need not remain at the original feed. Check the feed tangent identity
+    // directly from the retained feed-family references instead of assuming the
+    // trial history is immutable.
+    const auto aq_at_feed = fl::tangent_plane_distance(
+        result.feed, result.feed, *result.aqueous.feed_reference,
+        *result.aqueous.feed_reference);
+    const auto na_at_feed = fl::tangent_plane_distance(
+        result.feed, result.feed, *result.nonaqueous.feed_reference,
+        *result.aqueous.feed_reference);
+    near(aq_at_feed.value, 0.0L, 0.0L, 2e-13L);
+    near(na_at_feed.value, -golden.aqueous_minus_nonaqueous, 8e-10L, 8e-13L);
+
+    // Automatic starts are feed, uniform, and active-vertex blends. The uniform
+    // trial is already robustly negative in both families and therefore remains
+    // at the prescribed composition without a descent update.
     require(result.aqueous.search->trials.size() >= 2 &&
                 result.nonaqueous.search->trials.size() >= 2 &&
-                result.aqueous.search->trials[0].point &&
-                result.nonaqueous.search->trials[0].point,
-            "expected feed/uniform trials missing");
-    near(result.aqueous.search->trials[0].point->value, 0.0L, 0.0L, 2e-13L);
-    near(result.nonaqueous.search->trials[0].point->value,
-         -golden.aqueous_minus_nonaqueous, 8e-10L, 8e-13L);
+                result.aqueous.search->trials[1].point &&
+                result.nonaqueous.search->trials[1].point,
+            "expected uniform trials missing");
     near(result.aqueous.search->trials[1].point->value, golden.uniform_tpd_aqueous);
     near(result.nonaqueous.search->trials[1].point->value, golden.uniform_tpd_nonaqueous);
 }
