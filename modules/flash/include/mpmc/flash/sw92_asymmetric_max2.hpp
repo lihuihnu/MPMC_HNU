@@ -3,6 +3,7 @@
 
 #include <mpmc/flash/sw92_asymmetric_orchestration.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -16,14 +17,14 @@
 
 namespace mpmc::flash {
 
-/// Gate 3B.3 maximum-two-phase algorithm identity. `max2` is the capability of
-/// this entry point; it is not a proof that the thermodynamic model can never
-/// admit more than two phases.
+/// Gate 3B.3 maximum-two-phase algorithm identity. `max2` is an entry-point
+/// capability, not a proof that the thermodynamic model can never admit >2 phases.
 inline constexpr std::string_view sw92_xu_asymmetric_max2_convention =
     "SW92-equilibrium/xu-asymmetric-gibbs/max2-logK-SSI-RR/common-tangent/v1";
 
-/// Family-aware candidate phase. Rejected/indeterminate final-review paths
-/// retain the same data, so acceptance is expressed only by accepted_phase_set().
+/// Rejected/indeterminate final-review paths retain the same phase data, so the
+/// type deliberately says candidate. Publication is controlled only by
+/// Sw92AsymmetricMax2Result::accepted_phase_set().
 struct Sw92AsymmetricCandidatePhase {
     thermodynamics::SwPhaseFamily family{
         thermodynamics::SwPhaseFamily::aqueous};
@@ -56,7 +57,6 @@ struct Sw92AsymmetricMax2Result {
 
     Sw92AsymmetricMax2Status status{Sw92AsymmetricMax2Status::indeterminate};
     Sw92AsymmetricMax2Options options;
-
     double pressure_pa{};
     double temperature_k{};
     std::vector<double> feed;
@@ -75,6 +75,10 @@ struct Sw92AsymmetricMax2Result {
 
     double lower_feed_reduced_gibbs{std::numeric_limits<double>::quiet_NaN()};
     double lower_feed_gibbs_roundoff_guard{
+        std::numeric_limits<double>::quiet_NaN()};
+    double selected_pair_reduced_gibbs{
+        std::numeric_limits<double>::quiet_NaN()};
+    double selected_pair_gibbs_roundoff_guard{
         std::numeric_limits<double>::quiet_NaN()};
     double pair_minus_lower_feed_reduced_gibbs{
         std::numeric_limits<double>::quiet_NaN()};
@@ -109,7 +113,6 @@ struct Sw92AsymmetricMax2Result {
             expected > maximum_phase_count) {
             return nullptr;
         }
-
         double fraction_sum = 0.0;
         double fraction_correction = 0.0;
         for (const auto& phase : candidate_phase_set->phases) {
@@ -127,7 +130,6 @@ struct Sw92AsymmetricMax2Result {
             default:
                 return nullptr;
             }
-
             double composition_sum = 0.0;
             double composition_correction = 0.0;
             for (std::size_t i = 0; i < phase.composition.size(); ++i) {
@@ -161,7 +163,7 @@ struct Sw92AsymmetricMax2Result {
 
 namespace detail {
 
-inline double sw92_max2_reduced_gibbs_roundoff_guard(
+inline double sw92_max2_phase_gibbs_guard(
     std::span<const double> composition, const StabilityPhase& phase) {
     stability_check_phase(phase, composition.size());
     double magnitude = 1.0;
@@ -224,11 +226,8 @@ inline bool sw92_max2_stability_matches_selection(
 
 inline Sw92AsymmetricCandidatePhase sw92_max2_from_fixed_pair_phase(
     const Sw92AsymmetricFixedPairPhase& phase) {
-    return {phase.family,
-            phase.mole_phase_fraction,
-            phase.composition,
-            phase.activity,
-            phase.compressibility_factor};
+    return {phase.family, phase.mole_phase_fraction, phase.composition,
+            phase.activity, phase.compressibility_factor};
 }
 
 inline std::vector<std::vector<double>> sw92_max2_final_starts(
@@ -246,7 +245,7 @@ inline std::vector<std::vector<double>> sw92_max2_final_starts(
 }
 
 inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
-    // Preserve the generic StabilityOptions contract: zero TPD tolerance is legal.
+    // Preserve the generic StabilityOptions contract: tpd_tolerance==0 is legal.
     if (!std::isfinite(base) || base < 0.0 ||
         !std::isfinite(allowance) || allowance < 0.0 ||
         allowance > std::numeric_limits<double>::max() - base) {
@@ -313,6 +312,109 @@ inline bool sw92_max2_single_phase_evidence_consistent(
            candidate.activity.smooth == leg.feed_reference->smooth &&
            candidate.activity.ln_phi == leg.feed_reference->ln_phi &&
            candidate.reduced_gibbs == leg.feed_reduced_gibbs;
+}
+
+struct Sw92Max2PairEvidence {
+    double reduced_gibbs{};
+    double gibbs_roundoff_guard{};
+    double chemical_potential_norm{};
+    double mass_absolute{};
+    double mass_relative{};
+    double log_k_contrast{};
+    std::vector<double> common_log_activity;
+};
+
+/// Recompute the acceptance-critical continuous evidence from retained phase
+/// fractions/compositions/activities. This avoids trusting stale cached Gibbs,
+/// residual, mass-balance or common-tangent fields during authoritative review.
+inline std::optional<Sw92Max2PairEvidence> sw92_max2_recompute_pair_evidence(
+    const Sw92AsymmetricFixedPairState& pair,
+    std::span<const double> feed,
+    const Sw92AsymmetricFixedPairOptions& options) {
+    if (pair.phase0.composition.size() != feed.size() ||
+        pair.phase1.composition.size() != feed.size() ||
+        pair.phase0.activity.ln_phi.size() != feed.size() ||
+        pair.phase1.activity.ln_phi.size() != feed.size() ||
+        !pair.phase0.activity.smooth || !pair.phase1.activity.smooth ||
+        !std::isfinite(pair.phase0.mole_phase_fraction) ||
+        !std::isfinite(pair.phase1.mole_phase_fraction) ||
+        !(pair.phase0.mole_phase_fraction > options.minimum_phase_fraction) ||
+        !(pair.phase1.mole_phase_fraction > options.minimum_phase_fraction)) {
+        return std::nullopt;
+    }
+    const double fraction_sum =
+        pair.phase0.mole_phase_fraction + pair.phase1.mole_phase_fraction;
+    if (!std::isfinite(fraction_sum) ||
+        std::abs(fraction_sum - 1.0) > 256.0 * stability_eps) {
+        return std::nullopt;
+    }
+    try {
+        (void)stability_check_composition(feed);
+        (void)stability_check_composition(pair.phase0.composition);
+        (void)stability_check_composition(pair.phase1.composition);
+        stability_check_phase(pair.phase0.activity, feed.size());
+        stability_check_phase(pair.phase1.activity, feed.size());
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+
+    Sw92Max2PairEvidence evidence;
+    evidence.common_log_activity.resize(feed.size());
+    double gibbs_correction = 0.0;
+    double magnitude = 1.0;
+    double magnitude_correction = 0.0;
+    for (std::size_t i = 0; i < feed.size(); ++i) {
+        if (feed[i] == 0.0) {
+            if (pair.phase0.composition[i] != 0.0 ||
+                pair.phase1.composition[i] != 0.0) {
+                return std::nullopt;
+            }
+            continue;
+        }
+        const double x0 = pair.phase0.composition[i];
+        const double x1 = pair.phase1.composition[i];
+        if (!(x0 > 0.0) || !(x1 > 0.0)) { return std::nullopt; }
+        const double l0 = std::log(x0);
+        const double l1 = std::log(x1);
+        const double m0 = l0 + pair.phase0.activity.ln_phi[i];
+        const double m1 = l1 + pair.phase1.activity.ln_phi[i];
+        if (!std::isfinite(m0) || !std::isfinite(m1)) { return std::nullopt; }
+
+        evidence.chemical_potential_norm = std::max(
+            evidence.chemical_potential_norm, std::abs(m0 - m1));
+        evidence.common_log_activity[i] = std::midpoint(m0, m1);
+        evidence.log_k_contrast = std::max(
+            evidence.log_k_contrast, std::abs(l1 - l0));
+
+        const double recovered = std::fma(
+            pair.phase1.mole_phase_fraction, x1,
+            pair.phase0.mole_phase_fraction * x0);
+        const double error = std::abs(recovered - feed[i]);
+        evidence.mass_absolute = std::max(evidence.mass_absolute, error);
+        evidence.mass_relative = std::max(
+            evidence.mass_relative, error / feed[i]);
+
+        stability_add(
+            pair.phase0.mole_phase_fraction * x0 * m0 +
+                pair.phase1.mole_phase_fraction * x1 * m1,
+            evidence.reduced_gibbs, gibbs_correction);
+        stability_add(
+            pair.phase0.mole_phase_fraction * x0 *
+                    (std::abs(l0) + std::abs(pair.phase0.activity.ln_phi[i])) +
+                pair.phase1.mole_phase_fraction * x1 *
+                    (std::abs(l1) + std::abs(pair.phase1.activity.ln_phi[i])),
+            magnitude, magnitude_correction);
+    }
+    evidence.gibbs_roundoff_guard = 256.0 * stability_eps * magnitude;
+    if (!std::isfinite(evidence.reduced_gibbs) ||
+        !std::isfinite(evidence.gibbs_roundoff_guard) ||
+        evidence.chemical_potential_norm > options.chemical_potential_tolerance ||
+        evidence.mass_absolute > options.mass_absolute_tolerance ||
+        evidence.mass_relative > options.mass_relative_tolerance ||
+        evidence.log_k_contrast <= options.log_k_separation) {
+        return std::nullopt;
+    }
+    return evidence;
 }
 
 } // namespace detail
@@ -383,10 +485,21 @@ inline bool sw92_max2_single_phase_evidence_consistent(
             "Gate 3B.2 did not retain one complete, uniquely revalidated pair candidate for final acceptance";
         return result;
     }
+    const auto continuous = detail::sw92_max2_recompute_pair_evidence(
+        *pair, result.feed, result.selection.options.fixed_pair);
+    if (!continuous) {
+        result.status = Sw92AsymmetricMax2Status::indeterminate;
+        result.diagnostic =
+            "selected pair retained stale or inconsistent equation/material-balance evidence";
+        return result;
+    }
 
     result.candidate_phase_set = Sw92AsymmetricCandidatePhaseSet{{
         detail::sw92_max2_from_fixed_pair_phase(pair->phase0),
         detail::sw92_max2_from_fixed_pair_phase(pair->phase1)}};
+    result.selected_pair_reduced_gibbs = continuous->reduced_gibbs;
+    result.selected_pair_gibbs_roundoff_guard =
+        continuous->gibbs_roundoff_guard;
 
     const auto reference_family = result.selection.initial_stability.reference_family;
     if (!reference_family ||
@@ -401,19 +514,18 @@ inline bool sw92_max2_single_phase_evidence_consistent(
             thermodynamics::SwPhaseFamily::aqueous
         ? result.selection.initial_stability.aqueous
         : result.selection.initial_stability.nonaqueous;
-    if (!feed_leg.feed_reference || !std::isfinite(feed_leg.feed_reduced_gibbs) ||
-        !std::isfinite(pair->reduced_gibbs) ||
-        !std::isfinite(pair->gibbs_roundoff_guard)) {
+    if (!feed_leg.feed_reference || !std::isfinite(feed_leg.feed_reduced_gibbs)) {
         result.status = Sw92AsymmetricMax2Status::indeterminate;
         result.diagnostic =
-            "pair-vs-feed Gibbs comparison lacks a representable retained state";
+            "pair-vs-feed Gibbs comparison lacks a representable lower-feed reference";
         return result;
     }
 
     try {
-        result.lower_feed_reduced_gibbs = feed_leg.feed_reduced_gibbs;
+        result.lower_feed_reduced_gibbs = detail::sw92_feed_reduced_gibbs(
+            result.feed, *feed_leg.feed_reference);
         result.lower_feed_gibbs_roundoff_guard =
-            detail::sw92_max2_reduced_gibbs_roundoff_guard(
+            detail::sw92_max2_phase_gibbs_guard(
                 result.feed, *feed_leg.feed_reference);
     } catch (const std::exception& error) {
         result.status = Sw92AsymmetricMax2Status::indeterminate;
@@ -421,9 +533,10 @@ inline bool sw92_max2_single_phase_evidence_consistent(
         return result;
     }
     result.pair_minus_lower_feed_reduced_gibbs =
-        pair->reduced_gibbs - result.lower_feed_reduced_gibbs;
+        result.selected_pair_reduced_gibbs - result.lower_feed_reduced_gibbs;
     result.pair_feed_gibbs_combined_guard =
-        pair->gibbs_roundoff_guard + result.lower_feed_gibbs_roundoff_guard;
+        result.selected_pair_gibbs_roundoff_guard +
+        result.lower_feed_gibbs_roundoff_guard;
     if (!std::isfinite(result.pair_minus_lower_feed_reduced_gibbs) ||
         !std::isfinite(result.pair_feed_gibbs_combined_guard)) {
         result.status = Sw92AsymmetricMax2Status::indeterminate;
@@ -438,7 +551,8 @@ inline bool sw92_max2_single_phase_evidence_consistent(
         return result;
     }
 
-    result.common_reference_allowance = 0.5 * pair->chemical_potential_norm;
+    result.common_reference_allowance =
+        0.5 * continuous->chemical_potential_norm;
     if (!std::isfinite(result.common_reference_allowance) ||
         result.common_reference_allowance < 0.0) {
         result.status = Sw92AsymmetricMax2Status::indeterminate;
@@ -476,7 +590,7 @@ inline bool sw92_max2_single_phase_evidence_consistent(
 
     result.final_stability = test_sw92_pt_asymmetric_stability_against(
         result.pressure_pa, result.temperature_k, result.feed,
-        pair->common_log_activity, model,
+        continuous->common_log_activity, model,
         result.nacl_molality_mol_per_kg_water, effective, required_starts);
 
     switch (result.final_stability->status) {
