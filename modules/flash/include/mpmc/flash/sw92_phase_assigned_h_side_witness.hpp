@@ -263,6 +263,53 @@ inline double sw92_phase_assigned_h_side_effective_tpd_tolerance(
     return effective;
 }
 
+/// Mirror the generic stability start/storage quota before C2a1 duplicates any
+/// caller-provided start vector. The generic driver remains the authoritative
+/// validator and repeats these checks before property evaluation.
+inline void sw92_phase_assigned_h_side_preflight_starts(
+    std::span<const double> feed, const StabilityOptions& options,
+    std::span<const std::vector<double>> extra_starts) {
+    const std::size_t n = feed.size();
+    if (n == 0U || n > options.max_components) {
+        throw std::length_error(
+            "SW92 phase-assigned H-side witness: component quota exceeded or empty feed");
+    }
+    std::size_t active = 0U;
+    for (double value : feed) { if (value > 0.0) { ++active; } }
+    if (active > std::numeric_limits<std::size_t>::max() - 2U ||
+        extra_starts.size() > std::numeric_limits<std::size_t>::max() - 2U) {
+        throw std::length_error(
+            "SW92 phase-assigned H-side witness: start-count overflow");
+    }
+    const std::size_t generated = options.automatic_starts
+        ? (active == 1U ? 1U : active + 2U) : 0U;
+    const std::size_t supplied = extra_starts.size() + 2U; // retained W and H
+    if (generated > options.max_starts || supplied > options.max_starts - generated) {
+        throw std::length_error(
+            "SW92 phase-assigned H-side witness: start quota exceeded");
+    }
+    const std::size_t count = generated + supplied;
+    if (count > options.max_start_entries / n ||
+        count > std::vector<StabilityTrial>{}.max_size()) {
+        throw std::length_error(
+            "SW92 phase-assigned H-side witness: start storage quota exceeded");
+    }
+    for (const auto& start : extra_starts) {
+        if (start.size() != n) {
+            throw std::invalid_argument(
+                "SW92 phase-assigned H-side witness: start dimension mismatch");
+        }
+        (void)stability_check_composition(start);
+        for (std::size_t i = 0; i < n; ++i) {
+            if ((feed[i] == 0.0 && start[i] != 0.0) ||
+                (feed[i] > 0.0 && start[i] == 0.0)) {
+                throw std::domain_error(
+                    "SW92 phase-assigned H-side witness: starts must match active feed support");
+            }
+        }
+    }
+}
+
 inline Sw92PhaseAssignedNaNegativeWitness sw92_phase_assigned_classify_na_witness(
     std::size_t trial_index, const TpdPoint& point,
     std::span<const double> retained_h,
@@ -344,6 +391,10 @@ test_sw92_phase_assigned_h_side_na_witness(
             "Profile-C C2a1 requires an admissible C1 W(AQ)+H(NA) candidate";
         return result;
     }
+    if (source.feed.empty() || source.feed.size() > options.stability.max_components) {
+        throw std::length_error(
+            "SW92 phase-assigned H-side witness: component quota exceeded or empty feed");
+    }
 
     const auto evidence = detail::sw92_phase_assigned_revalidate_c1_for_h_side_witness(
         source, model);
@@ -353,6 +404,9 @@ test_sw92_phase_assigned_h_side_na_witness(
             "retained C1 state failed independent role/equilibrium/material-balance revalidation";
         return result;
     }
+    detail::sw92_phase_assigned_h_side_preflight_starts(
+        source.feed, options.stability, extra_starts);
+
     result.common_log_activity = evidence->common_log_activity;
     result.common_reference_allowance = evidence->common_reference_allowance;
     result.retained_w_water_fraction = evidence->retained_w_water_fraction;
@@ -362,10 +416,6 @@ test_sw92_phase_assigned_h_side_na_witness(
         detail::sw92_phase_assigned_h_side_effective_tpd_tolerance(
             result.base_tpd_tolerance, result.common_reference_allowance);
 
-    if (extra_starts.size() > std::numeric_limits<std::size_t>::max() - 2U) {
-        throw std::length_error(
-            "SW92 phase-assigned H-side witness: start-count overflow");
-    }
     std::vector<std::vector<double>> starts;
     starts.reserve(extra_starts.size() + 2U);
     const auto& c1 = *source.point;
