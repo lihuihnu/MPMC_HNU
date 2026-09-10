@@ -147,6 +147,13 @@ constexpr VleGolden golden[] = {
      0.90471309368999485042413868025225052443637955189182L}
 };
 
+Vec reference_log_k(const VleGolden& reference) {
+    const double x = static_cast<double>(reference.liquid_gas);
+    const double y = static_cast<double>(reference.vapor_gas);
+    return {std::log(y) - std::log(x),
+            std::log(1.0 - y) - std::log(1.0 - x)};
+}
+
 void check_accepted(const fl::Sw92FamilyPtSplitResult& result,
                     const VleGolden& reference, bool reverse = false) {
     const auto& solution = result.solution;
@@ -181,6 +188,7 @@ void check_accepted(const fl::Sw92FamilyPtSplitResult& result,
                 result.nacl_molality_mol_per_kg_water == reference.molality &&
                 result.model_profile == th::sw92_corrected_profile &&
                 result.phase_convention == th::sw92_pt_convention &&
+                result.equilibrium_algorithm == fl::sw92_family_vle_algorithm &&
                 result.component_ids.size() == 2,
             "one-family VLE metadata changed");
 }
@@ -245,6 +253,60 @@ void permutation() {
          second.solution.candidate()->fractions.vapor_fraction, 1e-10L, 1e-12L);
 }
 
+void phase_disappearance() {
+    const auto& reference = golden[0];
+    const auto model = binary_model(*reference.gas);
+    fl::Sw92FamilyVleEvaluator evaluator(
+        model, reference.molality, reference.family);
+
+    fl::PtSplitIterationOptions options;
+    const double target_vapor_fraction = 0.75 * options.minimum_phase_fraction;
+    const double x = static_cast<double>(reference.liquid_gas);
+    const double y = static_cast<double>(reference.vapor_gas);
+    const double feed_gas = std::fma(target_vapor_fraction, y - x, x);
+    const Vec feed{feed_gas, 1.0 - feed_gas};
+    const auto attempt = fl::iterate_pt_split(
+        reference.pressure_pa, reference.temperature_k, feed,
+        reference_log_k(reference), evaluator, options);
+
+    require(attempt.status == fl::PtSplitAttemptStatus::phase_disappearance &&
+                attempt.point.has_value(),
+            "small same-family phase was not isolated to disappearance semantics");
+    const auto& point = *attempt.point;
+    require(point.fugacity_norm <= options.fugacity_tolerance &&
+                point.fractions.mass_absolute <= options.mass_absolute_tolerance &&
+                point.fractions.mass_relative <= options.mass_relative_tolerance,
+            "phase disappearance was reported before equilibrium/balance tolerances");
+    require(point.fractions.vapor_fraction > 0.0 &&
+                point.fractions.vapor_fraction <= options.minimum_phase_fraction,
+            "phase disappearance gate used the wrong phase amount");
+    require(point.liquid.z < point.vapor.z,
+            "phase disappearance changed requested density roles");
+
+    fl::PtSplitOptions full_options;
+    full_options.iteration.minimum_phase_fraction = 0.3;
+    const auto unresolved = fl::solve_sw92_pt_family_vle(
+        reference.pressure_pa, reference.temperature_k,
+        Vec{reference.feed_gas, 1.0 - reference.feed_gas}, evaluator, full_options);
+    bool saw_disappearance = false;
+    for (const auto& full_attempt : unresolved.solution.attempts) {
+        if (full_attempt.status != fl::PtSplitAttemptStatus::phase_disappearance) { continue; }
+        require(full_attempt.point.has_value() &&
+                    full_attempt.point->fugacity_norm <= full_options.iteration.fugacity_tolerance &&
+                    full_attempt.point->fractions.mass_absolute <=
+                        full_options.iteration.mass_absolute_tolerance &&
+                    full_attempt.point->fractions.mass_relative <=
+                        full_options.iteration.mass_relative_tolerance,
+                "full VLE disappearance bypassed equation/balance checks");
+        saw_disappearance = true;
+    }
+    require(saw_disappearance &&
+                unresolved.solution.status == fl::PtSplitStatus::indeterminate &&
+                unresolved.solution.candidate() == nullptr &&
+                !unresolved.solution.final_stability.has_value(),
+            "disappearing phase was falsely published as an accepted phase set");
+}
+
 void contracts_and_failures() {
     const auto model = binary_model(co2);
     fl::Sw92FamilyVleEvaluator evaluator(
@@ -283,6 +345,7 @@ constexpr Test cases[] = {
     {"co2_nonaqueous_vle", co2_nonaqueous_vle},
     {"methane_aqueous_vle", methane_aqueous_vle},
     {"permutation", permutation},
+    {"phase_disappearance", phase_disappearance},
     {"contracts_and_failures", contracts_and_failures},
     {"headers", headers}};
 
