@@ -114,9 +114,9 @@ enum class Sw92AsymmetricFixedPairStatus {
     line_search_failed
 };
 
-/// Gate 3B.1 fixed-family-pair result. `converged` means the pair equations,
-/// balance, phase distinction, root smoothness and lower-envelope family
-/// assignment checks passed. It is NOT an accepted overall equilibrium state.
+/// Gate 3B.1 fixed-family-pair result. `converged` additionally means that the
+/// equation-converged point passed phase distinction, root smoothness and both
+/// lower-envelope family-assignment checks. It is NOT an accepted overall state.
 struct Sw92AsymmetricFixedPairResult {
     Sw92AsymmetricFixedPairStatus status{
         Sw92AsymmetricFixedPairStatus::rr_failure};
@@ -148,8 +148,19 @@ struct Sw92AsymmetricFixedPairResult {
     std::optional<StabilityPropertyIssue> property_issue;
     std::string diagnostic;
 
+    /// Equation convergence is independent of the later family-assignment gate.
+    /// Dominated/tied pairs intentionally retain equation-converged points.
     [[nodiscard]] bool equations_converged() const noexcept {
-        return status == Sw92AsymmetricFixedPairStatus::converged && point.has_value();
+        return point.has_value() &&
+               point->chemical_potential_norm <= options.chemical_potential_tolerance &&
+               point->mass_absolute <= options.mass_absolute_tolerance &&
+               point->mass_relative <= options.mass_relative_tolerance;
+    }
+
+    /// Admissible only within this one fixed-family-pair primitive. Overall
+    /// Gate-3B candidate selection/final phase-set stability are still absent.
+    [[nodiscard]] bool candidate_admissible() const noexcept {
+        return status == Sw92AsymmetricFixedPairStatus::converged && equations_converged();
     }
 };
 
@@ -542,15 +553,15 @@ inline Sw92AsymmetricFixedPairStatus sw92_fixed_pair_rr_status(
                 return result;
             }
 
-            const auto assignment_failure = [&](const Sw92AsymmetricFamilyAssignmentCheck& check) {
+            const auto assignment_failure = [](const Sw92AsymmetricFamilyAssignmentCheck& check) {
                 return check.status == Sw92AsymmetricFamilyAssignmentStatus::property_failure;
             };
-            const auto assignment_nonsmooth = [&](const Sw92AsymmetricFamilyAssignmentCheck& check) {
+            const auto assignment_nonsmooth = [](const Sw92AsymmetricFamilyAssignmentCheck& check) {
                 return check.status == Sw92AsymmetricFamilyAssignmentStatus::family_tie ||
                        check.status ==
                            Sw92AsymmetricFamilyAssignmentStatus::opposite_family_nonsmooth;
             };
-            const auto assignment_dominated = [&](const Sw92AsymmetricFamilyAssignmentCheck& check) {
+            const auto assignment_dominated = [](const Sw92AsymmetricFamilyAssignmentCheck& check) {
                 return check.status ==
                     Sw92AsymmetricFamilyAssignmentStatus::assigned_dominated;
             };
