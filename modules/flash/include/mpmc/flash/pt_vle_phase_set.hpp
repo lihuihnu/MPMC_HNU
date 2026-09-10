@@ -12,10 +12,10 @@ namespace mpmc::flash {
 namespace detail {
 
 [[nodiscard]] inline PtCandidatePhase project_vle_phase(
-    double mole_fraction, const std::vector<double>& composition,
+    double mole_phase_fraction, const std::vector<double>& composition,
     const PtSplitPhase& phase) {
     PtCandidatePhase projected;
-    projected.mole_fraction = mole_fraction;
+    projected.mole_phase_fraction = mole_phase_fraction;
     projected.composition = composition;
     projected.activity = phase.activity;
     projected.compressibility_factor = phase.z;
@@ -31,6 +31,9 @@ namespace detail {
     PtCandidatePhaseSet projected;
     projected.phases.reserve(2);
     const double vapor_fraction = candidate->fractions.vapor_fraction;
+    // Legacy VLE stores beta_V explicitly and defines beta_L = 1-beta_V.
+    // The projection performs only that contract-prescribed complement; it does
+    // not rerun thermodynamic properties, RR, stability, or equilibrium.
     projected.phases.push_back(project_vle_phase(
         1.0 - vapor_fraction, candidate->fractions.liquid, candidate->liquid));
     projected.phases.push_back(project_vle_phase(
@@ -40,9 +43,9 @@ namespace detail {
 
 } // namespace detail
 
-// Lossless structural projection of the existing VLE result into the generic
-// phase-set contract. It performs no provider calls, root solves, normalization,
-// phase relabeling, or floating-point recomputation of the accepted pair.
+// Structural projection of the existing VLE result into the generic phase-set
+// contract. It performs no provider calls, root solves, normalization, phase
+// relabeling, Rachford-Rice solve, stability search, or equilibrium iteration.
 [[nodiscard]] inline PtPhaseSetResult project_pt_vle_phase_set(
     const PtSplitResult& source) {
     PtPhaseSetResult result;
@@ -62,7 +65,7 @@ namespace detail {
             return result;
         }
         PtCandidatePhase phase;
-        phase.mole_fraction = 1.0;
+        phase.mole_phase_fraction = 1.0;
         phase.composition = source.initial_stability.feed;
         phase.activity = *source.initial_stability.reference;
         // Generic stability providers do not expose a compressibility factor.

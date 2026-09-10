@@ -51,7 +51,7 @@ As everywhere in the current flash module, `global_stability_proven` remains fal
 
 `PtCandidatePhase` contains:
 
-- `mole_fraction`: mole phase fraction, never pore-volume saturation;
+- `mole_phase_fraction`: mole phase fraction, never pore-volume saturation;
 - `composition`: ordered component mole fractions;
 - `activity`: `ln(phi)`, provider-local branch diagnostic, and smoothness flag;
 - optional `compressibility_factor`.
@@ -64,7 +64,7 @@ The phase-vector index and `activity.branch` are **diagnostics, not universal ph
 
 `candidate_phase_set` may be present even when the status is `phase_set_unstable` or `indeterminate`. This preserves a converged pair for diagnostics without presenting it as accepted.
 
-`accepted_phase_set()` returns a pointer only when status is `accepted`; otherwise it returns null. The rvalue overload is deleted to prevent dangling pointers.
+`accepted_phase_set()` returns a pointer only when status is `accepted`, the candidate set is present and nonempty, and its phase count does not exceed `capability.maximum_phase_count`; otherwise it returns null. This is only a structural publication guard, not a thermodynamic validator. The rvalue overload is deleted to prevent dangling pointers.
 
 For legacy VLE projection:
 
@@ -77,9 +77,9 @@ For legacy VLE projection:
 
 Malformed manually constructed legacy results are handled conservatively: an accepted legacy status without the required reference/candidate is projected as `indeterminate`, never as fabricated success.
 
-## No numerical change in the compatibility projection
+## No thermodynamic recomputation in the compatibility projection
 
-`project_pt_vle_phase_set` performs no EOS/provider call, no root solve, no Rachford–Rice solve, no normalization, no phase relabeling, and no floating-point recomputation of the two-phase candidate. The legacy pair's fractions, compositions, activity data and Z values are copied exactly.
+`project_pt_vle_phase_set` performs no EOS/provider call, no root solve, no Rachford–Rice solve, no normalization, no phase relabeling, no stability search, and no equilibrium iteration. The legacy compositions, activity data and Z values are copied directly. Legacy VLE stores only the vapor mole phase fraction explicitly, so the projected first-phase fraction is the contract-defined complement `1 - beta_V`; this is structural conversion, not a new flash calculation.
 
 The established PR76 metadata (`dataset_id`, `revision`, ordered component IDs, model profile, PT convention and root options) remains outside the model-independent payload and is retained by `Pr76PtPhaseSetResult`.
 

@@ -67,7 +67,7 @@ void accepted_single() {
     require(result.candidate_phase_set && result.accepted_phase_set(),
             "accepted single phase payload missing");
     const auto& phase = result.accepted_phase_set()->phases.at(0);
-    require(phase.mole_fraction == 1.0, "single phase fraction changed");
+    require(phase.mole_phase_fraction == 1.0, "single phase fraction changed");
     require(phase.composition == source.initial_stability.feed,
             "single phase composition changed");
     require(phase.activity.ln_phi == source.initial_stability.reference->ln_phi &&
@@ -95,9 +95,9 @@ void accepted_two_exact() {
 
     const auto& phases = result.accepted_phase_set()->phases;
     require(phases.size() == 2, "accepted pair size");
-    require(phases[0].mole_fraction == 1.0 - legacy->fractions.vapor_fraction &&
-                phases[1].mole_fraction == legacy->fractions.vapor_fraction,
-            "legacy phase fractions recomputed differently");
+    require(phases[0].mole_phase_fraction == 1.0 - legacy->fractions.vapor_fraction &&
+                phases[1].mole_phase_fraction == legacy->fractions.vapor_fraction,
+            "legacy phase-fraction mapping changed");
     require(phases[0].composition == legacy->fractions.liquid &&
                 phases[1].composition == legacy->fractions.vapor,
             "legacy compositions changed");
@@ -161,6 +161,16 @@ void malformed_success_is_not_fabricated() {
     require(missing_pair.status == fl::PtPhaseSetStatus::indeterminate &&
                 !missing_pair.accepted_phase_set(),
             "missing two-phase candidate became accepted");
+
+    fl::PtPhaseSetResult generic;
+    generic.status = fl::PtPhaseSetStatus::accepted;
+    generic.capability.maximum_phase_count = 2;
+    generic.candidate_phase_set.emplace();
+    require(!generic.accepted_phase_set() && generic.accepted_phase_count() == 0,
+            "empty generic phase set exposed as accepted");
+    generic.candidate_phase_set->phases.resize(3);
+    require(!generic.accepted_phase_set() && generic.accepted_phase_count() == 0,
+            "over-capability generic phase set exposed as accepted");
 }
 
 void pr76_metadata_projection() {
