@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 bool sw92_asymmetric_fixed_pair_header();
@@ -179,8 +180,8 @@ void check_point(const fl::Sw92AsymmetricFixedPairResult& result,
 void aq_aq_fixed_pair() {
     const auto result = solve_reference_pair(0);
     require(result.status == fl::Sw92AsymmetricFixedPairStatus::converged &&
-                result.equations_converged(),
-            "AQ+AQ fixed-pair primitive did not converge");
+                result.equations_converged() && result.candidate_admissible(),
+            "AQ+AQ fixed-pair primitive did not converge/admit its candidate");
     check_point(result, pair_golden[0]);
     require(result.point->phase0_assignment.status ==
                 fl::Sw92AsymmetricFamilyAssignmentStatus::assigned_lower &&
@@ -195,8 +196,8 @@ void aq_na_fixed_pair_dominated() {
     const auto result = solve_reference_pair(1);
     require(result.status ==
                 fl::Sw92AsymmetricFixedPairStatus::family_assignment_dominated &&
-                !result.equations_converged(),
-            "AQ+NA dominated assignment was incorrectly promoted");
+                result.equations_converged() && !result.candidate_admissible(),
+            "AQ+NA equation convergence/dominance semantics changed");
     check_point(result, pair_golden[1]);
     require(result.point->phase0_assignment.status ==
                 fl::Sw92AsymmetricFamilyAssignmentStatus::assigned_lower &&
@@ -208,8 +209,9 @@ void aq_na_fixed_pair_dominated() {
 void na_na_fixed_pair_dominated() {
     const auto result = solve_reference_pair(2);
     require(result.status ==
-                fl::Sw92AsymmetricFixedPairStatus::family_assignment_dominated,
-            "NA+NA dominated assignment was incorrectly promoted");
+                fl::Sw92AsymmetricFixedPairStatus::family_assignment_dominated &&
+                result.equations_converged() && !result.candidate_admissible(),
+            "NA+NA equation convergence/dominance semantics changed");
     check_point(result, pair_golden[2]);
     require(result.point->phase0_assignment.status ==
                 fl::Sw92AsymmetricFamilyAssignmentStatus::assigned_dominated &&
@@ -251,8 +253,9 @@ void family_tie_blocks_candidate() {
         model, 0.0);
     require(result.status ==
                 fl::Sw92AsymmetricFixedPairStatus::family_assignment_nonsmooth &&
-                result.point,
-            "exact AQ/NA family tie did not block fixed-pair candidate");
+                result.point && result.equations_converged() &&
+                !result.candidate_admissible(),
+            "exact AQ/NA family tie did not preserve equation convergence/block candidate");
     require(result.point->phase0_assignment.status ==
                 fl::Sw92AsymmetricFamilyAssignmentStatus::family_tie &&
                 result.point->phase1_assignment.status ==
@@ -275,8 +278,9 @@ void phase_disappearance() {
         {th::SwPhaseFamily::aqueous, th::SwPhaseFamily::aqueous},
         model, 0.0, options);
     require(result.status == fl::Sw92AsymmetricFixedPairStatus::phase_disappearance &&
-                result.point,
-            "small fixed-pair phase was not classified as disappearance");
+                result.point && result.equations_converged() &&
+                !result.candidate_admissible(),
+            "small fixed-pair phase did not preserve equations/report disappearance");
     require(result.point->chemical_potential_norm <= options.chemical_potential_tolerance &&
                 result.point->mass_absolute <= options.mass_absolute_tolerance &&
                 result.point->mass_relative <= options.mass_relative_tolerance &&
@@ -291,7 +295,8 @@ void phase_disappearance() {
 
 void permutation() {
     const auto result = solve_reference_pair(0, true);
-    require(result.status == fl::Sw92AsymmetricFixedPairStatus::converged,
+    require(result.status == fl::Sw92AsymmetricFixedPairStatus::converged &&
+                result.candidate_admissible(),
             "component permutation changed AQ+AQ fixed-pair status");
     check_point(result, pair_golden[0], true);
     require(result.component_ids.size() == 2 &&
@@ -311,7 +316,8 @@ void resource_and_contract_failures() {
         {th::SwPhaseFamily::aqueous, th::SwPhaseFamily::aqueous},
         model, 0.0, limited);
     require(budget.status == fl::Sw92AsymmetricFixedPairStatus::evaluation_limit &&
-                budget.evaluations == 2 && budget.point,
+                budget.evaluations == 2 && budget.point &&
+                budget.equations_converged() && !budget.candidate_admissible(),
             "family-dominance property budget was not accounted explicitly");
 
     fl::Sw92AsymmetricFixedPairOptions root_limited;
@@ -322,7 +328,8 @@ void resource_and_contract_failures() {
         model, 0.0, root_limited);
     require(root_failure.status == fl::Sw92AsymmetricFixedPairStatus::property_failure &&
                 root_failure.property_issue ==
-                    fl::StabilityPropertyIssue::root_iteration_limit,
+                    fl::StabilityPropertyIssue::root_iteration_limit &&
+                !root_failure.equations_converged(),
             "fixed-pair root-budget failure semantics changed");
 
     expect_error<std::invalid_argument>([&] {
