@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr76_roots.hpp'
+      - 'modules/thermodynamics/CMakeLists.txt'
       - 'modules/thermodynamics/sw92.md'
       - 'tests/thermodynamics/sw92/**'
       - '.github/workflows/sw92.yml'
