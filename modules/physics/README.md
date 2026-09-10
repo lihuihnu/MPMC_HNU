@@ -30,6 +30,8 @@ z_{N-1} = 1 - sum(z_0, ..., z_{N-2})
 
 The primal contains the liquid/vapor mole phase fractions, phase compositions, compressibility factors and phase molar densities. The flash phase fraction is explicitly a **mole phase fraction, not pore-volume saturation**.
 
+The primal is anchored to the exact accepted flash `beta/x/y/Z` snapshot. Before publishing it, the adapter re-evaluates the selected PR76 branches with the full accepted phase compositions and requires the reproduced `Z` values to agree within a roundoff guard; the published `Z` values themselves remain the exact values stored by the accepted flash candidate. Reduced-composition reconstruction is used only in the subsequent derivative path, so a derivative-specific reduced-coordinate failure cannot silently replace or redefine an otherwise valid residual primal.
+
 The existing PR76 phase contract defines
 
 ```text
