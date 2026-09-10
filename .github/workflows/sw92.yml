@@ -1,0 +1,65 @@
+name: SW92 thermodynamics
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
+      - 'modules/thermodynamics/sw92.md'
+      - 'tests/thermodynamics/sw92/**'
+      - '.github/workflows/sw92.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sw92-thermodynamics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sw92:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure SW92 thermodynamics only
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/thermodynamics/sw92 -B build/sw92 \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_THERMO_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Compile SW92 thermodynamics tests
+        run: cmake --build build/sw92 --target mpmc_thermodynamics_sw92_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run SW92 thermodynamics tests
+        run: ctest --test-dir build/sw92 -C ${{ matrix.config }} -R '^thermo[.]sw92[.]' --verbose --no-tests=error
+      - name: Independently regenerate SW92 Decimal references
+        run: python tests/thermodynamics/sw92/reference_decimal.py
