@@ -39,6 +39,7 @@ set(cases
     accepted_single_phase
     selection_indeterminate_not_published
     final_indeterminate_not_published
+    final_negative_witness_not_published
     pair_gibbs_above_feed_not_published
     publication_structural_guard
     component_permutation
