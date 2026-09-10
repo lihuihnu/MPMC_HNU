@@ -50,6 +50,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Regenerate independent Decimal references
+        run: |
+          python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
+          python tests/flash/sw92_phase_assigned_joint/reference_c2_domain_decimal.py
+          python tests/flash/sw92_phase_assigned_h_side_witness/reference_decimal.py
+
       - name: Configure Profile-C Gate C2a1
         run: |
           config_arg=()
@@ -77,9 +83,3 @@ jobs:
         run: cmake --build build/sw92-phase-assigned-joint --target mpmc_sw92_phase_assigned_joint_tests --config ${{ matrix.config }} --parallel 2
       - name: Run affected Profile-C Gate C1
         run: ctest --test-dir build/sw92-phase-assigned-joint -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_joint[.]' --verbose --no-tests=error
-
-      - name: Regenerate independent Decimal references
-        run: |
-          python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_joint/reference_c2_domain_decimal.py
-          python tests/flash/sw92_phase_assigned_h_side_witness/reference_decimal.py
