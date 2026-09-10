@@ -79,8 +79,8 @@ constexpr GasSpec co2{"carbon-dioxide", "Carbon dioxide", th::Sw92Species::carbo
                       304.2, 73.8, 0.2273, 0.1896};
 constexpr GasSpec methane{"methane", "Methane", th::Sw92Species::hydrocarbon,
                           190.6, 46.0, 0.0108, 0.4850};
-constexpr GasSpec water{"water", "Water", th::Sw92Species::water,
-                        647.3, 221.2, 0.3434, 0.0};
+constexpr GasSpec water_spec{"water", "Water", th::Sw92Species::water,
+                             647.3, 221.2, 0.3434, 0.0};
 
 th::Sw92Phase<double> binary_model(const GasSpec& gas, bool reverse = false) {
     const auto identity = sw92_source("Table 3 component identities");
@@ -89,7 +89,7 @@ th::Sw92Phase<double> binary_model(const GasSpec& gas, bool reverse = false) {
 
     std::vector<th::Component> catalog{
         {gas.id, gas.display, th::ComponentKind::pure, identity, std::nullopt},
-        {water.id, water.display, th::ComponentKind::pure, identity, std::nullopt}};
+        {water_spec.id, water_spec.display, th::ComponentKind::pure, identity, std::nullopt}};
 
     th::Sw92ParameterInput input;
     input.model_id = std::string(th::sw92_corrected_profile);
@@ -103,17 +103,17 @@ th::Sw92Phase<double> binary_model(const GasSpec& gas, bool reverse = false) {
         sourced(gas.pc_bar * 100000.0, th::Unit::pascal, properties,
                 "bar", "bar * 100000 -> Pa"),
         sourced(gas.omega, th::Unit::dimensionless, properties)});
-    input.pure.push_back({water.id, water.species,
-        sourced(water.tc, th::Unit::kelvin, properties, "K", "identity"),
-        sourced(water.pc_bar * 100000.0, th::Unit::pascal, properties,
+    input.pure.push_back({water_spec.id, water_spec.species,
+        sourced(water_spec.tc, th::Unit::kelvin, properties, "K", "identity"),
+        sourced(water_spec.pc_bar * 100000.0, th::Unit::pascal, properties,
                 "bar", "bar * 100000 -> Pa"),
-        sourced(water.omega, th::Unit::dimensionless, properties)});
+        sourced(water_spec.omega, th::Unit::dimensionless, properties)});
     input.water_binary.push_back({gas.id, th::Sw92NonAqueousWaterRule::constant,
                                   sourced(gas.nonaqueous_kij, th::Unit::dimensionless, na_pair)});
 
     const std::vector<std::string> order = reverse
-        ? std::vector<std::string>{water.id, gas.id}
-        : std::vector<std::string>{gas.id, water.id};
+        ? std::vector<std::string>{water_spec.id, gas.id}
+        : std::vector<std::string>{gas.id, water_spec.id};
     return th::Sw92Phase<double>::from_parameters(
         th::Sw92ParameterSet::create(catalog, order, input));
 }
@@ -134,17 +134,17 @@ struct VleGolden {
 
 constexpr VleGolden golden[] = {
     {&co2, th::SwPhaseFamily::nonaqueous, 3.0e6, 340.0, 0.0, 0.7,
-     0.000284148400815315029223095498982335673842538744L,
-     0.988725814519670096671192287725749616677997269L,
-     0.707897972721687782431207265035175917208561212L,
-     0.0231907380927525026099073080035L,
-     0.886568486878578795928863543918L},
+     0.00028414840081531502922309549898233567384253874407421L,
+     0.98872581451967009667119228772574961667799726909104L,
+     0.70789797272168778243120726503517591720856121160093L,
+     0.023190738092752502609907308003515799701599296777958L,
+     0.88656848687857879592886354391787579800243541664022L},
     {&methane, th::SwPhaseFamily::aqueous, 1.0e7, 350.0, 1.0, 0.5,
-     0.000906872773851126638054949435435153986776308908L,
-     0.990434503404630856446428419494771741626369134L,
-     0.504375129886973712103194630205147652712593350L,
-     0.0755670459371378192055074638222L,
-     0.904713093689994850424138680252L}
+     0.00090687277385112663805494943543515398677630890790447L,
+     0.99043450340463085644642841949477174162636913432131L,
+     0.50437512988697371210319463020514765271259334999789L,
+     0.075567045937137819205507463822231422767513833607575L,
+     0.90471309368999485042413868025225052443637955189182L}
 };
 
 void check_accepted(const fl::Sw92FamilyPtSplitResult& result,
