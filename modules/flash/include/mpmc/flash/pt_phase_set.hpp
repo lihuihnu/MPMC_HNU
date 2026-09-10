@@ -20,7 +20,7 @@ struct PtPhaseSetCapability {
 // One candidate phase instance. Vector position and provider branch are
 // diagnostics only; neither is a universal liquid/vapor/aqueous phase identity.
 struct PtCandidatePhase {
-    double mole_fraction{};
+    double mole_phase_fraction{};
     std::vector<double> composition;
     StabilityPhase activity;
     std::optional<double> compressibility_factor;
@@ -50,10 +50,18 @@ struct PtPhaseSetResult {
     bool global_stability_proven{false};
     std::string diagnostic;
 
+    // Structural publication guard only. Thermodynamic validity remains the
+    // producer's responsibility; this prevents an obviously malformed empty or
+    // over-capability set from being exposed through the accepted helper.
     [[nodiscard]] const PtCandidatePhaseSet* accepted_phase_set() const & noexcept {
-        return status == PtPhaseSetStatus::accepted && candidate_phase_set
-            ? &*candidate_phase_set
-            : nullptr;
+        if (status != PtPhaseSetStatus::accepted || !candidate_phase_set) {
+            return nullptr;
+        }
+        const std::size_t count = candidate_phase_set->phases.size();
+        if (count == 0 || count > capability.maximum_phase_count) {
+            return nullptr;
+        }
+        return &*candidate_phase_set;
     }
     const PtCandidatePhaseSet* accepted_phase_set() const && = delete;
 
