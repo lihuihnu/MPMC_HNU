@@ -1,0 +1,67 @@
+name: SW92 one-family VLE
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_split.hpp'
+      - 'modules/flash/CMakeLists.txt'
+      - 'modules/thermodynamics/**/*.hpp'
+      - 'modules/thermodynamics/**/CMakeLists.txt'
+      - 'tests/flash/sw92_family_vle/**'
+      - '.github/workflows/sw92_family_vle.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sw92-family-vle-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  family-vle:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure only SW92 one-family VLE integration
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_family_vle -B build/sw92-family-vle \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_FAMILY_VLE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Compile only SW92 one-family VLE regression
+        run: cmake --build build/sw92-family-vle --target mpmc_sw92_family_vle_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run SW92 one-family VLE increment
+        run: ctest --test-dir build/sw92-family-vle -C ${{ matrix.config }} -R '^flash[.]sw92_family_vle[.]' --verbose --no-tests=error
+      - name: Regenerate independent Decimal(80) one-family VLE references
+        run: python tests/flash/sw92_family_vle/reference_decimal.py
