@@ -209,6 +209,26 @@ void check_reference(
     }
 }
 
+void check_accepted_snapshot(
+    const fl::Pr76PtSplitResult& split,
+    const ph::ThermodynamicClosureSnapshot& closure) {
+    require(closure.primal.has_value(), "accepted closure missing primal");
+    const auto* candidate = split.solution.candidate();
+    require(candidate != nullptr, "accepted split missing candidate");
+    const auto& primal = *closure.primal;
+    require(primal.liquid.composition == candidate->fractions.liquid &&
+                primal.vapor.composition == candidate->fractions.vapor,
+            "closure composition is not the accepted flash snapshot");
+    require(primal.liquid.compressibility_factor == candidate->liquid.z &&
+                primal.vapor.compressibility_factor == candidate->vapor.z,
+            "closure Z is not the accepted flash snapshot");
+    require(primal.liquid.mole_phase_fraction ==
+                1.0 - candidate->fractions.vapor_fraction &&
+                primal.vapor.mole_phase_fraction ==
+                    candidate->fractions.vapor_fraction,
+            "closure phase fraction is not the accepted flash snapshot");
+}
+
 void binary_reference() {
     const auto model = binary_model(false);
     fl::Pr76VleEvaluator evaluator(model);
@@ -221,9 +241,7 @@ void binary_reference() {
         closure_reference::binary_vapor_z_gradient,
         closure_reference::binary_liquid_density_gradient,
         closure_reference::binary_vapor_density_gradient);
-    require(std::abs(closure.primal->vapor.mole_phase_fraction -
-                     split.solution.candidate()->fractions.vapor_fraction) < 1e-14,
-            "vapor mole phase fraction changed");
+    check_accepted_snapshot(split, closure);
 }
 
 void ternary_reference() {
@@ -241,6 +259,7 @@ void ternary_reference() {
         closure_reference::ternary_vapor_z_gradient,
         closure_reference::ternary_liquid_density_gradient,
         closure_reference::ternary_vapor_density_gradient);
+    check_accepted_snapshot(split, closure);
 }
 
 void unavailable_policy() {
