@@ -2,7 +2,7 @@
 
 面向多相、多组分计算的模块化高性能计算平台，采用可移植的 C++ 计算后端与独立 Web 前端。
 
-> **当前状态：AD、PR76 物性与汽液 PT 闪蒸基线。** 已提供独立的 C++20 `mpmc::ad::Dual<T, N>`、常见初等函数、`value_and_jacobian`、分块 `value_and_jacobian_runtime<K>`、独立增量测试入口与官方 runner 工作流；功能边界和使用方法见 [AD 模块说明](modules/ad/README.md)。已新增[有序组分与 PR76 数据契约](modules/thermodynamics/README.md)，并提供经原文核验的[纯组分 a(T)、b 数值核](modules/thermodynamics/pr76_pure.md)及温度导数增量测试；已增加[运行期经典混合参数](modules/thermodynamics/pr76_mixture.md)，区分完整/约化组成导数并验证顺序与变维数；已增加 [PT 候选相性质核](modules/thermodynamics/pr76_phase.md)，给定 p、T、相组成求可用 Z 根与 ln(phi)，含局部隐式导数和退化诊断；已实现 [TPD 相稳定性搜索](modules/flash/README.md) 与 [汽液 PT 相分裂基线](modules/flash/pt_split.md)，给定 p、T、总体摩尔组成 z，联合检查物料守恒与逸度平衡，并对候选两相作共同切平面复核；包含边界回归、TPD 回溯停滞修复和[未确定原因摘要](modules/flash/diagnostic_summary.md)。有限搜索不是全局稳定性认证；三相、含水模式、SW/CPA 及闪蒸解灵敏度尚未实现。已有软件与模型数值回归不等于实验验证或性能达标；测试结果以具体提交的 GitHub Actions 日志为准。开发约束见 [AGENTS.md](AGENTS.md)。
+> **当前状态：AD、PR76 物性、汽液 PT 闪蒸/隐式灵敏度与首个 physics thermodynamic closure。** 已提供独立的 C++20 `mpmc::ad::Dual<T, N>`、常见初等函数、`value_and_jacobian`、分块 `value_and_jacobian_runtime<K>`、独立增量测试入口与官方 runner 工作流；功能边界和使用方法见 [AD 模块说明](modules/ad/README.md)。已新增[有序组分与 PR76 数据契约](modules/thermodynamics/README.md)，并提供经原文核验的[纯组分 a(T)、b 数值核](modules/thermodynamics/pr76_pure.md)及温度导数增量测试；已增加[运行期经典混合参数](modules/thermodynamics/pr76_mixture.md)，区分完整/约化组成导数并验证顺序与变维数；已增加 [PT 候选相性质核](modules/thermodynamics/pr76_phase.md)，给定 p、T、相组成求可用 Z 根与 ln(phi)，含局部隐式导数和退化诊断；已实现 [TPD 相稳定性搜索](modules/flash/README.md) 与 [汽液 PT 相分裂基线](modules/flash/pt_split.md)，给定 p、T、总体摩尔组成 z，联合检查物料守恒与逸度平衡，并对候选两相作共同切平面复核；包含边界回归、TPD 回溯停滞修复和[未确定原因摘要](modules/flash/diagnostic_summary.md)。已增加[内部两相收敛解隐式灵敏度](modules/flash/pt_sensitivity.md)，并由首个 [physics thermodynamic-closure consumption contract](modules/physics/README.md) 将已接受两相状态映射为相摩尔分率、组成、Z、摩尔密度及其局部线性化，同时把 residual 可用性与 Newton 基点可用性分开。有限搜索不是全局稳定性认证；三相、含水模式、SW/CPA、单相 closure、网格、离散与全局求解器尚未实现。已有软件与模型数值回归不等于实验验证或性能达标；测试结果以具体提交的 GitHub Actions 日志为准。开发约束见 [AGENTS.md](AGENTS.md)。
 
 ## 1. 项目目标与基本原则
 
@@ -18,8 +18,8 @@
 
 | 层次 | 初始选择 | 边界与理由 |
 | --- | --- | --- |
-| 计算核心 | C++20，标准库优先 | AD 算术和初等函数已实现，且只依赖标准库；已增加 PR76 纯组分、经典混合系数、PT 候选相性质核及 C++20/double 汽液 PT 闪蒸基线，其余计算能力按路线开发；不将 GPU、MPI 或专有指令集作为基础依赖。 |
-| 构建与测试入口 | CMake 3.21+、CMake Presets、CTest | 已提供独立 `mpmc::ad`、`mpmc::thermodynamics`、`mpmc::flash` 目标及各自增量测试入口；汽液 PT 基线已有独立集成测试，三相和含水扩展待开发。[E1] |
+| 计算核心 | C++20，标准库优先 | AD 算术和初等函数已实现，且只依赖标准库；已增加 PR76 纯组分、经典混合系数、PT 候选相性质核、C++20/double 汽液 PT 闪蒸、内部两相收敛解灵敏度及最小 physics thermodynamic closure，其余计算能力按路线开发；不将 GPU、MPI 或专有指令集作为基础依赖。 |
+| 构建与测试入口 | CMake 3.21+、CMake Presets、CTest | 已提供独立 `mpmc::ad`、`mpmc::thermodynamics`、`mpmc::flash`、opt-in `mpmc::flash_sensitivity` 与 `mpmc::physics` 目标及对应增量测试入口；汽液 PT、灵敏度和 physics closure 均有独立验证，三相和含水扩展待开发。[E1] |
 | 前端 | React + TypeScript + Vite 单页应用 | 前后端独立开发与部署；不为计算平台默认引入 SSR 或另一套服务端业务逻辑。[E2] |
 | 服务通信 | Protocol Buffers + gRPC；浏览器通过 gRPC-Web 适配层接入 | 契约先行、消息版本化；传输对象与计算核心类型分离。[E3][E4] |
 | 大体量结果传输 | 独立 HTTP 二进制分块通道 | 网格、场变量不默认转为 JSON 数组或 Base64；支持有界缓冲、按需读取和校验。具体格式在结果模块开发时确定。 |
@@ -34,7 +34,7 @@
 
 ## 3. 模块架构与依赖方向
 
-下表描述目标职责；**当前 AD 已有计算代码，`modules/thermodynamics` 已有数据契约、PR76 纯组分、运行期混合 a/b 及 PT 候选相性质核，`modules/flash` 已有有限多初值相稳定性搜索、汽液 PT 相分裂、最终共同切平面复核与未确定诊断，其余模块尚未创建**。只在对应增量需要时创建文件与构建目标，不预生成空模块、占位实现或插件框架。
+下表描述目标职责；**当前 AD 已有计算代码，`modules/thermodynamics` 已有数据契约、PR76 纯组分、运行期混合 a/b 及 PT 候选相性质核，`modules/flash` 已有有限多初值相稳定性搜索、汽液 PT 相分裂、最终共同切平面复核、未确定诊断与已接受内部两相收敛解隐式灵敏度，`modules/physics` 已有最小 PR76 thermodynamic-closure consumption contract；其余模块尚未创建**。当前 physics 只消费已接受内部两相状态并提供相摩尔分率、组成、Z、摩尔密度及局部线性化，不等于已实现守恒方程、flux、饱和度、网格、离散或求解器。只在对应增量需要时创建文件与构建目标，不预生成空模块、占位实现或插件框架。
 
 | 模块 | 职责 |
 | --- | --- |
@@ -69,7 +69,7 @@
 
 ## 5. 热力学模型与科学边界
 
-当前已实现的[PR76 数据契约](modules/thermodynamics/README.md)按稳定组分 ID 绑定参数并形成运行期有序快照；公共来源、单位与身份层供后续 SW/CPA 复用，不将 PR 的常数对称 kij 规则强加给它们。已增加纯组分、经典混合 a/b 与 [PT 候选相性质](modules/thermodynamics/pr76_phase.md)，支持 Z、ln(phi) 和简单根分支的局部导数；根数不等于相数。在此基础上已实现 [TPD 相稳定性搜索](modules/flash/README.md) 和 [PR76 汽液 PT 基线](modules/flash/pt_split.md)，联合验收守恒、逸度与最终相集合的有限稳定性搜索结果；不提供全局认证，也不等于已实现三相或含水闪蒸。
+当前已实现的[PR76 数据契约](modules/thermodynamics/README.md)按稳定组分 ID 绑定参数并形成运行期有序快照；公共来源、单位与身份层供后续 SW/CPA 复用，不将 PR 的常数对称 kij 规则强加给它们。已增加纯组分、经典混合 a/b 与 [PT 候选相性质](modules/thermodynamics/pr76_phase.md)，支持 Z、ln(phi) 和简单根分支的局部导数；根数不等于相数。在此基础上已实现 [TPD 相稳定性搜索](modules/flash/README.md)、[PR76 汽液 PT 基线](modules/flash/pt_split.md)与[已接受内部两相收敛解隐式灵敏度](modules/flash/pt_sensitivity.md)，联合验收守恒、逸度与最终相集合的有限稳定性搜索结果，并为固定相集合/根分支提供局部一阶导数；不提供全局稳定性或跨相边界光滑性认证，也不等于已实现三相或含水闪蒸。首个 [physics thermodynamic closure](modules/physics/README.md) 仅消费上述能力并增加 Z/相摩尔密度及其链式导数，不新增经验热力学模型。
 
 模型选择通过能力目录与配置完成，不把 EOS 公式硬编码进闪蒸算法。每个模型应报告模型 ID/版本、可用组分、允许相态、所需参数、混合规则、导数能力、适用范围及资料来源；不支持的组合显式拒绝，不静默回退到另一模型。
 
@@ -85,9 +85,9 @@
 
 ## 6. 两相、三相闪蒸与水的处理
 
-### 6.1 当前可用：PR76 汽液 PT 调用与诊断
+### 6.1 当前可用：PR76 汽液 PT 调用、诊断与内部两相灵敏度
 
-现有 `solve_pr76_pt_vle` 输入压力 p（Pa）、温度 T（K）和总体摩尔组成 z，依次执行进料 TPD、失稳试探组成的守恒初始化、汽液相分裂和最终共同切平面复核。使用 CMake 目标 `mpmc::flash`，无需前端或网络服务；完整接口、选项、数值门槛与构建入口见 [汽液 PT 契约](modules/flash/pt_split.md)。
+现有 `solve_pr76_pt_vle` 输入压力 p（Pa）、温度 T（K）和总体摩尔组成 z，依次执行进料 TPD、失稳试探组成的守恒初始化、汽液相分裂和最终共同切平面复核。使用 CMake 目标 `mpmc::flash`，无需前端或网络服务；完整接口、选项、数值门槛与构建入口见 [汽液 PT 契约](modules/flash/pt_split.md)。对最终接受的内部两相状态，可通过 opt-in `mpmc::flash_sensitivity` 和 [隐式灵敏度契约](modules/flash/pt_sensitivity.md) 获取 `beta/x/y/logK` 对 `(p,T,z_reduced)` 的局部一阶导数；该导数不跨泡露点、相消失、临界/根切换或相集合变化外推。
 
 以下为调用片段：调用方先建立有来源、单位和模型约定记录的 `PrParameterSet parameters`；提供有限且正的 `p_pa`、`t_kelvin`，以及有限、非负且与参数快照顺序和数量一致的摩尔组成容器 `z`（如 `std::vector<double>`）。参数由调用方提供，接口不内置流体数据库；输入只接受组成和在契约规定的舍入范围内偏离 1，不将负组成裁剪为零或填补缺失组分。输入／参数错误仍可能抛出异常，不能假定所有失败都封装在返回状态中。
 
@@ -114,7 +114,7 @@ const auto& solution = result.solution;
 
 所有结果的 `global_stability_proven` 均为 `false`；“未检出”不是全局认证。`solution.diagnostic` 的分阶段摘要、`attempts` 与初始／最终 TPD 的 trial 记录用法见 [未确定原因摘要](modules/flash/diagnostic_summary.md)。机器分流应读取已有枚举、候选与配额字段，不匹配整条诊断字符串；`phase_disappearance` 不等于物理上严格不存在该相。结果拥有数据，候选指针随结果对象存活；evaluator 仅顺序复用，不能并发共用同一实例。
 
-[泡点／露点邻域回归](modules/flash/boundary_regression.md) 和[极近露点门槛审计](modules/flash/dew_limit_audit.md) 记录有限采样范围、独立高精度二元参考与相消失边界；原边界文档中的 TPD 停滞是历史记录，后续修复依据与回归见 [TPD 模块说明](modules/flash/README.md)。这些是软件和模型数值验证，不是实验数据或全局稳定性证书。当前不提供 LLE 专用求解、联合三相、任一含水模式、SW/CPA、生产泡点／露点 API 或闪蒸解灵敏度。
+[泡点／露点邻域回归](modules/flash/boundary_regression.md) 和[极近露点门槛审计](modules/flash/dew_limit_audit.md) 记录有限采样范围、独立高精度二元参考与相消失边界；原边界文档中的 TPD 停滞是历史记录，后续修复依据与回归见 [TPD 模块说明](modules/flash/README.md)。这些是软件和模型数值验证，不是实验数据或全局稳定性证书。当前不提供 LLE 专用求解、联合三相、任一含水模式、SW/CPA、生产泡点／露点 API、单相 closure 或跨泡露点/相消失/临界/根切换的闪蒸导数。
 
 ### 6.2 后续目标：多相与水处理约束
 
@@ -152,7 +152,7 @@ beta_alpha >= 0，x_i_alpha >= 0
 | M0：文档引导 | 本 README 与根级 AGENTS（已完成初始化） | 初始化时仅文档；后续各阶段单独提供实现和验证证据。 |
 | M1：AD 最小基础 | 已提供最小构建与测试入口、固定维数值/导数语义、基础算术 | 解析导数、边界行为和必要编译验证；每项分开小步提交。 |
 | M2：AD 可用能力 | 已提供常见初等函数及逐函数测试入口；继续按需补齐函数和导数访问 | 独立交叉验证、导数保真与必要资源检查。 |
-| M3：PR 与两相基线 | 已提供有序组分/PR76 参数契约、纯/混合系数、PT 候选相性质、有限 TPD 搜索与汽液 PT 相分裂；已集成边界回归、TPD 停滞修复、露点门槛审计及诊断摘要 | 已有解析与独立高精度二元参考的守恒、逸度、边界和未确定状态回归；进一步扩展前仍需适用体系证据，不作全局或实验验证声明。 |
+| M3：PR 与两相基线 | 已提供有序组分/PR76 参数契约、纯/混合系数、PT 候选相性质、有限 TPD 搜索、汽液 PT 相分裂、内部两相收敛解灵敏度及最小 physics thermodynamic closure；已集成边界回归、TPD 停滞修复、露点门槛审计及诊断摘要 | 已有解析与独立高精度二元/三元参考的守恒、逸度、边界、未确定状态、隐式导数与 closure 链式导数回归；进一步扩展前仍需适用体系证据，不作全局、跨相边界或实验验证声明。 |
 | M4：含水模型与互溶 | 核验 SW 具体版本与资料；逐一实现所需 SW/CPA 能力和含水两相验证 | 合法且可追溯的参数与含水基准；不宣称所有模型适用于所有体系。 |
 | M5：三相闪蒸 | 联合三相平衡、相数变化与退化处理 | 三相参考证据、稳定性、守恒及可用导数核验。 |
 | M6：网格与输入 | 创建、导入、拓扑与几何校验，逐一支持格式 | 小型已知网格、非法输入、单位与索引检查。 |
@@ -167,7 +167,7 @@ beta_alpha >= 0，x_i_alpha >= 0
 
 纯文档变更仅做必要的内容、格式、引用和差异审查；AD、共享数值核心、公共接口、构建或编译选项变更必须扩展到受影响的已有下游。跨平台风险变更运行必要平台组合；平台未经实际测试不得宣称通过。共享托管 runner 上的计时不能单独证明 HPC 性能收益。
 
-文档初始化阶段没有创建代码或 CI。当前 AD、热力学数据契约、PR76 纯/混合系数、PT 候选相性质核、TPD 稳定性搜索及汽液 PT 基线均有增量测试入口与官方 runner 工作流；相分裂集成覆盖边界、停滞、露点门槛和诊断回归，并保留独立高精度二元参考。三相和含水模型尚未实现，未创建许可证或占位目录。具体执行结果查阅对应 PR/提交的 Actions 日志，不能将配置了工作流视为测试已通过。完整审计、提交与验证规则以 [AGENTS.md](AGENTS.md) 为准。
+文档初始化阶段没有创建代码或 CI。当前 AD、热力学数据契约、PR76 纯/混合系数、PT 候选相性质核、TPD 稳定性搜索、汽液 PT 基线、内部两相收敛解灵敏度和最小 physics thermodynamic closure 均有增量测试入口与官方 runner 工作流；相分裂集成覆盖边界、停滞、露点门槛和诊断回归，并保留独立高精度二元/三元参考，灵敏度和 closure 另有独立 Decimal 高精度导数交叉核验。三相、含水模型、单相 closure、网格、离散与全局求解器尚未实现，未创建许可证或占位目录。具体执行结果查阅对应 PR/提交的 Actions 日志，不能将配置了工作流视为测试已通过。完整审计、提交与验证规则以 [AGENTS.md](AGENTS.md) 为准。
 
 ## 9. 待确认事项与参考资料
 
@@ -181,7 +181,7 @@ beta_alpha >= 0，x_i_alpha >= 0
 - [E4] [gRPC-Web 官方实现与流支持说明](https://github.com/grpc/grpc-web#streaming-support)。
 - [E5] [vtk.js 官方文档](https://kitware.github.io/vtk-js/docs/)。
 - [E6] [CppAD 官方文档](https://coin-or.github.io/CppAD/)，用于 AD 模式、接口与独立核验方法参考，不预先绑定实现路线。
-- [E7] [GitHub-hosted runners 官方文档](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
+- [E7] [GitHub-hosted runners 官方文档](https://docs.github.com/actions/reference/runners/github-hosted-runners)。
 - [E8] [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines)；[OPM 模块说明](https://opm-project.org/?page_id=274)；[DuMux 官方文档](https://dumux.org/docs/doxygen/master/)。借鉴规范、分层与科学软件工程，复用代码前另行审计许可。
 - [S1] Peng, D.-Y.; Robinson, D. B. (1976). *A New Two-Constant Equation of State*. DOI: [10.1021/i160057a011](https://doi.org/10.1021/i160057a011)。
 - [S2] Søreide, I.; Whitson, C. H. (1992). *Peng-Robinson predictions for hydrocarbons, CO2, N2, and H2S with pure water and NaCl brine*. DOI: [10.1016/0378-3812(92)85105-H](https://doi.org/10.1016/0378-3812(92)85105-H)。对应已确认的 SW 模型，具体公式与参数仍须在实现前核验。
