@@ -14,6 +14,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mpmc::physics {
@@ -65,6 +66,16 @@ inline void pr76_closure_validate_snapshot(
     return std::all_of(values.begin(), values.end(), [](double value) {
         return std::isfinite(value);
     });
+}
+
+[[nodiscard]] inline bool closure_same_z(double value, double accepted) {
+    if (!std::isfinite(value) || !std::isfinite(accepted)) {
+        return false;
+    }
+    const double guard =
+        1024.0 * std::numeric_limits<double>::epsilon();
+    return std::abs(value - accepted) <=
+           guard * std::max(1.0, std::abs(accepted));
 }
 
 [[nodiscard]] inline Pr76PhaseZPartials pr76_phase_z_partials(
@@ -131,10 +142,9 @@ inline void pr76_closure_validate_snapshot(
 } // namespace detail
 
 // Consume an already solved PR76 PT flash result. This adapter does not solve a
-// conservation law and does not own Newton globalization. It publishes a valid
-// two-phase primal whenever the accepted flash state can be reproduced, and an
-// optional local linearization only when all implicit-sensitivity/property checks
-// succeed on the same atomic snapshot.
+// conservation law and does not own Newton globalization. The primal is anchored
+// to the exact accepted flash x/y/beta/Z snapshot. Reduced-coordinate PR76 AD is
+// used only for the optional local linearization.
 [[nodiscard]] inline ThermodynamicClosureSnapshot build_pr76_pt_vle_closure(
     const mpmc::flash::Pr76PtSplitResult& split,
     const mpmc::flash::Pr76VleEvaluator& evaluator,
@@ -181,7 +191,9 @@ inline void pr76_closure_validate_snapshot(
     const double beta = candidate->fractions.vapor_fraction;
     if (!std::isfinite(beta) || !(beta > 0.0) || !(beta < 1.0) ||
         candidate->fractions.liquid.size() != n ||
-        candidate->fractions.vapor.size() != n) {
+        candidate->fractions.vapor.size() != n ||
+        !std::isfinite(candidate->liquid.z) || !(candidate->liquid.z > 0.0) ||
+        !std::isfinite(candidate->vapor.z) || !(candidate->vapor.z > 0.0)) {
         result.primal_status = ThermodynamicClosurePrimalStatus::indeterminate;
         result.diagnostic = "PR76 closure: invalid accepted two-phase primal shape";
         return result;
@@ -190,27 +202,30 @@ inline void pr76_closure_validate_snapshot(
     try {
         th::Pr76PhaseWorkspace<double> liquid_workspace;
         th::Pr76PhaseWorkspace<double> vapor_workspace;
-        const std::span<const double> liquid_reduced{
-            candidate->fractions.liquid.data(), n - 1};
-        const std::span<const double> vapor_reduced{
-            candidate->fractions.vapor.data(), n - 1};
-        const auto liquid_values = evaluator.model().evaluate_reduced(
-            result.pressure_pa, result.temperature_k, liquid_reduced,
+        const std::span<const double> liquid_full{
+            candidate->fractions.liquid.data(), n};
+        const std::span<const double> vapor_full{
+            candidate->fractions.vapor.data(), n};
+        const auto liquid_values = evaluator.model().evaluate_full(
+            result.pressure_pa, result.temperature_k, liquid_full,
             candidate->liquid.activity.branch, liquid_workspace,
             split.root_options);
-        const auto vapor_values = evaluator.model().evaluate_reduced(
-            result.pressure_pa, result.temperature_k, vapor_reduced,
+        const auto vapor_values = evaluator.model().evaluate_full(
+            result.pressure_pa, result.temperature_k, vapor_full,
             candidate->vapor.activity.branch, vapor_workspace,
             split.root_options);
+        if (!detail::closure_same_z(liquid_values.z, candidate->liquid.z) ||
+            !detail::closure_same_z(vapor_values.z, candidate->vapor.z)) {
+            throw std::runtime_error(
+                "PR76 closure: accepted phase Z cannot be reproduced from full composition");
+        }
 
         const double r = th::Pr76Pure<double>::gas_constant();
         const double liquid_density = result.pressure_pa /
-            (liquid_values.z * r * result.temperature_k);
+            (candidate->liquid.z * r * result.temperature_k);
         const double vapor_density = result.pressure_pa /
-            (vapor_values.z * r * result.temperature_k);
-        if (!std::isfinite(liquid_values.z) || !(liquid_values.z > 0.0) ||
-            !std::isfinite(vapor_values.z) || !(vapor_values.z > 0.0) ||
-            !std::isfinite(liquid_density) || !(liquid_density > 0.0) ||
+            (candidate->vapor.z * r * result.temperature_k);
+        if (!std::isfinite(liquid_density) || !(liquid_density > 0.0) ||
             !std::isfinite(vapor_density) || !(vapor_density > 0.0)) {
             throw std::range_error("PR76 closure: nonrepresentable phase volume state");
         }
@@ -218,11 +233,11 @@ inline void pr76_closure_validate_snapshot(
         PtVleThermodynamicState primal;
         primal.liquid.mole_phase_fraction = 1.0 - beta;
         primal.liquid.composition = candidate->fractions.liquid;
-        primal.liquid.compressibility_factor = liquid_values.z;
+        primal.liquid.compressibility_factor = candidate->liquid.z;
         primal.liquid.molar_density_mol_per_m3 = liquid_density;
         primal.vapor.mole_phase_fraction = beta;
         primal.vapor.composition = candidate->fractions.vapor;
-        primal.vapor.compressibility_factor = vapor_values.z;
+        primal.vapor.compressibility_factor = candidate->vapor.z;
         primal.vapor.molar_density_mol_per_m3 = vapor_density;
         result.primal = std::move(primal);
         result.primal_status = ThermodynamicClosurePrimalStatus::valid;
@@ -270,17 +285,14 @@ inline void pr76_closure_validate_snapshot(
             evaluator.model(), result.pressure_pa, result.temperature_k,
             result.primal->vapor.composition, candidate->vapor.activity.branch,
             split.root_options);
-        const double z_guard =
-            1024.0 * std::numeric_limits<double>::epsilon();
-        const auto same_z = [z_guard](double a, double b) {
-            return std::abs(a - b) <= z_guard * std::max(1.0, std::abs(b));
-        };
-        if (!same_z(liquid_z.value, result.primal->liquid.compressibility_factor) ||
-            !same_z(vapor_z.value, result.primal->vapor.compressibility_factor) ||
+        if (!detail::closure_same_z(
+                liquid_z.value, result.primal->liquid.compressibility_factor) ||
+            !detail::closure_same_z(
+                vapor_z.value, result.primal->vapor.compressibility_factor) ||
             liquid_z.gradient.size() != n + 1 ||
             vapor_z.gradient.size() != n + 1) {
             throw std::runtime_error(
-                "PR76 closure: phase derivative path changed the accepted primal");
+                "PR76 closure: reduced derivative path changed the accepted primal");
         }
 
         PtVleThermodynamicLinearization linearization;
