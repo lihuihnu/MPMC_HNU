@@ -5,6 +5,7 @@ on:
     paths:
       - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
       - 'modules/flash/**/CMakeLists.txt'
       - 'tests/flash/stability/**'
       - 'modules/thermodynamics/**/*.hpp'
@@ -59,8 +60,10 @@ jobs:
             "${config_arg[@]}" ${{ matrix.compiler }} \
             -DMPMC_FLASH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Compile only stability integration
-        run: cmake --build build/flash-stability --target mpmc_flash_stability_tests --config ${{ matrix.config }} --parallel 2
+        run: cmake --build build/flash-stability --target mpmc_flash_stability_tests mpmc_flash_sw92_stability_tests --config ${{ matrix.config }} --parallel 2
       - name: Run necessary stability increment
         run: ctest --test-dir build/flash-stability -C ${{ matrix.config }} -R '^flash[.]stability[.]' --verbose --no-tests=error
-      - name: Regenerate independent fixed-state references
+      - name: Regenerate independent fixed-state PR76 references
         run: python tests/flash/stability/reference_decimal.py
+      - name: Regenerate independent fixed-state SW92 references
+        run: python tests/flash/stability/reference_sw92_decimal.py
