@@ -15,7 +15,6 @@ from pathlib import Path
 import re
 
 R = D("8.31446261815324")
-SQRT2 = D(2).sqrt()
 SPEC = {
     "CO2": (D("304.2"), D("73.8e5"), D("0.2273")),
     "CH4": (D("190.6"), D("46.0e5"), D("0.0108")),
@@ -130,20 +129,21 @@ def phase(gas_fraction: D, gas: str, family: str,
     bb = covolume * pressure / (R * temperature)
     c2 = bb - D(1)
     c1 = aa - D(3) * bb * bb - D(2) * bb
+    sqrt2 = D(2).sqrt()  # evaluated in the caller's active Decimal context
 
     candidates = []
     for z in cubic_roots(aa, bb):
         derivative = (D(3) * z + D(2) * c2) * z + c1
         if derivative <= 0:
             continue
-        log_ratio = ((z + (D(1) + SQRT2) * bb) /
-                     (z + (D(1) - SQRT2) * bb)).ln()
+        log_ratio = ((z + (D(1) + sqrt2) * bb) /
+                     (z + (D(1) - sqrt2) * bb)).ln()
         ln_phi = []
         for i in range(2):
             ratio = bi[i] / covolume
             expression = D(2) * rows[i] / attraction - ratio
             ln_phi.append(ratio * (z - D(1)) - (z - bb).ln() -
-                          aa / (D(2) * SQRT2 * bb) * expression * log_ratio)
+                          aa / (D(2) * sqrt2 * bb) * expression * log_ratio)
         candidates.append((z, ln_phi))
     if not candidates:
         raise ArithmeticError("no mechanically admissible reference root")
