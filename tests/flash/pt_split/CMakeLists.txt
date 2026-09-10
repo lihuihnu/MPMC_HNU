@@ -106,3 +106,22 @@ foreach(case attempt_outcomes stability_outcomes dew_and_neighbor limits referen
     set_tests_properties(flash.pt_split.diagnostic_${case} PROPERTIES
         LABELS "flash;flash.pt_split;diagnostic" TIMEOUT 120)
 endforeach()
+
+# End-to-end runtime-component regression against an independent ternary PR76 oracle.
+add_executable(mpmc_pt_ternary_tests ternary_test.cpp)
+target_link_libraries(mpmc_pt_ternary_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pt_ternary_tests PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(mpmc_pt_ternary_tests PRIVATE /W4 /WX /permissive- /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(mpmc_pt_ternary_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+endif()
+if(MPMC_SPLIT_ENABLE_SANITIZERS)
+    target_compile_options(mpmc_pt_ternary_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(mpmc_pt_ternary_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+foreach(case parameters_runtime flash_reference permutations final_indeterminate)
+    add_test(NAME flash.pt_split.ternary_${case} COMMAND mpmc_pt_ternary_tests ${case})
+    set_tests_properties(flash.pt_split.ternary_${case} PROPERTIES
+        LABELS "flash;flash.pt_split;ternary" TIMEOUT 180)
+endforeach()
