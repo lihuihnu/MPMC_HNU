@@ -1,0 +1,67 @@
+name: SW92 phase-assigned AQ/NA joint
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp'
+      - 'modules/flash/sw92_phase_assigned_joint.md'
+      - 'modules/thermodynamics/**/*.hpp'
+      - 'tests/flash/sw92_phase_assigned_joint/**'
+      - '.github/workflows/sw92_phase_assigned_joint.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sw92-phase-assigned-joint-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  c1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure Profile-C Gate C1
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_phase_assigned_joint -B build/sw92-phase-assigned-joint \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PHASE_ASSIGNED_JOINT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build Profile-C Gate C1
+        run: cmake --build build/sw92-phase-assigned-joint --target mpmc_sw92_phase_assigned_joint_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run Profile-C Gate C1
+        run: ctest --test-dir build/sw92-phase-assigned-joint -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_joint[.]' --verbose --no-tests=error
+
+      - name: Regenerate independent Decimal references
+        run: python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
