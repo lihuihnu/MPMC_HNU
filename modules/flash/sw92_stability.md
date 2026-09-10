@@ -66,6 +66,14 @@ That capability does not itself define cross-family orchestration: deciding whic
 AQ/NA references must be tested and how their results form an initial phase set is
 a separate audited increment.
 
+## Equilibrium-algorithm identity
+
+Cross-family use is now governed by [the SW92 equilibrium-algorithm contract](sw92_equilibrium_algorithm.md).
+That contract deliberately distinguishes the primary
+`SW92-equilibrium/dual-model-directional/PT-v1` route from the reserved
+`SW92-equilibrium/asymmetric-gibbs-envelope/PT-v1` route. This fixed-family
+adapter is a building block for both; it does not select one of them implicitly.
+
 ## Model validity boundary
 
 SW92 phase-family correlations are empirical. The generic TPD search may visit
