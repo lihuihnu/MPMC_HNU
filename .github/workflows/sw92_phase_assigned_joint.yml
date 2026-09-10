@@ -8,6 +8,7 @@ on:
       - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
       - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp'
       - 'modules/flash/sw92_phase_assigned_joint.md'
+      - 'modules/flash/sw92_phase_assigned_c2_stability_audit.md'
       - 'modules/thermodynamics/**/*.hpp'
       - 'tests/flash/sw92_phase_assigned_joint/**'
       - '.github/workflows/sw92_phase_assigned_joint.yml'
@@ -64,4 +65,6 @@ jobs:
         run: ctest --test-dir build/sw92-phase-assigned-joint -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_joint[.]' --verbose --no-tests=error
 
       - name: Regenerate independent Decimal references
-        run: python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
+        run: |
+          python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
+          python tests/flash/sw92_phase_assigned_joint/reference_c2_domain_decimal.py
