@@ -92,6 +92,20 @@ const fl::Sw92AsymmetricFixedPairState& selected_pair(
     return *pair;
 }
 
+fl::Sw92AsymmetricFixedPairState& selected_pair_mutable(
+    fl::Sw92AsymmetricPairSelectionResult& selection) {
+    require(selection.selected_candidate_class &&
+                *selection.selected_candidate_class < selection.candidate_classes.size(),
+            "selected candidate class unavailable");
+    const auto attempt_index =
+        selection.candidate_classes[*selection.selected_candidate_class].representative_attempt;
+    require(attempt_index < selection.attempts.size() &&
+                selection.attempts[attempt_index].fixed_pair &&
+                selection.attempts[attempt_index].fixed_pair->point,
+            "selected fixed-pair attempt unavailable");
+    return *selection.attempts[attempt_index].fixed_pair->point;
+}
+
 bool has_start(const fl::StabilityResult& search, const Vec& target) {
     return std::any_of(search.trials.begin(), search.trials.end(),
                        [&](const fl::StabilityTrial& trial) {
@@ -150,6 +164,7 @@ void accepted_two_phase_reference() {
     near(low_gas, low_gas_reference);
     near(high_gas, high_gas_reference);
     near(pair.reduced_gibbs, golden.pair_gibbs);
+    near(result.selected_pair_reduced_gibbs, golden.pair_gibbs);
     near(result.lower_feed_reduced_gibbs, golden.lower_feed_gibbs);
     near(result.pair_minus_lower_feed_reduced_gibbs, golden.pair_minus_feed);
     require(result.pair_minus_lower_feed_reduced_gibbs <
@@ -174,9 +189,9 @@ void final_common_tangent_and_required_starts() {
             "reference final stability unavailable");
     const auto& pair = selected_pair(result);
     require(result.final_stability->common_log_activity == pair.common_log_activity,
-            "final AQ/NA searches did not use the selected-pair midpoint tangent");
-    near(pair.common_log_activity[0], golden.common_d_gas);
-    near(pair.common_log_activity[1], golden.common_d_water);
+            "recomputed final common tangent changed from the retained Gate-3B.1 tangent");
+    near(result.final_stability->common_log_activity[0], golden.common_d_gas);
+    near(result.final_stability->common_log_activity[1], golden.common_d_water);
     near(result.common_reference_allowance,
          0.5L * static_cast<long double>(pair.chemical_potential_norm),
          1e-12L, 1e-16L);
@@ -195,31 +210,26 @@ void final_common_tangent_and_required_starts() {
 
     const Vec feed{0.7, 0.3};
     const Vec uniform{0.5, 0.5};
+    const auto& common = result.final_stability->common_log_activity;
     const auto& low = pair.phase0.composition[0] < pair.phase1.composition[0]
         ? pair.phase0.composition : pair.phase1.composition;
     const auto& high = pair.phase0.composition[0] < pair.phase1.composition[0]
         ? pair.phase1.composition : pair.phase0.composition;
-    require(std::abs(prescribed_tpd(3.0e6, 340.0, feed, low,
-                                    pair.common_log_activity, model,
+    require(std::abs(prescribed_tpd(3.0e6, 340.0, feed, low, common, model,
                                     th::SwPhaseFamily::aqueous)) < 2e-10 &&
-                std::abs(prescribed_tpd(3.0e6, 340.0, feed, high,
-                                        pair.common_log_activity, model,
+                std::abs(prescribed_tpd(3.0e6, 340.0, feed, high, common, model,
                                         th::SwPhaseFamily::aqueous)) < 2e-10,
-            "accepted AQ phases are not on their recorded common tangent");
-    near(prescribed_tpd(3.0e6, 340.0, feed, low,
-                        pair.common_log_activity, model,
+            "accepted AQ phases are not on their recomputed common tangent");
+    near(prescribed_tpd(3.0e6, 340.0, feed, low, common, model,
                         th::SwPhaseFamily::nonaqueous),
          golden.low_gas_na_tpd);
-    near(prescribed_tpd(3.0e6, 340.0, feed, high,
-                        pair.common_log_activity, model,
+    near(prescribed_tpd(3.0e6, 340.0, feed, high, common, model,
                         th::SwPhaseFamily::nonaqueous),
          golden.high_gas_na_tpd);
-    near(prescribed_tpd(3.0e6, 340.0, feed, uniform,
-                        pair.common_log_activity, model,
+    near(prescribed_tpd(3.0e6, 340.0, feed, uniform, common, model,
                         th::SwPhaseFamily::aqueous),
          golden.uniform_aq_tpd);
-    near(prescribed_tpd(3.0e6, 340.0, feed, uniform,
-                        pair.common_log_activity, model,
+    near(prescribed_tpd(3.0e6, 340.0, feed, uniform, common, model,
                         th::SwPhaseFamily::nonaqueous),
          golden.uniform_na_tpd);
 }
@@ -272,30 +282,54 @@ void final_indeterminate_not_published() {
             "indeterminate final family search incorrectly published the selected pair");
 }
 
+void final_negative_witness_not_published() {
+    const auto model = binary_model();
+    auto selection = fl::orchestrate_sw92_asymmetric_pair_candidates(
+        3.0e6, 340.0, Vec{0.7, 0.3}, model, 0.0);
+    require(selection.status ==
+                fl::Sw92AsymmetricPairSelectionStatus::
+                    pair_candidate_selected_pending_final_stability,
+            "reference Gate-3B.2 selection unavailable for final-negative structural test");
+    auto& point = selected_pair_mutable(selection);
+
+    // Synthetic post-selection gauge perturbation applied equally to both
+    // phases for each component. It preserves the pair chemical-potential
+    // equality, but makes the retained activities inconsistent with the real
+    // SW92 model used by final stability. The final family searches must catch
+    // the resulting robust negative witness; this is not a physical reference.
+    constexpr double gas_shift = 0.10;
+    constexpr double water_shift = -(7.0 / 3.0) * gas_shift;
+    for (auto* phase : {&point.phase0, &point.phase1}) {
+        phase->activity.ln_phi[0] += gas_shift;
+        phase->activity.ln_phi[1] += water_shift;
+    }
+
+    const auto result = fl::finalize_sw92_asymmetric_max2_selection(
+        std::move(selection), model);
+    require(result.status == fl::Sw92AsymmetricMax2Status::phase_set_unstable &&
+                result.candidate_phase_set && result.final_stability &&
+                result.final_stability->status == fl::StabilityStatus::unstable &&
+                !result.final_stability->negative_witnesses.empty() &&
+                result.accepted_phase_set() == nullptr,
+            "robust final negative witness did not block phase-set publication");
+}
+
 void pair_gibbs_above_feed_not_published() {
     const auto model = binary_model();
     auto selection = fl::orchestrate_sw92_asymmetric_pair_candidates(
         3.0e6, 340.0, Vec{0.7, 0.3}, model, 0.0);
     require(selection.status ==
                 fl::Sw92AsymmetricPairSelectionStatus::
-                    pair_candidate_selected_pending_final_stability &&
-                selection.selected_candidate_class,
+                    pair_candidate_selected_pending_final_stability,
             "reference Gate-3B.2 selection unavailable for Gibbs-gate structural test");
-    const auto class_index = *selection.selected_candidate_class;
-    const auto attempt_index =
-        selection.candidate_classes[class_index].representative_attempt;
-    require(attempt_index < selection.attempts.size() &&
-                selection.attempts[attempt_index].fixed_pair &&
-                selection.attempts[attempt_index].fixed_pair->point,
-            "reference pair attempt unavailable");
+    auto& point = selected_pair_mutable(selection);
 
-    // Synthetic post-selection perturbation: test only the Gate-3B.3 publication
-    // guard, not a physical SW92 state or a new thermodynamic reference.
-    auto& point = *selection.attempts[attempt_index].fixed_pair->point;
-    const auto family = *selection.initial_stability.reference_family;
-    const auto& feed_leg = family == th::SwPhaseFamily::aqueous
-        ? selection.initial_stability.aqueous : selection.initial_stability.nonaqueous;
-    point.reduced_gibbs = feed_leg.feed_reduced_gibbs + 0.25;
+    // Uniformly shifting both phase activities preserves common-chemical-
+    // potential equality but raises the recomputed pair G/RT by exactly 1.
+    // This tests the Gate-3B.3 Gibbs publication guard, not a physical SW92 state.
+    for (auto* phase : {&point.phase0, &point.phase1}) {
+        for (double& value : phase->activity.ln_phi) { value += 1.0; }
+    }
 
     const auto result = fl::finalize_sw92_asymmetric_max2_selection(
         std::move(selection), model);
@@ -304,7 +338,7 @@ void pair_gibbs_above_feed_not_published() {
                 result.accepted_phase_set() == nullptr &&
                 result.pair_minus_lower_feed_reduced_gibbs >
                     result.pair_feed_gibbs_combined_guard,
-            "resolved pair-above-feed Gibbs state was incorrectly accepted");
+            "recomputed pair-above-feed Gibbs state was incorrectly accepted");
 }
 
 void publication_structural_guard() {
@@ -340,7 +374,7 @@ void component_permutation() {
 void final_start_quota_preflight() {
     const auto model = binary_model();
     fl::Sw92AsymmetricMax2Options options;
-    // Binary automatic search generates four starts; Gate 3B.3 must append two
+    // Binary automatic search generates four starts; Gate 3B.3 appends two
     // candidate phases to each family, so five is intentionally insufficient.
     options.final_stability.aqueous.stability.max_starts = 5;
     options.final_stability.nonaqueous.stability.max_starts = 5;
@@ -363,6 +397,7 @@ constexpr TestCase tests[] = {
     {"accepted_single_phase", accepted_single_phase},
     {"selection_indeterminate_not_published", selection_indeterminate_not_published},
     {"final_indeterminate_not_published", final_indeterminate_not_published},
+    {"final_negative_witness_not_published", final_negative_witness_not_published},
     {"pair_gibbs_above_feed_not_published", pair_gibbs_above_feed_not_published},
     {"publication_structural_guard", publication_structural_guard},
     {"component_permutation", component_permutation},
