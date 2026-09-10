@@ -22,8 +22,8 @@ namespace mpmc::flash {
 inline constexpr std::string_view sw92_xu_asymmetric_max2_convention =
     "SW92-equilibrium/xu-asymmetric-gibbs/max2-logK-SSI-RR/common-tangent/v1";
 
-/// Family-aware candidate phase. The type name deliberately says candidate:
-/// rejected/indeterminate final-review paths retain the same data for diagnosis.
+/// Family-aware candidate phase. Rejected/indeterminate final-review paths
+/// retain the same data, so acceptance is expressed only by accepted_phase_set().
 struct Sw92AsymmetricCandidatePhase {
     thermodynamics::SwPhaseFamily family{
         thermodynamics::SwPhaseFamily::aqueous};
@@ -50,9 +50,6 @@ enum class Sw92AsymmetricMax2Status {
     indeterminate
 };
 
-/// Authoritative Gate 3B maximum-two-phase result. A candidate phase set may be
-/// retained on rejected/indeterminate pair paths for diagnostics, but
-/// accepted_phase_set() publishes it only on the two explicit accepted states.
 struct Sw92AsymmetricMax2Result {
     static constexpr std::size_t maximum_phase_count = 2;
     static constexpr bool global_stability_proven = false;
@@ -112,6 +109,7 @@ struct Sw92AsymmetricMax2Result {
             expected > maximum_phase_count) {
             return nullptr;
         }
+
         double fraction_sum = 0.0;
         double fraction_correction = 0.0;
         for (const auto& phase : candidate_phase_set->phases) {
@@ -174,9 +172,10 @@ inline double sw92_max2_reduced_gibbs_roundoff_guard(
             throw std::domain_error(
                 "SW92 asymmetric max2: active composition must be positive");
         }
-        const double term = composition[i] *
-            (std::abs(std::log(composition[i])) + std::abs(phase.ln_phi[i]));
-        stability_add(term, magnitude, correction);
+        stability_add(
+            composition[i] *
+                (std::abs(std::log(composition[i])) + std::abs(phase.ln_phi[i])),
+            magnitude, correction);
     }
     const double guard = 256.0 * stability_eps * magnitude;
     if (!std::isfinite(guard)) {
@@ -204,6 +203,25 @@ inline bool sw92_max2_model_matches_selection(
     return true;
 }
 
+inline bool sw92_max2_stability_matches_selection(
+    const Sw92AsymmetricPairSelectionResult& selection) {
+    const auto& initial = selection.initial_stability;
+    return initial.pressure_pa == selection.pressure_pa &&
+           initial.temperature_k == selection.temperature_k &&
+           initial.feed == selection.feed &&
+           initial.nacl_molality_mol_per_kg_water ==
+               selection.nacl_molality_mol_per_kg_water &&
+           initial.dataset_id == selection.dataset_id &&
+           initial.revision == selection.revision &&
+           initial.component_ids == selection.component_ids &&
+           std::string_view{initial.model_profile} ==
+               thermodynamics::sw92_corrected_profile &&
+           std::string_view{initial.phase_convention} ==
+               thermodynamics::sw92_pt_convention &&
+           std::string_view{initial.equilibrium_profile} ==
+               sw92_xu_asymmetric_gibbs_profile;
+}
+
 inline Sw92AsymmetricCandidatePhase sw92_max2_from_fixed_pair_phase(
     const Sw92AsymmetricFixedPairPhase& phase) {
     return {phase.family,
@@ -222,45 +240,92 @@ inline std::vector<std::vector<double>> sw92_max2_final_starts(
     std::vector<std::vector<double>> starts;
     starts.reserve(caller_starts.size() + 2U);
     for (const auto& start : caller_starts) { starts.push_back(start); }
-    // Both candidate compositions are mandatory starts in BOTH family searches.
     starts.push_back(pair.phase0.composition);
     starts.push_back(pair.phase1.composition);
     return starts;
 }
 
 inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
-    if (!std::isfinite(base) || !(base > 0.0) ||
+    // Preserve the generic StabilityOptions contract: zero TPD tolerance is legal.
+    if (!std::isfinite(base) || base < 0.0 ||
         !std::isfinite(allowance) || allowance < 0.0 ||
         allowance > std::numeric_limits<double>::max() - base) {
         throw std::domain_error(
             "SW92 asymmetric max2: nonrepresentable final TPD tolerance/allowance");
     }
     const double effective = base + allowance;
-    if (!std::isfinite(effective) || !(effective > 0.0)) {
+    if (!std::isfinite(effective) || effective < 0.0) {
         throw std::domain_error(
             "SW92 asymmetric max2: invalid effective final TPD tolerance");
     }
     return effective;
 }
 
+inline const Sw92AsymmetricFixedPairState* sw92_max2_revalidate_pair_choice(
+    const Sw92AsymmetricPairSelectionResult& selection) {
+    if (selection.status !=
+            Sw92AsymmetricPairSelectionStatus::
+                pair_candidate_selected_pending_final_stability ||
+        selection.attempt_limit_reached ||
+        selection.attempts.size() != selection.plan.size()) {
+        return nullptr;
+    }
+    const auto classes = sw92_build_candidate_classes(
+        selection.attempts, selection.feed, selection.options.fixed_pair);
+    const auto choice = sw92_choose_candidate_class(classes);
+    if (choice.distinct_gibbs_tie || !choice.selected_class ||
+        *choice.selected_class >= classes.size()) {
+        return nullptr;
+    }
+    const std::size_t attempt_index =
+        classes[*choice.selected_class].representative_attempt;
+    if (attempt_index >= selection.attempts.size() ||
+        !selection.attempts[attempt_index].fixed_pair ||
+        !selection.attempts[attempt_index].fixed_pair->candidate_admissible()) {
+        return nullptr;
+    }
+    return &*selection.attempts[attempt_index].fixed_pair->point;
+}
+
+inline bool sw92_max2_single_phase_evidence_consistent(
+    const Sw92AsymmetricPairSelectionResult& selection) {
+    if (selection.status != Sw92AsymmetricPairSelectionStatus::
+                                single_phase_candidate_no_instability_found ||
+        !selection.single_phase_candidate ||
+        selection.initial_stability.status != StabilityStatus::no_instability_found ||
+        selection.initial_stability.feed_reference_status !=
+            Sw92AsymmetricFeedReferenceStatus::selected ||
+        !selection.initial_stability.reference_family ||
+        *selection.initial_stability.reference_family !=
+            selection.single_phase_candidate->family ||
+        selection.single_phase_candidate->composition != selection.feed) {
+        return false;
+    }
+    const auto& leg = *selection.initial_stability.reference_family ==
+            thermodynamics::SwPhaseFamily::aqueous
+        ? selection.initial_stability.aqueous
+        : selection.initial_stability.nonaqueous;
+    if (!leg.feed_reference || !std::isfinite(leg.feed_reduced_gibbs)) {
+        return false;
+    }
+    const auto& candidate = *selection.single_phase_candidate;
+    return candidate.activity.branch == leg.feed_reference->branch &&
+           candidate.activity.smooth == leg.feed_reference->smooth &&
+           candidate.activity.ln_phi == leg.feed_reference->ln_phi &&
+           candidate.reduced_gibbs == leg.feed_reduced_gibbs;
+}
+
 } // namespace detail
 
-/// Finalize one Gate-3B.2 selection. The selection is copied/moved into the
-/// result so all witness/attempt/candidate diagnostics remain available.
-///
-/// A selected pair is accepted only after:
-///  1) its reduced Gibbs is not resolved above the original lower-envelope feed;
-///  2) the pair midpoint common tangent is used by both AQ/NA final searches;
-///  3) BOTH candidate compositions are explicit starts in BOTH family searches;
-///  4) neither family search is unstable or indeterminate.
 [[nodiscard]] inline Sw92AsymmetricMax2Result finalize_sw92_asymmetric_max2_selection(
     Sw92AsymmetricPairSelectionResult selection,
     const thermodynamics::Sw92Phase<double>& model,
     Sw92AsymmetricStabilityOptions final_stability_options = {},
     Sw92AsymmetricStabilityStarts caller_final_starts = {}) {
-    if (!detail::sw92_max2_model_matches_selection(selection, model)) {
+    if (!detail::sw92_max2_model_matches_selection(selection, model) ||
+        !detail::sw92_max2_stability_matches_selection(selection)) {
         throw std::invalid_argument(
-            "SW92 asymmetric max2: selection/model snapshot identity mismatch");
+            "SW92 asymmetric max2: selection/model or retained-stability identity mismatch");
     }
     if (std::string_view{selection.model_profile} !=
             thermodynamics::sw92_corrected_profile ||
@@ -292,10 +357,10 @@ inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
 
     if (result.selection.status ==
             Sw92AsymmetricPairSelectionStatus::single_phase_candidate_no_instability_found) {
-        if (!result.selection.single_phase_candidate) {
+        if (!detail::sw92_max2_single_phase_evidence_consistent(result.selection)) {
             result.status = Sw92AsymmetricMax2Status::indeterminate;
             result.diagnostic =
-                "Gate 3B.2 single-phase status lacks its retained family-aware candidate";
+                "Gate 3B.2 single-phase status is inconsistent with retained Gate-3A evidence";
             return result;
         }
         const auto& source = *result.selection.single_phase_candidate;
@@ -311,20 +376,11 @@ inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
         return result;
     }
 
-    if (result.selection.status !=
-            Sw92AsymmetricPairSelectionStatus::pair_candidate_selected_pending_final_stability) {
-        result.status = Sw92AsymmetricMax2Status::indeterminate;
-        result.diagnostic =
-            "Gate 3B.2 did not provide a unique complete pair candidate for final acceptance";
-        return result;
-    }
-
-    const auto* pair =
-        result.selection.selected_pair_candidate_pending_final_stability();
+    const auto* pair = detail::sw92_max2_revalidate_pair_choice(result.selection);
     if (pair == nullptr) {
         result.status = Sw92AsymmetricMax2Status::indeterminate;
         result.diagnostic =
-            "Gate 3B.2 selected-pair state is unavailable or no longer admissible";
+            "Gate 3B.2 did not retain one complete, uniquely revalidated pair candidate for final acceptance";
         return result;
     }
 
@@ -341,10 +397,10 @@ inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
             "selected pair lacks the resolved lower-feed reference required for pair-vs-feed Gibbs comparison";
         return result;
     }
-    const auto& feed_leg =
-        *reference_family == thermodynamics::SwPhaseFamily::aqueous
-            ? result.selection.initial_stability.aqueous
-            : result.selection.initial_stability.nonaqueous;
+    const auto& feed_leg = *reference_family ==
+            thermodynamics::SwPhaseFamily::aqueous
+        ? result.selection.initial_stability.aqueous
+        : result.selection.initial_stability.nonaqueous;
     if (!feed_leg.feed_reference || !std::isfinite(feed_leg.feed_reduced_gibbs) ||
         !std::isfinite(pair->reduced_gibbs) ||
         !std::isfinite(pair->gibbs_roundoff_guard)) {
@@ -382,9 +438,6 @@ inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
         return result;
     }
 
-    // The midpoint tangent uncertainty is bounded only by the pair's converged
-    // chemical-potential mismatch. This is a numerical allowance, not an error
-    // enclosure or a physical tolerance.
     result.common_reference_allowance = 0.5 * pair->chemical_potential_norm;
     if (!std::isfinite(result.common_reference_allowance) ||
         result.common_reference_allowance < 0.0) {
@@ -449,9 +502,6 @@ inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
     return result;
 }
 
-/// Full Gate 3B maximum-two-phase entry: Gate 3A -> 3B.1/3B.2 selection ->
-/// Gate 3B.3 final acceptance. Salt molality remains an external fixed coordinate;
-/// only EOS components are material-balanced.
 [[nodiscard]] inline Sw92AsymmetricMax2Result solve_sw92_xu_asymmetric_max2(
     double pressure_pa, double temperature_k, std::span<const double> feed,
     const thermodynamics::Sw92Phase<double>& model,
