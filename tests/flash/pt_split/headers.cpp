@@ -1,6 +1,9 @@
+#include <mpmc/flash/pr76_phase_set.hpp>
+#include <mpmc/flash/pr76_phase_set.hpp>
 #include <mpmc/flash/pr76_split.hpp>
-#include <mpmc/flash/pr76_split.hpp>
+#include <mpmc/flash/pt_phase_set.hpp>
 #include <mpmc/flash/pt_split.hpp>
+#include <mpmc/flash/pt_vle_phase_set.hpp>
 #include <mpmc/flash/rachford_rice.hpp>
 
 bool pt_split_headers() {
