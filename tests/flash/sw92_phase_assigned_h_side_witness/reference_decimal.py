@@ -1,10 +1,10 @@
 """Independent Decimal(80) reference for Profile-C Gate C2a1.
 
-This script imports only the already-independent stdlib Decimal C1 oracle.  It
-never imports production C++.  The traceable C1 states are used to verify that
-the retained H(NA) phase lies on the reconstructed common tangent.  A separate
+This script imports only the already-independent stdlib Decimal C1 oracle. It
+never imports production C++. The traceable C1 states are used to verify that
+the retained H(NA) phase lies on the reconstructed common tangent. A separate
 explicit synthetic-test variant changes only the CO2/water nonaqueous BIP to
-zero in order to create both (a) a negative NA point at the retained W
+-0.1 in order to create both (a) a negative NA point at the retained W
 composition that must fail the physical-role guard and (b) a distinct,
 water-poorer negative NA point usable only as an H-split witness seed.
 
@@ -52,26 +52,26 @@ if __name__ == "__main__":
         co2_h = retained_h_tpd("CO2", "3e6", "340", "0", "0.7", "0.006", "0.989")
         ch4_h = retained_h_tpd("CH4", "1e7", "350", "1", "0.5", "0.0009", "0.995")
 
-        # Explicit synthetic-test-only NA interaction.  AQ remains the audited
+        # Explicit synthetic-test-only NA interaction. AQ remains the audited
         # corrected-original CO2 formula; only the NA constant is changed.
         old_na = NA_KIJ["CO2"]
-        NA_KIJ["CO2"] = D("0")
+        NA_KIJ["CO2"] = D("-0.1")
         try:
-            synthetic = case("CO2", "3e6", "340", "0", "0.5", "0.002", "0.988")
+            synthetic = case("CO2", "3e6", "340", "0", "0.5", "0.006", "0.987")
             x_w = synthetic[0]
             y_h = synthetic[1]
             common = [synthetic[6], synthetic[7]]
             tpd_at_w = tpd(x_w, "CO2", "NA", D("3e6"), D("340"), D("0"), common)
-            trial_gas = D("0.003")
+            trial_gas = D("0.01")
             tpd_distinct = tpd(trial_gas, "CO2", "NA", D("3e6"), D("340"), D("0"), common)
 
             # The retained W point is negative under NA, but it is not
             # water-poorer than W itself and therefore cannot seed H splitting.
-            if not tpd_at_w < D("-1e-5"):
+            if not tpd_at_w < D("-1e-4"):
                 raise AssertionError("synthetic NA-at-W point lost robust negative TPD")
 
             # The explicit trial is distinct from H and water-poorer than W.
-            if not tpd_distinct < D("-1e-5"):
+            if not tpd_distinct < D("-1e-4"):
                 raise AssertionError("synthetic distinct NA witness lost robust negative TPD")
             if not trial_gas > x_w:
                 raise AssertionError("synthetic witness is not water-poorer than retained W")
@@ -83,7 +83,7 @@ if __name__ == "__main__":
             print("synthetic x_CO2^W=", format(x_w, ".35g"),
                   "y_CO2^H=", format(y_h, ".35g"))
             print("synthetic D_NA(W)=", format(tpd_at_w, ".35g"))
-            print("synthetic D_NA(w=0.003)=", format(tpd_distinct, ".35g"))
+            print("synthetic D_NA(w=0.01)=", format(tpd_distinct, ".35g"))
         finally:
             NA_KIJ["CO2"] = old_na
 
