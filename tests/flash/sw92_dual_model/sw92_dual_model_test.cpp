@@ -137,7 +137,7 @@ th::Sw92Phase<double> ternary_structural_model() {
     const std::vector<std::string> order{co2.id, methane.id, water_spec.id};
     return th::Sw92Phase<double>::from_parameters(
         th::Sw92ParameterSet::create(catalog, order, input,
-                                     th::DataPolicy::allow_synthetic_test));
+                                     th::DataPolicy::allow_synthetic_tests));
 }
 
 struct DualGolden {
