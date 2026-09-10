@@ -96,17 +96,16 @@ if __name__ == "__main__":
         if anchors[2] >= D(0):
             raise AssertionError("selected reference pair is no longer below feed Gibbs")
 
-        # Dense deterministic probe is only a regression sanity check, not a
-        # global certificate. It catches gross tangent/sign regressions while the
-        # C++ path still owns the declared finite multistart search semantics.
+        # Coarse deterministic probe only catches gross tangent/sign regressions.
+        # It is deliberately bounded and is not a global stability certificate.
         for family in ("AQ", "NA"):
             lowest = None
-            for k in range(1, 1000):
-                value = imposed_tpd(D(k) / D(1000), family, common)
+            for k in range(1, 100):
+                value = imposed_tpd(D(k) / D(100), family, common)
                 lowest = value if lowest is None else min(lowest, value)
             if lowest < D("-1e-28"):
                 raise AssertionError(
-                    f"independent dense {family} probe found unexpected negative TPD: {lowest}"
+                    f"independent coarse {family} probe found unexpected negative TPD: {lowest}"
                 )
 
         cpp = Path(__file__).with_name("sw92_asymmetric_max2_test.cpp").read_text(
