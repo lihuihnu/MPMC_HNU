@@ -34,6 +34,7 @@ endif()
 set(cases
     feed_reference_and_common_tangent
     negative_witness_and_counts
+    combined_status_semantics
     pure_vertex_active_gauge
     family_tie_guard
     permutation
