@@ -1,0 +1,70 @@
+name: Physics thermodynamic closure
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/physics/**'
+      - 'modules/flash/include/mpmc/flash/pr76_split.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_sensitivity.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'
+      - 'modules/flash/include/mpmc/flash/detail/**'
+      - 'modules/flash/sensitivity/CMakeLists.txt'
+      - 'modules/thermodynamics/**/*.hpp'
+      - 'modules/thermodynamics/**/CMakeLists.txt'
+      - 'modules/ad/**/*.hpp'
+      - 'modules/ad/**/CMakeLists.txt'
+      - 'tests/flash/pt_split/reference_sensitivity_decimal.py'
+      - 'tests/physics/thermodynamic_closure/**'
+      - '.github/workflows/physics_closure.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: physics-thermodynamic-closure-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  closure:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure only physics thermodynamic closure
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/physics/thermodynamic_closure -B build/physics-closure \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_PHYSICS_CLOSURE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Compile physics thermodynamic closure regression
+        run: cmake --build build/physics-closure --target mpmc_physics_closure_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run physics thermodynamic closure increment
+        run: ctest --test-dir build/physics-closure -C ${{ matrix.config }} -R '^physics[.]thermodynamic_closure[.]' --verbose --no-tests=error
+      - name: Independently regenerate closure references
+        run: python tests/physics/thermodynamic_closure/reference_closure_decimal.py
