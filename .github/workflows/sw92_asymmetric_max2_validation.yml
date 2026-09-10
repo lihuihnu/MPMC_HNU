@@ -1,0 +1,86 @@
+name: SW92 asymmetric max2 validation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp'
+      - 'modules/flash/sw92_asymmetric_max2_validation.md'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
+      - 'tests/flash/sw92_asymmetric_max2/**'
+      - 'tests/flash/sw92_asymmetric_max2_validation/**'
+      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - '.github/workflows/sw92_asymmetric_max2_validation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sw92-asymmetric-max2-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validation:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure expanded max2 validation
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_asymmetric_max2_validation -B build/sw92-asymmetric-max2-validation \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_MAX2_VALIDATION_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build expanded max2 validation
+        run: cmake --build build/sw92-asymmetric-max2-validation --target mpmc_sw92_asymmetric_max2_validation_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run expanded max2 validation
+        run: ctest --test-dir build/sw92-asymmetric-max2-validation -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_max2_validation[.]' --verbose --no-tests=error
+
+      - name: Configure existing Gate 3B.3 max2 baseline
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_asymmetric_max2 -B build/sw92-asymmetric-max2 \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_ASYMMETRIC_MAX2_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build existing Gate 3B.3 max2 baseline
+        run: cmake --build build/sw92-asymmetric-max2 --target mpmc_sw92_asymmetric_max2_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run existing Gate 3B.3 max2 baseline
+        run: ctest --test-dir build/sw92-asymmetric-max2 -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_max2[.]' --verbose --no-tests=error
+
+      - name: Regenerate independent Decimal references
+        run: |
+          python tests/flash/sw92_asymmetric_max2_validation/reference_decimal.py
+          python tests/flash/sw92_asymmetric_max2/reference_decimal.py
