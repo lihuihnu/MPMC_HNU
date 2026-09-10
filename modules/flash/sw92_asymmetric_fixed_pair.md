@@ -192,10 +192,12 @@ For each phase:
 - opposite-family minimum-root nonsmooth -> `opposite_family_nonsmooth`;
 - property failure -> explicit failure.
 
-The fixed-pair result is `converged` only if **both** phase assignments are resolved lower. A
-dominated/nonsmooth pair retains its equation-converged point for diagnostics/reference but
-`equations_converged()` returns false because the pair is not an admissible lower-envelope candidate.
-The primitive never switches family in place after detecting dominance.
+The fixed-pair result status is `converged` only if **both** phase assignments are resolved lower.
+A dominated/nonsmooth pair still retains its equation-converged point for diagnostics/reference:
+`equations_converged()` reports the common-chemical-potential plus material-balance gate, while
+`candidate_admissible()` additionally requires `status == converged`. This preserves the distinction
+between “the fixed family equations have a root” and “that root is admissible on the AQ/NA lower
+envelope.” The primitive never switches family in place after detecting dominance.
 
 ## Result status is not overall equilibrium acceptance
 
@@ -207,8 +209,13 @@ The primitive never switches family in place after detecting dominance.
 - same-family root smoothness/conditioning;
 - per-phase lower-envelope family-dominance checks.
 
-It does **not** mean the pair is the lowest-Gibbs candidate among all assignments, stable to all AQ/NA
-trials, or accepted as the maximum-two-phase equilibrium. There is deliberately no
+`equations_converged()` is deliberately weaker: dominated, family-tied, disappearing, or
+post-equation resource-limited states may still report true when the stored point already satisfies
+the chemical-potential and material-balance tolerances. `candidate_admissible()` is the Gate-3B.1
+candidate gate and is true only for the `converged` status.
+
+Neither helper means the pair is the lowest-Gibbs candidate among all assignments, stable to all
+AQ/NA trials, or accepted as the maximum-two-phase equilibrium. There is deliberately no
 `accepted_phase_set()` in Gate 3B.1.
 
 ## Independent numerical references
