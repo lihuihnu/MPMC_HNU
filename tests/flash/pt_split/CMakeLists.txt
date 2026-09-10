@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(mpmc_pt_split_tests LANGUAGES CXX)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash" flash-library)
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash/sensitivity" flash-sensitivity-library)
 enable_testing()
 add_executable(mpmc_pt_split_tests split_test.cpp headers.cpp)
 target_link_libraries(mpmc_pt_split_tests PRIVATE mpmc::flash)

@@ -12,6 +12,7 @@ on:
       - 'modules/flash/include/mpmc/flash/pr76_sensitivity.hpp'
       - 'modules/flash/include/mpmc/flash/detail/**'
       - 'modules/flash/CMakeLists.txt'
+      - 'modules/flash/sensitivity/CMakeLists.txt'
       - 'modules/thermodynamics/**/*.hpp'
       - 'modules/thermodynamics/**/CMakeLists.txt'
       - 'modules/ad/**/*.hpp'
