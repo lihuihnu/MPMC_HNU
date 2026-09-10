@@ -11,6 +11,12 @@ Public entry points:
 - `solve_sw92_pt_family_vle`
 - `Sw92FamilyPtSplitResult`
 
+The Gate-1 equilibrium-algorithm identity is
+`SW92-equilibrium/fixed-family-vle-primitive/v1`. Results record this identity separately from the
+thermodynamics profile and from the generic `PtSplitResult::convention`. The identifier names only
+the internally consistent fixed-family primitive; it is deliberately not the Whitson dual-model
+observable profile and not the Xu asymmetric-Gibbs joint-equilibrium profile.
+
 One evaluator fixes one validated `Sw92Phase<double>` snapshot, one NaCl molality, one
 `SwPhaseFamily::{aqueous,nonaqueous}`, and one `Sw92RootOptions` value. It is sequentially reusable
 but owns scratch and is not concurrently callable.
@@ -75,6 +81,11 @@ An accepted two-phase result under this primitive is a valid phase set **for tha
 model**. It must not be combined with a phase from an independently solved opposite-family run and
 then presented as though both phases satisfied one common material balance.
 
+A phase whose converged amount is at or below `minimum_phase_fraction` retains the generic
+`phase_disappearance` semantics: fugacity and material-balance tolerances are checked first, the
+attempt is not promoted to a converged two-phase candidate, and the full one-family wrapper does
+not publish it as an accepted phase set.
+
 ## Fixed-molality semantics
 
 NaCl molality remains the external state coordinate defined by
@@ -101,7 +112,9 @@ Two traceable binary model anchors are used:
 
 The regression checks phase compositions, phase fraction, Z values, material balance, fugacity
 residual, final same-family stability, component permutation, fixed family/molality metadata,
-root-budget failure semantics, requested root roles, and public-header self-containment.
+explicit Gate-1 equilibrium-algorithm identity, root-budget failure semantics, requested root
+roles, phase-disappearance gating after equilibrium/balance checks, non-publication of a
+disappearing phase as an accepted phase set, and public-header self-containment.
 
 These anchors are independent **model numerical references**, not experimental validation and not
 a global phase-stability proof.
