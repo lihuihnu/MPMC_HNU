@@ -9,10 +9,16 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace mpmc::flash {
+
+/// Gate-1 equilibrium-algorithm identity. This labels the internally consistent
+/// fixed-family primitive only; it is neither of the cross-family profiles.
+inline constexpr std::string_view sw92_family_vle_algorithm =
+    "SW92-equilibrium/fixed-family-vle-primitive/v1";
 
 /// One-family SW92 VLE provider for the generic PT split driver.
 ///
@@ -132,6 +138,7 @@ struct Sw92FamilyPtSplitResult {
     std::vector<std::string> component_ids;
     std::string model_profile{thermodynamics::sw92_corrected_profile};
     std::string phase_convention{thermodynamics::sw92_pt_convention};
+    std::string equilibrium_algorithm{sw92_family_vle_algorithm};
     double nacl_molality_mol_per_kg_water{};
     thermodynamics::SwPhaseFamily family{thermodynamics::SwPhaseFamily::aqueous};
     thermodynamics::Sw92RootOptions root_options;
