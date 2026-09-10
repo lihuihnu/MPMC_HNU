@@ -184,6 +184,8 @@ void check_binary_reference(const fl::Sw92AsymmetricMax2Result& result,
     const auto& pair = selected_pair(result);
     const auto& low = low_gas_phase(pair, gas_index);
     const auto& high = high_gas_phase(pair, gas_index);
+    const bool low_is_phase0 = &low == &pair.phase0;
+    const bool high_is_phase0 = &high == &pair.phase0;
     require(low.family == th::SwPhaseFamily::aqueous &&
                 high.family == th::SwPhaseFamily::aqueous,
             "Xu lower-envelope binary reference no longer selects AQ+AQ");
@@ -195,18 +197,17 @@ void check_binary_reference(const fl::Sw92AsymmetricMax2Result& result,
     near(low.compressibility_factor, reference.low_z);
     near(high.compressibility_factor, reference.high_z);
     near(result.lower_feed_reduced_gibbs, reference.lower_feed_gibbs);
-    near(result.pair_recomputed_reduced_gibbs, reference.pair_gibbs);
+    near(result.selected_pair_reduced_gibbs, reference.pair_gibbs);
     near(result.pair_minus_lower_feed_reduced_gibbs, reference.pair_minus_feed);
     require(result.final_stability->common_log_activity.size() == 2,
             "binary final common tangent dimension changed");
     near(result.final_stability->common_log_activity[gas_index], reference.common_d_gas);
     near(result.final_stability->common_log_activity[water_index], reference.common_d_water);
-    near(low.family == pair.phase0.family
+    near(low_is_phase0
              ? pair.phase0_assignment.aqueous_minus_nonaqueous_gibbs
              : pair.phase1_assignment.aqueous_minus_nonaqueous_gibbs,
          reference.low_aq_minus_na_gibbs);
-    near(high.family == pair.phase0.family &&
-                 high.composition.data() == pair.phase0.composition.data()
+    near(high_is_phase0
              ? pair.phase0_assignment.aqueous_minus_nonaqueous_gibbs
              : pair.phase1_assignment.aqueous_minus_nonaqueous_gibbs,
          reference.high_aq_minus_na_gibbs);
