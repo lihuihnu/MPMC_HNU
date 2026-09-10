@@ -22,7 +22,9 @@ namespace mpmc::flash {
 inline constexpr std::string_view sw92_xu_asymmetric_max2_convention =
     "SW92-equilibrium/xu-asymmetric-gibbs/max2-logK-SSI-RR/common-tangent/v1";
 
-struct Sw92AsymmetricAcceptedPhase {
+/// Family-aware candidate phase. The type name deliberately says candidate:
+/// rejected/indeterminate final-review paths retain the same data for diagnosis.
+struct Sw92AsymmetricCandidatePhase {
     thermodynamics::SwPhaseFamily family{
         thermodynamics::SwPhaseFamily::aqueous};
     double mole_phase_fraction{};
@@ -31,8 +33,8 @@ struct Sw92AsymmetricAcceptedPhase {
     std::optional<double> compressibility_factor;
 };
 
-struct Sw92AsymmetricAcceptedPhaseSet {
-    std::vector<Sw92AsymmetricAcceptedPhase> phases;
+struct Sw92AsymmetricCandidatePhaseSet {
+    std::vector<Sw92AsymmetricCandidatePhase> phases;
 };
 
 struct Sw92AsymmetricMax2Options {
@@ -72,7 +74,7 @@ struct Sw92AsymmetricMax2Result {
     std::string max2_convention{sw92_xu_asymmetric_max2_convention};
 
     Sw92AsymmetricPairSelectionResult selection;
-    std::optional<Sw92AsymmetricAcceptedPhaseSet> candidate_phase_set;
+    std::optional<Sw92AsymmetricCandidatePhaseSet> candidate_phase_set;
 
     double lower_feed_reduced_gibbs{std::numeric_limits<double>::quiet_NaN()};
     double lower_feed_gibbs_roundoff_guard{
@@ -96,7 +98,7 @@ struct Sw92AsymmetricMax2Result {
 
     std::string diagnostic;
 
-    [[nodiscard]] const Sw92AsymmetricAcceptedPhaseSet*
+    [[nodiscard]] const Sw92AsymmetricCandidatePhaseSet*
         accepted_phase_set() const & noexcept {
         const bool accepted_single =
             status == Sw92AsymmetricMax2Status::single_phase_no_instability_found;
@@ -111,18 +113,37 @@ struct Sw92AsymmetricMax2Result {
             return nullptr;
         }
         double fraction_sum = 0.0;
+        double fraction_correction = 0.0;
         for (const auto& phase : candidate_phase_set->phases) {
             if (!std::isfinite(phase.mole_phase_fraction) ||
                 !(phase.mole_phase_fraction > 0.0) ||
                 phase.composition.size() != feed.size()) {
                 return nullptr;
             }
-            fraction_sum += phase.mole_phase_fraction;
+            detail::stability_add(
+                phase.mole_phase_fraction, fraction_sum, fraction_correction);
             switch (phase.family) {
             case thermodynamics::SwPhaseFamily::aqueous:
             case thermodynamics::SwPhaseFamily::nonaqueous:
                 break;
             default:
+                return nullptr;
+            }
+
+            double composition_sum = 0.0;
+            double composition_correction = 0.0;
+            for (std::size_t i = 0; i < phase.composition.size(); ++i) {
+                const double value = phase.composition[i];
+                if (!std::isfinite(value) || value < 0.0 || value > 1.0 ||
+                    (feed[i] == 0.0 && value != 0.0) ||
+                    (feed[i] > 0.0 && !(value > 0.0))) {
+                    return nullptr;
+                }
+                detail::stability_add(
+                    value, composition_sum, composition_correction);
+            }
+            if (std::abs(composition_sum - 1.0) >
+                64.0 * detail::stability_eps) {
                 return nullptr;
             }
         }
@@ -132,7 +153,7 @@ struct Sw92AsymmetricMax2Result {
         }
         return &*candidate_phase_set;
     }
-    const Sw92AsymmetricAcceptedPhaseSet* accepted_phase_set() const && = delete;
+    const Sw92AsymmetricCandidatePhaseSet* accepted_phase_set() const && = delete;
 
     [[nodiscard]] std::size_t accepted_phase_count() const noexcept {
         const auto* accepted = accepted_phase_set();
@@ -183,7 +204,7 @@ inline bool sw92_max2_model_matches_selection(
     return true;
 }
 
-inline Sw92AsymmetricAcceptedPhase sw92_max2_from_fixed_pair_phase(
+inline Sw92AsymmetricCandidatePhase sw92_max2_from_fixed_pair_phase(
     const Sw92AsymmetricFixedPairPhase& phase) {
     return {phase.family,
             phase.mole_phase_fraction,
@@ -241,10 +262,13 @@ inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
         throw std::invalid_argument(
             "SW92 asymmetric max2: selection/model snapshot identity mismatch");
     }
-    if (selection.model_profile != thermodynamics::sw92_corrected_profile ||
-        selection.phase_convention != thermodynamics::sw92_pt_convention ||
-        selection.equilibrium_profile != sw92_xu_asymmetric_gibbs_profile ||
-        selection.orchestration_convention !=
+    if (std::string_view{selection.model_profile} !=
+            thermodynamics::sw92_corrected_profile ||
+        std::string_view{selection.phase_convention} !=
+            thermodynamics::sw92_pt_convention ||
+        std::string_view{selection.equilibrium_profile} !=
+            sw92_xu_asymmetric_gibbs_profile ||
+        std::string_view{selection.orchestration_convention} !=
             sw92_xu_asymmetric_orchestration_convention) {
         throw std::invalid_argument(
             "SW92 asymmetric max2: selection algorithm/model identity mismatch");
@@ -275,12 +299,12 @@ inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
             return result;
         }
         const auto& source = *result.selection.single_phase_candidate;
-        Sw92AsymmetricAcceptedPhase phase;
+        Sw92AsymmetricCandidatePhase phase;
         phase.family = source.family;
         phase.mole_phase_fraction = 1.0;
         phase.composition = source.composition;
         phase.activity = source.activity;
-        result.candidate_phase_set = Sw92AsymmetricAcceptedPhaseSet{{std::move(phase)}};
+        result.candidate_phase_set = Sw92AsymmetricCandidatePhaseSet{{std::move(phase)}};
         result.status = Sw92AsymmetricMax2Status::single_phase_no_instability_found;
         result.diagnostic =
             "Gate 3A initial two-family finite stability found no instability; family-aware single phase accepted without forcing a split; not a global stability proof";
@@ -304,7 +328,7 @@ inline double sw92_max2_effective_tpd_tolerance(double base, double allowance) {
         return result;
     }
 
-    result.candidate_phase_set = Sw92AsymmetricAcceptedPhaseSet{{
+    result.candidate_phase_set = Sw92AsymmetricCandidatePhaseSet{{
         detail::sw92_max2_from_fixed_pair_phase(pair->phase0),
         detail::sw92_max2_from_fixed_pair_phase(pair->phase1)}};
 
