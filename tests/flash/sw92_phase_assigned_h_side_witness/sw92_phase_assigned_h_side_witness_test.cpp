@@ -88,14 +88,14 @@ fl::Sw92PhaseAssignedJointResult solve_c1(
         model, reference.molality, options);
 }
 
-th::Sw92Phase<double> synthetic_na_zero_model(bool reverse = false) {
+th::Sw92Phase<double> synthetic_na_negative_model(bool reverse = false) {
     auto prepared = sw92_test::binary_input(sw92_test::co2, reverse);
-    prepared.input.dataset_id = "SW92-C2a1-synthetic-NA-zero";
+    prepared.input.dataset_id = "SW92-C2a1-synthetic-NA-minus-0p1";
     prepared.input.revision = "synthetic-test-v1";
     auto source = sw92_test::synthetic(
-        "C2a1 structural fixture: CO2/water nonaqueous kij=0");
+        "C2a1 structural fixture: CO2/water nonaqueous kij=-0.1");
     prepared.input.water_binary.at(0).nonaqueous_kij =
-        sw92_test::scalar(0.0, th::Unit::dimensionless, source);
+        sw92_test::scalar(-0.1, th::Unit::dimensionless, source);
     return th::Sw92Phase<double>::from_parameters(
         th::Sw92ParameterSet::create(
             prepared.catalog, prepared.order, prepared.input,
@@ -103,9 +103,9 @@ th::Sw92Phase<double> synthetic_na_zero_model(bool reverse = false) {
 }
 
 fl::Sw92PhaseAssignedJointResult solve_synthetic_c1(bool reverse = false) {
-    const auto model = synthetic_na_zero_model(reverse);
+    const auto model = synthetic_na_negative_model(reverse);
     Vec feed{0.5, 0.5};
-    Vec seed{6.1739566237881105, -4.396681357954204};
+    Vec seed{5.114042043098671, -4.350000925246979};
     if (reverse) { std::swap(seed[0], seed[1]); }
     return fl::iterate_sw92_phase_assigned_aq_na_joint(
         3.0e6, 340.0, feed, seed, model, 0.0);
@@ -178,13 +178,13 @@ void cross_family_blocker_is_not_c2a1_rejection() {
 }
 
 void synthetic_admissible_witness() {
-    const auto model = synthetic_na_zero_model();
+    const auto model = synthetic_na_negative_model();
     const auto c1 = solve_synthetic_c1();
     require(c1.candidate() != nullptr, "synthetic C1 candidate unavailable");
 
     fl::Sw92PhaseAssignedHSideWitnessOptions options;
     options.stability.automatic_starts = false;
-    const std::vector<Vec> extra{{0.003, 0.997}};
+    const std::vector<Vec> extra{{0.01, 0.99}};
     const auto result = fl::test_sw92_phase_assigned_h_side_na_witness(
         c1, model, options, extra);
     require(result.status == fl::Sw92PhaseAssignedHSideWitnessStatus::
@@ -198,13 +198,13 @@ void synthetic_admissible_witness() {
         [](const fl::Sw92PhaseAssignedNaNegativeWitness& witness) {
             return witness.usable_h_split_seed() &&
                    witness.point.composition.size() == 2U &&
-                   std::abs(witness.point.composition[0] - 0.003) < 1e-12;
+                   std::abs(witness.point.composition[0] - 0.01) < 1e-12;
         });
     require(it != result.negative_witnesses.end(),
-            "explicit 0.003 synthetic NA witness was not preserved");
-    require(it->point.value < -1e-5,
+            "explicit 0.01 synthetic NA witness was not preserved");
+    require(it->point.value < -1e-4,
             "synthetic H-split witness is not robustly negative");
-    near(it->point.value, -7.643999071963782e-4L, 5e-4L, 2e-7L);
+    near(it->point.value, -3.774777671108005e-3L, 2e-6L, 2e-9L);
     require(it->compositionally_distinct_from_retained_h &&
                 it->water_role_admissible &&
                 it->retained_w_minus_trial_water_fraction >
@@ -213,7 +213,7 @@ void synthetic_admissible_witness() {
 }
 
 void synthetic_role_guard_rejects_w_like_negative() {
-    const auto model = synthetic_na_zero_model();
+    const auto model = synthetic_na_negative_model();
     const auto c1 = solve_synthetic_c1();
     fl::Sw92PhaseAssignedHSideWitnessOptions options;
     options.stability.automatic_starts = false;
