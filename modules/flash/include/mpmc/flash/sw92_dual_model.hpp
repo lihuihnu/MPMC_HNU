@@ -164,6 +164,15 @@ inline std::optional<Sw92DualModelTargetPhase> sw92_select_binary_water_target(
         pressure_pa, temperature_k, feed, nonaqueous_evaluator,
         options.nonaqueous.split_options, starts.nonaqueous_initial, starts.nonaqueous_final);
 
+    // Both complete multicomponent runs are retained, but no physical phase label
+    // beyond the audited binary rule is inferred from water content or root order.
+    if (model.size() != 2) {
+        result.status = Sw92DualModelStatus::multicomponent_phase_label_not_implemented;
+        result.diagnostic =
+            "both family runs retained; automatic physical target-phase labeling is binary-only";
+        return result;
+    }
+
     const bool aqueous_accepted = detail::sw92_family_two_phase_accepted(result.aqueous_run);
     const bool nonaqueous_accepted = detail::sw92_family_two_phase_accepted(result.nonaqueous_run);
     if (!aqueous_accepted || !nonaqueous_accepted) {
@@ -177,13 +186,6 @@ inline std::optional<Sw92DualModelTargetPhase> sw92_select_binary_water_target(
             result.status = Sw92DualModelStatus::nonaqueous_observable_unavailable;
             result.diagnostic = "NA fixed-family run did not provide an accepted two-phase target";
         }
-        return result;
-    }
-
-    if (model.size() != 2) {
-        result.status = Sw92DualModelStatus::multicomponent_phase_label_not_implemented;
-        result.diagnostic =
-            "both family runs retained; automatic physical target-phase labeling is binary-only";
         return result;
     }
 
