@@ -76,6 +76,35 @@ struct Sw92AsymmetricNegativeWitness {
     TpdPoint point;
 };
 
+/// Two required finite family searches against one externally supplied common
+/// reduced tangent. This is reusable by Gate 3A and later phase-set review; it
+/// never decides or publishes a phase split.
+struct Sw92AsymmetricCommonTangentSearchResult {
+    StabilityStatus status{StabilityStatus::indeterminate};
+    static constexpr bool global_stability_proven = false;
+
+    double pressure_pa{};
+    double temperature_k{};
+    double input_feed_sum{};
+    std::vector<double> feed;
+    double nacl_molality_mol_per_kg_water{};
+
+    std::string dataset_id;
+    std::string revision;
+    std::vector<std::string> component_ids;
+    std::string model_profile{thermodynamics::sw92_corrected_profile};
+    std::string phase_convention{thermodynamics::sw92_pt_convention};
+    std::string equilibrium_profile{sw92_xu_asymmetric_gibbs_profile};
+    std::string search_convention{sw92_xu_asymmetric_stability_convention};
+
+    Sw92AsymmetricStabilityOptions options;
+    std::vector<double> common_log_activity;
+    StabilityResult aqueous;
+    StabilityResult nonaqueous;
+    std::vector<Sw92AsymmetricNegativeWitness> negative_witnesses;
+    std::string diagnostic;
+};
+
 struct Sw92AsymmetricStabilityResult {
     StabilityStatus status{StabilityStatus::indeterminate};
     static constexpr bool global_stability_proven = false;
@@ -213,7 +242,110 @@ inline void sw92_collect_negative_witnesses(
     }
 }
 
+inline StabilityStatus sw92_combine_asymmetric_searches(
+    const StabilityResult& aqueous, const StabilityResult& nonaqueous) noexcept {
+    if (aqueous.status == StabilityStatus::unstable ||
+        nonaqueous.status == StabilityStatus::unstable) {
+        return StabilityStatus::unstable;
+    }
+    if (aqueous.status == StabilityStatus::no_instability_found &&
+        nonaqueous.status == StabilityStatus::no_instability_found) {
+        return StabilityStatus::no_instability_found;
+    }
+    return StabilityStatus::indeterminate;
+}
+
+inline std::string sw92_asymmetric_search_diagnostic(StabilityStatus status) {
+    switch (status) {
+    case StabilityStatus::unstable:
+        return "finite common-tangent search found a robust negative TPD witness in at least one SW92 family";
+    case StabilityStatus::no_instability_found:
+        return "both finite family searches found no instability against the common tangent; not a global proof";
+    case StabilityStatus::indeterminate:
+        return "no robust negative witness was found, but at least one required family search is indeterminate";
+    }
+    return "unknown SW92 asymmetric stability status";
+}
+
 } // namespace detail
+
+/// Run both SW92 family searches against exactly one caller-supplied reduced
+/// tangent. The caller owns the thermodynamic validity/uncertainty of that
+/// tangent; this helper owns family symmetry, resource isolation and witnesses.
+[[nodiscard]] inline Sw92AsymmetricCommonTangentSearchResult
+    test_sw92_pt_asymmetric_stability_against(
+        double pressure_pa, double temperature_k, std::span<const double> support_feed,
+        std::span<const double> common_log_activity,
+        const thermodynamics::Sw92Phase<double>& model,
+        double nacl_molality_mol_per_kg_water,
+        Sw92AsymmetricStabilityOptions options = {},
+        Sw92AsymmetricStabilityStarts starts = {}) {
+    if (!std::isfinite(pressure_pa) || pressure_pa <= 0.0 ||
+        !std::isfinite(temperature_k) || temperature_k <= 0.0) {
+        throw std::domain_error(
+            "SW92 asymmetric stability: finite p>0 Pa and T>0 K required");
+    }
+    if (support_feed.size() != model.size()) {
+        throw std::invalid_argument(
+            "SW92 asymmetric stability: feed does not match ordered model snapshot");
+    }
+    if (common_log_activity.size() != support_feed.size()) {
+        throw std::invalid_argument(
+            "SW92 asymmetric stability: common tangent dimension mismatch");
+    }
+    for (double value : common_log_activity) {
+        if (!std::isfinite(value)) {
+            throw std::domain_error(
+                "SW92 asymmetric stability: finite common tangent entries required");
+        }
+    }
+
+    detail::sw92_asymmetric_preflight_search(
+        support_feed, options.aqueous.stability, starts.aqueous);
+    detail::sw92_asymmetric_preflight_search(
+        support_feed, options.nonaqueous.stability, starts.nonaqueous);
+
+    Sw92AsymmetricCommonTangentSearchResult result;
+    result.pressure_pa = pressure_pa;
+    result.temperature_k = temperature_k;
+    result.input_feed_sum = detail::stability_check_composition(support_feed);
+    result.feed = detail::stability_normalize(support_feed, result.input_feed_sum);
+    result.nacl_molality_mol_per_kg_water = nacl_molality_mol_per_kg_water;
+    result.options = options;
+    result.common_log_activity.assign(common_log_activity.begin(), common_log_activity.end());
+
+    const auto& parameters = model.parameters();
+    result.dataset_id = parameters.dataset_id();
+    result.revision = parameters.revision();
+    for (const auto& component : parameters.components().items()) {
+        result.component_ids.push_back(component.id);
+    }
+
+    Sw92FamilyStabilityEvaluator aqueous_evaluator(
+        model, nacl_molality_mol_per_kg_water,
+        thermodynamics::SwPhaseFamily::aqueous, options.aqueous.root_options);
+    Sw92FamilyStabilityEvaluator nonaqueous_evaluator(
+        model, nacl_molality_mol_per_kg_water,
+        thermodynamics::SwPhaseFamily::nonaqueous, options.nonaqueous.root_options);
+
+    result.aqueous = test_pt_stability_against(
+        pressure_pa, temperature_k, support_feed, common_log_activity,
+        aqueous_evaluator, options.aqueous.stability, starts.aqueous);
+    result.nonaqueous = test_pt_stability_against(
+        pressure_pa, temperature_k, support_feed, common_log_activity,
+        nonaqueous_evaluator, options.nonaqueous.stability, starts.nonaqueous);
+
+    detail::sw92_collect_negative_witnesses(
+        thermodynamics::SwPhaseFamily::aqueous, result.aqueous,
+        result.negative_witnesses);
+    detail::sw92_collect_negative_witnesses(
+        thermodynamics::SwPhaseFamily::nonaqueous, result.nonaqueous,
+        result.negative_witnesses);
+    result.status = detail::sw92_combine_asymmetric_searches(
+        result.aqueous, result.nonaqueous);
+    result.diagnostic = detail::sw92_asymmetric_search_diagnostic(result.status);
+    return result;
+}
 
 /// Gate 3A: finite Xu-style lower-envelope stability foundation for SW92 AQ/NA.
 ///
@@ -357,37 +489,14 @@ inline void sw92_collect_negative_witnesses(
         }
     }
 
-    result.aqueous.search = test_pt_stability_against(
+    auto common_search = test_sw92_pt_asymmetric_stability_against(
         pressure_pa, temperature_k, result.feed, result.common_log_activity,
-        aqueous_evaluator, options.aqueous.stability, starts.aqueous);
-    result.nonaqueous.search = test_pt_stability_against(
-        pressure_pa, temperature_k, result.feed, result.common_log_activity,
-        nonaqueous_evaluator, options.nonaqueous.stability, starts.nonaqueous);
-
-    detail::sw92_collect_negative_witnesses(
-        thermodynamics::SwPhaseFamily::aqueous, *result.aqueous.search,
-        result.negative_witnesses);
-    detail::sw92_collect_negative_witnesses(
-        thermodynamics::SwPhaseFamily::nonaqueous, *result.nonaqueous.search,
-        result.negative_witnesses);
-
-    const StabilityStatus aqueous_status = result.aqueous.search->status;
-    const StabilityStatus nonaqueous_status = result.nonaqueous.search->status;
-    if (aqueous_status == StabilityStatus::unstable ||
-        nonaqueous_status == StabilityStatus::unstable) {
-        result.status = StabilityStatus::unstable;
-        result.diagnostic =
-            "finite common-tangent search found a robust negative TPD witness in at least one SW92 family";
-    } else if (aqueous_status == StabilityStatus::no_instability_found &&
-               nonaqueous_status == StabilityStatus::no_instability_found) {
-        result.status = StabilityStatus::no_instability_found;
-        result.diagnostic =
-            "both finite family searches found no instability against the common feed tangent; not a global proof";
-    } else {
-        result.status = StabilityStatus::indeterminate;
-        result.diagnostic =
-            "no robust negative witness was found, but at least one required family search is indeterminate";
-    }
+        model, nacl_molality_mol_per_kg_water, options, starts);
+    result.aqueous.search = std::move(common_search.aqueous);
+    result.nonaqueous.search = std::move(common_search.nonaqueous);
+    result.negative_witnesses = std::move(common_search.negative_witnesses);
+    result.status = common_search.status;
+    result.diagnostic = std::move(common_search.diagnostic);
     return result;
 }
 
