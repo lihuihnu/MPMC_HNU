@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(mpmc_pt_split_tests LANGUAGES CXX)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash" flash-library)
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash/sensitivity" flash-sensitivity-library)
 enable_testing()
 add_executable(mpmc_pt_split_tests split_test.cpp headers.cpp)
 target_link_libraries(mpmc_pt_split_tests PRIVATE mpmc::flash)
@@ -124,4 +125,23 @@ foreach(case parameters_runtime flash_reference permutations final_indeterminate
     add_test(NAME flash.pt_split.ternary_${case} COMMAND mpmc_pt_ternary_tests ${case})
     set_tests_properties(flash.pt_split.ternary_${case} PROPERTIES
         LABELS "flash;flash.pt_split;ternary" TIMEOUT 180)
+endforeach()
+
+# Local converged-solution derivatives: separate from the flash iteration target.
+add_executable(mpmc_pt_sensitivity_tests sensitivity_test.cpp)
+target_link_libraries(mpmc_pt_sensitivity_tests PRIVATE mpmc::flash_sensitivity)
+set_target_properties(mpmc_pt_sensitivity_tests PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(mpmc_pt_sensitivity_tests PRIVATE /W4 /WX /permissive- /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(mpmc_pt_sensitivity_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+endif()
+if(MPMC_SPLIT_ENABLE_SANITIZERS)
+    target_compile_options(mpmc_pt_sensitivity_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(mpmc_pt_sensitivity_tests PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+foreach(case binary_reference ternary_reference guards invariants)
+    add_test(NAME flash.pt_split.sensitivity_${case} COMMAND mpmc_pt_sensitivity_tests ${case})
+    set_tests_properties(flash.pt_split.sensitivity_${case} PROPERTIES
+        LABELS "flash;flash.pt_split;sensitivity" TIMEOUT 180)
 endforeach()
