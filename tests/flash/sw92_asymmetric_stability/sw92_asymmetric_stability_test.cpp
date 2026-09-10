@@ -195,10 +195,6 @@ void feed_reference_and_common_tangent() {
                 result.nonaqueous.search->imposed_log_activity == result.common_log_activity,
             "AQ/NA searches did not receive the exact same tangent");
 
-    // The generic trial object stores its final accepted iterate, so an NA feed
-    // start need not remain at the original feed. Check the feed tangent identity
-    // directly from the retained feed-family references instead of assuming the
-    // trial history is immutable.
     const auto aq_at_feed = fl::tangent_plane_distance(
         result.feed, result.feed, *result.aqueous.feed_reference,
         *result.aqueous.feed_reference);
@@ -208,9 +204,6 @@ void feed_reference_and_common_tangent() {
     near(aq_at_feed.value, 0.0L, 0.0L, 2e-13L);
     near(na_at_feed.value, -golden.aqueous_minus_nonaqueous, 8e-10L, 8e-13L);
 
-    // Automatic starts are feed, uniform, and active-vertex blends. The uniform
-    // trial is already robustly negative in both families and therefore remains
-    // at the prescribed composition without a descent update.
     require(result.aqueous.search->trials.size() >= 2 &&
                 result.nonaqueous.search->trials.size() >= 2 &&
                 result.aqueous.search->trials[1].point &&
@@ -253,6 +246,35 @@ void negative_witness_and_counts() {
     }
     require(aq_uniform && na_uniform,
             "family-tagged prescribed negative witnesses were not retained");
+}
+
+void combined_status_semantics() {
+    const auto model = binary_model();
+    const Vec stable_feed{0.001, 0.999};
+    const auto stable = fl::test_sw92_pt_asymmetric_stability(
+        3.0e6, 340.0, stable_feed, model, 0.0);
+    require(stable.feed_reference_status ==
+                fl::Sw92AsymmetricFeedReferenceStatus::selected &&
+                stable.aqueous.search && stable.nonaqueous.search,
+            "stable-state asymmetric searches were not executed");
+    require(stable.aqueous.search->status == fl::StabilityStatus::no_instability_found &&
+                stable.nonaqueous.search->status == fl::StabilityStatus::no_instability_found &&
+                stable.status == fl::StabilityStatus::no_instability_found &&
+                stable.negative_witnesses.empty(),
+            "two no-instability family searches did not combine correctly");
+    require(!stable.global_stability_proven,
+            "finite no-instability result became a global proof");
+
+    fl::Sw92AsymmetricStabilityOptions limited;
+    limited.aqueous.stability.max_iterations = 0;
+    const auto unresolved = fl::test_sw92_pt_asymmetric_stability(
+        3.0e6, 340.0, stable_feed, model, 0.0, limited);
+    require(unresolved.aqueous.search && unresolved.nonaqueous.search &&
+                unresolved.aqueous.search->status == fl::StabilityStatus::indeterminate &&
+                unresolved.nonaqueous.search->status == fl::StabilityStatus::no_instability_found &&
+                unresolved.status == fl::StabilityStatus::indeterminate &&
+                unresolved.negative_witnesses.empty(),
+            "indeterminate family without negative evidence did not dominate no-instability result");
 }
 
 void pure_vertex_active_gauge() {
@@ -378,6 +400,7 @@ using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test cases[] = {
     {"feed_reference_and_common_tangent", feed_reference_and_common_tangent},
     {"negative_witness_and_counts", negative_witness_and_counts},
+    {"combined_status_semantics", combined_status_semantics},
     {"pure_vertex_active_gauge", pure_vertex_active_gauge},
     {"family_tie_guard", family_tie_guard},
     {"permutation", permutation},
