@@ -14,6 +14,14 @@
 
 namespace mpmc::flash {
 
+/// Same-family minimum-Gibbs property selection with its selected Z retained.
+/// `activity.branch` is still only the increasing-Z cubic-root index inside the
+/// fixed family; Z is diagnostic/property data and never selects AQ versus NA.
+struct Sw92FamilySelectedPhase {
+    StabilityPhase activity;
+    double compressibility_factor{};
+};
+
 /// Fixed-family SW92 property provider for the generic PT stability search.
 /// The phase family and NaCl molality are constructor state and never change
 /// during one search. `StabilityPhase::branch` is only the increasing-Z cubic
@@ -62,8 +70,11 @@ public:
         return root_options_;
     }
 
-    [[nodiscard]] StabilityPhase operator()(double pressure_pa, double temperature_k,
-                                           std::span<const double> composition) {
+    /// Resolve the same family/minimum-Gibbs root once and retain both its
+    /// StabilityPhase and compressibility factor for family-aware downstream use.
+    [[nodiscard]] Sw92FamilySelectedPhase evaluate_selected(
+        double pressure_pa, double temperature_k,
+        std::span<const double> composition) {
         namespace th = thermodynamics;
         try {
             const auto roots = model_.roots(pressure_pa, temperature_k, composition,
@@ -82,7 +93,7 @@ public:
                 break;
             }
 
-            std::vector<StabilityPhase> candidates;
+            std::vector<Sw92FamilySelectedPhase> candidates;
             candidates.reserve(roots.count);
             for (std::size_t root_index = 0; root_index < roots.count; ++root_index) {
                 // H'>0 <=> dp/dv<0. This mechanical filter is not a TPD test.
@@ -90,7 +101,8 @@ public:
                 auto values = model_.evaluate(pressure_pa, temperature_k, composition,
                                               molality_, family_, root_index,
                                               workspace_, root_options_);
-                candidates.push_back({std::move(values.ln_phi), root_index, true});
+                candidates.push_back({
+                    {std::move(values.ln_phi), root_index, true}, values.z});
             }
             if (candidates.empty()) {
                 throw StabilityPropertyError(StabilityPropertyIssue::no_admissible_branch,
@@ -99,12 +111,14 @@ public:
 
             // At fixed p,T,x,family, ideal/reference terms cancel between cubic
             // roots, so sum_i x_i ln(phi_i) ranks their molar Gibbs energies.
-            const auto difference = [&](const StabilityPhase& a, const StabilityPhase& b) {
+            const auto difference = [&](const Sw92FamilySelectedPhase& a,
+                                        const Sw92FamilySelectedPhase& b) {
                 double value = 0.0;
                 double correction = 0.0;
                 for (std::size_t i = 0; i < composition.size(); ++i) {
-                    detail::stability_add(composition[i] * (a.ln_phi[i] - b.ln_phi[i]),
-                                          value, correction);
+                    detail::stability_add(
+                        composition[i] * (a.activity.ln_phi[i] - b.activity.ln_phi[i]),
+                        value, correction);
                 }
                 if (!std::isfinite(value)) {
                     throw StabilityPropertyError(StabilityPropertyIssue::nonfinite_properties,
@@ -119,7 +133,7 @@ public:
                     best = candidate;
                 }
             }
-            if (!roots.roots[candidates[best].branch].derivative_valid) {
+            if (!roots.roots[candidates[best].activity.branch].derivative_valid) {
                 throw StabilityPropertyError(StabilityPropertyIssue::ill_conditioned_root,
                     "SW92 stability: selected root is too ill-conditioned for a reliable search");
             }
@@ -130,8 +144,8 @@ public:
                 double magnitude = 1.0;
                 for (std::size_t i = 0; i < composition.size(); ++i) {
                     magnitude += composition[i] *
-                        (std::abs(candidates[candidate].ln_phi[i]) +
-                         std::abs(candidates[best].ln_phi[i]));
+                        (std::abs(candidates[candidate].activity.ln_phi[i]) +
+                         std::abs(candidates[best].activity.ln_phi[i]));
                 }
                 if (!std::isfinite(magnitude)) {
                     throw StabilityPropertyError(StabilityPropertyIssue::nonfinite_properties,
@@ -139,7 +153,7 @@ public:
                 }
                 if (std::abs(difference(candidates[candidate], candidates[best])) <=
                     256.0 * detail::stability_eps * magnitude) {
-                    candidates[best].smooth = false;
+                    candidates[best].activity.smooth = false;
                 }
             }
             return std::move(candidates[best]);
@@ -159,6 +173,12 @@ public:
         } catch (const std::range_error& error) {
             throw StabilityPropertyError(StabilityPropertyIssue::root_range, error.what());
         }
+    }
+
+    [[nodiscard]] StabilityPhase operator()(double pressure_pa, double temperature_k,
+                                           std::span<const double> composition) {
+        auto selected = evaluate_selected(pressure_pa, temperature_k, composition);
+        return std::move(selected.activity);
     }
 
 private:
