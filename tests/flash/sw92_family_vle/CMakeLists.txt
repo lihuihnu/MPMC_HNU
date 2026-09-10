@@ -35,6 +35,7 @@ set(cases
     co2_nonaqueous_vle
     methane_aqueous_vle
     permutation
+    phase_disappearance
     contracts_and_failures
     headers)
 foreach(case IN LISTS cases)
