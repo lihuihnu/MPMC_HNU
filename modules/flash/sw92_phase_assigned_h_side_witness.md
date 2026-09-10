@@ -177,19 +177,35 @@ The focused regression suite covers:
 2. traceable CH4/H2O, 1 molal NaCl C1 state: same check with nonzero molality;
 3. the known negative `AQ-at-H` CO2 blocker is reproduced outside the adapter while C2a1 still
    reports no additional NA witness;
-4. explicit synthetic-test CO2/water NA `k_ij=0` produces a distinct water-poorer negative NA
-   witness usable as an H-split seed;
-5. the same synthetic model produces a negative NA-at-W diagnostic that fails the water-role guard
-   and leaves the outer result indeterminate;
+4. explicit `synthetic_test` CO2/water with only the NA water BIP changed to `k_ij=-0.1` produces a
+   distinct, water-poorer robust negative NA witness near `x_CO2=0.01`, usable only as an H-split
+   seed;
+5. the same synthetic model produces a robust negative NA-at-W diagnostic that fails the
+   water-role guard and leaves the outer result indeterminate;
 6. finite evaluation exhaustion remains indeterminate;
 7. NA root/property failure remains indeterminate with the generic family-search diagnostics;
 8. failed/mismatched C1 source guards;
 9. component permutation;
 10. public-header self containment.
 
-A standalone Decimal(80) script, independent of production C++, regenerates the retained-H tangent
-identity and the synthetic negative points. The existing C1 and post-C1 C2 blocker Decimal scripts
-are rerun unchanged in the C2a1 workflow.
+The standalone Decimal(80) script, independent of production C++, regenerates approximately
+
+```text
+x_CO2^W = 0.00593460227779478
+y_CO2^H = 0.987169796047773
+D_NA(W) = -0.002894806218964
+D_NA(x_CO2=0.01) = -0.003774779298654
+```
+
+for that explicit synthetic fixture. The first negative point is intentionally role-inadmissible; the
+second is compositionally distinct from retained H and water-poorer than retained W. These values
+are structural test evidence only and are not SW92 physical parameter or phase-equilibrium claims.
+
+The initially attempted synthetic `k_ij=0` fixture was independently rejected before acceptance:
+its NA TPD did not become negative. No production tolerance or thermodynamic formula was changed
+to force the intended test topology.
+
+The existing C1 and post-C1 C2 blocker Decimal scripts are rerun unchanged in the C2a1 workflow.
 
 ## Explicitly not implemented
 
