@@ -91,3 +91,16 @@ The focused stability integration includes:
 The reference uses the same traceable SW92 1992 corrected-original CO2/water data
 already documented in `modules/thermodynamics/sw92.md`; it does not introduce a
 new component database or experimental-validation claim.
+
+## Equilibrium-algorithm boundary
+
+A fixed-family stability result is not, by itself, a definition of how AQ and NA
+parameterizations form one equilibrium calculation. The source audit now distinguishes
+an evidence-aligned Whitson dual-model observable workflow from a generalized
+Xu-style asymmetric-Gibbs equilibrium route. Their algorithm identities, publication
+rules and implementation gates are defined in
+[`sw92_equilibrium_algorithm.md`](sw92_equilibrium_algorithm.md).
+
+In particular, this adapter must remain reusable by either route. No AQ/NA selection,
+water-fraction heuristic, cross-family Gibbs policy or phase-split ownership is to be
+moved into `Sw92FamilyStabilityEvaluator`.
