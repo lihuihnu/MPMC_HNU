@@ -4,13 +4,19 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'modules/ad/**'
       - 'modules/physics/include/mpmc/physics/thermodynamic_closure.hpp'
       - 'modules/physics/include/mpmc/physics/sw92_thermodynamic_closure.hpp'
       - 'modules/physics/CMakeLists.txt'
+      - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'
+      - 'modules/flash/include/mpmc/flash/detail/pt_sensitivity_detail.hpp'
+      - 'modules/flash/include/mpmc/flash/detail/sw92_profile_c_sensitivity_local.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_profile_c_sensitivity.hpp'
       - 'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp'
       - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_*.hpp'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
       - 'tests/physics/sw92_thermodynamic_closure/**'
+      - 'tests/flash/sw92_profile_c_sensitivity/**'
       - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
       - 'tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py'
       - 'tests/thermodynamics/sw92/test_support.hpp'
