@@ -1,0 +1,118 @@
+name: SW92 Profile-C authoritative phase set
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp'
+      - 'modules/flash/sw92_profile_c_phase_set.md'
+      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_boundary.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_pt.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase_closure.hpp'
+      - 'modules/thermodynamics/**/*.hpp'
+      - 'tests/flash/sw92_profile_c_phase_set/**'
+      - 'tests/flash/sw92_phase_assigned_boundary/**'
+      - 'tests/flash/sw92_phase_assigned_pt/**'
+      - 'tests/flash/pt_split/phase_set_test.cpp'
+      - 'tests/flash/pt_split/CMakeLists.txt'
+      - 'README.md'
+      - '.github/workflows/sw92_profile_c_phase_set.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sw92-profile-c-phase-set-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publication:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Regenerate physical Sample-6 oracle
+        run: python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
+
+      - name: Configure authoritative publication regression
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_profile_c_phase_set \
+            -B build/sw92-profile-c-phase-set \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PROFILE_C_PHASE_SET_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build authoritative publication regression
+        run: cmake --build build/sw92-profile-c-phase-set --target mpmc_sw92_profile_c_phase_set_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run authoritative publication regression
+        run: ctest --test-dir build/sw92-profile-c-phase-set -C ${{ matrix.config }} -R '^flash[.]sw92_profile_c_phase_set[.]' --verbose --no-tests=error
+
+      - name: Configure affected boundary-aware PT regression
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
+          cmake -S tests/flash/sw92_phase_assigned_boundary -B build/sw92-boundary \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PHASE_ASSIGNED_BOUNDARY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build affected boundary-aware PT regression
+        run: cmake --build build/sw92-boundary --target mpmc_sw92_phase_assigned_boundary_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run affected boundary-aware PT regression
+        run: ctest --test-dir build/sw92-boundary -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_boundary[.]' --verbose --no-tests=error
+
+      - name: Configure affected Profile-C PT regression
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
+          cmake -S tests/flash/sw92_phase_assigned_pt -B build/sw92-pt \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PHASE_ASSIGNED_PT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build affected Profile-C PT regression
+        run: cmake --build build/sw92-pt --target mpmc_sw92_phase_assigned_pt_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run affected Profile-C PT regression
+        run: ctest --test-dir build/sw92-pt -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_pt[.]' --verbose --no-tests=error
+
+      - name: Configure generic phase-set contract regression
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
+          cmake -S tests/flash/pt_split -B build/pt-phase-set \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build generic phase-set contract regression
+        run: cmake --build build/pt-phase-set --target mpmc_pt_phase_set_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run generic phase-set contract regression
+        run: ctest --test-dir build/pt-phase-set -C ${{ matrix.config }} -R '^flash[.]pt_split[.]phase_set_' --verbose --no-tests=error
