@@ -111,7 +111,8 @@ or W phase, and that higher-phase evidence from a fresh neighbor is preserved.
 A separate provenance regression mutates C2a1 metadata and confirms that the
 resolver rejects the inconsistent chain before re-solving.
 
-Validation run `34567768458` completed successfully on:
+Numerical/test head `1e77cb988b8ca1d123a36abd1a8544bc451db99e`
+was validated by GitHub Actions run `34567768458` on:
 
 - GCC Debug + ASan/UBSan;
 - Clang Release;
@@ -119,8 +120,9 @@ Validation run `34567768458` completed successfully on:
 
 The same run also passed the affected top-level Profile-C PT, C2b.2, no-W,
 C2a1 and C1 suites, with the physical Sample-6 Decimal oracle regenerated on all
-three jobs. No SW92 formula, parameter, tolerance or physical reference anchor
-was changed to obtain the result.
+three jobs. Later commits only synchronize this scientific/validation document;
+no production code, test, workflow, tolerance, parameter or reference anchor was
+changed after that validated head.
 
 Frontend work remains frozen until maximum-three-phase validation and
 authoritative publication are complete.
