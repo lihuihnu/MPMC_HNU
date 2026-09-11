@@ -89,6 +89,7 @@ struct Sw92PhaseAssignedPtResult {
     std::size_t c2b1_attempts{};
     bool c1_attempt_limit_reached{false};
     bool c2b1_attempt_limit_reached{false};
+    bool unstable_no_w_w_search_attempted{false};
     std::string diagnostic;
 
     [[nodiscard]] bool locally_closed_phase_candidate() const noexcept {
@@ -115,32 +116,6 @@ inline void sw92_phase_assigned_pt_check_options(
         throw std::invalid_argument(
             "SW92 Profile-C PT: positive candidate-attempt quotas required");
     }
-}
-
-inline double sw92_phase_assigned_pt_dot(
-    std::span<const double> first, std::span<const double> second) {
-    if (first.size() != second.size()) {
-        throw std::logic_error("SW92 Profile-C PT: dot-product dimension mismatch");
-    }
-    double value = 0.0;
-    double correction = 0.0;
-    for (std::size_t i = 0; i < first.size(); ++i) {
-        stability_add(first[i] * second[i], value, correction);
-    }
-    return value;
-}
-
-inline double sw92_phase_assigned_pt_common_gibbs_guard(
-    std::span<const double> feed, std::span<const double> common) {
-    if (feed.size() != common.size()) {
-        return std::numeric_limits<double>::infinity();
-    }
-    double magnitude = 1.0;
-    double correction = 0.0;
-    for (std::size_t i = 0; i < feed.size(); ++i) {
-        stability_add(feed[i] * std::abs(common[i]), magnitude, correction);
-    }
-    return 256.0 * stability_eps * magnitude;
 }
 
 inline double sw92_phase_assigned_pt_log_distance(
@@ -188,6 +163,111 @@ inline std::vector<std::vector<double>> sw92_phase_assigned_pt_h_side_starts(
         }
     }
     return starts;
+}
+
+/// A fixed-NA two-phase candidate may itself be unstable to another NA phase.
+/// That is NOT sufficient to terminate Profile-C: the physical solution may be
+/// W+H0+H1. Reconstruct the selected fixed-NA pair and perform the same targeted
+/// AQ appearance search used by the no-W adapter. If a W seed is found, the
+/// top-level graph continues into joint Profile-C equations.
+inline bool sw92_phase_assigned_pt_try_w_from_unstable_no_w(
+    Sw92PhaseAssignedNoWResult& no_w,
+    const thermodynamics::Sw92Phase<double>& model) {
+    auto& solution = no_w.hydrocarbon_flash.solution;
+    if (no_w.status !=
+            Sw92PhaseAssignedNoWStatus::higher_h_multiplicity_or_wrong_candidate ||
+        solution.status != PtSplitStatus::phase_set_unstable) {
+        return false;
+    }
+    const auto* candidate = solution.candidate();
+    if (candidate == nullptr || no_w.feed.empty() ||
+        no_w.water_index >= no_w.feed.size()) {
+        return false;
+    }
+
+    no_w.retained_na_candidate_compositions.clear();
+    no_w.retained_na_candidate_fractions.clear();
+    no_w.aqueous_witnesses.clear();
+    no_w.selected_water_witness_index.reset();
+    no_w.retained_na_candidate_compositions.push_back(candidate->fractions.liquid);
+    no_w.retained_na_candidate_compositions.push_back(candidate->fractions.vapor);
+    no_w.retained_na_candidate_fractions.push_back(
+        1.0 - candidate->fractions.vapor_fraction);
+    no_w.retained_na_candidate_fractions.push_back(candidate->fractions.vapor_fraction);
+    no_w.common_log_activity = candidate->common_log_activity;
+
+    no_w.min_retained_na_candidate_water_fraction =
+        std::numeric_limits<double>::infinity();
+    no_w.max_retained_na_candidate_water_fraction = 0.0;
+    for (const auto& phase : no_w.retained_na_candidate_compositions) {
+        if (phase.size() != no_w.feed.size()) { return false; }
+        const double water = phase[no_w.water_index];
+        no_w.min_retained_na_candidate_water_fraction = std::min(
+            no_w.min_retained_na_candidate_water_fraction, water);
+        no_w.max_retained_na_candidate_water_fraction = std::max(
+            no_w.max_retained_na_candidate_water_fraction, water);
+    }
+    if (!std::isfinite(no_w.min_retained_na_candidate_water_fraction) ||
+        !std::isfinite(no_w.max_retained_na_candidate_water_fraction) ||
+        no_w.feed[no_w.water_index] == 0.0) {
+        return false;
+    }
+
+    no_w.targeted_water_start = sw92_phase_assigned_targeted_water_start(
+        no_w.feed, no_w.water_index,
+        no_w.max_retained_na_candidate_water_fraction);
+    if (!no_w.targeted_water_start) { return false; }
+
+    const std::size_t mandatory = 1U + no_w.retained_na_candidate_count();
+    sw92_phase_assigned_no_w_preflight_starts(
+        no_w.feed, no_w.options.aqueous_appearance, mandatory, {});
+    std::vector<std::vector<double>> starts;
+    starts.reserve(mandatory);
+    starts.push_back(*no_w.targeted_water_start);
+    for (const auto& phase : no_w.retained_na_candidate_compositions) {
+        starts.push_back(phase);
+    }
+
+    Sw92FamilyStabilityEvaluator aqueous(
+        model, no_w.nacl_molality_mol_per_kg_water,
+        thermodynamics::SwPhaseFamily::aqueous,
+        no_w.options.aqueous_root_options);
+    no_w.aqueous_appearance_search = test_pt_stability_against(
+        no_w.pressure_pa, no_w.temperature_k, no_w.feed,
+        no_w.common_log_activity, aqueous,
+        no_w.options.aqueous_appearance, starts);
+    const auto& search = *no_w.aqueous_appearance_search;
+    if (search.trials.empty()) {
+        no_w.status = Sw92PhaseAssignedNoWStatus::indeterminate;
+        no_w.diagnostic =
+            "unstable fixed-NA pair required W-rival review but the targeted AQ search produced no trial";
+        return false;
+    }
+
+    const auto& targeted = search.trials.front();
+    if (targeted.status == StabilityTrialStatus::negative_tpd && targeted.point &&
+        stability_negative(*targeted.point, search.options)) {
+        no_w.aqueous_witnesses.push_back(sw92_phase_assigned_classify_water_witness(
+            0U, *targeted.point, no_w.retained_na_candidate_compositions,
+            no_w.feed, no_w.water_index,
+            no_w.min_retained_na_candidate_water_fraction,
+            no_w.options.log_composition_separation));
+        if (no_w.aqueous_witnesses.front().usable_w_seed()) {
+            no_w.selected_water_witness_index = 0U;
+            no_w.status = Sw92PhaseAssignedNoWStatus::aqueous_phase_witness_found;
+            no_w.diagnostic =
+                "fixed-NA pair has further NA instability and a targeted physical W witness; continue into joint Profile-C topology rather than terminating at all-NA multiplicity";
+            return true;
+        }
+    }
+
+    if (targeted.status != StabilityTrialStatus::stationary &&
+        targeted.status != StabilityTrialStatus::negative_tpd) {
+        no_w.status = Sw92PhaseAssignedNoWStatus::indeterminate;
+        no_w.diagnostic =
+            "unstable fixed-NA pair required W-rival review but targeted AQ search was numerically/property indeterminate";
+    }
+    return false;
 }
 
 inline void sw92_phase_assigned_pt_publish_no_w(
@@ -260,12 +340,6 @@ inline void sw92_phase_assigned_pt_publish_c2b1(
 
 } // namespace detail
 
-/// Top-level Profile-C PT topology orchestration.
-///
-/// The driver intentionally returns locally-closed phase candidates rather than
-/// an authoritative phase set. It routes through the already audited numerical
-/// gates and keeps hydrocarbon morphology unresolved so frontend integration can
-/// begin without inventing L/V physics.
 [[nodiscard]] inline Sw92PhaseAssignedPtResult solve_sw92_phase_assigned_pt(
     double pressure_pa, double temperature_k, std::span<const double> feed,
     const thermodynamics::Sw92Phase<double>& model,
@@ -290,6 +364,13 @@ inline void sw92_phase_assigned_pt_publish_c2b1(
     result.no_w = solve_sw92_phase_assigned_no_w(
         pressure_pa, temperature_k, feed, model,
         nacl_molality_mol_per_kg_water, options.no_w);
+
+    if (result.no_w.status ==
+        Sw92PhaseAssignedNoWStatus::higher_h_multiplicity_or_wrong_candidate) {
+        result.unstable_no_w_w_search_attempted = true;
+        (void)detail::sw92_phase_assigned_pt_try_w_from_unstable_no_w(
+            result.no_w, model);
+    }
 
     switch (result.no_w.status) {
     case Sw92PhaseAssignedNoWStatus::no_w_single_h_locally_closed:
@@ -322,19 +403,19 @@ inline void sw92_phase_assigned_pt_publish_c2b1(
     }
 
     const auto* w_witness = result.no_w.selected_water_witness();
-    if (w_witness == nullptr ||
-        result.no_w.common_log_activity.size() != result.feed.size()) {
+    if (w_witness == nullptr) {
         result.status = Sw92PhaseAssignedPtStatus::topology_unresolved;
         result.diagnostic =
-            "no-W stage reported W appearance without a usable retained witness/common tangent";
+            "no-W stage reported W appearance without a usable retained witness";
         return result;
     }
     const auto& w_seed = w_witness->point.composition;
-    const double no_w_gibbs = detail::sw92_phase_assigned_pt_dot(
-        result.feed, result.no_w.common_log_activity);
-    const double no_w_guard = detail::sw92_phase_assigned_pt_common_gibbs_guard(
-        result.feed, result.no_w.common_log_activity);
 
+    // Do NOT compare all-NA no-W Gibbs against W(AQ)+H(NA) Gibbs. Those are
+    // different physical-role/model assignments in an asymmetric SW92 profile;
+    // such a cross-topology ranking would recreate Profile-B model competition.
+    // A targeted W instability generates the rival physical topology, and the
+    // joint C1 equations plus role guard decide whether that topology exists.
     std::optional<Sw92PhaseAssignedJointResult> best_c1;
     double best_c1_gibbs = std::numeric_limits<double>::infinity();
     for (const auto& h_seed : result.no_w.retained_na_candidate_compositions) {
@@ -355,8 +436,6 @@ inline void sw92_phase_assigned_pt_publish_c2b1(
             nacl_molality_mol_per_kg_water, options.c1);
         const auto* point = candidate.candidate();
         if (point == nullptr) { continue; }
-        const double guard = no_w_guard + point->gibbs_roundoff_guard;
-        if (point->reduced_gibbs > no_w_gibbs + guard) { continue; }
         if (point->reduced_gibbs < best_c1_gibbs) {
             best_c1_gibbs = point->reduced_gibbs;
             best_c1 = std::move(candidate);
@@ -365,8 +444,8 @@ inline void sw92_phase_assigned_pt_publish_c2b1(
     if (!best_c1) {
         result.status = Sw92PhaseAssignedPtStatus::topology_unresolved;
         result.diagnostic = result.c1_attempt_limit_reached
-            ? "W witness exists but the C1 attempt quota was exhausted before a Gibbs-consistent W+H candidate was retained"
-            : "W witness exists but no Gibbs-consistent admissible W+H joint candidate was found";
+            ? "W witness exists but the C1 attempt quota was exhausted before an admissible W+H candidate was retained"
+            : "W witness exists but no admissible W+H joint candidate was found";
         return result;
     }
     result.c1 = std::move(best_c1);
