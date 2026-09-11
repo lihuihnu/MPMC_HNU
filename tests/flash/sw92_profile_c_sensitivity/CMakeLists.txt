@@ -12,6 +12,8 @@ add_executable(mpmc_sw92_profile_c_sensitivity_tests
     sw92_profile_c_sensitivity_header.cpp)
 add_executable(mpmc_sw92_profile_c_sensitivity_sample6_fresh
     sw92_profile_c_sensitivity_sample6_fresh.cpp)
+add_dependencies(mpmc_sw92_profile_c_sensitivity_tests
+    mpmc_sw92_profile_c_sensitivity_sample6_fresh)
 
 foreach(target IN ITEMS
         mpmc_sw92_profile_c_sensitivity_tests
