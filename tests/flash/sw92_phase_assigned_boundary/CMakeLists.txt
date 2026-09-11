@@ -38,6 +38,7 @@ set(cases
     physical_no_w_edge
     synthetic_h_drop_guard
     synthetic_w_drop_guard
+    source_chain_guard
     boundary_aware_interior
     boundary_aware_guard
     headers)
