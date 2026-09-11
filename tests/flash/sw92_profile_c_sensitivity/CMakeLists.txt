@@ -10,30 +10,37 @@ option(MPMC_SW92_PROFILE_C_SENSITIVITY_ENABLE_SANITIZERS
 add_executable(mpmc_sw92_profile_c_sensitivity_tests
     sw92_profile_c_sensitivity_test.cpp
     sw92_profile_c_sensitivity_header.cpp)
-target_link_libraries(mpmc_sw92_profile_c_sensitivity_tests PRIVATE
-    mpmc::flash_sensitivity)
-target_include_directories(mpmc_sw92_profile_c_sensitivity_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
-set_target_properties(mpmc_sw92_profile_c_sensitivity_tests PROPERTIES
-    CXX_EXTENSIONS OFF)
+add_executable(mpmc_sw92_profile_c_sensitivity_sample6_fresh
+    sw92_profile_c_sensitivity_sample6_fresh.cpp)
 
-if(MSVC)
-    target_compile_options(mpmc_sw92_profile_c_sensitivity_tests PRIVATE
-        /W4 /WX /permissive- /utf-8)
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(mpmc_sw92_profile_c_sensitivity_tests PRIVATE
-        -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
-endif()
+foreach(target IN ITEMS
+        mpmc_sw92_profile_c_sensitivity_tests
+        mpmc_sw92_profile_c_sensitivity_sample6_fresh)
+    target_link_libraries(${target} PRIVATE mpmc::flash_sensitivity)
+    target_include_directories(${target} PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        target_compile_options(${target} PRIVATE
+            -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+    endif()
+endforeach()
 
 if(MPMC_SW92_PROFILE_C_SENSITIVITY_ENABLE_SANITIZERS)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
        NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
         message(FATAL_ERROR "SW92 Profile-C sensitivity sanitizers require Linux GCC/Clang")
     endif()
-    target_compile_options(mpmc_sw92_profile_c_sensitivity_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-    target_link_options(mpmc_sw92_profile_c_sensitivity_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all)
+    foreach(target IN ITEMS
+            mpmc_sw92_profile_c_sensitivity_tests
+            mpmc_sw92_profile_c_sensitivity_sample6_fresh)
+        target_compile_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all)
+    endforeach()
 endif()
 
 set(cases
@@ -51,3 +58,9 @@ foreach(case IN LISTS cases)
     set_tests_properties(flash.sw92_profile_c_sensitivity.${case} PROPERTIES
         LABELS "flash;flash.sensitivity;sw92;ad" TIMEOUT 600)
 endforeach()
+
+add_test(NAME flash.sw92_profile_c_sensitivity.sample6_fresh_pt_resolve
+         COMMAND mpmc_sw92_profile_c_sensitivity_sample6_fresh)
+set_tests_properties(
+    flash.sw92_profile_c_sensitivity.sample6_fresh_pt_resolve PROPERTIES
+    LABELS "flash;flash.sensitivity;sw92;ad;fresh-resolve" TIMEOUT 600)
