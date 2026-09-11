@@ -111,17 +111,12 @@ A separate provenance regression mutates C2a1 metadata and confirms that the
 resolver rejects the inconsistent chain before re-solving.
 
 Numerical/test head `1e77cb988b8ca1d123a36abd1a8544bc451db99e`
-was validated by GitHub Actions run `34567768458` on:
-
-- GCC Debug + ASan/UBSan;
-- Clang Release;
-- MSVC Release.
-
-The same run passed the affected top-level Profile-C PT, C2b.2, no-W, C2a1 and
-C1 suites, with the physical Sample-6 Decimal oracle regenerated on all three
-jobs. Commits after the validated numerical/test head only synchronize this
-scientific/validation document; no production code, test, workflow, tolerance,
-parameter or reference anchor changed after validation.
+was validated by GitHub Actions run `34567768458` on GCC Debug + ASan/UBSan,
+Clang Release and MSVC Release. The same run passed the affected top-level
+Profile-C PT, C2b.2, no-W, C2a1 and C1 suites, with the physical Sample-6
+Decimal oracle regenerated on all three jobs. Commits after the validated
+numerical/test head only synchronize this document; no production code, test,
+workflow, tolerance, parameter or reference anchor changed after validation.
 
 Frontend work remains frozen until maximum-three-phase validation and
 authoritative publication are complete.
