@@ -16,6 +16,7 @@ bool sw92_thermodynamic_closure_header() {
     linearization.linear_solve_backward_error = 0.0;
     linearization.equilibrium_residual_norm = 0.0;
 
+    snapshot.feed = {0.4, 0.6};
     snapshot.component_ids = {"A", "B"};
     snapshot.primal_status = mpmc::physics::ThermodynamicClosurePrimalStatus::valid;
     snapshot.linearization_status =
@@ -24,6 +25,7 @@ bool sw92_thermodynamic_closure_header() {
         mpmc::physics::ThermodynamicClosureLinearizationReason::none;
     snapshot.primal.emplace();
     snapshot.primal->phases.resize(1U);
+    snapshot.primal->phases.front().composition = {0.5, 0.5};
     snapshot.linearization = linearization;
 
     return mpmc::physics::PtPhaseSetThermodynamicClosureSnapshot::convention ==
