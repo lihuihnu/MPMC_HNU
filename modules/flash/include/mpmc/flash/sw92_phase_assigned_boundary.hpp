@@ -314,12 +314,18 @@ resolve_sw92_phase_assigned_c2b2_boundary(
             "boundary re-solve requires an equation-converged C2b.1 disappearance state";
         return result;
     }
-    if (c1.feed != c2b1.feed || c1.feed != c2b2.feed ||
-        c1.dataset_id != c2b1.dataset_id || c1.dataset_id != c2b2.dataset_id ||
-        c1.revision != c2b1.revision || c1.revision != c2b2.revision ||
-        c1.component_ids != c2b1.component_ids || c1.component_ids != c2b2.component_ids) {
+    if (!detail::sw92_phase_assigned_c2b1_source_matches(c1, c2a1) ||
+        !detail::sw92_phase_assigned_c2b2_three_phase_matches(c1, c2b1) ||
+        !detail::sw92_phase_assigned_c2b2_source_seed_matches(c1, c2a1, c2b1) ||
+        c1.pressure_pa != c2b2.pressure_pa ||
+        c1.temperature_k != c2b2.temperature_k ||
+        c1.nacl_molality_mol_per_kg_water != c2b2.nacl_molality_mol_per_kg_water ||
+        c1.feed != c2b2.feed || c1.dataset_id != c2b2.dataset_id ||
+        c1.revision != c2b2.revision || c1.component_ids != c2b2.component_ids ||
+        c2b2.selected_c2a1_witness_index != c2b1.source_witness_index) {
         result.status = Sw92PhaseAssignedBoundaryStatus::source_chain_inconsistent;
-        result.diagnostic = "boundary re-solve source metadata do not share one model snapshot";
+        result.diagnostic =
+            "boundary re-solve source metadata or C2a1->C2b.1 witness provenance is inconsistent";
         return result;
     }
 
