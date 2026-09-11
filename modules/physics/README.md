@@ -2,9 +2,9 @@
 
 ## Scope
 
-The `physics` layer consumes already accepted thermodynamic/flash states and exposes owned thermodynamic snapshots for future conservation-law and discretization code. It does **not** create mesh, flux, saturation, Darcy flow, time stepping, global residual assembly, a nonlinear solver, viscosity, enthalpy or an energy equation.
+The `physics` layer consumes already accepted thermodynamic/flash states and exposes owned thermodynamic snapshots plus a model-neutral local fluid-volume component inventory for future conservation-law and discretization code. It does **not** create pore volume, mesh, flux, saturation, Darcy flow, time stepping, global residual assembly, a nonlinear solver, viscosity, enthalpy or an energy equation.
 
-Two adapters are currently implemented:
+Two thermodynamic-closure adapters are currently implemented:
 
 - `mpmc/physics/pr76_thermodynamic_closure.hpp`: accepted PR76 internal two-phase VLE primal plus its validated local linearization;
 - `mpmc/physics/sw92_thermodynamic_closure.hpp`: accepted SW92 Profile-C authoritative 1/2/3-phase PT primal plus the validated fixed-phase-set local implicit linearization when available.
@@ -13,6 +13,8 @@ The generic header `mpmc/physics/thermodynamic_closure.hpp` contains two payload
 
 - `ThermodynamicClosureSnapshot`: the original fixed liquid/vapor PR76 VLE contract;
 - `PtPhaseSetThermodynamicClosureSnapshot`: the variable-cardinality phase-set reduced-feed v2 contract used by SW92 and intended for later phase-set models.
+
+`mpmc/physics/component_inventory.hpp` consumes either payload without changing the upstream contracts and publishes total/component molar inventory per **total fluid volume** plus a local reduced-feed Jacobian when the source closure has a valid linearization. See [PT component inventory and local Jacobian](component_inventory.md).
 
 The CMake target remains `mpmc::physics`. Dependency direction is `physics -> flash_sensitivity -> ad/thermodynamics`; no lower layer depends on physics.
 
@@ -32,7 +34,7 @@ If the sensitivity path reports `solution_not_accepted`, or the flash itself is 
 
 ### SW92 Profile-C
 
-The SW92 adapter now follows the same two-axis policy for authoritative 1/2/3-phase states.
+The SW92 adapter follows the same two-axis policy for authoritative 1/2/3-phase states.
 
 When the fixed-phase-set flash sensitivity succeeds:
 
@@ -95,6 +97,33 @@ d c_alpha / dq
 plus the local equilibrium-Jacobian reciprocal-condition estimate, implicit-solve backward error and accepted-base residual norm.
 
 `can_seed_newton()` checks not only status and payload presence but also component/phase/input dimensions, all Jacobian shapes, finite entries and finite local-solve diagnostics. The generic vector deliberately has no `liquid`, `vapor`, `aqueous`, AQ or NA label. Model-specific role/family identity remains in the model adapter sidecar so generic physics code cannot silently turn a numerical phase slot into physical morphology.
+
+## Model-neutral PT component inventory
+
+Public entry:
+
+```cpp
+#include <mpmc/physics/component_inventory.hpp>
+
+const auto inventory = mpmc::physics::build_pt_component_inventory(closure);
+```
+
+The overload set accepts both `ThermodynamicClosureSnapshot` and `PtPhaseSetThermodynamicClosureSnapshot`. It performs no flash, EOS solve, topology selection or finite-difference differentiation.
+
+For accepted phases it computes
+
+```text
+v_bar = sum_alpha beta_alpha / c_alpha
+c_mix = 1 / v_bar
+s_i   = sum_alpha beta_alpha x_alpha,i
+a_i   = c_mix s_i  [mol/m^3 fluid]
+```
+
+and independently requires the source material-balance identity `s_i ~= z_i`, hence `a_i ~= c_mix z_i`. The quantity `a_i` is component moles per **total fluid volume**; it is not pore-volume accumulation and introduces no porosity or saturation model.
+
+When the source local derivative is available, the inventory layer analytically combines `d beta/dq`, `d x/dq` and `d c/dq` to publish `d c_mix/dq` and `d a_i/dq` in the same reduced-feed coordinates. Each column is independently checked against the differentiated feed form and against `sum_i d a_i/dq = d c_mix/dq`. Production finite differences are not used.
+
+The inventory layer deliberately exposes `inventory_available()` and `linearization_available()` rather than a global-Newton eligibility claim. If the source primal is valid while its derivative is unavailable, the fluid-volume inventory remains valid but no inventory Jacobian is published; derivative failure reasons are propagated. Full equations and validation are documented in [the component-inventory contract](component_inventory.md).
 
 ## SW92 authoritative Profile-C adapter
 
@@ -209,9 +238,11 @@ The SW92 physics-closure regression covers:
 11. runtime component permutation for both primal and p/T derivative columns;
 12. public-header self containment and reduced-feed v2 convention.
 
+The component-inventory regression separately covers model-neutral fixed-VLE/variable-cardinality consumption, exact phase-slot invariance, PR76 and SW92 derivative-unavailable propagation, SW92 Sample-6 component permutation, and test-only isothermal fixed-fluid-volume residual Jacobians cross-checked against fresh PR76/SW92 re-solves.
+
 The underlying flash-sensitivity regression independently validates the fixed-phase-set implicit Jacobian with forward AD, fresh re-solves, the physical Sample-6 three-phase state, permutation/H-slot invariance and derivative boundary guards; see the [SW92 Profile-C sensitivity contract](../flash/sw92_profile_c_sensitivity.md).
 
-A dedicated GitHub-hosted GCC Debug+ASan/UBSan / Clang Release / MSVC Release workflow regenerates the existing independent Sample-6 Decimal(80) primal oracle before the focused C++ suite. Changes to the shared generic closure header also select the existing PR76 closure workflow.
+Dedicated GitHub-hosted GCC Debug+ASan/UBSan / Clang Release / MSVC Release workflows cover both the thermodynamic-closure adapters and the component-inventory layer. Changes to the shared generic closure header also select the existing PR76 closure workflow.
 
 ## Current non-capabilities
 
@@ -220,9 +251,10 @@ The physics layer still does not provide:
 - a validated SW92 H0/H1 liquid/vapor or LV/LL morphology resolver;
 - derivatives across phase appearance/disappearance, family/root switching or critical/near-multiple-root states;
 - NaCl inventory conservation (Profile-C molality remains prescribed model input);
-- pore-volume saturation, mass density, viscosity, mobility, enthalpy/internal energy;
+- pore volume, porosity, pore-volume accumulation or pore-volume saturation;
+- mass density, viscosity, mobility, enthalpy/internal energy;
 - mass/energy fluxes, capillary pressure or relative permeability;
-- conservation residual assembly, mesh/discretization, time integration or a nonlinear solver;
+- production conservation residual assembly, mesh/discretization, time integration, global Jacobian assembly or a nonlinear solver;
 - CPA closure.
 
-Those are separate model/numerical increments and must not be inferred from a valid local thermodynamic linearization.
+Those are separate model/numerical increments and must not be inferred from a valid local thermodynamic or component-inventory linearization.
