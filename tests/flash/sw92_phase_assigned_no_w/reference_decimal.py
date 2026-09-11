@@ -2,12 +2,14 @@
 
 Stdlib only; no production imports. This combines the already-independent SW92
 one-family VLE transcription with the independent Profile-C C1 minimum-root
-transcription. It verifies that a wet fixed-NA candidate has a water-richer AQ
-phase-addition direction, while a feed beyond the W+H coexistence H endpoint
-has no such negative AQ trial at the independently solved W composition.
+transcription. It verifies that a wet fixed-NA candidate has a negative AQ
+phase-addition direction toward a composition that is water-richer than the
+water-poor retained NA branch. A fixed-NA pair may also contain a W-like
+water-rich mathematical phase; that must not be promoted to physical H role.
 
-These are model numerical checks, not experimental validation or global
-stability proofs.
+A dry feed beyond the W+H coexistence H endpoint is checked independently
+against the same W trial. These are model numerical checks, not experimental
+validation or global stability proofs.
 """
 
 from decimal import Decimal as D, localcontext
@@ -45,7 +47,9 @@ if __name__ == "__main__":
         pressure = D("3e6")
         temperature = D("340")
 
-        # Wet feed: independent fixed-NA two-phase equilibrium.
+        # Wet feed: independent fixed-NA two-phase equilibrium. The low-Z NA
+        # mathematical branch is itself extremely water-rich; only the
+        # water-poor NA branch is a required H contrast for W candidate creation.
         x, y, beta, _, _ = solve_case(
             "CO2", "NA", "3e6", "340", "0", "0.7", "0.00028", "0.9887")
         low = phase(x, "CO2", "NA", pressure, temperature, D(0), "liquid")
@@ -59,8 +63,13 @@ if __name__ == "__main__":
         wet_tpd = tpd_aq(w_gas, common_pair, pressure, temperature)
         if not wet_tpd < D("-1e-6"):
             raise AssertionError(f"wet fixed-NA state lost AQ phase-addition direction: {wet_tpd}")
-        if not (D(1) - w_gas) > max(D(1) - x, D(1) - y):
-            raise AssertionError("independent AQ witness is not water-richer than retained NA phases")
+        w_water = D(1) - w_gas
+        min_na_water = min(D(1) - x, D(1) - y)
+        max_na_water = max(D(1) - x, D(1) - y)
+        if not w_water > min_na_water:
+            raise AssertionError("independent AQ witness lost W/H water-richness contrast")
+        if not max_na_water > w_water:
+            raise AssertionError("fixture no longer exposes the W-like fixed-NA mathematical branch")
 
         # Dry feed lies beyond the H endpoint of the independent W+H tie line.
         # Check the same independently solved W composition against the minimum-
@@ -75,6 +84,8 @@ if __name__ == "__main__":
 
         print("wet fixed-NA x_CO2=", format(x, ".35g"),
               "y_CO2=", format(y, ".35g"), "beta=", format(beta, ".35g"))
+        print("wet NA water range=", format(min_na_water, ".35g"),
+              format(max_na_water, ".35g"), "AQ-W water=", format(w_water, ".35g"))
         print("wet targeted AQ TPD=", format(wet_tpd, ".35g"))
         print("dry targeted AQ TPD=", format(dry_tpd, ".35g"))
         print("Independent Decimal(80) Profile-C no-W structural checks passed")
