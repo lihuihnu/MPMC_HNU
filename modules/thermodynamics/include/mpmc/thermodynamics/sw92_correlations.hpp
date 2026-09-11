@@ -5,11 +5,42 @@
 
 #include <cmath>
 #include <concepts>
+#include <span>
 #include <stdexcept>
+#include <type_traits>
 
 namespace mpmc::thermodynamics {
 
 namespace detail {
+
+template <typename Number, typename T>
+concept Sw92Number = std::same_as<Number, T> || requires(const Number& number) {
+    typename Number::Scalar;
+    requires std::same_as<typename Number::Scalar, T>;
+    { number.value() } -> std::same_as<T>;
+    { std::span<const T>{number.derivatives()} };
+};
+
+template <typename Number>
+[[nodiscard]] auto sw92_value(const Number& number) {
+    if constexpr (std::floating_point<Number>) {
+        return number;
+    } else {
+        return number.value();
+    }
+}
+
+template <typename Number>
+[[nodiscard]] bool sw92_finite(const Number& number) {
+    if (!std::isfinite(sw92_value(number))) { return false; }
+    if constexpr (!std::floating_point<Number>) {
+        for (const auto derivative : number.derivatives()) {
+            if (!std::isfinite(derivative)) { return false; }
+        }
+    }
+    return true;
+}
+
 template <std::floating_point T>
 [[nodiscard]] T sw92_pow_nonnegative(T x, T p) {
     if (!std::isfinite(x) || x < T{0} || !std::isfinite(p))
@@ -21,40 +52,47 @@ template <std::floating_point T>
 }
 } // namespace detail
 
-/// SW92 Eq.(9). c_sw is mol NaCl/kg H2O, not a composition fraction.
-template <std::floating_point T>
-[[nodiscard]] T sw92_water_alpha(T temperature_k, T water_tc_k,
-                                 T nacl_molality_mol_per_kg_water) {
-    if (!std::isfinite(temperature_k) || !(temperature_k > T{0}) ||
+/// SW92 Eq.(9). c_sw is mol NaCl/kg H2O, not a composition fraction. Prescribed
+/// molality is held fixed in the current AD contract; temperature may carry seeds.
+template <typename Number, std::floating_point T>
+    requires detail::Sw92Number<Number, T>
+[[nodiscard]] Number sw92_water_alpha(
+    const Number& temperature_k, T water_tc_k,
+    T nacl_molality_mol_per_kg_water) {
+    const T temperature = detail::sw92_value(temperature_k);
+    if (!detail::sw92_finite(temperature_k) || !(temperature > T{0}) ||
         !std::isfinite(water_tc_k) || !(water_tc_k > T{0}) ||
         !std::isfinite(nacl_molality_mol_per_kg_water) ||
         nacl_molality_mol_per_kg_water < T{0})
         throw std::domain_error("sw92_water_alpha: finite T,Tc>0 and molality>=0 required");
-    const T tr = temperature_k / water_tc_k;
-    const T c11 = detail::sw92_pow_nonnegative(nacl_molality_mol_per_kg_water,
-                                               static_cast<T>(1.1L));
-    const T tr3 = tr * tr * tr;
-    if (!std::isfinite(tr3) || tr3 == T{0})
+    const Number tr = temperature_k / water_tc_k;
+    const T c11 = detail::sw92_pow_nonnegative(
+        nacl_molality_mol_per_kg_water, static_cast<T>(1.1L));
+    const Number tr3 = tr * tr * tr;
+    if (!detail::sw92_finite(tr3) || detail::sw92_value(tr3) == T{0})
         throw std::range_error("sw92_water_alpha: nonrepresentable reduced state");
-    const T q = T{1} + static_cast<T>(0.4530L) *
+    const Number q = T{1} + static_cast<T>(0.4530L) *
         (T{1} - tr * (T{1} - static_cast<T>(0.0103L) * c11)) +
         static_cast<T>(0.0034L) * (T{1}/tr3 - T{1});
-    const T alpha = q * q;
-    if (!std::isfinite(alpha)) throw std::range_error("sw92_water_alpha: nonrepresentable alpha");
+    const Number alpha = q * q;
+    if (!detail::sw92_finite(alpha))
+        throw std::range_error("sw92_water_alpha: nonrepresentable alpha");
     return alpha;
 }
 
 /// Corrected SW92 AQ water-pair rules: corrected Eq.(12)/Table 2 and Eq.(13),
 /// plus Eqs.(14),(15). `tr` is T/Tc of the non-water component.
-template <std::floating_point T>
-[[nodiscard]] T sw92_aqueous_water_kij(Sw92Species species, T tr, T omega,
-                                       T nacl_molality_mol_per_kg_water) {
-    if (!std::isfinite(tr) || !(tr > T{0}) ||
+template <typename Number, std::floating_point T>
+    requires detail::Sw92Number<Number, T>
+[[nodiscard]] Number sw92_aqueous_water_kij(
+    Sw92Species species, const Number& tr, T omega,
+    T nacl_molality_mol_per_kg_water) {
+    if (!detail::sw92_finite(tr) || !(detail::sw92_value(tr) > T{0}) ||
         !std::isfinite(nacl_molality_mol_per_kg_water) ||
         nacl_molality_mol_per_kg_water < T{0})
         throw std::domain_error("SW92 AQ BIP: invalid reduced state/molality");
     const T c = nacl_molality_mol_per_kg_water;
-    T k{};
+    Number k{T{0}};
     switch (species) {
     case Sw92Species::hydrocarbon: {
         if (!std::isfinite(omega) || !(omega > T{0}))
@@ -78,7 +116,8 @@ template <std::floating_point T>
     case Sw92Species::carbon_dioxide: {
         const T c1 = detail::sw92_pow_nonnegative(c, static_cast<T>(0.7505L));
         const T c2 = detail::sw92_pow_nonnegative(c, static_cast<T>(0.979L));
-        const T e = std::exp(-static_cast<T>(6.7222L)*tr - c);
+        using std::exp;
+        const Number e = exp(-static_cast<T>(6.7222L)*tr - c);
         k = -static_cast<T>(0.31092L)*(T{1}+static_cast<T>(0.15587L)*c1) +
              static_cast<T>(0.23580L)*(T{1}+static_cast<T>(0.17837L)*c2)*tr -
              static_cast<T>(21.2566L)*e;
@@ -91,16 +130,23 @@ template <std::floating_point T>
     case Sw92Species::unspecified:
         throw std::invalid_argument("SW92 AQ BIP: invalid water-pair species");
     }
-    if (!std::isfinite(k)) throw std::range_error("SW92 AQ BIP: nonrepresentable value");
+    if (!detail::sw92_finite(k))
+        throw std::range_error("SW92 AQ BIP: nonrepresentable value");
     return k;
 }
 
 /// SW92 Eq.(17), used only for H2S/water in the non-aqueous family.
-template <std::floating_point T>
-[[nodiscard]] T sw92_h2s_nonaqueous_water_kij(T tr) {
-    if (!std::isfinite(tr) || !(tr > T{0}))
+template <typename Number, std::floating_point T>
+    requires detail::Sw92Number<Number, T>
+[[nodiscard]] Number sw92_h2s_nonaqueous_water_kij(const Number& tr) {
+    if (!detail::sw92_finite(tr) || !(detail::sw92_value(tr) > T{0}))
         throw std::domain_error("SW92 Eq.(17): Tr must be finite and >0");
     return static_cast<T>(0.19031L) - static_cast<T>(0.05965L)*tr;
+}
+
+template <std::floating_point T>
+[[nodiscard]] T sw92_h2s_nonaqueous_water_kij(T tr) {
+    return sw92_h2s_nonaqueous_water_kij<T, T>(tr);
 }
 
 } // namespace mpmc::thermodynamics

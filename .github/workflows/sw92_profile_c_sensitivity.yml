@@ -1,0 +1,103 @@
+name: SW92 Profile-C implicit sensitivity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/ad/**'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'
+      - 'modules/flash/include/mpmc/flash/detail/pt_sensitivity_detail.hpp'
+      - 'modules/flash/include/mpmc/flash/detail/sw92_profile_c_sensitivity_local.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_profile_c_sensitivity.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp'
+      - 'tests/flash/sw92_profile_c_sensitivity/**'
+      - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
+      - 'tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py'
+      - 'tests/thermodynamics/sw92/**'
+      - '.github/workflows/sw92_profile_c_sensitivity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sw92-profile-c-sensitivity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sensitivity:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Regenerate physical Sample-6 oracle
+        run: python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
+
+      - name: Configure SW92 Profile-C sensitivity regression
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_profile_c_sensitivity \
+            -B build/sw92-profile-c-sensitivity \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PROFILE_C_SENSITIVITY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build SW92 Profile-C sensitivity regression
+        run: cmake --build build/sw92-profile-c-sensitivity --target mpmc_sw92_profile_c_sensitivity_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run SW92 Profile-C sensitivity regression
+        run: ctest --test-dir build/sw92-profile-c-sensitivity -C ${{ matrix.config }} -R '^flash[.]sw92_profile_c_sensitivity[.]' --verbose --no-tests=error
+
+      - name: Configure affected SW92 thermodynamics regression
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/thermodynamics/sw92 -B build/sw92-thermodynamics \
+            "${config_arg[@]}" ${{ matrix.compiler }}
+      - name: Build affected SW92 thermodynamics regression
+        run: cmake --build build/sw92-thermodynamics --config ${{ matrix.config }} --parallel 2
+      - name: Run affected SW92 thermodynamics regression
+        run: ctest --test-dir build/sw92-thermodynamics -C ${{ matrix.config }} --verbose --no-tests=error
+
+      - name: Configure affected Profile-C publication regression
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_profile_c_phase_set \
+            -B build/sw92-profile-c-phase-set \
+            "${config_arg[@]}" ${{ matrix.compiler }}
+      - name: Build affected Profile-C publication regression
+        run: cmake --build build/sw92-profile-c-phase-set --config ${{ matrix.config }} --parallel 2
+      - name: Run affected Profile-C publication regression
+        run: ctest --test-dir build/sw92-profile-c-phase-set -C ${{ matrix.config }} -R '^flash[.]sw92_profile_c_phase_set[.]' --verbose --no-tests=error
