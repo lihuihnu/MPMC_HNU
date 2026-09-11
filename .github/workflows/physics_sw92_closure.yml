@@ -1,0 +1,75 @@
+name: SW92 physics thermodynamic closure
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/physics/include/mpmc/physics/thermodynamic_closure.hpp'
+      - 'modules/physics/include/mpmc/physics/sw92_thermodynamic_closure.hpp'
+      - 'modules/physics/CMakeLists.txt'
+      - 'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_*.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
+      - 'tests/physics/sw92_thermodynamic_closure/**'
+      - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
+      - 'tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py'
+      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - '.github/workflows/physics_sw92_closure.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: physics-sw92-closure-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  closure:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Regenerate physical Sample-6 oracle
+        run: python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
+
+      - name: Configure SW92 thermodynamic closure regression
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/physics/sw92_thermodynamic_closure \
+            -B build/physics-sw92-closure \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_THERMODYNAMIC_CLOSURE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build SW92 thermodynamic closure regression
+        run: cmake --build build/physics-sw92-closure --target mpmc_sw92_thermodynamic_closure_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run SW92 thermodynamic closure regression
+        run: ctest --test-dir build/physics-sw92-closure -C ${{ matrix.config }} -R '^physics[.]sw92_thermodynamic_closure[.]' --verbose --no-tests=error

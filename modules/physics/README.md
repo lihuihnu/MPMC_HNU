@@ -2,71 +2,177 @@
 
 ## Scope
 
-This is the first concrete `physics` layer increment. It consumes an already solved PR76 VLE PT flash result and exposes a small thermodynamic closure snapshot for future conservation-law and discretization code. It does **not** create mesh, flux, saturation, Darcy, time stepping, global residual assembly, a nonlinear solver, viscosity, enthalpy or an energy equation.
+The `physics` layer consumes already accepted thermodynamic/flash states and exposes owned thermodynamic snapshots for future conservation-law and discretization code. It does **not** create mesh, flux, saturation, Darcy flow, time stepping, global residual assembly, a nonlinear solver, viscosity, enthalpy or an energy equation.
 
-The public generic header is `mpmc/physics/thermodynamic_closure.hpp`; the current PR76 adapter is `mpmc/physics/pr76_thermodynamic_closure.hpp`. The CMake target is `mpmc::physics`, which depends on the opt-in `mpmc::flash_sensitivity` target. Dependency direction is therefore `physics -> flash sensitivity -> flash/thermodynamics + ad`; no lower layer depends on physics.
+Two adapters are currently implemented:
+
+- `mpmc/physics/pr76_thermodynamic_closure.hpp`: accepted PR76 internal two-phase VLE primal plus its validated local linearization;
+- `mpmc/physics/sw92_thermodynamic_closure.hpp`: accepted SW92 Profile-C authoritative 1/2/3-phase PT **primal only**.
+
+The generic header `mpmc/physics/thermodynamic_closure.hpp` therefore contains two separate payload shapes:
+
+- `ThermodynamicClosureSnapshot`: the original fixed liquid/vapor PR76 VLE contract;
+- `PtPhaseSetThermodynamicClosureSnapshot`: a variable-cardinality phase-set primal contract that does not invent model-specific phase labels.
+
+The CMake target remains `mpmc::physics`. Dependency direction is `physics -> flash/thermodynamics` (and, for the existing PR76 derivative adapter, `flash_sensitivity -> ad`); no lower layer depends on physics.
 
 ## Atomic snapshot and two-axis availability
 
-`ThermodynamicClosureSnapshot` separates two decisions:
+Primal availability and linearization availability are independent decisions.
 
-- `primal_status`: whether this snapshot owns a thermodynamic primal that may be used by a future conservation residual or line-search merit evaluation;
-- `linearization_status`: whether this **same** snapshot owns a local derivative that may seed a Newton Jacobian.
+A valid primal may be used by a future conservation residual or line-search merit evaluation. A Newton/Jacobian base point may consume a derivative only when the same closure snapshot explicitly publishes a supported linearization.
 
-The primal and derivative are `std::optional` values built from scratch on every call. A derivative from an older state is never copied into a new closure result by the adapter. A caller replacing its snapshot therefore cannot obtain `new primal + old derivative` from this API.
+No adapter may replace an unavailable derivative with zeros, a previous-cell or previous-iterate derivative, clipping, or a hidden finite-difference fallback.
 
-For the current adapter, an accepted two-phase flash can remain a valid primal when sensitivity is unavailable because of a phase-boundary guard, local ill-conditioning, unsupported feed support, derivative property failure or derivative arithmetic failure. In those cases `residual_available()==true`, `can_seed_newton()==false`, and `linearization` is empty. If the sensitivity path reports `solution_not_accepted`, or the flash itself is `phase_set_unstable`/`indeterminate`, the adapter does not publish a usable primal.
+### PR76
 
-A stable single-phase flash is a valid thermodynamic regime in general, but the v1 **two-phase** consumption adapter intentionally does not implement its closure yet and reports `phase_regime_not_implemented`; it does not manufacture a second phase.
+For the existing PR76 two-phase adapter, an accepted two-phase flash can remain a valid primal when sensitivity is unavailable because of a phase-boundary guard, local ill-conditioning, unsupported feed support, derivative property failure or derivative arithmetic failure. In those cases `residual_available()==true`, `can_seed_newton()==false`, and `linearization` is empty.
 
-## Coordinates and quantities
+If the sensitivity path reports `solution_not_accepted`, or the flash itself is unstable/indeterminate, the adapter does not publish a usable primal. Stable PR76 single-phase closure remains outside that v1 adapter.
 
-The derivative columns are inherited exactly from the accepted flash sensitivity contract:
+### SW92 Profile-C
+
+The SW92 adapter intentionally separates a **usable 1/2/3-phase primal** from the still-missing SW flash derivative contract:
+
+```text
+primal_status        = valid
+linearization_status = unavailable
+linearization_reason = not_implemented
+residual_available() = true
+can_seed_newton()    = false
+```
+
+This is not a temporary zero-Jacobian approximation. It is an explicit API boundary: SW92 flash sensitivities require a later independently validated increment.
+
+## Generic variable-cardinality phase-set primal
+
+`PtPhaseSetThermodynamicClosureSnapshot` owns:
+
+- pressure `p` and temperature `T`;
+- ordered overall feed and ordered component IDs;
+- thermodynamic model / dataset / revision identity;
+- a vector of `ThermodynamicPhaseState` objects.
+
+Each phase state contains:
+
+```text
+mole phase fraction beta_alpha
+ordered mole composition x_alpha
+compressibility factor Z_alpha
+molar density c_alpha = p/(Z_alpha R T)
+```
+
+The phase fraction is a **mole phase fraction, not pore-volume saturation**.
+
+The generic vector deliberately has no `liquid`, `vapor`, `aqueous`, AQ or NA label. Model-specific role/family identity is carried by the model adapter sidecar so generic physics code cannot silently turn a numerical phase slot into physical morphology.
+
+## SW92 authoritative Profile-C adapter
+
+Public entry:
+
+```cpp
+#include <mpmc/physics/sw92_thermodynamic_closure.hpp>
+
+const auto closure = mpmc::physics::build_sw92_profile_c_thermodynamic_closure(
+    authoritative_phase_set, sw92_model);
+```
+
+The input must be an authoritative `Sw92ProfileCPtPhaseSetResult` from the Profile-C publication contract. The adapter does not run another flash, TPD search, material-balance solve, topology search, composition normalization or morphology classifier.
+
+### Provenance and phase identity
+
+The adapter preserves and checks:
+
+- p/T and ordered feed;
+- dataset ID / revision / ordered component IDs;
+- prescribed NaCl molality;
+- SW92 model and phase convention;
+- Profile-C equilibrium/orchestration/boundary/publication conventions;
+- per-phase physical role and AQ/NA family;
+- per-phase selected cubic-root branch as numerical provenance.
+
+The SW sidecar retains only the roles already authorized upstream:
+
+- `aqueous` with AQ family;
+- `nonaqueous_unclassified` with NA family.
+
+H0/H1 remain `nonaqueous_unclassified`; branch index or Z ordering is not promoted to liquid/vapor or LV/LL morphology. `morphology_resolved=false` and `global_stability_proven=false` remain explicit.
+
+### Property reproduction and density
+
+Before publishing the physics primal, the adapter evaluates the existing SW92 phase-property kernel at each **exact accepted** composition, family and root branch and requires the reproduced `ln(phi)` to match the activity retained by the authoritative flash result within a roundoff guard.
+
+For accepted 2/3-phase states whose authoritative publication already owns Z, the reproduced Z must agree and the physics state preserves the exact accepted Z.
+
+The authoritative dry no-W single-H publication intentionally stores reference activity but no selected Z, because the publication adapter was required to remain a pure projection. The physics closure has a different responsibility: it needs a molar volume/density. For that one case it obtains Z from the already identified family/root branch during the same property-reproduction call. It still does **not** rerun phase selection or flash logic.
+
+Molar density introduces no new empirical model:
+
+```text
+Z = p v_m/(R T)
+c = 1/v_m = p/(Z R T)   [mol/m^3]
+```
+
+No mass density, saturation, mobility or transport property is implied.
+
+### Failure policy
+
+A non-accepted authoritative status, malformed phase set, inconsistent publication convention, invalid role/family pair, phase-fraction/composition shape error, or unreproducible activity/Z yields an `indeterminate` closure with no residual primal.
+
+Passing a different ordered SW92 model snapshot (dataset/revision/component order mismatch) is an input-contract error and throws `std::invalid_argument`, consistent with the existing PR76 closure adapter's model/snapshot mismatch behavior.
+
+## PR76 coordinates and local linearization
+
+The existing PR76 derivative columns remain:
 
 ```text
 q = (p_Pa, T_K, z_0, ..., z_{N-2})
 z_{N-1} = 1 - sum(z_0, ..., z_{N-2})
 ```
 
-The primal contains the liquid/vapor mole phase fractions, phase compositions, compressibility factors and phase molar densities. The flash phase fraction is explicitly a **mole phase fraction, not pore-volume saturation**.
+The PR76 primal is anchored to the exact accepted flash `beta/x/y/Z` snapshot. Before publication, the adapter re-evaluates the selected branches with the accepted full phase compositions and requires reproduced Z agreement.
 
-The primal is anchored to the exact accepted flash `beta/x/y/Z` snapshot. Before publishing it, the adapter re-evaluates the selected PR76 branches with the full accepted phase compositions and requires the reproduced `Z` values to agree within a roundoff guard; the published `Z` values themselves remain the exact values stored by the accepted flash candidate. Reduced-composition reconstruction is used only in the subsequent derivative path, so a derivative-specific reduced-coordinate failure cannot silently replace or redefine an otherwise valid residual primal.
-
-The existing PR76 phase contract defines
+For an available linearization, the adapter obtains local selected-branch Z partials from the existing AD/simple-root IFT phase kernel and combines them with converged flash composition derivatives:
 
 ```text
-Z = p * v_m / (R*T)
+dZ_alpha/dq = partial Z_alpha/partial(p,T,w_alpha) * d(p,T,w_alpha)/dq
 ```
 
-so the adapter introduces no new empirical model when it computes
+Molar-density derivatives use:
 
 ```text
-c = 1/v_m = p/(Z*R*T)  [mol/m^3].
+dc_alpha/c_alpha = dp/p - dZ_alpha/Z_alpha - dT/T
 ```
 
-For an available linearization, the adapter obtains the local partial derivative of each selected PR76 `Z` branch with respect to `(p,T,w_reduced)` from the existing AD/simple-root IFT phase kernel. It then combines that with the converged flash `dx/dq` or `dy/dq`:
+No flash iteration, RR bisection, line search, TPD search or root iteration is differentiated by the closure adapter itself.
 
-```text
-dZ_alpha/dq = partial Z_alpha/partial(p,T,w_alpha) * d(p,T,w_alpha)/dq.
-```
+## Validation
 
-Molar-density derivatives use the exact chain rule
+The SW92 focused regression covers:
 
-```text
-dc_alpha/c_alpha = dp/p - dZ_alpha/Z_alpha - dT/T.
-```
+1. traceable dry CO2/H2O authoritative single-H state, including reconstruction of the source-missing Z;
+2. traceable wet CO2/H2O authoritative W+H state with exact accepted phase-fraction/composition/Z preservation;
+3. physical Mortezazadeh–Rasaei Sample-6 authoritative W+H0+H1 state;
+4. `c=p/(ZRT)` for every published phase;
+5. AQ/NA and `aqueous` / `nonaqueous_unclassified` metadata preservation;
+6. publication-convention and phase-activity tamper rejection;
+7. ordered model/source mismatch rejection;
+8. runtime component permutation;
+9. public-header self containment;
+10. valid-primal / unavailable-linearization policy.
 
-No flash iteration, RR bisection, line search, TPD search or root iteration is differentiated here.
-
-## Intended future solver policy
-
-This module does not implement Newton globalization, but it makes the required distinction machine-readable:
-
-- future residual/merit evaluation may consume a snapshot only when `residual_available()` is true;
-- a future Newton base/Jacobian assembly may consume the derivative only when `can_seed_newton()` is true;
-- an unavailable derivative must not be replaced by zeros, a previous-cell/previous-iterate derivative, clipping, or a hidden finite-difference fallback;
-- a future solver may deliberately implement a documented global inexact/quasi-Newton strategy, but that is a separate numerical algorithm and must not arise as an implicit per-cell fallback.
+A dedicated GitHub-hosted GCC Debug+ASan/UBSan / Clang Release / MSVC Release workflow regenerates the existing independent Sample-6 Decimal(80) oracle before the focused C++ suite. Changes to the shared generic closure header also rerun the existing PR76 closure workflow and its independent reference regeneration.
 
 ## Current non-capabilities
 
-The adapter does not provide single-phase closure values, phase switching, bubble/dew or phase-disappearance derivatives, critical/root-switch derivatives, zero-support changes, LLE/three-phase states, saturation, mass density, mobility, transport properties, enthalpy/internal energy, SW or CPA closure. Those require separate model and validation increments.
+The physics layer still does not provide:
+
+- SW92 flash sensitivities/Jacobians;
+- a validated SW92 H0/H1 liquid/vapor or LV/LL morphology resolver;
+- NaCl inventory conservation (Profile-C molality remains prescribed model input);
+- pore-volume saturation, mass density, viscosity, mobility, enthalpy/internal energy;
+- mass/energy fluxes, capillary pressure or relative permeability;
+- conservation residual assembly, mesh/discretization, time integration or nonlinear solvers;
+- CPA closure.
+
+Those are separate model/numerical increments and must not be inferred from a valid SW92 thermodynamic primal.

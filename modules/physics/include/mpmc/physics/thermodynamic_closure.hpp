@@ -23,6 +23,7 @@ enum class ThermodynamicClosureLinearizationStatus { available, unavailable };
 
 enum class ThermodynamicClosureLinearizationReason {
     none,
+    not_implemented,
     phase_boundary,
     ill_conditioned_equilibrium,
     unsupported_feed_support,
@@ -116,6 +117,49 @@ struct ThermodynamicClosureSnapshot {
                    ThermodynamicClosureLinearizationStatus::available &&
                linearization.has_value();
     }
+};
+
+// Variable-cardinality PT phase-set primal. Phase order is representation order
+// supplied by the accepted flash result; this generic payload deliberately does
+// not invent liquid/vapor/aqueous labels. Model-specific role/family metadata
+// belongs in a model adapter sidecar.
+struct PtPhaseSetThermodynamicState {
+    std::vector<ThermodynamicPhaseState> phases;
+};
+
+// Primal-only v1 contract for authoritative 1..N PT phase sets. The derivative
+// payload is intentionally absent: an unavailable model sensitivity must not be
+// replaced by zeros, stale derivatives or hidden finite differences. A future
+// variable-cardinality derivative contract requires its own explicit version.
+struct PtPhaseSetThermodynamicClosureSnapshot {
+    static constexpr std::string_view convention =
+        "PT/phase-set/thermodynamic-closure-primal-v1";
+
+    ThermodynamicClosurePrimalStatus primal_status{
+        ThermodynamicClosurePrimalStatus::indeterminate};
+    ThermodynamicClosureLinearizationStatus linearization_status{
+        ThermodynamicClosureLinearizationStatus::unavailable};
+    ThermodynamicClosureLinearizationReason linearization_reason{
+        ThermodynamicClosureLinearizationReason::not_implemented};
+
+    double pressure_pa{};
+    double temperature_k{};
+    std::vector<double> feed;
+    std::vector<std::string> component_ids;
+    std::string thermodynamic_model;
+    std::string dataset_id;
+    std::string revision;
+
+    std::optional<PtPhaseSetThermodynamicState> primal;
+    std::string diagnostic;
+
+    [[nodiscard]] bool residual_available() const noexcept {
+        return primal_status == ThermodynamicClosurePrimalStatus::valid &&
+               primal.has_value() && !primal->phases.empty();
+    }
+
+    // v1 has no derivative payload by construction.
+    [[nodiscard]] bool can_seed_newton() const noexcept { return false; }
 };
 
 } // namespace mpmc::physics
