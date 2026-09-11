@@ -115,9 +115,12 @@ The SW92-specific wrapper preserves:
 - publication convention.
 
 The projector checks that acceptance-critical source objects share the same
-p/T/feed/molality/dataset/revision/component snapshot and expected Profile-C
-conventions. A mismatched source chain cannot become an accepted generic phase
-set merely because a top-level status was manually changed.
+p/T/feed/molality/dataset/revision/component snapshot. It also verifies the
+stage-specific algorithm identities that define the evidence chain: the no-W
+adapter convention, fixed-family VLE algorithm, C1 primitive, C2a1 witness,
+C2b.1 primitive, C2b.2 review and boundary-resolver convention where applicable.
+A mismatched or manually relabelled source chain cannot become an accepted
+generic phase set merely because a top-level status was manually changed.
 
 ## Validation
 
@@ -130,8 +133,10 @@ The focused regression covers:
    reduced chemical potentials;
 4. fresh physical W+H disappearance-neighbor re-solve remains closed;
 5. the physical H0+H1 edge retains its incipient-W witness and is not published
-   as an authoritative no-W pair;
-6. mismatched C2/fixed-family provenance is downgraded to indeterminate;
+   as an authoritative no-W pair; the complete topology graph may continue to a
+   separately closed W-containing topology;
+6. mismatched C2/fixed-family metadata and tampered stage-specific convention
+   identities are downgraded to indeterminate;
 7. runtime component-order permutation invariance;
 8. H0/H1 slot exchange changes representation order only; both remain
    `nonaqueous_unclassified` NA phase instances;
