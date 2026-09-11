@@ -19,9 +19,6 @@
 
 namespace mpmc::flash {
 
-/// Profile-C Gate C2b.1 numerical identity. H0/H1 are symmetric instances of
-/// the SW92 nonaqueous family. Their slot names are representation only and do
-/// not mean hydrocarbon liquid/vapor.
 inline constexpr std::string_view sw92_phase_assigned_c2b1_three_phase_convention =
     "SW92-equilibrium/phase-assigned-aq-na-joint/unordered-w-h0-h1-"
     "three-phase-logK-SSI-generalized-RR/v1";
@@ -41,8 +38,6 @@ struct Sw92PhaseAssignedThreePhaseOptions {
     int max_balance_backtracks{48};
     std::size_t max_evaluations{30000};
     std::size_t max_components{256};
-    /// Initialization-only split of the retained C1 H fraction. It is not a
-    /// physical prior and is not retained as a final phase fraction.
     double new_hydrocarbon_seed_share{0.1};
     thermodynamics::Sw92RootOptions aqueous_root_options;
     thermodynamics::Sw92RootOptions nonaqueous_root_options;
@@ -85,16 +80,14 @@ struct Sw92PhaseAssignedThreePhaseState {
     Sw92PhaseAssignedThreePhasePhase aqueous_phase;
     Sw92PhaseAssignedThreePhasePhase hydrocarbon0_phase;
     Sw92PhaseAssignedThreePhasePhase hydrocarbon1_phase;
-
-    std::vector<double> log_k_h0; // ln(x_i^H0 / x_i^W).
-    std::vector<double> log_k_h1; // ln(x_i^H1 / x_i^W).
-    std::vector<double> chemical_potential_residual_h0; // mu_W/RT - mu_H0/RT.
-    std::vector<double> chemical_potential_residual_h1; // mu_W/RT - mu_H1/RT.
-    std::vector<double> common_log_activity; // Mean of the three converging values.
+    std::vector<double> log_k_h0;
+    std::vector<double> log_k_h1;
+    std::vector<double> chemical_potential_residual_h0;
+    std::vector<double> chemical_potential_residual_h1;
+    std::vector<double> common_log_activity;
     double chemical_potential_norm{};
     double reduced_gibbs{};
     double gibbs_roundoff_guard{};
-
     double generalized_rr_residual{};
     double raw_aqueous_sum{};
     double raw_hydrocarbon0_sum{};
@@ -102,7 +95,6 @@ struct Sw92PhaseAssignedThreePhaseState {
     double mass_absolute{};
     double mass_relative{};
     int balance_iterations{};
-
     double aqueous_h0_log_distance{};
     double aqueous_h1_log_distance{};
     double h0_h1_log_distance{};
@@ -112,9 +104,6 @@ struct Sw92PhaseAssignedThreePhaseState {
         std::numeric_limits<double>::quiet_NaN()};
     double water_role_roundoff_guard{
         std::numeric_limits<double>::quiet_NaN()};
-
-    /// Representation-only swap after convergence. It never changes equations
-    /// and never maps H0/H1 to physical liquid/vapor roles.
     bool hydrocarbon_slots_canonicalized{false};
 };
 
@@ -132,7 +121,6 @@ struct Sw92PhaseAssignedThreePhaseResult {
     double input_feed_sum{};
     std::vector<double> feed;
     double nacl_molality_mol_per_kg_water{};
-
     std::string dataset_id;
     std::string revision;
     std::vector<std::string> component_ids;
@@ -140,12 +128,10 @@ struct Sw92PhaseAssignedThreePhaseResult {
     std::string phase_convention{thermodynamics::sw92_pt_convention};
     std::string equilibrium_profile{sw92_phase_assigned_aq_na_joint_profile};
     std::string primitive_convention{sw92_phase_assigned_c2b1_three_phase_convention};
-
     std::vector<double> initial_log_k_h0;
     std::vector<double> initial_log_k_h1;
     std::array<double, 2> initial_hydrocarbon_fractions{};
     std::optional<std::size_t> source_witness_index;
-
     std::optional<Sw92PhaseAssignedThreePhaseState> point;
     int iterations{};
     std::size_t evaluations{};
@@ -161,12 +147,10 @@ struct Sw92PhaseAssignedThreePhaseResult {
                point->mass_absolute <= options.mass_absolute_tolerance &&
                point->mass_relative <= options.mass_relative_tolerance;
     }
-
     [[nodiscard]] bool candidate_admissible() const noexcept {
         return status == Sw92PhaseAssignedThreePhaseStatus::converged_candidate &&
                equations_converged();
     }
-
     [[nodiscard]] const Sw92PhaseAssignedThreePhaseState* candidate() const & noexcept {
         return candidate_admissible() ? &*point : nullptr;
     }
@@ -235,7 +219,7 @@ struct Sw92GeneralizedRr3Result {
 
 struct Sw92GeneralizedRr3Evaluation {
     std::array<double, 2> residual{};
-    std::array<double, 3> jacobian{}; // j00, j01, j11.
+    std::array<double, 3> jacobian{};
     std::vector<double> aqueous;
     std::vector<double> hydrocarbon0;
     std::vector<double> hydrocarbon1;
@@ -258,7 +242,6 @@ inline std::optional<Sw92GeneralizedRr3Evaluation> sw92_rr3_evaluate(
     value.aqueous.assign(feed.size(), 0.0);
     value.hydrocarbon0.assign(feed.size(), 0.0);
     value.hydrocarbon1.assign(feed.size(), 0.0);
-
     double f0 = 0.0, f0_correction = 0.0;
     double f1 = 0.0, f1_correction = 0.0;
     double j00 = 0.0, j00_correction = 0.0;
@@ -315,7 +298,6 @@ inline Sw92GeneralizedRr3Result solve_sw92_generalized_rr3(
             return result;
         }
     }
-
     auto beta = initial_fractions;
     std::optional<Sw92GeneralizedRr3Evaluation> evaluation;
     for (int iteration = 0;; ++iteration) {
@@ -335,7 +317,6 @@ inline Sw92GeneralizedRr3Result solve_sw92_generalized_rr3(
             result.status = Sw92GeneralizedRr3Status::iteration_limit;
             return result;
         }
-
         const double j00 = evaluation->jacobian[0];
         const double j01 = evaluation->jacobian[1];
         const double j11 = evaluation->jacobian[2];
@@ -352,10 +333,7 @@ inline Sw92GeneralizedRr3Result solve_sw92_generalized_rr3(
         const std::array<double, 2> step{
             (-f0 * j11 + j01 * f1) / determinant,
             (j01 * f0 - j00 * f1) / determinant};
-        if (!std::isfinite(step[0]) || !std::isfinite(step[1])) {
-            return result;
-        }
-
+        if (!std::isfinite(step[0]) || !std::isfinite(step[1])) { return result; }
         bool accepted = false;
         double alpha = 1.0;
         for (int backtrack = 0; backtrack < options.max_balance_backtracks;
@@ -379,7 +357,6 @@ inline Sw92GeneralizedRr3Result solve_sw92_generalized_rr3(
             return result;
         }
     }
-
     result.hydrocarbon_fractions = beta;
     result.aqueous = std::move(evaluation->aqueous);
     result.hydrocarbon0 = std::move(evaluation->hydrocarbon0);
@@ -396,7 +373,6 @@ inline Sw92GeneralizedRr3Result solve_sw92_generalized_rr3(
         result.status = Sw92GeneralizedRr3Status::unrepresentable;
         return result;
     }
-
     const double beta_w = 1.0 - beta[0] - beta[1];
     for (std::size_t i = 0; i < feed.size(); ++i) {
         result.aqueous[i] /= result.raw_aqueous_sum;
@@ -491,10 +467,6 @@ inline bool sw92_phase_assigned_c2b1_source_matches(
 
 } // namespace detail
 
-/// Low-level C2b.1 numerical primitive for a fixed W(AQ)+H0(NA)+H1(NA)
-/// topology. The two hydrocarbon slots are unordered physical instances. The
-/// function does not infer a phase count, perform a final stability search, or
-/// publish liquid/vapor roles.
 [[nodiscard]] inline Sw92PhaseAssignedThreePhaseResult
 iterate_sw92_phase_assigned_three_phase_candidate(
     double pressure_pa, double temperature_k,
@@ -545,7 +517,6 @@ iterate_sw92_phase_assigned_three_phase_candidate(
     result.initial_log_k_h1.assign(
         initial_log_k_h1.begin(), initial_log_k_h1.end());
     result.initial_hydrocarbon_fractions = initial_hydrocarbon_fractions;
-
     const auto& parameters = model.parameters();
     result.dataset_id = parameters.dataset_id();
     result.revision = parameters.revision();
@@ -555,8 +526,7 @@ iterate_sw92_phase_assigned_three_phase_candidate(
     for (std::size_t i = 0; i < feed.size(); ++i) {
         if (feed[i] > 0.0 && result.feed[i] == 0.0) {
             result.status = Sw92PhaseAssignedThreePhaseStatus::balance_failure;
-            result.diagnostic =
-                "roundoff normalization lost an active feed component";
+            result.diagnostic = "roundoff normalization lost an active feed component";
             return result;
         }
     }
@@ -621,7 +591,6 @@ iterate_sw92_phase_assigned_three_phase_candidate(
                 Sw92PhaseAssignedThreePhaseStatus::no_resolved_balance_state,
                 "SW92 phase-assigned C2b.1: no representable generalized RR state");
         }
-
         Sw92PhaseAssignedThreePhaseState state;
         state.aqueous_phase.physical_role = Sw92PhysicalPhaseRole::aqueous;
         state.aqueous_phase.thermodynamic_family =
@@ -632,14 +601,12 @@ iterate_sw92_phase_assigned_three_phase_candidate(
             thermodynamics::SwPhaseFamily::nonaqueous;
         state.hydrocarbon1_phase.thermodynamic_family =
             thermodynamics::SwPhaseFamily::nonaqueous;
-
         state.hydrocarbon0_phase.mole_phase_fraction =
             balance.hydrocarbon_fractions[0];
         state.hydrocarbon1_phase.mole_phase_fraction =
             balance.hydrocarbon_fractions[1];
         state.aqueous_phase.mole_phase_fraction =
-            1.0 - balance.hydrocarbon_fractions[0] -
-            balance.hydrocarbon_fractions[1];
+            1.0 - balance.hydrocarbon_fractions[0] - balance.hydrocarbon_fractions[1];
         state.aqueous_phase.composition = balance.aqueous;
         state.hydrocarbon0_phase.composition = balance.hydrocarbon0;
         state.hydrocarbon1_phase.composition = balance.hydrocarbon1;
@@ -692,7 +659,7 @@ iterate_sw92_phase_assigned_three_phase_candidate(
                 state.chemical_potential_norm,
                 std::abs(state.chemical_potential_residual_h0[i]),
                 std::abs(state.chemical_potential_residual_h1[i])});
-            stability_add(
+            detail::stability_add(
                 state.aqueous_phase.mole_phase_fraction *
                     state.aqueous_phase.composition[i] * m_w +
                 state.hydrocarbon0_phase.mole_phase_fraction *
@@ -700,23 +667,19 @@ iterate_sw92_phase_assigned_three_phase_candidate(
                 state.hydrocarbon1_phase.mole_phase_fraction *
                     state.hydrocarbon1_phase.composition[i] * m_1,
                 state.reduced_gibbs, gibbs_correction);
-            stability_add(
+            detail::stability_add(
                 state.aqueous_phase.mole_phase_fraction *
                     state.aqueous_phase.composition[i] *
-                    (std::abs(lw) +
-                     std::abs(state.aqueous_phase.activity.ln_phi[i])) +
+                    (std::abs(lw) + std::abs(state.aqueous_phase.activity.ln_phi[i])) +
                 state.hydrocarbon0_phase.mole_phase_fraction *
                     state.hydrocarbon0_phase.composition[i] *
-                    (std::abs(l0) +
-                     std::abs(state.hydrocarbon0_phase.activity.ln_phi[i])) +
+                    (std::abs(l0) + std::abs(state.hydrocarbon0_phase.activity.ln_phi[i])) +
                 state.hydrocarbon1_phase.mole_phase_fraction *
                     state.hydrocarbon1_phase.composition[i] *
-                    (std::abs(l1) +
-                     std::abs(state.hydrocarbon1_phase.activity.ln_phi[i])),
+                    (std::abs(l1) + std::abs(state.hydrocarbon1_phase.activity.ln_phi[i])),
                 magnitude, magnitude_correction);
         }
-        state.gibbs_roundoff_guard =
-            256.0 * detail::stability_eps * magnitude;
+        state.gibbs_roundoff_guard = 256.0 * detail::stability_eps * magnitude;
         if (!std::isfinite(state.chemical_potential_norm) ||
             !std::isfinite(state.reduced_gibbs) ||
             !std::isfinite(state.gibbs_roundoff_guard)) {
@@ -753,9 +716,7 @@ iterate_sw92_phase_assigned_three_phase_candidate(
                     "SW92 phase-assigned C2b.1: chemical potentials converged but material balance failed";
                 return result;
             }
-
-            if (point.aqueous_phase.mole_phase_fraction <=
-                options.minimum_phase_fraction) {
+            if (point.aqueous_phase.mole_phase_fraction <= options.minimum_phase_fraction) {
                 result.status =
                     Sw92PhaseAssignedThreePhaseStatus::aqueous_phase_disappearance;
                 result.diagnostic =
@@ -772,19 +733,15 @@ iterate_sw92_phase_assigned_three_phase_candidate(
                     "SW92 phase-assigned C2b.1: an unordered H(NA) phase reached the phase-disappearance boundary; no lower topology is accepted here";
                 return result;
             }
-
-            point.aqueous_h0_log_distance =
-                detail::sw92_phase_assigned_log_distance(
-                    point.aqueous_phase.composition,
-                    point.hydrocarbon0_phase.composition, result.feed);
-            point.aqueous_h1_log_distance =
-                detail::sw92_phase_assigned_log_distance(
-                    point.aqueous_phase.composition,
-                    point.hydrocarbon1_phase.composition, result.feed);
-            point.h0_h1_log_distance =
-                detail::sw92_phase_assigned_log_distance(
-                    point.hydrocarbon0_phase.composition,
-                    point.hydrocarbon1_phase.composition, result.feed);
+            point.aqueous_h0_log_distance = detail::sw92_phase_assigned_log_distance(
+                point.aqueous_phase.composition,
+                point.hydrocarbon0_phase.composition, result.feed);
+            point.aqueous_h1_log_distance = detail::sw92_phase_assigned_log_distance(
+                point.aqueous_phase.composition,
+                point.hydrocarbon1_phase.composition, result.feed);
+            point.h0_h1_log_distance = detail::sw92_phase_assigned_log_distance(
+                point.hydrocarbon0_phase.composition,
+                point.hydrocarbon1_phase.composition, result.feed);
             if (!(point.aqueous_h0_log_distance > options.log_composition_separation) ||
                 !(point.aqueous_h1_log_distance > options.log_composition_separation) ||
                 !(point.h0_h1_log_distance > options.log_composition_separation)) {
@@ -793,7 +750,6 @@ iterate_sw92_phase_assigned_three_phase_candidate(
                     "SW92 phase-assigned C2b.1: converged phase compositions are not pairwise distinct";
                 return result;
             }
-
             const std::size_t water_index = parameters.water_index();
             const double w_water = point.aqueous_phase.composition[water_index];
             const double h0_water = point.hydrocarbon0_phase.composition[water_index];
@@ -826,40 +782,33 @@ iterate_sw92_phase_assigned_three_phase_candidate(
                     "SW92 phase-assigned C2b.1: assigned W(AQ) is not water-richer than both H(NA) phases";
                 return result;
             }
-
             detail::sw92_phase_assigned_canonicalize_h_slots(
                 point, result.component_ids);
-            point.aqueous_h0_log_distance =
-                detail::sw92_phase_assigned_log_distance(
-                    point.aqueous_phase.composition,
-                    point.hydrocarbon0_phase.composition, result.feed);
-            point.aqueous_h1_log_distance =
-                detail::sw92_phase_assigned_log_distance(
-                    point.aqueous_phase.composition,
-                    point.hydrocarbon1_phase.composition, result.feed);
-            point.h0_h1_log_distance =
-                detail::sw92_phase_assigned_log_distance(
-                    point.hydrocarbon0_phase.composition,
-                    point.hydrocarbon1_phase.composition, result.feed);
+            point.aqueous_h0_log_distance = detail::sw92_phase_assigned_log_distance(
+                point.aqueous_phase.composition,
+                point.hydrocarbon0_phase.composition, result.feed);
+            point.aqueous_h1_log_distance = detail::sw92_phase_assigned_log_distance(
+                point.aqueous_phase.composition,
+                point.hydrocarbon1_phase.composition, result.feed);
+            point.h0_h1_log_distance = detail::sw92_phase_assigned_log_distance(
+                point.hydrocarbon0_phase.composition,
+                point.hydrocarbon1_phase.composition, result.feed);
             point.aqueous_minus_h0_water_fraction =
                 point.aqueous_phase.composition[water_index] -
                 point.hydrocarbon0_phase.composition[water_index];
             point.aqueous_minus_h1_water_fraction =
                 point.aqueous_phase.composition[water_index] -
                 point.hydrocarbon1_phase.composition[water_index];
-
             result.status = Sw92PhaseAssignedThreePhaseStatus::converged_candidate;
             result.diagnostic =
                 "unordered W(AQ)+H0(NA)+H1(NA) equations, three-phase material balance and relative-water topology converged; H morphology and final topology/stability publication are intentionally not resolved";
             return result;
         }
-
         if (result.iterations >= options.max_iterations) {
             result.status = Sw92PhaseAssignedThreePhaseStatus::iteration_limit;
             result.diagnostic = "SW92 phase-assigned C2b.1: iteration limit";
             return result;
         }
-
         const double scale = std::max(
             1.0, point.chemical_potential_norm / options.max_log_step);
         bool accepted = false;
@@ -920,10 +869,6 @@ iterate_sw92_phase_assigned_three_phase_candidate(
     }
 }
 
-/// Gate C2b.1 source adapter. It accepts only an admissible C1 W(AQ)+H(NA)
-/// candidate and one robust, role-admissible C2a1 additional-NA witness from
-/// the same model snapshot. The witness is a seed; the returned state is still
-/// only an unordered three-phase candidate.
 [[nodiscard]] inline Sw92PhaseAssignedThreePhaseResult
 solve_sw92_phase_assigned_c2b1_candidate(
     const Sw92PhaseAssignedJointResult& c1,
@@ -936,7 +881,6 @@ solve_sw92_phase_assigned_c2b1_candidate(
         throw std::invalid_argument(
             "SW92 phase-assigned C2b.1: C1 result/model snapshot mismatch");
     }
-
     Sw92PhaseAssignedThreePhaseResult rejected;
     rejected.options = options;
     rejected.pressure_pa = c1.pressure_pa;
@@ -947,7 +891,6 @@ solve_sw92_phase_assigned_c2b1_candidate(
     rejected.revision = c1.revision;
     rejected.component_ids = c1.component_ids;
     rejected.source_witness_index = witness_index;
-
     if (c1.candidate() == nullptr) {
         rejected.status =
             Sw92PhaseAssignedThreePhaseStatus::source_candidate_unavailable;
@@ -980,7 +923,6 @@ solve_sw92_phase_assigned_c2b1_candidate(
         rejected.diagnostic = "C2b.1 witness index is out of range";
         return rejected;
     }
-
     const auto& witness = c2a1.negative_witnesses[witness_index];
     const auto* source_point = c1.candidate();
     const auto reclassified = detail::sw92_phase_assigned_classify_na_witness(
@@ -997,7 +939,6 @@ solve_sw92_phase_assigned_c2b1_candidate(
             "selected C2a1 trial is not a robust, distinct and role-admissible NA witness under retained options";
         return rejected;
     }
-
     const std::size_t n = c1.feed.size();
     std::vector<double> log_k_h0(n, 0.0);
     std::vector<double> log_k_h1(n, 0.0);
@@ -1021,7 +962,6 @@ solve_sw92_phase_assigned_c2b1_candidate(
     const std::array<double, 2> fractions{
         retained_h_fraction * (1.0 - options.new_hydrocarbon_seed_share),
         retained_h_fraction * options.new_hydrocarbon_seed_share};
-
     auto result = iterate_sw92_phase_assigned_three_phase_candidate(
         c1.pressure_pa, c1.temperature_k, c1.feed,
         log_k_h0, log_k_h1, fractions, model,
