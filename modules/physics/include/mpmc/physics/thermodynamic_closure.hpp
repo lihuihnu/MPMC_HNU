@@ -235,6 +235,7 @@ struct PtPhaseSetThermodynamicClosureSnapshot {
         if (value.component_count < 2U ||
             value.component_count == std::numeric_limits<std::size_t>::max() ||
             value.component_count != component_ids.size() ||
+            value.component_count != feed.size() ||
             value.phase_count != primal->phases.size() ||
             value.input_count != value.component_count + 1U) {
             return false;
