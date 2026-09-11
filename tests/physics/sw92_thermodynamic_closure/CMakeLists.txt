@@ -38,6 +38,7 @@ set(cases
     one_phase_reproduces_missing_z
     two_phase_preserves_authoritative_properties
     sample6_three_phase_primal
+    linearization_failure_policy
     rejection_and_model_guard
     component_permutation
     headers)
@@ -45,5 +46,5 @@ foreach(case IN LISTS cases)
     add_test(NAME physics.sw92_thermodynamic_closure.${case}
              COMMAND mpmc_sw92_thermodynamic_closure_tests ${case})
     set_tests_properties(physics.sw92_thermodynamic_closure.${case} PROPERTIES
-        LABELS "physics;thermodynamic_closure;sw92" TIMEOUT 300)
+        LABELS "physics;thermodynamic_closure;sw92;linearization" TIMEOUT 300)
 endforeach()
