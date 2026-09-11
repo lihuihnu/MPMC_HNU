@@ -27,12 +27,7 @@ using Sw92RootOptions = Pr76RootOptions;
 template <std::floating_point T> using Sw92Root = Pr76Root<T>;
 template <std::floating_point T> using Sw92RootSet = Pr76RootSet<T>;
 
-enum class Sw92PhaseErrorCode {
-    near_multiple,
-    iteration_limit,
-    unrepresentable_root,
-    ill_conditioned_derivative
-};
+enum class Sw92PhaseErrorCode { near_multiple, iteration_limit, unrepresentable_root };
 class Sw92PhaseError : public std::runtime_error {
 public:
     Sw92PhaseError(Sw92PhaseErrorCode code, const char* message)
@@ -237,8 +232,7 @@ private:
         Number free_volume{root.free_volume_z};
         if constexpr (!std::floating_point<Number>) {
             if (!root.derivative_valid) {
-                throw Sw92PhaseError(
-                    Sw92PhaseErrorCode::ill_conditioned_derivative,
+                throw std::range_error(
                     "Sw92Phase: selected root has no reliable local derivative");
             }
             const T y0 = root.free_volume_z / roots.scale;
