@@ -188,6 +188,14 @@ void fresh_disappearance_neighbors() {
         1.0e7, 350.0, w_h_feed, model, 0.0);
     require_publication_basics(published_w_h, 2U);
 
+    // On the H0+H1 edge, a direct fresh no-W re-solve must *not* authorize
+    // removal of W: it finds a robust AQ/W appearance witness. The full
+    // boundary-aware topology graph is nevertheless allowed to continue from
+    // that witness into the W-containing C1 topology. If C1 closes and C2a1
+    // finds no additional-H evidence, authoritative publication is W+H -- not
+    // the rejected all-NA H0+H1 neighbor. This distinction is the point of the
+    // regression: preserve the incipient-W evidence without falsely requiring
+    // every rival-topology rejection to make the complete flash indeterminate.
     const Vec no_w_feed = edge_feed(h0, h1, 0.90);
     const std::vector<Vec> starts{h0, h1};
     const auto no_w_neighbor = fl::detail::sw92_phase_assigned_resolve_no_w_neighbor(
@@ -199,14 +207,22 @@ void fresh_disappearance_neighbors() {
                 !no_w_neighbor.neighbor_locally_closed() &&
                 no_w_neighbor.neighbor_no_w &&
                 no_w_neighbor.neighbor_no_w->status ==
-                    fl::Sw92PhaseAssignedNoWStatus::aqueous_phase_witness_found,
+                    fl::Sw92PhaseAssignedNoWStatus::aqueous_phase_witness_found &&
+                no_w_neighbor.neighbor_no_w->selected_water_witness() != nullptr,
             "fresh H0+H1 neighbor lost its incipient-W blocking evidence");
-    const auto blocked = fl::solve_sw92_profile_c_pt_phase_set(
+
+    const auto routed = fl::solve_sw92_profile_c_pt_phase_set(
         1.0e7, 350.0, no_w_feed, model, 0.0);
-    require(blocked.solution.status == fl::PtPhaseSetStatus::indeterminate &&
-                !blocked.accepted_phase_set_published() &&
-                blocked.solution.accepted_phase_set() == nullptr,
-            "incipient-W H0+H1 edge was exposed as authoritative no-W publication");
+    require_publication_basics(routed, 2U);
+    require(routed.phase_metadata[0].physical_role ==
+                fl::Sw92PhaseAssignedPtPhysicalRole::aqueous &&
+                routed.phase_metadata[0].thermodynamic_family ==
+                    th::SwPhaseFamily::aqueous &&
+                routed.phase_metadata[1].physical_role ==
+                    fl::Sw92PhaseAssignedPtPhysicalRole::nonaqueous_unclassified &&
+                routed.phase_metadata[1].thermodynamic_family ==
+                    th::SwPhaseFamily::nonaqueous,
+            "incipient-W evidence was bypassed by an authoritative all-NA publication");
 }
 
 void provenance_guard() {
