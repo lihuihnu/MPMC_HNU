@@ -64,6 +64,13 @@ struct PtComponentInventoryLinearization {
     }
     [[nodiscard]] double d_component_molar_density(
         std::size_t component, std::size_t column) const {
+        if (component >= component_count || column >= input_count ||
+            (input_count != 0U &&
+             component > (std::numeric_limits<std::size_t>::max() - column) /
+                             input_count)) {
+            throw std::out_of_range(
+                "component inventory: component Jacobian index outside payload");
+        }
         return component_molar_density_jacobian.at(
             component * input_count + column);
     }
@@ -99,13 +106,25 @@ struct PtComponentInventorySnapshot {
     std::string diagnostic;
 
     [[nodiscard]] bool inventory_available() const noexcept {
-        return primal_status == ThermodynamicClosurePrimalStatus::valid &&
-               primal.has_value() && component_count >= 2U &&
-               component_ids.size() == component_count &&
-               feed.size() == component_count &&
-               primal->component_molar_density_mol_per_m3.size() == component_count &&
-               std::isfinite(primal->total_molar_density_mol_per_m3) &&
-               primal->total_molar_density_mol_per_m3 > 0.0;
+        if (primal_status != ThermodynamicClosurePrimalStatus::valid ||
+            !primal || component_count < 2U || phase_count == 0U ||
+            component_ids.size() != component_count ||
+            feed.size() != component_count ||
+            primal->component_molar_density_mol_per_m3.size() != component_count ||
+            !std::isfinite(pressure_pa) || !(pressure_pa > 0.0) ||
+            !std::isfinite(temperature_k) || !(temperature_k > 0.0) ||
+            !std::isfinite(primal->total_molar_density_mol_per_m3) ||
+            !(primal->total_molar_density_mol_per_m3 > 0.0)) {
+            return false;
+        }
+        for (std::size_t i = 0; i < component_count; ++i) {
+            if (!std::isfinite(feed[i]) || feed[i] < 0.0 ||
+                !std::isfinite(primal->component_molar_density_mol_per_m3[i]) ||
+                primal->component_molar_density_mol_per_m3[i] < 0.0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     [[nodiscard]] bool linearization_available() const noexcept {
@@ -116,13 +135,14 @@ struct PtComponentInventorySnapshot {
             return false;
         }
         const auto& value = *linearization;
-        if (value.component_count != component_count ||
-            value.input_count != component_count + 1U ||
+        if (value.component_count < 2U ||
+            value.component_count == std::numeric_limits<std::size_t>::max() ||
+            value.component_count != component_count ||
+            value.input_count != value.component_count + 1U ||
             value.total_molar_density_gradient.size() != value.input_count) {
             return false;
         }
-        if (value.component_count != 0U &&
-            value.input_count > std::numeric_limits<std::size_t>::max() /
+        if (value.input_count > std::numeric_limits<std::size_t>::max() /
                                     value.component_count) {
             return false;
         }
@@ -310,7 +330,9 @@ template <class PhaseAt, class DBeta, class DX, class DC>
     std::size_t source_input_count,
     const std::vector<double>& phase_component_sum,
     const PtComponentInventoryOptions& options) {
-    if (!result.primal || source_input_count != result.component_count + 1U) {
+    if (!result.primal ||
+        result.component_count == std::numeric_limits<std::size_t>::max() ||
+        source_input_count != result.component_count + 1U) {
         inventory_clear_linearization(result);
         result.linearization_reason =
             ThermodynamicClosureLinearizationReason::solution_not_accepted;
@@ -320,7 +342,8 @@ template <class PhaseAt, class DBeta, class DX, class DC>
     }
     const std::size_t n = result.component_count;
     const std::size_t q_count = source_input_count;
-    if (n > std::numeric_limits<std::size_t>::max() / q_count) {
+    if (q_count == 0U ||
+        n > std::numeric_limits<std::size_t>::max() / q_count) {
         inventory_clear_linearization(result);
         result.linearization_reason =
             ThermodynamicClosureLinearizationReason::arithmetic_failure;
@@ -497,8 +520,10 @@ inline ThermodynamicClosureLinearizationReason propagated_reason(
     const auto& linearization = *source.linearization;
     const std::size_t n = result.component_count;
     const std::size_t q = linearization.input_count;
-    if (n > std::numeric_limits<std::size_t>::max() / q ||
-        linearization.component_count != n || q != n + 1U ||
+    if (linearization.component_count != n ||
+        n == std::numeric_limits<std::size_t>::max() ||
+        q != n + 1U || q == 0U ||
+        n > std::numeric_limits<std::size_t>::max() / q ||
         linearization.vapor_fraction_gradient.size() != q ||
         linearization.liquid_composition_jacobian.size() != n * q ||
         linearization.vapor_composition_jacobian.size() != n * q ||
