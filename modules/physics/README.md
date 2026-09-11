@@ -32,7 +32,7 @@ If the sensitivity path reports `solution_not_accepted`, or the flash itself is 
 
 ### SW92 Profile-C
 
-The SW92 adapter intentionally separates a **usable 1/2/3-phase primal** from the still-missing SW flash derivative contract:
+The SW92 physics adapter intentionally still publishes a **usable 1/2/3-phase primal only**:
 
 ```text
 primal_status        = valid
@@ -42,7 +42,7 @@ residual_available() = true
 can_seed_newton()    = false
 ```
 
-This is not a temporary zero-Jacobian approximation. It is an explicit API boundary: SW92 flash sensitivities require a later independently validated increment.
+A separately validated flash-layer Jacobian is now available through [`differentiate_sw92_profile_c_phase_set(...)`](../flash/sw92_profile_c_sensitivity.md) for a fixed authoritative phase set, fixed AQ/NA family assignment and fixed selected root branches. This physics adapter does **not** consume that Jacobian yet. Wiring it into an atomic physics closure snapshot is the next downstream adapter gate; until then `can_seed_newton()` must remain false. This separation prevents a newly available flash derivative from silently changing the established physics consumption contract.
 
 ## Generic variable-cardinality phase-set primal
 
@@ -148,7 +148,7 @@ No flash iteration, RR bisection, line search, TPD search or root iteration is d
 
 ## Validation
 
-The SW92 focused regression covers:
+The SW92 primal-consumption regression covers:
 
 1. traceable dry CO2/H2O authoritative single-H state, including reconstruction of the source-missing Z;
 2. traceable wet CO2/H2O authoritative W+H state with exact accepted phase-fraction/composition/Z preservation;
@@ -159,7 +159,9 @@ The SW92 focused regression covers:
 7. ordered model/source mismatch rejection;
 8. runtime component permutation;
 9. public-header self containment;
-10. valid-primal / unavailable-linearization policy.
+10. valid-primal / unavailable-physics-linearization policy.
+
+The separate SW92 flash-sensitivity regression validates the fixed-phase-set implicit Jacobian with forward AD, fresh re-solves, the physical Sample-6 three-phase state, permutation/H-slot invariance and derivative boundary guards; see the [SW92 Profile-C sensitivity contract](../flash/sw92_profile_c_sensitivity.md).
 
 A dedicated GitHub-hosted GCC Debug+ASan/UBSan / Clang Release / MSVC Release workflow regenerates the existing independent Sample-6 Decimal(80) oracle before the focused C++ suite. Changes to the shared generic closure header also rerun the existing PR76 closure workflow and its independent reference regeneration.
 
@@ -167,7 +169,7 @@ A dedicated GitHub-hosted GCC Debug+ASan/UBSan / Clang Release / MSVC Release wo
 
 The physics layer still does not provide:
 
-- SW92 flash sensitivities/Jacobians;
+- consumption/publication of the SW92 flash Jacobian in `Sw92ProfileCThermodynamicClosureSnapshot`;
 - a validated SW92 H0/H1 liquid/vapor or LV/LL morphology resolver;
 - NaCl inventory conservation (Profile-C molality remains prescribed model input);
 - pore-volume saturation, mass density, viscosity, mobility, enthalpy/internal energy;
@@ -175,4 +177,4 @@ The physics layer still does not provide:
 - conservation residual assembly, mesh/discretization, time integration or nonlinear solvers;
 - CPA closure.
 
-Those are separate model/numerical increments and must not be inferred from a valid SW92 thermodynamic primal.
+Those are separate model/numerical increments and must not be inferred from a valid SW92 thermodynamic primal or a standalone flash sensitivity result.
