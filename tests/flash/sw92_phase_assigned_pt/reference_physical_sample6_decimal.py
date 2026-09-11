@@ -4,13 +4,16 @@ Primary topology/data source: Mortezazadeh & Rasaei, Fluid Phase Equilibria 450
 (2017) 160-174, DOI 10.1016/j.fluid.2017.07.007. The selected gas-condensate
 Sample 6 state is P=10 MPa, T=350 K and fresh water. Figure 7 places that state
 inside the water+oil+gas region; Tables 4-5 provide pure properties and feed and
-state that non-water BIPs are zero.
+state that non-water BIPs are zero. Appendix A supplies the NA water-hydrocarbon
+constants used for this physical reproduction, including 0.5 for normal
+hydrocarbons heavier than C4.
 
-Water/non-water BIPs use the corrected Soreide-Whitson 1992 contract. The
-numerics intentionally follow MPMC_HNU's exact corrected-original/PR76-base
-profile, including the original PR76 quadratic kappa for every non-water
-component. Therefore the 2017 publication is a physical topology/source oracle,
-not a source of copied numerical phase-composition golden values.
+The numerics intentionally follow MPMC_HNU's exact
+SW92/corrected-original/PR76-base profile: corrected original SW92 water alpha
+and AQ BIP correlation, plus the original PR76 quadratic kappa for every
+non-water component. Therefore the 2017 publication is a physical
+source/topology oracle, not a source of copied numerical phase-composition
+golden values.
 
 Stdlib only; no production imports.
 """
@@ -39,8 +42,8 @@ SPEC = {
 }
 NA_WATER_KIJ = {
     "C1": D("0.4850"), "C2": D("0.4920"), "C3": D("0.5525"),
-    "C4": D("0.5091"), "C5": D("0.5091"), "C6": D("0.5091"),
-    "C7+": D("0.5091"),
+    "C4": D("0.5091"), "C5": D("0.5"), "C6": D("0.5"),
+    "C7+": D("0.5"),
 }
 
 # Table-5 values are rounded and sum to 0.9999. Normalization here is an
@@ -62,9 +65,12 @@ def powd(value: D, exponent: D) -> D:
 
 def water_alpha() -> D:
     tr = TEMPERATURE / SPEC["H2O"][0]
+    # Corrected-original SW92 Eq.(9): the 0.0034 term is OUTSIDE the
+    # 0.4530 multiplier. Keep this parenthesization explicit because a prior
+    # regression draft caught exactly this transcription hazard.
     q = (D(1) + D("0.4530") *
-         (D(1) - tr * (D(1) - D("0.0103") * powd(MOLALITY, D("1.1"))) +
-          D("0.0034") * (tr ** D(-3) - D(1))))
+         (D(1) - tr * (D(1) - D("0.0103") * powd(MOLALITY, D("1.1")))) +
+         D("0.0034") * (D(1) / (tr ** 3) - D(1)))
     return q * q
 
 
@@ -250,17 +256,17 @@ def log_ratio(numerator, denominator):
 
 def solve_flash():
     # Deliberately rounded independent seeds, not the C++ golden literals.
-    w0 = normalized([D(".998985"), D(".00094374"), D(".0000509013"),
-                     D(".0000153911"), D(".00000450229"), D("5.92637e-7"),
-                     D("4.88431e-8"), D("1.98761e-11")])
-    h00 = normalized([D(".00343116"), D(".304788"), D(".0396788"),
-                       D(".0390738"), D(".0497255"), D(".0375338"),
-                       D(".0402370"), D(".485532")])
-    h10 = normalized([D(".00636908"), D(".903513"), D(".0435611"),
-                       D(".0213505"), D(".0146105"), D(".00574990"),
-                       D(".00313020"), D(".00171544")])
+    w0 = normalized([D(".999143"), D(".000801499"), D(".0000408836"),
+                     D(".0000114941"), D(".00000311120"), D("3.75863e-7"),
+                     D("2.79473e-8"), D("7.45412e-12")])
+    h00 = normalized([D(".00317609"), D(".305047"), D(".0397125"),
+                       D(".0390992"), D(".0497509"), D(".0375450"),
+                       D(".0402421"), D(".485427")])
+    h10 = normalized([D(".00552981"), D(".904284"), D(".0435996"),
+                       D(".0213672"), D(".0146194"), D(".00575261"),
+                       D(".00313126"), D(".00171569")])
     unknown = (log_ratio(h00, w0) + log_ratio(h10, w0) +
-               [D(".03649"), D(".45748")])
+               [D(".036499"), D(".457160")])
     step = D("1e-20")
 
     for _ in range(12):
