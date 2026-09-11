@@ -118,7 +118,7 @@ void phase_property_ad_crosscheck() {
     limits.max_jacobian_entries = 9U;
     const auto differentiated = ad::value_and_jacobian_runtime<width>(
         equation, inputs, 3U, workspace, limits);
-    require(phase.compressibility_factor,
+    require(phase.compressibility_factor.has_value(),
             "AD phase-property fixture lost accepted Z");
     near(differentiated.values[0], *phase.compressibility_factor, 2e-10, 2e-12);
     near(differentiated.values[1], phase.activity.ln_phi[0], 2e-10, 2e-12);
@@ -215,8 +215,8 @@ void two_phase_fresh_resolve_crosscheck() {
                     sensitivity.d_composition(phase,i,column)*step[column],
                     (a[phase].composition[i]-b[phase].composition[i])/2.0);
             }
-            require(a[phase].compressibility_factor &&
-                        b[phase].compressibility_factor,
+            require(a[phase].compressibility_factor.has_value() &&
+                        b[phase].compressibility_factor.has_value(),
                     "fresh two-phase perturbation lost Z");
             near_increment(
                 sensitivity.d_compressibility(phase,column)*step[column],
@@ -298,7 +298,7 @@ void h_slot_symmetry() {
         1.0e7,350.0,sample6::feed(),model,0.0);
     const auto original = fl::differentiate_sw92_profile_c_phase_set(source,model);
     require_success(original,3U);
-    require(source.solution.candidate_phase_set,
+    require(source.solution.candidate_phase_set.has_value(),
             "H-slot sensitivity fixture lost phase set");
     std::swap(source.solution.candidate_phase_set->phases[1],
               source.solution.candidate_phase_set->phases[2]);
@@ -340,7 +340,7 @@ void boundary_and_tamper_guards() {
     const auto binary = binary_model();
     auto tampered = fl::solve_sw92_profile_c_pt_phase_set(
         3.0e6,340.0,Vec{0.7,0.3},binary,0.0);
-    require(tampered.solution.candidate_phase_set,
+    require(tampered.solution.candidate_phase_set.has_value(),
             "tamper fixture lost accepted phase set");
     tampered.solution.candidate_phase_set->phases[0].activity.ln_phi[0] += 1e-5;
     const auto rejected = fl::differentiate_sw92_profile_c_phase_set(
