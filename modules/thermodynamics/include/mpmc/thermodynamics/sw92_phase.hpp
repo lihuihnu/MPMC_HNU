@@ -52,23 +52,7 @@ private:
     std::vector<Number> sums_;
 };
 
-namespace detail {
-template <typename Number, typename = void>
-struct Sw92PhaseScalar { using type = Number; };
-template <typename Number>
-struct Sw92PhaseScalar<Number, std::void_t<typename Number::Scalar>> {
-    using type = typename Number::Scalar;
-};
-template <typename Number>
-using Sw92PhaseScalarT = typename Sw92PhaseScalar<Number>::type;
-} // namespace detail
-
-// The second template argument defaults from Number so the historical public
-// spelling Sw92PhaseValues<double> remains source-compatible. AD callers may
-// use Sw92PhaseValues<Dual<...>> while the stored algebraic-root set continues
-// to use the underlying floating scalar.
-template <typename Number,
-          std::floating_point T = detail::Sw92PhaseScalarT<Number>>
+template <typename Number, std::floating_point T>
 struct Sw92PhaseValues {
     Number z{};
     std::vector<Number> ln_phi;
@@ -148,7 +132,7 @@ public:
     }
 
     // Backward-compatible full-composition floating-point API.
-    [[nodiscard]] Sw92PhaseValues<T> evaluate(
+    [[nodiscard]] Sw92PhaseValues<T, T> evaluate(
         T pressure_pa, T temperature_k, std::span<const T> x,
         T molality, SwPhaseFamily family, std::size_t root_index,
         Sw92PhaseWorkspace<T>& workspace, Sw92RootOptions options={}) const {
@@ -159,7 +143,7 @@ public:
 
     template <typename Number>
         requires detail::Sw92Number<Number, T>
-    [[nodiscard]] Sw92PhaseValues<Number> evaluate_full(
+    [[nodiscard]] Sw92PhaseValues<Number, T> evaluate_full(
         const Number& pressure_pa, const Number& temperature_k,
         std::type_identity_t<std::span<const Number>> x,
         T molality, SwPhaseFamily family, std::size_t root_index,
@@ -172,7 +156,7 @@ public:
 
     template <typename Number>
         requires detail::Sw92Number<Number, T>
-    [[nodiscard]] Sw92PhaseValues<Number> evaluate_reduced(
+    [[nodiscard]] Sw92PhaseValues<Number, T> evaluate_reduced(
         const Number& pressure_pa, const Number& temperature_k,
         std::type_identity_t<std::span<const Number>> independent,
         T molality, SwPhaseFamily family, std::size_t root_index,
@@ -227,7 +211,7 @@ private:
 
     template <bool Reduced, typename Number>
         requires detail::Sw92Number<Number, T>
-    [[nodiscard]] Sw92PhaseValues<Number> evaluate_impl(
+    [[nodiscard]] Sw92PhaseValues<Number, T> evaluate_impl(
         const Number& pressure_pa, const Number& temperature_k,
         std::span<const Number> x, T molality, SwPhaseFamily family,
         std::size_t root_index, Sw92PhaseWorkspace<Number>& workspace,
