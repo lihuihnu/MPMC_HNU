@@ -13,6 +13,7 @@ on:
       - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp'
       - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_pt.hpp'
       - 'modules/flash/sw92_phase_assigned_pt.md'
+      - 'modules/flash/sw92_authoritative_three_phase_audit.md'
       - 'modules/thermodynamics/**/*.hpp'
       - 'tests/flash/sw92_family_vle/**'
       - 'tests/flash/sw92_phase_assigned_joint/**'
@@ -32,7 +33,7 @@ jobs:
   pt:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +70,7 @@ jobs:
           python tests/flash/sw92_phase_assigned_three_phase/reference_decimal.py
           python tests/flash/sw92_phase_assigned_three_phase_closure/reference_decimal.py
           python tests/flash/sw92_phase_assigned_no_w/reference_decimal.py
+          python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
 
       - name: Configure top-level Profile-C PT
         run: |

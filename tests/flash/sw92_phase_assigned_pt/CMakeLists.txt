@@ -38,6 +38,9 @@ set(cases
     dry_no_w
     zero_water
     synthetic_three_phase
+    physical_three_phase_direct
+    physical_three_phase_top_level
+    physical_three_phase_permutation
     permutation
     attempt_quota
     headers)
@@ -45,5 +48,5 @@ foreach(case IN LISTS cases)
     add_test(NAME flash.sw92_phase_assigned_pt.${case}
              COMMAND mpmc_sw92_phase_assigned_pt_tests ${case})
     set_tests_properties(flash.sw92_phase_assigned_pt.${case} PROPERTIES
-        LABELS "flash;flash.sw92_phase_assigned_pt;unit" TIMEOUT 180)
+        LABELS "flash;flash.sw92_phase_assigned_pt;unit" TIMEOUT 240)
 endforeach()
