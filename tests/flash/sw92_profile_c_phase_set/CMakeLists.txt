@@ -19,6 +19,8 @@ target_include_directories(mpmc_sw92_profile_c_phase_set_blocker_diagnostic PRIV
     "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
 set_target_properties(mpmc_sw92_profile_c_phase_set_blocker_diagnostic PROPERTIES
     CXX_EXTENSIONS OFF)
+add_dependencies(mpmc_sw92_profile_c_phase_set_tests
+    mpmc_sw92_profile_c_phase_set_blocker_diagnostic)
 
 if(MSVC)
     target_compile_options(mpmc_sw92_profile_c_phase_set_tests PRIVATE
