@@ -1,8 +1,10 @@
 #include <mpmc/flash/sw92_phase_assigned_pt.hpp>
 
 #include "../sw92_phase_assigned_three_phase_closure/fixture.hpp"
+#include "physical_sample6.hpp"
 #include "test_support.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
@@ -17,14 +19,14 @@ bool sw92_phase_assigned_pt_header();
 namespace {
 namespace fl = mpmc::flash;
 namespace th = mpmc::thermodynamics;
+namespace sample6 = sw92_profile_c_sample6;
 using Vec = std::vector<double>;
 
 void require(bool condition, std::string_view message,
              std::source_location where = std::source_location::current()) {
     if (!condition) {
         throw std::runtime_error(std::string(where.file_name()) + ":" +
-                                 std::to_string(where.line()) + ": " +
-                                 std::string(message));
+                                 std::to_string(where.line()) + ": " + std::string(message));
     }
 }
 
@@ -37,6 +39,17 @@ void near(double actual, long double expected, long double relative = 3e-8L,
         std::cerr << "actual=" << actual << " expected=" << expected << '\n';
         require(false, "reference mismatch", where);
     }
+}
+
+Vec log_ratio(const Vec& numerator, const Vec& denominator) {
+    require(numerator.size() == denominator.size(), "log-ratio dimension mismatch");
+    Vec values(numerator.size());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        require(numerator[i] > 0.0 && denominator[i] > 0.0,
+                "physical reference requires positive log-ratio support");
+        values[i] = std::log(numerator[i]) - std::log(denominator[i]);
+    }
+    return values;
 }
 
 th::Sw92Phase<double> binary_model(bool reverse = false) {
@@ -110,23 +123,6 @@ void synthetic_ternary_routes_to_three_phase() {
                   << " c1_attempts=" << result.c1_attempts
                   << " c2b1_attempts=" << result.c2b1_attempts
                   << " diagnostic=" << result.diagnostic << '\n';
-        if (result.c1) {
-            std::cerr << "c1=" << static_cast<int>(result.c1->status)
-                      << " diagnostic=" << result.c1->diagnostic << '\n';
-        }
-        if (result.c2a1) {
-            std::cerr << "c2a1=" << static_cast<int>(result.c2a1->status)
-                      << " negative=" << result.c2a1->negative_witnesses.size()
-                      << " diagnostic=" << result.c2a1->diagnostic << '\n';
-        }
-        if (result.c2b1) {
-            std::cerr << "c2b1=" << static_cast<int>(result.c2b1->status)
-                      << " diagnostic=" << result.c2b1->diagnostic << '\n';
-        }
-        if (result.c2b2) {
-            std::cerr << "c2b2=" << static_cast<int>(result.c2b2->status)
-                      << " diagnostic=" << result.c2b2->diagnostic << '\n';
-        }
         require(false,
                 "synthetic structural state did not traverse top-level three-phase path");
     }
@@ -146,6 +142,137 @@ void synthetic_ternary_routes_to_three_phase() {
                 "top-level three-phase instance is incomplete");
     }
     near(result.phases[0].composition[0], c2b2_test::w[0]);
+}
+
+void check_physical_three_phase_state(
+    const fl::Sw92PhaseAssignedThreePhaseState& state) {
+    const auto phases = std::array<const fl::Sw92PhaseAssignedThreePhasePhase*, 3>{
+        &state.aqueous_phase, &state.hydrocarbon0_phase, &state.hydrocarbon1_phase};
+    const auto expected_composition =
+        std::array<const std::array<long double, 8>*, 3>{
+            &sample6::golden.w, &sample6::golden.h0, &sample6::golden.h1};
+    for (std::size_t phase = 0; phase < phases.size(); ++phase) {
+        require(phases[phase]->composition.size() == sample6::golden.feed.size(),
+                "physical Sample-6 component dimension changed");
+        for (std::size_t i = 0; i < sample6::golden.feed.size(); ++i) {
+            near(phases[phase]->composition[i], (*expected_composition[phase])[i],
+                 8e-8L, 3e-12L);
+        }
+        near(phases[phase]->mole_phase_fraction, sample6::golden.fractions[phase],
+             8e-8L, 3e-12L);
+        near(phases[phase]->compressibility_factor, sample6::golden.z[phase],
+             8e-8L, 3e-12L);
+    }
+    for (std::size_t i = 0; i < sample6::golden.common.size(); ++i) {
+        near(state.common_log_activity[i], sample6::golden.common[i],
+             8e-8L, 3e-11L);
+    }
+    require(state.aqueous_phase.thermodynamic_family == th::SwPhaseFamily::aqueous &&
+                state.hydrocarbon0_phase.thermodynamic_family ==
+                    th::SwPhaseFamily::nonaqueous &&
+                state.hydrocarbon1_phase.thermodynamic_family ==
+                    th::SwPhaseFamily::nonaqueous,
+            "physical Sample-6 family mapping changed");
+    require(state.aqueous_phase.composition[0] >
+                std::max(state.hydrocarbon0_phase.composition[0],
+                         state.hydrocarbon1_phase.composition[0]),
+            "physical Sample-6 W phase lost water-rich role ordering");
+    require(state.hydrocarbon0_phase.compressibility_factor <
+                state.hydrocarbon1_phase.compressibility_factor,
+            "physical Sample-6 H slots lost deterministic lower-Z canonical order");
+    require(state.chemical_potential_norm <= 1.0e-11 &&
+                state.mass_absolute <= 1.0e-12 &&
+                state.mass_relative <= 1.0e-10 &&
+                state.generalized_rr_residual <= 2.0e-13,
+            "physical Sample-6 equilibrium/balance gate changed");
+}
+
+void physical_sample6_direct_three_phase() {
+    const auto model = sample6::model();
+    const Vec feed = sample6::feed();
+    const Vec w = sample6::w();
+    const Vec h0 = sample6::h0();
+    const Vec h1 = sample6::h1();
+    const auto result = fl::iterate_sw92_phase_assigned_three_phase_candidate(
+        1.0e7, 350.0, feed, log_ratio(h0, w), log_ratio(h1, w),
+        {static_cast<double>(sample6::golden.fractions[1]),
+         static_cast<double>(sample6::golden.fractions[2])},
+        model, 0.0);
+    require(result.status == fl::Sw92PhaseAssignedThreePhaseStatus::converged_candidate &&
+                result.candidate() != nullptr,
+            "physical Sample-6 direct three-phase kernel did not converge");
+    check_physical_three_phase_state(*result.candidate());
+    require(result.dataset_id ==
+                "MR2017-Sample6-SW92-corrected-original-PR76-base" &&
+                !result.global_stability_proven &&
+                !result.accepted_phase_set_published,
+            "physical Sample-6 provenance/candidate semantics changed");
+}
+
+void physical_sample6_top_level_three_phase() {
+    const auto result = fl::solve_sw92_phase_assigned_pt(
+        1.0e7, 350.0, sample6::feed(), sample6::model(), 0.0);
+    if (!(result.status == fl::Sw92PhaseAssignedPtStatus::w_h0_h1_locally_closed &&
+          result.phases.size() == 3U && result.c1 && result.c2a1 &&
+          result.c2b1 && result.c2b2 && result.c2b1->candidate())) {
+        std::cerr << "physical Sample-6 top-level status=" <<
+            static_cast<int>(result.status)
+                  << " noW=" << static_cast<int>(result.no_w.status)
+                  << " c1_attempts=" << result.c1_attempts
+                  << " c2b1_attempts=" << result.c2b1_attempts
+                  << " diagnostic=" << result.diagnostic << '\n';
+        if (result.c1) {
+            std::cerr << "c1=" << static_cast<int>(result.c1->status)
+                      << " diagnostic=" << result.c1->diagnostic << '\n';
+        }
+        if (result.c2a1) {
+            std::cerr << "c2a1=" << static_cast<int>(result.c2a1->status)
+                      << " negative=" << result.c2a1->negative_witnesses.size()
+                      << " diagnostic=" << result.c2a1->diagnostic << '\n';
+        }
+        if (result.c2b1) {
+            std::cerr << "c2b1=" << static_cast<int>(result.c2b1->status)
+                      << " diagnostic=" << result.c2b1->diagnostic << '\n';
+        }
+        if (result.c2b2) {
+            std::cerr << "c2b2=" << static_cast<int>(result.c2b2->status)
+                      << " diagnostic=" << result.c2b2->diagnostic << '\n';
+        }
+        require(false,
+                "physical Mortezazadeh-Rasaei Sample-6 did not traverse the top-level three-phase flash path");
+    }
+    require(result.c2b2->w_present_locally_closed(),
+            "physical Sample-6 did not pass the final W-present H-multiplicity review");
+    check_physical_three_phase_state(*result.c2b1->candidate());
+    for (std::size_t phase = 0; phase < result.phases.size(); ++phase) {
+        near(result.phases[phase].mole_phase_fraction,
+             sample6::golden.fractions[phase], 8e-8L, 3e-12L);
+    }
+}
+
+void physical_sample6_direct_permutation() {
+    const auto model = sample6::model(true);
+    const Vec feed = sample6::feed(true);
+    const Vec w = sample6::w(true);
+    const Vec h0 = sample6::h0(true);
+    const Vec h1 = sample6::h1(true);
+    const auto result = fl::iterate_sw92_phase_assigned_three_phase_candidate(
+        1.0e7, 350.0, feed, log_ratio(h0, w), log_ratio(h1, w),
+        {static_cast<double>(sample6::golden.fractions[1]),
+         static_cast<double>(sample6::golden.fractions[2])},
+        model, 0.0);
+    require(result.candidate() != nullptr,
+            "physical Sample-6 reversed component order did not converge");
+    const auto& state = *result.candidate();
+    for (std::size_t i = 0; i < sample6::golden.feed.size(); ++i) {
+        const std::size_t reversed = sample6::golden.feed.size() - 1U - i;
+        near(state.aqueous_phase.composition[reversed], sample6::golden.w[i],
+             8e-8L, 3e-12L);
+        near(state.hydrocarbon0_phase.composition[reversed], sample6::golden.h0[i],
+             8e-8L, 3e-12L);
+        near(state.hydrocarbon1_phase.composition[reversed], sample6::golden.h1[i],
+             8e-8L, 3e-12L);
+    }
 }
 
 void binary_component_permutation() {
@@ -192,6 +319,9 @@ int main(int argc, char** argv) {
         else if (name == "dry_no_w") dry_binary_routes_to_no_w_single();
         else if (name == "zero_water") zero_water_routes_to_no_w_single();
         else if (name == "synthetic_three_phase") synthetic_ternary_routes_to_three_phase();
+        else if (name == "physical_three_phase_direct") physical_sample6_direct_three_phase();
+        else if (name == "physical_three_phase_top_level") physical_sample6_top_level_three_phase();
+        else if (name == "physical_three_phase_permutation") physical_sample6_direct_permutation();
         else if (name == "permutation") binary_component_permutation();
         else if (name == "attempt_quota") attempt_quota_is_explicit();
         else if (name == "headers") headers();
