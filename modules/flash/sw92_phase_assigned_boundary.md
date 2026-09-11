@@ -119,9 +119,9 @@ was validated by GitHub Actions run `34567768458` on:
 
 The same run passed the affected top-level Profile-C PT, C2b.2, no-W, C2a1 and
 C1 suites, with the physical Sample-6 Decimal oracle regenerated on all three
-jobs. Later commits only synchronize this scientific/validation document; no
-production code, test, workflow, tolerance, parameter or reference anchor was
-changed after that validated head.
+jobs. Commits after the validated numerical/test head only synchronize this
+scientific/validation document; no production code, test, workflow, tolerance,
+parameter or reference anchor changed after validation.
 
 Frontend work remains frozen until maximum-three-phase validation and
 authoritative publication are complete.
