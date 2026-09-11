@@ -74,24 +74,15 @@ template <class Result>
                sw92_phase_assigned_aq_na_joint_profile;
 }
 
-[[nodiscard]] inline bool sw92_profile_c_base_contract_valid(
-    const Sw92PhaseAssignedPtResult& base) {
-    if (base.feed.empty() || base.component_ids.size() != base.feed.size() ||
-        std::string_view{base.model_profile} != thermodynamics::sw92_corrected_profile ||
-        std::string_view{base.phase_convention} != thermodynamics::sw92_pt_convention ||
-        std::string_view{base.equilibrium_profile} !=
-            sw92_phase_assigned_aq_na_joint_profile ||
-        std::string_view{base.orchestration_convention} !=
-            sw92_phase_assigned_pt_convention ||
-        !sw92_profile_c_snapshot_matches(base, base.no_w)) {
+[[nodiscard]] inline bool sw92_profile_c_no_w_contract_matches(
+    const Sw92PhaseAssignedPtResult& base,
+    const Sw92PhaseAssignedNoWResult& no_w) {
+    if (!sw92_profile_c_snapshot_matches(base, no_w) ||
+        std::string_view{no_w.adapter_convention} !=
+            sw92_phase_assigned_no_w_convention) {
         return false;
     }
-    try {
-        (void)stability_check_composition(base.feed);
-    } catch (const std::exception&) {
-        return false;
-    }
-    const auto& family = base.no_w.hydrocarbon_flash;
+    const auto& family = no_w.hydrocarbon_flash;
     const auto& solution = family.solution;
     return family.dataset_id == base.dataset_id &&
            family.revision == base.revision &&
@@ -103,9 +94,47 @@ template <class Result>
                thermodynamics::sw92_corrected_profile &&
            std::string_view{family.phase_convention} ==
                thermodynamics::sw92_pt_convention &&
+           std::string_view{family.equilibrium_algorithm} ==
+               sw92_family_vle_algorithm &&
            solution.initial_stability.pressure_pa == base.pressure_pa &&
            solution.initial_stability.temperature_k == base.temperature_k &&
            solution.initial_stability.feed == base.feed;
+}
+
+[[nodiscard]] inline bool sw92_profile_c_c1_contract_matches(
+    const Sw92PhaseAssignedPtResult& base,
+    const Sw92PhaseAssignedJointResult& c1) {
+    return sw92_profile_c_snapshot_matches(base, c1) &&
+           std::string_view{c1.primitive_convention} ==
+               sw92_phase_assigned_aq_na_joint_primitive;
+}
+
+[[nodiscard]] inline bool sw92_profile_c_c2a1_contract_matches(
+    const Sw92PhaseAssignedPtResult& base,
+    const Sw92PhaseAssignedHSideWitnessResult& c2a1) {
+    return sw92_profile_c_snapshot_matches(base, c2a1) &&
+           std::string_view{c2a1.witness_convention} ==
+               sw92_phase_assigned_h_side_na_witness_convention;
+}
+
+[[nodiscard]] inline bool sw92_profile_c_base_contract_valid(
+    const Sw92PhaseAssignedPtResult& base) {
+    if (base.feed.empty() || base.component_ids.size() != base.feed.size() ||
+        std::string_view{base.model_profile} != thermodynamics::sw92_corrected_profile ||
+        std::string_view{base.phase_convention} != thermodynamics::sw92_pt_convention ||
+        std::string_view{base.equilibrium_profile} !=
+            sw92_phase_assigned_aq_na_joint_profile ||
+        std::string_view{base.orchestration_convention} !=
+            sw92_phase_assigned_pt_convention ||
+        !sw92_profile_c_no_w_contract_matches(base, base.no_w)) {
+        return false;
+    }
+    try {
+        (void)stability_check_composition(base.feed);
+    } catch (const std::exception&) {
+        return false;
+    }
+    return true;
 }
 
 [[nodiscard]] inline bool sw92_profile_c_activity_valid(
@@ -175,7 +204,7 @@ template <class Phase>
     const Sw92PhaseAssignedBoundaryAwareResult& source,
     const Sw92PhaseAssignedNoWResult& no_w) {
     const auto& base = source.base;
-    if (!sw92_profile_c_snapshot_matches(base, no_w) ||
+    if (!sw92_profile_c_no_w_contract_matches(base, no_w) ||
         !no_w.no_w_locally_closed()) {
         return false;
     }
@@ -267,8 +296,8 @@ template <class Phase>
     const auto* point = c1.candidate();
     if (source.status != Sw92PhaseAssignedPtStatus::w_h_locally_closed ||
         source.phases.size() != 2U || point == nullptr ||
-        !sw92_profile_c_snapshot_matches(base, c1) ||
-        !sw92_profile_c_snapshot_matches(base, c2a1) ||
+        !sw92_profile_c_c1_contract_matches(base, c1) ||
+        !sw92_profile_c_c2a1_contract_matches(base, c2a1) ||
         c2a1.status != Sw92PhaseAssignedHSideWitnessStatus::
                             no_additional_nonaqueous_witness_found ||
         !sw92_profile_c_activity_valid(
@@ -305,10 +334,14 @@ template <class Phase>
     const Sw92PhaseAssignedThreePhaseResult& c2b1,
     const Sw92PhaseAssignedC2b2Result& c2b2) {
     if (!base.c1 || !base.c2a1 ||
-        !sw92_profile_c_snapshot_matches(base, *base.c1) ||
-        !sw92_profile_c_snapshot_matches(base, *base.c2a1) ||
+        !sw92_profile_c_c1_contract_matches(base, *base.c1) ||
+        !sw92_profile_c_c2a1_contract_matches(base, *base.c2a1) ||
         !sw92_profile_c_snapshot_matches(base, c2b1) ||
         !sw92_profile_c_snapshot_matches(base, c2b2) ||
+        std::string_view{c2b1.primitive_convention} !=
+            sw92_phase_assigned_c2b1_three_phase_convention ||
+        std::string_view{c2b2.review_convention} !=
+            sw92_phase_assigned_c2b2_closure_convention ||
         !sw92_phase_assigned_c2b1_source_matches(*base.c1, *base.c2a1) ||
         !sw92_phase_assigned_c2b2_three_phase_matches(*base.c1, c2b1) ||
         !sw92_phase_assigned_c2b2_source_seed_matches(*base.c1, *base.c2a1, c2b1) ||
@@ -373,6 +406,8 @@ template <class Phase>
     const auto& base = source.base;
     if (!source.boundary || !source.boundary_c2b1 || !source.boundary_c2b2 ||
         !base.c1 || !base.c2a1 ||
+        std::string_view{source.boundary->convention} !=
+            sw92_phase_assigned_boundary_convention ||
         !sw92_profile_c_c2_chain_matches(
             base, *source.boundary_c2b1, *source.boundary_c2b2)) {
         return false;
@@ -382,8 +417,10 @@ template <class Phase>
     case Sw92PhaseAssignedBoundaryStatus::resolved_to_w_h:
         return review_status == Sw92PhaseAssignedC2b2Status::route_to_w_h &&
                source.boundary->neighbor_c1 && source.boundary->neighbor_c2a1 &&
-               sw92_profile_c_snapshot_matches(base, *source.boundary->neighbor_c1) &&
-               sw92_profile_c_snapshot_matches(base, *source.boundary->neighbor_c2a1);
+               sw92_profile_c_c1_contract_matches(
+                   base, *source.boundary->neighbor_c1) &&
+               sw92_profile_c_c2a1_contract_matches(
+                   base, *source.boundary->neighbor_c2a1);
     case Sw92PhaseAssignedBoundaryStatus::resolved_to_no_w_single_h:
     case Sw92PhaseAssignedBoundaryStatus::resolved_to_no_w_two_h:
         return (review_status ==
@@ -391,7 +428,8 @@ template <class Phase>
                 review_status ==
                     Sw92PhaseAssignedC2b2Status::single_phase_endpoint_unresolved) &&
                source.boundary->neighbor_no_w &&
-               sw92_profile_c_snapshot_matches(base, *source.boundary->neighbor_no_w);
+               sw92_profile_c_no_w_contract_matches(
+                   base, *source.boundary->neighbor_no_w);
     case Sw92PhaseAssignedBoundaryStatus::no_boundary_route:
     case Sw92PhaseAssignedBoundaryStatus::neighbor_topology_not_closed:
     case Sw92PhaseAssignedBoundaryStatus::higher_phase_count_or_wrong_candidate:
