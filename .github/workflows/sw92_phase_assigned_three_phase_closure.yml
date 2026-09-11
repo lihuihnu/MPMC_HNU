@@ -1,0 +1,119 @@
+name: SW92 phase-assigned C2b2 topology closure
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase_closure.hpp'
+      - 'modules/flash/sw92_phase_assigned_three_phase_closure.md'
+      - 'modules/thermodynamics/**/*.hpp'
+      - 'tests/flash/sw92_phase_assigned_joint/**'
+      - 'tests/flash/sw92_phase_assigned_h_side_witness/**'
+      - 'tests/flash/sw92_phase_assigned_three_phase/**'
+      - 'tests/flash/sw92_phase_assigned_three_phase_closure/**'
+      - '.github/workflows/sw92_phase_assigned_three_phase_closure.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sw92-phase-assigned-c2b2-closure-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  c2b2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Regenerate independent Decimal references
+        run: |
+          python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
+          python tests/flash/sw92_phase_assigned_joint/reference_c2_domain_decimal.py
+          python tests/flash/sw92_phase_assigned_h_side_witness/reference_decimal.py
+          python tests/flash/sw92_phase_assigned_three_phase/reference_decimal.py
+          python tests/flash/sw92_phase_assigned_three_phase_closure/reference_decimal.py
+
+      - name: Configure Profile-C Gate C2b2
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_phase_assigned_three_phase_closure -B build/sw92-phase-assigned-three-phase-closure \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PHASE_ASSIGNED_THREE_PHASE_CLOSURE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build Profile-C Gate C2b2
+        run: cmake --build build/sw92-phase-assigned-three-phase-closure --target mpmc_sw92_phase_assigned_three_phase_closure_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run Profile-C Gate C2b2
+        run: ctest --test-dir build/sw92-phase-assigned-three-phase-closure -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_three_phase_closure[.]' --verbose --no-tests=error
+
+      - name: Configure affected Profile-C Gate C2b1
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_phase_assigned_three_phase -B build/sw92-phase-assigned-three-phase \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PHASE_ASSIGNED_THREE_PHASE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build affected Profile-C Gate C2b1
+        run: cmake --build build/sw92-phase-assigned-three-phase --target mpmc_sw92_phase_assigned_three_phase_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run affected Profile-C Gate C2b1
+        run: ctest --test-dir build/sw92-phase-assigned-three-phase -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_three_phase[.]' --verbose --no-tests=error
+
+      - name: Configure affected Profile-C Gate C2a1
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_phase_assigned_h_side_witness -B build/sw92-phase-assigned-h-side-witness \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PHASE_ASSIGNED_H_SIDE_WITNESS_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build affected Profile-C Gate C2a1
+        run: cmake --build build/sw92-phase-assigned-h-side-witness --target mpmc_sw92_phase_assigned_h_side_witness_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run affected Profile-C Gate C2a1
+        run: ctest --test-dir build/sw92-phase-assigned-h-side-witness -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_h_side_witness[.]' --verbose --no-tests=error
+
+      - name: Configure affected Profile-C Gate C1
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/sw92_phase_assigned_joint -B build/sw92-phase-assigned-joint \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SW92_PHASE_ASSIGNED_JOINT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build affected Profile-C Gate C1
+        run: cmake --build build/sw92-phase-assigned-joint --target mpmc_sw92_phase_assigned_joint_tests --config ${{ matrix.config }} --parallel 2
+      - name: Run affected Profile-C Gate C1
+        run: ctest --test-dir build/sw92-phase-assigned-joint -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_joint[.]' --verbose --no-tests=error
