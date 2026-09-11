@@ -5,6 +5,7 @@
 #include <mpmc/ad/runtime_differentiate.hpp>
 #include <mpmc/flash/sw92_profile_c_phase_set.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -26,18 +27,24 @@ struct Sw92ProfileCSensitivityLocalSystem {
     std::size_t compressibility_output{};
     std::size_t density_output{};
     std::size_t output_count{};
+    // Internal chart only: each phase drops its largest accepted component from
+    // the independent coordinates to avoid reconstructing a trace component by
+    // subtracting nearly equal numbers. This does not change external q.
+    std::vector<std::size_t> phase_dependent_components;
     ad::RuntimeValueAndJacobian<double> values;
 };
 
 // Local fixed-phase-set coordinates:
 //
-// u = [x^0_0..x^0_{N-2}, ..., x^{P-1}_0..x^{P-1}_{N-2},
+// u = [N-1 independent mole fractions for each accepted phase,
 //      beta_0..beta_{P-2}]
 // q = [p, T, z_0..z_{N-2}]
 //
-// The last composition in every phase, last phase fraction and last feed
-// component are dependent simplex coordinates. The residual has exactly PN-1
-// equations for PN-1 unknowns:
+// For numerical conditioning, phase alpha chooses as its dependent composition
+// the largest component in that accepted phase. The external feed chart remains
+// the public reduced-feed convention with z_{N-1} dependent. The last phase
+// fraction is dependent. The residual has exactly PN-1 equations for PN-1
+// unknowns:
 //   - N common-chemical-potential equations for each phase a>0 versus phase 0;
 //   - N-1 component material balances.
 //
@@ -79,6 +86,7 @@ sw92_profile_c_sensitivity_local_system(
     const std::size_t density_output = compressibility_output + pcount;
     const std::size_t output_count = density_output + pcount;
 
+    std::vector<std::size_t> dependent(pcount, 0U);
     std::vector<double> inputs(variable_count, 0.0);
     for (std::size_t phase = 0; phase < pcount; ++phase) {
         const auto& composition = accepted->phases[phase].composition;
@@ -86,8 +94,19 @@ sw92_profile_c_sensitivity_local_system(
             throw std::invalid_argument(
                 "SW92 sensitivity local system: phase composition dimension mismatch");
         }
-        for (std::size_t i = 0; i + 1U < n; ++i) {
-            inputs[phase * (n - 1U) + i] = composition[i];
+        dependent[phase] = static_cast<std::size_t>(
+            std::distance(
+                composition.begin(),
+                std::max_element(composition.begin(), composition.end())));
+        std::size_t local_column = 0U;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i == dependent[phase]) { continue; }
+            inputs[phase * (n - 1U) + local_column] = composition[i];
+            ++local_column;
+        }
+        if (local_column != n - 1U) {
+            throw std::logic_error(
+                "SW92 sensitivity local system: phase chart shape mismatch");
         }
     }
     const std::size_t beta_offset = pcount * (n - 1U);
@@ -122,12 +141,15 @@ sw92_profile_c_sensitivity_local_system(
             std::vector<Number> beta(pcount);
             for (std::size_t phase = 0; phase < pcount; ++phase) {
                 Number sum{0.0};
-                for (std::size_t i = 0; i + 1U < n; ++i) {
+                std::size_t local_column = 0U;
+                for (std::size_t i = 0; i < n; ++i) {
+                    if (i == dependent[phase]) { continue; }
                     composition[phase][i] =
-                        variables[phase * (n - 1U) + i];
+                        variables[phase * (n - 1U) + local_column];
                     sum += composition[phase][i];
+                    ++local_column;
                 }
-                composition[phase][n - 1U] = Number{1.0} - sum;
+                composition[phase][dependent[phase]] = Number{1.0} - sum;
             }
             Number beta_sum{0.0};
             for (std::size_t phase = 0; phase + 1U < pcount; ++phase) {
@@ -139,10 +161,10 @@ sw92_profile_c_sensitivity_local_system(
             std::vector<thermodynamics::Sw92PhaseValues<Number, double>> values;
             values.reserve(pcount);
             for (std::size_t phase = 0; phase < pcount; ++phase) {
-                const auto independent = std::span<const Number>{
-                    composition[phase].data(), n - 1U};
-                values.push_back(model.evaluate_reduced(
-                    pressure, temperature, independent,
+                values.push_back(model.evaluate_full(
+                    pressure, temperature,
+                    std::span<const Number>{
+                        composition[phase].data(), composition[phase].size()},
                     source.nacl_molality_mol_per_kg_water,
                     source.phase_metadata[phase].thermodynamic_family,
                     accepted->phases[phase].activity.branch,
@@ -208,6 +230,7 @@ sw92_profile_c_sensitivity_local_system(
         compressibility_output,
         density_output,
         output_count,
+        std::move(dependent),
         std::move(differentiated)};
 }
 
