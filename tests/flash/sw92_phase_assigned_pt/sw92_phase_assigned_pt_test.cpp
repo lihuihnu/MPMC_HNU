@@ -100,12 +100,36 @@ void synthetic_ternary_routes_to_three_phase() {
     const auto feed = c2b2_test::feed_from_c1_beta(0.73L, false);
     const auto result = fl::solve_sw92_phase_assigned_pt(
         3.0e6, 260.0, feed, model, 0.0);
-    require(result.status ==
-                fl::Sw92PhaseAssignedPtStatus::w_h0_h1_locally_closed &&
-                result.locally_closed_phase_candidate() &&
-                result.phases.size() == 3U && result.c1 && result.c2a1 &&
-                result.c2b1 && result.c2b2,
-            "synthetic structural state did not traverse top-level three-phase path");
+    if (!(result.status ==
+              fl::Sw92PhaseAssignedPtStatus::w_h0_h1_locally_closed &&
+          result.locally_closed_phase_candidate() &&
+          result.phases.size() == 3U && result.c1 && result.c2a1 &&
+          result.c2b1 && result.c2b2)) {
+        std::cerr << "top-level status=" << static_cast<int>(result.status)
+                  << " noW=" << static_cast<int>(result.no_w.status)
+                  << " c1_attempts=" << result.c1_attempts
+                  << " c2b1_attempts=" << result.c2b1_attempts
+                  << " diagnostic=" << result.diagnostic << '\n';
+        if (result.c1) {
+            std::cerr << "c1=" << static_cast<int>(result.c1->status)
+                      << " diagnostic=" << result.c1->diagnostic << '\n';
+        }
+        if (result.c2a1) {
+            std::cerr << "c2a1=" << static_cast<int>(result.c2a1->status)
+                      << " negative=" << result.c2a1->negative_witnesses.size()
+                      << " diagnostic=" << result.c2a1->diagnostic << '\n';
+        }
+        if (result.c2b1) {
+            std::cerr << "c2b1=" << static_cast<int>(result.c2b1->status)
+                      << " diagnostic=" << result.c2b1->diagnostic << '\n';
+        }
+        if (result.c2b2) {
+            std::cerr << "c2b2=" << static_cast<int>(result.c2b2->status)
+                      << " diagnostic=" << result.c2b2->diagnostic << '\n';
+        }
+        require(false,
+                "synthetic structural state did not traverse top-level three-phase path");
+    }
     require(result.c2b2->w_present_locally_closed() &&
                 result.phases[0].physical_role ==
                     fl::Sw92PhaseAssignedPtPhysicalRole::aqueous &&
