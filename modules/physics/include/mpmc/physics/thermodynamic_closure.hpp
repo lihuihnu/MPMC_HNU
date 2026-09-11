@@ -233,10 +233,14 @@ struct PtPhaseSetThermodynamicClosureSnapshot {
         }
         const auto& value = *linearization;
         if (value.component_count < 2U ||
+            value.component_count == std::numeric_limits<std::size_t>::max() ||
             value.component_count != component_ids.size() ||
             value.phase_count != primal->phases.size() ||
             value.input_count != value.component_count + 1U) {
             return false;
+        }
+        for (const auto& phase : primal->phases) {
+            if (phase.composition.size() != value.component_count) { return false; }
         }
         const auto product_matches = [](std::size_t lhs, std::size_t rhs,
                                         std::size_t actual) noexcept {
