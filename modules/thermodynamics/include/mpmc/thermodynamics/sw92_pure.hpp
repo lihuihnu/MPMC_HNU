@@ -17,19 +17,26 @@ namespace mpmc::thermodynamics {
 inline constexpr std::string_view sw92_pure_convention =
     "SW92/corrected-original/PR76-printed-coefficients/R-SI-2019/pure-v1";
 
-template <std::floating_point T>
-struct Sw92PureValues { T a, b, alpha; };
+template <typename Number>
+struct Sw92PureValues { Number a, b, alpha; };
 
 namespace detail {
-template <std::floating_point T>
-void sw92_check_state(T t, T molality, const Sw92Applicability& app) {
-    if (!std::isfinite(t) || !(t > T{0}) || !std::isfinite(molality) || molality < T{0})
-        throw std::domain_error("SW92: finite T>0 K and NaCl molality>=0 mol/kg H2O required");
+template <typename Number, std::floating_point T>
+    requires Sw92Number<Number, T>
+void sw92_check_state(
+    const Number& t, T molality, const Sw92Applicability& app) {
+    const T temperature = sw92_value(t);
+    if (!sw92_finite(t) || !(temperature > T{0}) ||
+        !std::isfinite(molality) || molality < T{0})
+        throw std::domain_error(
+            "SW92: finite T/seeds, T>0 K and NaCl molality>=0 mol/kg H2O required");
     if (const auto& b = app.state.temperature_k; b &&
-        (static_cast<long double>(t) < b->lower || static_cast<long double>(t) > b->upper))
+        (static_cast<long double>(temperature) < b->lower ||
+         static_cast<long double>(temperature) > b->upper))
         throw std::domain_error("SW92: temperature outside declared dataset interval");
     if (const auto& b = app.nacl_molality_mol_per_kg_water; b &&
-        (static_cast<long double>(molality) < b->lower || static_cast<long double>(molality) > b->upper))
+        (static_cast<long double>(molality) < b->lower ||
+         static_cast<long double>(molality) > b->upper))
         throw std::domain_error("SW92: NaCl molality outside declared dataset interval");
 }
 
@@ -46,7 +53,9 @@ template <std::floating_point T>
 } // namespace detail
 
 /// Prepared PR pure-component coefficients. Non-water uses PR76 alpha; water
-/// uses SW92 Eq.(9). This is a primal floating-point kernel, not an AD contract.
+/// uses SW92 Eq.(9). The prepared scalar type remains built-in floating point;
+/// evaluate accepts the same structural AD numbers as the PR76 thermodynamic
+/// kernel. Prescribed NaCl molality is intentionally not an AD coordinate.
 template <std::floating_point T = double>
     requires std::same_as<T, std::remove_cv_t<T>>
 class Sw92Pure {
@@ -69,20 +78,29 @@ public:
     [[nodiscard]] T covolume() const noexcept { return b_; }
     [[nodiscard]] Sw92Species species() const noexcept { return species_; }
 
-    [[nodiscard]] Sw92PureValues<T> evaluate(T temperature_k,
-                                             T nacl_molality_mol_per_kg_water) const {
-        detail::sw92_check_state(temperature_k, nacl_molality_mol_per_kg_water, app_);
-        T alpha{};
+    template <typename Number>
+        requires detail::Sw92Number<Number, T>
+    [[nodiscard]] Sw92PureValues<Number> evaluate(
+        const Number& temperature_k,
+        T nacl_molality_mol_per_kg_water) const {
+        detail::sw92_check_state(
+            temperature_k, nacl_molality_mol_per_kg_water, app_);
+        Number alpha{T{0}};
         if (species_ == Sw92Species::water) {
-            alpha = sw92_water_alpha(temperature_k, tc_, nacl_molality_mol_per_kg_water);
+            alpha = sw92_water_alpha<Number, T>(
+                temperature_k, tc_, nacl_molality_mol_per_kg_water);
         } else {
-            const T q = T{1} + kappa_ * (T{1} - std::sqrt(temperature_k) / sqrt_tc_);
-            alpha = q*q;
-            if (!std::isfinite(alpha)) throw std::range_error("Sw92Pure: non-water alpha");
+            using std::sqrt;
+            const Number q = T{1} + kappa_ *
+                (T{1} - sqrt(temperature_k) / sqrt_tc_);
+            alpha = q * q;
+            if (!detail::sw92_finite(alpha))
+                throw std::range_error("Sw92Pure: non-water alpha");
         }
-        const T a = ac_ * alpha;
-        if (!std::isfinite(a) || a < T{0}) throw std::range_error("Sw92Pure: attraction");
-        return {a, b_, alpha};
+        const Number a = ac_ * alpha;
+        if (!detail::sw92_finite(a) || detail::sw92_value(a) < T{0})
+            throw std::range_error("Sw92Pure: attraction");
+        return {a, Number{b_}, alpha};
     }
 
 private:
@@ -102,7 +120,8 @@ private:
         if (!std::isfinite(sqrt_tc_) || !(sqrt_tc_ > T{0}) ||
             !std::isfinite(ac_) || !(ac_ > T{0}) || !std::isfinite(b_) ||
             !(b_ > T{0}) || !std::isfinite(kappa_))
-            throw std::range_error("Sw92Pure: prepared coefficient outside scalar range");
+            throw std::range_error(
+                "Sw92Pure: prepared coefficient outside scalar range");
     }
 
     Sw92Species species_{Sw92Species::unspecified};
