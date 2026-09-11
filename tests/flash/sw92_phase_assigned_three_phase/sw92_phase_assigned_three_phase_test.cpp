@@ -13,6 +13,8 @@
 #include <string_view>
 #include <vector>
 
+bool sw92_phase_assigned_three_phase_header();
+
 namespace {
 namespace fl = mpmc::flash;
 namespace th = mpmc::thermodynamics;
@@ -42,7 +44,7 @@ struct ThreePhaseGolden {
     std::array<long double, 3> w;
     std::array<long double, 3> h0;
     std::array<long double, 3> h1;
-    std::array<long double, 3> fractions; // W,H0,H1
+    std::array<long double, 3> fractions;
     std::array<long double, 3> z;
     std::array<long double, 3> common;
     std::array<long double, 3> feed;
@@ -171,7 +173,7 @@ solve_c2a1(const fl::Sw92PhaseAssignedJointResult& c1) {
 }
 
 void check_reference(const fl::Sw92PhaseAssignedThreePhaseState& state) {
-    const auto& phases = std::array<const fl::Sw92PhaseAssignedThreePhasePhase*, 3>{
+    const auto phases = std::array<const fl::Sw92PhaseAssignedThreePhasePhase*, 3>{
         &state.aqueous_phase, &state.hydrocarbon0_phase, &state.hydrocarbon1_phase};
     const auto expected = std::array<const std::array<long double, 3>*, 3>{
         &golden.w, &golden.h0, &golden.h1};
@@ -231,7 +233,8 @@ void synthetic_pipeline_reference() {
     auto [c2a1, witness_index] = solve_c2a1(c1);
     require(c2a1.negative_witnesses[witness_index].point.value < -0.05,
             "synthetic additional-NA witness is no longer robustly negative");
-    near(golden.c1_to_h1_tpd, golden.c1_to_h1_tpd, 0.0L, 0.0L);
+    near(c2a1.negative_witnesses[witness_index].point.value,
+         golden.c1_to_h1_tpd, 5e-7L, 5e-10L);
 
     const auto result = fl::solve_sw92_phase_assigned_c2b1_candidate(
         c1, c2a1, witness_index, model());
@@ -357,8 +360,6 @@ void source_guards() {
                 fl::Sw92PhaseAssignedThreePhaseStatus::source_witness_unavailable,
             "C2b.1 ran without a matching C2a1 witness result");
 }
-
-bool sw92_phase_assigned_three_phase_header();
 
 void headers() {
     require(sw92_phase_assigned_three_phase_header(),
