@@ -147,30 +147,18 @@ void boundary_aware_guard_path() {
     const auto feed = c2b2_test::feed_from_c1_beta(0.73L, false);
     const auto result = fl::solve_sw92_phase_assigned_pt_boundary_aware(
         3.0e6, 260.0, feed, c2b2_test::model(false), 0.0, options);
-    const bool ok =
-        result.base.status == fl::Sw92PhaseAssignedPtStatus::topology_unresolved &&
-        result.disappearance_attempts > 0U && result.boundary_c2b1 &&
-        result.boundary_c2b2 && result.boundary &&
-        result.boundary->re_solve_attempted &&
-        !result.boundary->neighbor_locally_closed() &&
-        result.status == fl::Sw92PhaseAssignedPtStatus::topology_unresolved &&
-        result.phases.empty();
-    if (!ok) {
-        std::cerr << "boundary-aware base=" << static_cast<int>(result.base.status)
-                  << " final=" << static_cast<int>(result.status)
-                  << " attempts=" << result.disappearance_attempts
-                  << " c2b1=" << static_cast<bool>(result.boundary_c2b1)
-                  << " c2b2=" << static_cast<bool>(result.boundary_c2b2)
-                  << " boundary=" << static_cast<bool>(result.boundary)
-                  << " diagnostic=" << result.diagnostic << '\n';
-        if (result.boundary) {
-            std::cerr << "boundary status=" << static_cast<int>(result.boundary->status)
-                      << " re_solve=" << result.boundary->re_solve_attempted
-                      << " diagnostic=" << result.boundary->diagnostic << '\n';
-        }
-    }
-    require(ok,
-            "boundary-aware top-level path did not re-solve and explicitly reject an artificial phase drop");
+    require(result.base.status == fl::Sw92PhaseAssignedPtStatus::topology_unresolved &&
+                result.disappearance_attempts > 0U && result.boundary_c2b1 &&
+                result.boundary_c2b2 && result.boundary &&
+                result.boundary->re_solve_attempted &&
+                !result.boundary->neighbor_locally_closed() &&
+                result.boundary->status ==
+                    fl::Sw92PhaseAssignedBoundaryStatus::
+                        higher_phase_count_or_wrong_candidate &&
+                result.status ==
+                    fl::Sw92PhaseAssignedPtStatus::higher_phase_count_or_wrong_candidate &&
+                result.phases.empty(),
+            "boundary-aware top-level path did not preserve higher-phase evidence from the fresh neighbor re-solve");
 }
 
 void headers() {
