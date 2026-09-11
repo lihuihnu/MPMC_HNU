@@ -13,20 +13,27 @@ no-W fixed-NA candidate generation + targeted W appearance
         +-- locally closed 2 NA candidates
         |
         +-- W witness
+        |       |
+        |       v
+        | C1 W(AQ)+H(NA)
+        |       |
+        |       v
+        | C2a1 H-side NA addition
+        |    /        \
+        | no witness  witness
+        |    |           |
+        |    v           v
+        | W + H     C2b.1 W+H0+H1
+        |                |
+        |                v
+        |           C2b.2 closure
+        |
+        +-- fixed-NA pair has further NA instability
                 |
                 v
-          C1 W(AQ)+H(NA)
+          targeted W-rival review
                 |
-                v
-          C2a1 H-side NA addition
-             /        \
-       no witness    witness
-          |             |
-          v             v
-       W + H       C2b.1 W+H0+H1
-                         |
-                         v
-                    C2b.2 closure
+          if W seed exists, continue into C1/C2a/C2b
 ```
 
 Algorithm identity:
@@ -63,8 +70,9 @@ phase instances. Each instance carries:
 - optional compressibility factor when already available from the retained
   primitive.
 
-This is deliberately enough for a frontend to display phase count candidates,
-compositions, fractions and diagnostics without reimplementing flash logic.
+This is deliberately enough for a frontend/service boundary to display phase
+count candidates, compositions, fractions and diagnostics without duplicating
+EOS or flash logic.
 
 It is **not** an authoritative physical phase-set publication:
 
@@ -78,18 +86,37 @@ No nonaqueous phase is labeled liquid or vapor.
 
 ## no-W routing
 
-The driver starts from the morphology-neutral no-W adapter. If its fixed-NA
-multiplicity and targeted W-appearance search are locally closed, the driver
-returns the corresponding one- or two-NA candidate state directly.
+The driver starts from the morphology-neutral no-W adapter. If fixed-NA
+multiplicity and targeted W-appearance are locally closed, the driver returns
+the corresponding one- or two-NA candidate state directly.
 
 If the no-W adapter finds a targeted AQ W seed, the driver continues into joint
 Profile-C equations rather than accepting that seed as a phase.
 
+### Unstable fixed-NA pair is not a terminal topology
+
+A fixed-NA two-phase result may fail its same-family final stability review.
+That evidence means only that the all-NA maximum-two-phase candidate is not
+closed. It does **not** prove the physical Profile-C state has more than three H
+phases: the correct solution may instead be
+
+```text
+W(AQ) + H0(NA) + H1(NA).
+```
+
+Therefore the top-level driver reconstructs the selected fixed-NA pair and runs
+the same targeted AQ/W appearance review before terminating at
+`higher_phase_count_or_wrong_candidate`.
+
+If a usable targeted W seed exists, the graph proceeds through C1/C2a1/C2b.1/
+C2b.2. This behavior is required by the synthetic structural three-phase
+regression and does not modify the underlying fixed-family VLE semantics.
+
 ## C1 candidate attempts
 
 A W witness may coexist with multiple retained NA numerical candidates. The
-driver therefore tries each NA candidate that is water-poorer than the W seed
-and has representable common support.
+driver tries each candidate that is water-poorer than the W seed and has
+representable common component support.
 
 For each attempt:
 
@@ -99,30 +126,57 @@ logK_i = log(x_i^H / x_i^W)
 
 initializes the existing C1 `W(AQ)+H(NA)` joint primitive.
 
-A converged C1 candidate is retained only if its recomputed reduced Gibbs does
-not exceed the retained no-W common-tangent Gibbs beyond the summed arithmetic
-roundoff guards. This is a nested physical-topology comparison, not global
-AQ/NA model competition. Among admissible attempts the lowest reduced-Gibbs C1
-candidate is retained.
+### No cross-topology AQ/NA Gibbs ranking
+
+The driver deliberately does **not** reject C1 by comparing
+
+```text
+G(all phases evaluated with NA)
+```
+
+against
+
+```text
+G(W evaluated with AQ + H evaluated with NA).
+```
+
+Those are different physical-role/model assignments in the asymmetric SW92
+Profile-C contract. Treating their feed-level Gibbs surfaces as globally
+competing would recreate Profile-B lower-envelope semantics.
+
+The targeted W instability creates the rival physical topology; C1 joint
+equations, material balance, common reduced chemical potentials and relative
+water-role guard decide whether an admissible `W+H` candidate exists. If
+multiple C1 attempts converge, the lowest reduced-Gibbs candidate **within that
+same W(AQ)+H(NA) topology** is retained.
 
 Attempt quotas remain explicit. Exhaustion never becomes success.
 
 ## C2a1 and C2b.1 routing
 
 The retained C1 H composition is reviewed by C2a1. Distinct retained no-W NA
-candidates are supplied as extra H-side starts, which improves candidate
-recovery without changing C2a1's role guards.
+candidates are supplied as extra H-side starts, improving candidate recovery
+without changing C2a1's role guards.
 
 If C2a1 finds no additional H witness, the top-level state is
 `w_h_locally_closed`.
 
 If C2a1 finds usable additional-NA witnesses, the driver tries the existing
-C2b.1 source adapter for each witness within a bounded attempt quota. A
-three-phase candidate must also have reduced Gibbs no higher than the retained
-C1 candidate beyond arithmetic guards. The lowest admissible candidate is sent
-to C2b.2.
+C2b.1 source adapter for each witness within a bounded attempt quota.
 
-Only a C2b.2 result of
+Here a reduced-Gibbs comparison **is** valid as a nested topology guard because
+
+```text
+W(AQ)+H(NA)
+    ->
+W(AQ)+H0(NA)+H1(NA)
+```
+
+keeps the physical model assignment fixed while splitting one NA phase into two
+NA phase instances. C2b.1 must not increase reduced Gibbs beyond arithmetic
+roundoff guards. The lowest admissible three-phase candidate is sent to C2b.2.
+
+Only C2b.2
 `w_present_h_multiplicity_locally_closed` becomes the top-level
 `w_h0_h1_locally_closed` status.
 
@@ -131,9 +185,9 @@ numerical/property failures remain explicit unresolved/failure states.
 
 ## Why the driver does not implement PIP
 
-The current platform goal is to finish thermodynamic/topology flash correctness
-and then integrate the frontend. Hydrocarbon morphology is orthogonal to these
-joint equations because all H instances use the same SW92 NA family.
+The current platform priority is to finish thermodynamic/topology flash
+correctness and integrate the frontend. Hydrocarbon morphology is orthogonal to
+these joint equations because all H instances use the same SW92 NA family.
 
 Consequently v1 deliberately exposes
 
@@ -150,18 +204,29 @@ chemical-potential contract.
 
 ## Validation
 
-The focused regression must cover at least:
+The focused regression covers:
 
-- traceable wet CO2/H2O -> locally closed `W+H`;
+- traceable wet CO2/H2O -> locally closed `W+H` and independent C1 Decimal
+  golden values;
 - dry CO2/H2O -> locally closed no-W single NA/H candidate;
 - zero-water inventory -> no-W single NA/H candidate;
-- synthetic CH4/CO2/H2O C2b.1 structural fixture -> locally closed
-  `W+H0+H1` through the **top-level** entry point;
+- synthetic CH4/CO2/H2O structural fixture -> locally closed
+  `W+H0+H1` through the **top-level single entry point**, including recovery from
+  an unstable fixed-NA pair into the W-rival topology;
 - runtime component permutation;
 - bounded candidate-attempt failure semantics;
 - public-header self containment.
 
-The dedicated hosted workflow reruns all directly affected no-W/C1/C2a1/C2b.1/
-C2b.2 regressions and their independent Decimal references. No formula,
-parameter, tolerance or reference anchor is changed merely to make orchestration
-pass.
+Numerical code head `372b84b59ac7cdd1710172e2108290021b2a382f`
+was validated by GitHub Actions run `34561821136`:
+
+- GCC Debug + ASan/UBSan: success;
+- Clang Release: success;
+- MSVC Release: success;
+- top-level Profile-C PT focused regression: success on all three platforms;
+- affected no-W, C2b.2, C2b.1, C2a1 and C1 regression suites: success on all
+  three platforms;
+- all independent Decimal references in that dependency chain: success.
+
+No formula, parameter, tolerance or reference anchor was changed to make the
+orchestration pass.
