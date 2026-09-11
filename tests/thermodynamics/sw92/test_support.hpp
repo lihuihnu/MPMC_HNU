@@ -58,6 +58,9 @@ inline constexpr Spec methane{"methane","Methane",th::Sw92Species::hydrocarbon,1
 inline constexpr Spec nitrogen{"nitrogen","Nitrogen",th::Sw92Species::nitrogen,126.1,34.0,.0403,.4778,false};
 inline constexpr Spec co2{"carbon-dioxide","Carbon dioxide",th::Sw92Species::carbon_dioxide,304.2,73.8,.2273,.1896,false};
 inline constexpr Spec h2s{"hydrogen-sulfide","Hydrogen sulfide",th::Sw92Species::hydrogen_sulfide,373.2,89.4,.1081,0,true};
+// SW92 Table 3 n-C4 pure properties and Table 5 non-aqueous water BIP.
+// This fixture is used with the Reamer et al. 1944 experimental three-phase line.
+inline constexpr Spec n_butane{"n-butane","n-Butane",th::Sw92Species::hydrocarbon,425.2,38.0,.1931,.5091,false};
 inline constexpr Spec water{"water","Water",th::Sw92Species::water,647.3,221.2,.3434,0,false};
 
 struct Prepared { std::vector<th::Component> catalog; th::Sw92ParameterInput input;
