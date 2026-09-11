@@ -56,16 +56,75 @@ void require_primal_basics(
                 closure.phase_metadata.size() == phase_count,
             "SW92 physics closure did not publish expected primal phase count");
     require(closure.closure.primal_status ==
-                ph::ThermodynamicClosurePrimalStatus::valid &&
-                closure.closure.linearization_status ==
-                    ph::ThermodynamicClosureLinearizationStatus::unavailable &&
-                closure.closure.linearization_reason ==
-                    ph::ThermodynamicClosureLinearizationReason::not_implemented &&
-                !closure.can_seed_newton(),
-            "SW92 closure invented an unavailable flash linearization");
+                ph::ThermodynamicClosurePrimalStatus::valid,
+            "SW92 closure did not retain a valid primal");
     require(!closure.global_stability_proven && !closure.morphology_resolved &&
-                closure.closure_convention == ph::sw92_profile_c_closure_convention,
-            "SW92 closure changed global-stability/morphology semantics");
+                closure.closure_convention == ph::sw92_profile_c_closure_convention &&
+                closure.sensitivity_convention ==
+                    fl::sw92_profile_c_sensitivity_convention,
+            "SW92 closure changed global-stability/morphology/sensitivity provenance");
+}
+
+void require_linearization_basics(
+    const ph::Sw92ProfileCThermodynamicClosureSnapshot& closure,
+    std::size_t phase_count) {
+    require_primal_basics(closure, phase_count);
+    require(closure.closure.linearization_status ==
+                ph::ThermodynamicClosureLinearizationStatus::available &&
+                closure.closure.linearization_reason ==
+                    ph::ThermodynamicClosureLinearizationReason::none &&
+                closure.closure.linearization.has_value() &&
+                closure.can_seed_newton(),
+            "SW92 closure did not publish the successful local linearization atomically");
+    const auto& linearization = *closure.closure.linearization;
+    const std::size_t n = closure.closure.component_ids.size();
+    require(linearization.component_count == n &&
+                linearization.phase_count == phase_count &&
+                linearization.input_count == n + 1U &&
+                linearization.phase_fraction_jacobian.size() ==
+                    phase_count * linearization.input_count &&
+                linearization.composition_jacobian.size() ==
+                    phase_count * n * linearization.input_count &&
+                linearization.compressibility_jacobian.size() ==
+                    phase_count * linearization.input_count &&
+                linearization.molar_density_jacobian.size() ==
+                    phase_count * linearization.input_count &&
+                std::isfinite(linearization.equilibrium_jacobian_rcond) &&
+                linearization.equilibrium_jacobian_rcond > 0.0 &&
+                std::isfinite(linearization.linear_solve_backward_error) &&
+                std::isfinite(linearization.equilibrium_residual_norm),
+            "SW92 closure linearization shape/diagnostics are invalid");
+}
+
+void require_linearization_matches_sensitivity(
+    const fl::Sw92ProfileCPtPhaseSetResult& source,
+    const th::Sw92Phase<double>& model,
+    const ph::Sw92ProfileCThermodynamicClosureSnapshot& closure) {
+    const auto sensitivity =
+        fl::differentiate_sw92_profile_c_phase_set(source, model);
+    require(sensitivity.status == fl::PtSensitivityStatus::success,
+            sensitivity.diagnostic);
+    require(closure.closure.linearization.has_value(),
+            "matching check requires a physics linearization");
+    const auto& linearization = *closure.closure.linearization;
+    require(linearization.component_count == sensitivity.component_count &&
+                linearization.phase_count == sensitivity.phase_count &&
+                linearization.input_count == sensitivity.input_count &&
+                linearization.phase_fraction_jacobian ==
+                    sensitivity.phase_fraction_jacobian &&
+                linearization.composition_jacobian ==
+                    sensitivity.composition_jacobian &&
+                linearization.compressibility_jacobian ==
+                    sensitivity.compressibility_jacobian &&
+                linearization.molar_density_jacobian ==
+                    sensitivity.molar_density_jacobian,
+            "physics closure changed the validated SW92 flash Jacobian");
+    near(linearization.equilibrium_jacobian_rcond,
+         sensitivity.equilibrium_jacobian_rcond, 0.0, 0.0);
+    near(linearization.linear_solve_backward_error,
+         sensitivity.linear_solve_backward_error, 0.0, 0.0);
+    near(linearization.equilibrium_residual_norm,
+         sensitivity.equilibrium_residual_norm, 0.0, 0.0);
 }
 
 void require_density_identity(const ph::PtPhaseSetThermodynamicClosureSnapshot& closure) {
@@ -90,7 +149,8 @@ void one_phase_reproduces_missing_z() {
             "one-phase publication unexpectedly started storing Z");
 
     const auto closure = ph::build_sw92_profile_c_thermodynamic_closure(source, model);
-    require_primal_basics(closure, 1U);
+    require_linearization_basics(closure, 1U);
+    require_linearization_matches_sensitivity(source, model, closure);
     const auto& phase = closure.closure.primal->phases.front();
     require(phase.composition == published.composition &&
                 phase.mole_phase_fraction == published.mole_phase_fraction &&
@@ -115,7 +175,8 @@ void two_phase_preserves_authoritative_properties() {
             "wet binary no longer supplies authoritative W+H source");
 
     const auto closure = ph::build_sw92_profile_c_thermodynamic_closure(source, model);
-    require_primal_basics(closure, 2U);
+    require_linearization_basics(closure, 2U);
+    require_linearization_matches_sensitivity(source, model, closure);
     const auto& published = source.solution.accepted_phase_set()->phases;
     const auto& phases = closure.closure.primal->phases;
     for (std::size_t i = 0; i < 2U; ++i) {
@@ -148,7 +209,8 @@ void sample6_three_phase_primal() {
             "Sample-6 no longer supplies authoritative three-phase source");
 
     const auto closure = ph::build_sw92_profile_c_thermodynamic_closure(source, model);
-    require_primal_basics(closure, 3U);
+    require_linearization_basics(closure, 3U);
+    require_linearization_matches_sensitivity(source, model, closure);
     require(closure.closure.dataset_id == source.dataset_id &&
                 closure.closure.revision == source.revision &&
                 closure.closure.component_ids == source.component_ids &&
@@ -180,6 +242,48 @@ void sample6_three_phase_primal() {
     require_density_identity(closure.closure);
 }
 
+void linearization_failure_policy() {
+    const auto model = sample6::model();
+    const auto source = fl::solve_sw92_profile_c_pt_phase_set(
+        1.0e7, 350.0, sample6::feed(), model, 0.0);
+    require(source.accepted_phase_set_published() &&
+                source.solution.accepted_phase_count() == 3U,
+            "linearization failure fixture lost Sample-6 phase set");
+
+    ph::Sw92ProfileCClosureOptions options;
+    options.sensitivity.minimum_derivative_phase_fraction = 0.04;
+    const auto guarded = ph::build_sw92_profile_c_thermodynamic_closure(
+        source, model, options);
+    require_primal_basics(guarded, 3U);
+    require(guarded.closure.linearization_status ==
+                ph::ThermodynamicClosureLinearizationStatus::unavailable &&
+                guarded.closure.linearization_reason ==
+                    ph::ThermodynamicClosureLinearizationReason::phase_boundary &&
+                !guarded.closure.linearization.has_value() &&
+                !guarded.can_seed_newton(),
+            "derivative boundary failure did not preserve primal / reject Newton atomically");
+
+    auto inconsistent = source;
+    require(inconsistent.solution.feed.size() >= 2U,
+            "inconsistency fixture lost feed dimensions");
+    inconsistent.solution.feed[0] += 1.0e-4;
+    inconsistent.solution.feed[1] -= 1.0e-4;
+    const auto rejected = ph::build_sw92_profile_c_thermodynamic_closure(
+        inconsistent, model);
+    require(!rejected.residual_available() &&
+                rejected.closure.primal_status ==
+                    ph::ThermodynamicClosurePrimalStatus::indeterminate &&
+                rejected.closure.linearization_status ==
+                    ph::ThermodynamicClosureLinearizationStatus::unavailable &&
+                rejected.closure.linearization_reason ==
+                    ph::ThermodynamicClosureLinearizationReason::solution_not_accepted &&
+                !rejected.closure.primal.has_value() &&
+                !rejected.closure.linearization.has_value() &&
+                rejected.phase_metadata.empty() &&
+                !rejected.can_seed_newton(),
+            "sensitivity/primal inconsistency did not invalidate the atomic snapshot");
+}
+
 void rejection_and_model_guard() {
     const auto model = binary_model();
     const auto source = fl::solve_sw92_profile_c_pt_phase_set(
@@ -193,7 +297,8 @@ void rejection_and_model_guard() {
         ph::build_sw92_profile_c_thermodynamic_closure(convention_tamper, model);
     require(!rejected_convention.residual_available() &&
                 rejected_convention.closure.primal_status ==
-                    ph::ThermodynamicClosurePrimalStatus::indeterminate,
+                    ph::ThermodynamicClosurePrimalStatus::indeterminate &&
+                !rejected_convention.closure.linearization.has_value(),
             "closure accepted tampered authoritative publication identity");
 
     auto activity_tamper = source;
@@ -205,14 +310,16 @@ void rejection_and_model_guard() {
         ph::build_sw92_profile_c_thermodynamic_closure(activity_tamper, model);
     require(!rejected_activity.residual_available() &&
                 rejected_activity.closure.primal_status ==
-                    ph::ThermodynamicClosurePrimalStatus::indeterminate,
+                    ph::ThermodynamicClosurePrimalStatus::indeterminate &&
+                !rejected_activity.closure.linearization.has_value(),
             "closure accepted phase property that cannot be reproduced");
 
     auto status_tamper = source;
     status_tamper.solution.status = fl::PtPhaseSetStatus::indeterminate;
     const auto rejected_status =
         ph::build_sw92_profile_c_thermodynamic_closure(status_tamper, model);
-    require(!rejected_status.residual_available(),
+    require(!rejected_status.residual_available() &&
+                !rejected_status.closure.linearization.has_value(),
             "closure consumed a non-accepted phase-set status");
 
     bool caught = false;
@@ -236,8 +343,8 @@ void component_permutation() {
         normal_source, normal_model);
     const auto reverse = ph::build_sw92_profile_c_thermodynamic_closure(
         reverse_source, reverse_model);
-    require_primal_basics(normal, 3U);
-    require_primal_basics(reverse, 3U);
+    require_linearization_basics(normal, 3U);
+    require_linearization_basics(reverse, 3U);
 
     for (std::size_t phase = 0; phase < 3U; ++phase) {
         const auto& a = normal.closure.primal->phases[phase];
@@ -254,6 +361,24 @@ void component_permutation() {
                 "component permutation changed composition size");
         for (std::size_t i = 0; i < a.composition.size(); ++i) {
             near(a.composition[i], b.composition[a.composition.size() - 1U - i]);
+        }
+    }
+
+    const auto& normal_l = *normal.closure.linearization;
+    const auto& reverse_l = *reverse.closure.linearization;
+    for (std::size_t phase = 0; phase < 3U; ++phase) {
+        for (std::size_t column = 0; column < 2U; ++column) {
+            near(normal_l.d_phase_fraction(phase, column),
+                 reverse_l.d_phase_fraction(phase, column), 3e-6, 3e-10);
+            near(normal_l.d_compressibility(phase, column),
+                 reverse_l.d_compressibility(phase, column), 3e-6, 3e-10);
+            near(normal_l.d_molar_density(phase, column),
+                 reverse_l.d_molar_density(phase, column), 3e-6, 2e-8);
+            for (std::size_t i = 0; i < 8U; ++i) {
+                near(normal_l.d_composition(phase, i, column),
+                     reverse_l.d_composition(phase, 7U - i, column),
+                     4e-6, 4e-9);
+            }
         }
     }
 }
@@ -276,6 +401,7 @@ int main(int argc, char** argv) {
         else if (name == "two_phase_preserves_authoritative_properties")
             two_phase_preserves_authoritative_properties();
         else if (name == "sample6_three_phase_primal") sample6_three_phase_primal();
+        else if (name == "linearization_failure_policy") linearization_failure_policy();
         else if (name == "rejection_and_model_guard") rejection_and_model_guard();
         else if (name == "component_permutation") component_permutation();
         else if (name == "headers") headers();

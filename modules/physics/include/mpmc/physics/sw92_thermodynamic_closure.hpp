@@ -2,6 +2,7 @@
 #define MPMC_PHYSICS_SW92_THERMODYNAMIC_CLOSURE_HPP
 
 #include <mpmc/flash/sw92_profile_c_phase_set.hpp>
+#include <mpmc/flash/sw92_profile_c_sensitivity.hpp>
 #include <mpmc/physics/thermodynamic_closure.hpp>
 #include <mpmc/thermodynamics/sw92_phase.hpp>
 
@@ -19,10 +20,13 @@
 namespace mpmc::physics {
 
 inline constexpr std::string_view sw92_profile_c_closure_convention =
-    "SW92/phase-assigned/Profile-C/physics-thermodynamic-closure-primal/v1";
+    "SW92/phase-assigned/Profile-C/physics-thermodynamic-closure-reduced-feed/v2";
 
 struct Sw92ProfileCClosureOptions {
+    // One root policy is used by both primal reproduction and the derivative
+    // path so a closure snapshot cannot mix two selected-root conventions.
     mpmc::thermodynamics::Sw92RootOptions root_options{};
+    mpmc::flash::Sw92ProfileCSensitivityOptions sensitivity{};
 };
 
 // Model-specific phase identity remains a sidecar to the generic physics phase
@@ -50,6 +54,7 @@ struct Sw92ProfileCThermodynamicClosureSnapshot {
     std::string orchestration_convention;
     std::string boundary_convention;
     std::string publication_convention;
+    std::string sensitivity_convention;
     std::string closure_convention{sw92_profile_c_closure_convention};
     std::vector<Sw92ProfileCClosurePhaseMetadata> phase_metadata;
 
@@ -58,7 +63,7 @@ struct Sw92ProfileCThermodynamicClosureSnapshot {
                phase_metadata.size() == closure.primal->phases.size();
     }
     [[nodiscard]] bool can_seed_newton() const noexcept {
-        return closure.can_seed_newton();
+        return residual_available() && closure.can_seed_newton();
     }
 };
 
@@ -77,6 +82,13 @@ namespace detail {
         if (!sw92_closure_same_roundoff(lhs[i], rhs[i])) { return false; }
     }
     return true;
+}
+
+[[nodiscard]] inline bool sw92_closure_vector_finite(
+    std::span<const double> values) {
+    return std::all_of(values.begin(), values.end(), [](double value) {
+        return std::isfinite(value);
+    });
 }
 
 [[nodiscard]] inline bool sw92_closure_simplex_valid(
@@ -151,14 +163,93 @@ inline void sw92_closure_validate_model_snapshot(
     return false;
 }
 
+[[nodiscard]] inline ThermodynamicClosureLinearizationReason
+sw92_closure_map_sensitivity_failure(mpmc::flash::PtSensitivityStatus status) {
+    using Source = mpmc::flash::PtSensitivityStatus;
+    switch (status) {
+    case Source::success:
+        return ThermodynamicClosureLinearizationReason::none;
+    case Source::phase_boundary:
+        return ThermodynamicClosureLinearizationReason::phase_boundary;
+    case Source::ill_conditioned_equilibrium:
+        return ThermodynamicClosureLinearizationReason::ill_conditioned_equilibrium;
+    case Source::unsupported_feed_support:
+        return ThermodynamicClosureLinearizationReason::unsupported_feed_support;
+    case Source::property_failure:
+        return ThermodynamicClosureLinearizationReason::property_failure;
+    case Source::arithmetic_failure:
+        return ThermodynamicClosureLinearizationReason::arithmetic_failure;
+    case Source::solution_not_accepted:
+        return ThermodynamicClosureLinearizationReason::solution_not_accepted;
+    }
+    return ThermodynamicClosureLinearizationReason::arithmetic_failure;
+}
+
+[[nodiscard]] inline bool sw92_closure_sensitivity_matches_snapshot(
+    const mpmc::flash::Sw92ProfileCPhaseSetSensitivityResult& sensitivity,
+    const mpmc::flash::Sw92ProfileCPtPhaseSetResult& source,
+    const PtPhaseSetThermodynamicState& primal) {
+    const std::size_t n = source.component_ids.size();
+    const std::size_t phase_count = primal.phases.size();
+    if (sensitivity.status != mpmc::flash::PtSensitivityStatus::success ||
+        sensitivity.component_count != n ||
+        sensitivity.phase_count != phase_count ||
+        sensitivity.input_count != n + 1U ||
+        sensitivity.pressure_pa != source.solution.pressure_pa ||
+        sensitivity.temperature_k != source.solution.temperature_k ||
+        sensitivity.feed != source.solution.feed ||
+        sensitivity.nacl_molality_mol_per_kg_water !=
+            source.nacl_molality_mol_per_kg_water ||
+        sensitivity.dataset_id != source.dataset_id ||
+        sensitivity.revision != source.revision ||
+        sensitivity.component_ids != source.component_ids ||
+        sensitivity.model_profile != source.model_profile ||
+        sensitivity.phase_convention != source.phase_convention ||
+        sensitivity.equilibrium_profile != source.equilibrium_profile ||
+        sensitivity.orchestration_convention != source.orchestration_convention ||
+        sensitivity.boundary_convention != source.boundary_convention ||
+        sensitivity.publication_convention != source.publication_convention ||
+        sensitivity.phase_metadata.size() != source.phase_metadata.size() ||
+        sensitivity.phase_fraction_jacobian.size() !=
+            phase_count * sensitivity.input_count ||
+        sensitivity.composition_jacobian.size() !=
+            phase_count * n * sensitivity.input_count ||
+        sensitivity.compressibility_jacobian.size() !=
+            phase_count * sensitivity.input_count ||
+        sensitivity.molar_density_jacobian.size() !=
+            phase_count * sensitivity.input_count ||
+        !sw92_closure_vector_finite(sensitivity.phase_fraction_jacobian) ||
+        !sw92_closure_vector_finite(sensitivity.composition_jacobian) ||
+        !sw92_closure_vector_finite(sensitivity.compressibility_jacobian) ||
+        !sw92_closure_vector_finite(sensitivity.molar_density_jacobian) ||
+        !std::isfinite(sensitivity.equilibrium_jacobian_rcond) ||
+        !(sensitivity.equilibrium_jacobian_rcond > 0.0) ||
+        !std::isfinite(sensitivity.linear_solve_backward_error) ||
+        sensitivity.linear_solve_backward_error < 0.0 ||
+        !std::isfinite(sensitivity.equilibrium_residual_norm) ||
+        sensitivity.equilibrium_residual_norm < 0.0) {
+        return false;
+    }
+    for (std::size_t phase = 0; phase < phase_count; ++phase) {
+        if (sensitivity.phase_metadata[phase].physical_role !=
+                source.phase_metadata[phase].physical_role ||
+            sensitivity.phase_metadata[phase].thermodynamic_family !=
+                source.phase_metadata[phase].thermodynamic_family) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace detail
 
 // Consume an already authoritative SW92 Profile-C PT phase set. This function
 // performs no flash, TPD, material-balance solve, topology search, composition
-// normalization or morphology classification. It re-evaluates only each
-// accepted phase property at the exact accepted composition/family/root branch
-// to validate provenance and obtain Z for the single-H publication case where
-// the publication source intentionally retained activity but no Z.
+// normalization or morphology classification. It first reproduces the exact
+// accepted primal, then atomically attaches the validated fixed-phase-set local
+// sensitivity when available. Derivative-only failures preserve the primal;
+// `solution_not_accepted` invalidates the whole snapshot as an internal
+// consistency failure.
 [[nodiscard]] inline Sw92ProfileCThermodynamicClosureSnapshot
 build_sw92_profile_c_thermodynamic_closure(
     const mpmc::flash::Sw92ProfileCPtPhaseSetResult& source,
@@ -186,10 +277,8 @@ build_sw92_profile_c_thermodynamic_closure(
     result.orchestration_convention = source.orchestration_convention;
     result.boundary_convention = source.boundary_convention;
     result.publication_convention = source.publication_convention;
-    result.closure.linearization_status =
-        ThermodynamicClosureLinearizationStatus::unavailable;
-    result.closure.linearization_reason =
-        ThermodynamicClosureLinearizationReason::not_implemented;
+    result.sensitivity_convention =
+        std::string(fl::sw92_profile_c_sensitivity_convention);
 
     if (!detail::sw92_closure_publication_contract_valid(source)) {
         result.closure.primal_status = ThermodynamicClosurePrimalStatus::indeterminate;
@@ -295,10 +384,6 @@ build_sw92_profile_c_thermodynamic_closure(
 
         result.closure.primal = std::move(primal);
         result.closure.primal_status = ThermodynamicClosurePrimalStatus::valid;
-        result.closure.diagnostic =
-            "SW92 closure: authoritative Profile-C primal available; "
-            "SW92 flash linearization is not implemented";
-        return result;
     } catch (const std::exception& error) {
         result.closure.primal_status = ThermodynamicClosurePrimalStatus::indeterminate;
         result.closure.primal.reset();
@@ -307,6 +392,73 @@ build_sw92_profile_c_thermodynamic_closure(
             std::string("SW92 closure: primal reproduction failed: ") + error.what();
         return result;
     }
+
+    auto sensitivity_options = options.sensitivity;
+    sensitivity_options.root_options = options.root_options;
+    const auto sensitivity = fl::differentiate_sw92_profile_c_phase_set(
+        source, model, sensitivity_options);
+    if (sensitivity.status != fl::PtSensitivityStatus::success) {
+        result.closure.linearization_status =
+            ThermodynamicClosureLinearizationStatus::unavailable;
+        result.closure.linearization_reason =
+            detail::sw92_closure_map_sensitivity_failure(sensitivity.status);
+        result.closure.linearization.reset();
+        if (sensitivity.status == fl::PtSensitivityStatus::solution_not_accepted) {
+            result.closure.primal_status =
+                ThermodynamicClosurePrimalStatus::indeterminate;
+            result.closure.primal.reset();
+            result.phase_metadata.clear();
+            result.closure.diagnostic =
+                std::string("SW92 closure: sensitivity rejected the accepted primal: ") +
+                sensitivity.diagnostic;
+            return result;
+        }
+        result.closure.diagnostic =
+            std::string("SW92 closure: authoritative Profile-C primal available; ") +
+            "local linearization unavailable: " + sensitivity.diagnostic;
+        return result;
+    }
+
+    if (!result.closure.primal ||
+        !detail::sw92_closure_sensitivity_matches_snapshot(
+            sensitivity, source, *result.closure.primal)) {
+        result.closure.primal_status = ThermodynamicClosurePrimalStatus::indeterminate;
+        result.closure.primal.reset();
+        result.closure.linearization.reset();
+        result.phase_metadata.clear();
+        result.closure.linearization_status =
+            ThermodynamicClosureLinearizationStatus::unavailable;
+        result.closure.linearization_reason =
+            ThermodynamicClosureLinearizationReason::solution_not_accepted;
+        result.closure.diagnostic =
+            "SW92 closure: successful sensitivity does not match the owned primal snapshot";
+        return result;
+    }
+
+    PtPhaseSetThermodynamicLinearization linearization;
+    linearization.component_count = sensitivity.component_count;
+    linearization.phase_count = sensitivity.phase_count;
+    linearization.input_count = sensitivity.input_count;
+    linearization.phase_fraction_jacobian = sensitivity.phase_fraction_jacobian;
+    linearization.composition_jacobian = sensitivity.composition_jacobian;
+    linearization.compressibility_jacobian = sensitivity.compressibility_jacobian;
+    linearization.molar_density_jacobian = sensitivity.molar_density_jacobian;
+    linearization.equilibrium_jacobian_rcond =
+        sensitivity.equilibrium_jacobian_rcond;
+    linearization.linear_solve_backward_error =
+        sensitivity.linear_solve_backward_error;
+    linearization.equilibrium_residual_norm =
+        sensitivity.equilibrium_residual_norm;
+
+    result.closure.linearization = std::move(linearization);
+    result.closure.linearization_status =
+        ThermodynamicClosureLinearizationStatus::available;
+    result.closure.linearization_reason =
+        ThermodynamicClosureLinearizationReason::none;
+    result.closure.diagnostic =
+        "SW92 closure: authoritative Profile-C primal and fixed-phase-set "
+        "local linearization available";
+    return result;
 }
 
 } // namespace mpmc::physics
