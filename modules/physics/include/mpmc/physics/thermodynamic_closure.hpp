@@ -1,7 +1,9 @@
 #ifndef MPMC_PHYSICS_THERMODYNAMIC_CLOSURE_HPP
 #define MPMC_PHYSICS_THERMODYNAMIC_CLOSURE_HPP
 
+#include <cmath>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -230,9 +232,56 @@ struct PtPhaseSetThermodynamicClosureSnapshot {
             return false;
         }
         const auto& value = *linearization;
-        return value.component_count == component_ids.size() &&
-               value.phase_count == primal->phases.size() &&
-               value.input_count == value.component_count + 1U;
+        if (value.component_count != component_ids.size() ||
+            value.phase_count != primal->phases.size() ||
+            value.input_count != value.component_count + 1U) {
+            return false;
+        }
+        const auto product_matches = [](std::size_t lhs, std::size_t rhs,
+                                        std::size_t actual) noexcept {
+            if (lhs != 0U && rhs > std::numeric_limits<std::size_t>::max() / lhs) {
+                return false;
+            }
+            return lhs * rhs == actual;
+        };
+        if (!product_matches(value.phase_count, value.input_count,
+                             value.phase_fraction_jacobian.size()) ||
+            !product_matches(value.phase_count, value.input_count,
+                             value.compressibility_jacobian.size()) ||
+            !product_matches(value.phase_count, value.input_count,
+                             value.molar_density_jacobian.size()) ||
+            !product_matches(value.phase_count, value.component_count,
+                             value.phase_count == 0U ? 0U :
+                                 value.phase_count * value.component_count)) {
+            return false;
+        }
+        if (value.phase_count != 0U &&
+            value.component_count >
+                std::numeric_limits<std::size_t>::max() / value.phase_count) {
+            return false;
+        }
+        const std::size_t phase_component_count =
+            value.phase_count * value.component_count;
+        if (!product_matches(phase_component_count, value.input_count,
+                             value.composition_jacobian.size())) {
+            return false;
+        }
+        const auto finite_vector = [](const std::vector<double>& values) noexcept {
+            for (double entry : values) {
+                if (!std::isfinite(entry)) { return false; }
+            }
+            return true;
+        };
+        return finite_vector(value.phase_fraction_jacobian) &&
+               finite_vector(value.composition_jacobian) &&
+               finite_vector(value.compressibility_jacobian) &&
+               finite_vector(value.molar_density_jacobian) &&
+               std::isfinite(value.equilibrium_jacobian_rcond) &&
+               value.equilibrium_jacobian_rcond > 0.0 &&
+               std::isfinite(value.linear_solve_backward_error) &&
+               value.linear_solve_backward_error >= 0.0 &&
+               std::isfinite(value.equilibrium_residual_norm) &&
+               value.equilibrium_residual_norm >= 0.0;
     }
 };
 
