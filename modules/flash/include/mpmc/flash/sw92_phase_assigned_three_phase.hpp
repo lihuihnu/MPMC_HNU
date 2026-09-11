@@ -41,8 +41,8 @@ struct Sw92PhaseAssignedThreePhaseOptions {
     int max_balance_backtracks{48};
     std::size_t max_evaluations{30000};
     std::size_t max_components{256};
-    /// C2b.1 source wrapper splits the retained C1 H fraction into an old-H
-    /// and witness-H seed. This is initialization only, never a final fraction.
+    /// Initialization-only split of the retained C1 H fraction. It is not a
+    /// physical prior and is not retained as a final phase fraction.
     double new_hydrocarbon_seed_share{0.1};
     thermodynamics::Sw92RootOptions aqueous_root_options;
     thermodynamics::Sw92RootOptions nonaqueous_root_options;
@@ -86,14 +86,11 @@ struct Sw92PhaseAssignedThreePhaseState {
     Sw92PhaseAssignedThreePhasePhase hydrocarbon0_phase;
     Sw92PhaseAssignedThreePhasePhase hydrocarbon1_phase;
 
-    // ln(x_i^Hk / x_i^W) on active feed support.
-    std::vector<double> log_k_h0;
-    std::vector<double> log_k_h1;
-    // mu_W/RT - mu_Hk/RT.
-    std::vector<double> chemical_potential_residual_h0;
-    std::vector<double> chemical_potential_residual_h1;
-    // Arithmetic midpoint/mean diagnostic only; all three mu values are checked.
-    std::vector<double> common_log_activity;
+    std::vector<double> log_k_h0; // ln(x_i^H0 / x_i^W).
+    std::vector<double> log_k_h1; // ln(x_i^H1 / x_i^W).
+    std::vector<double> chemical_potential_residual_h0; // mu_W/RT - mu_H0/RT.
+    std::vector<double> chemical_potential_residual_h1; // mu_W/RT - mu_H1/RT.
+    std::vector<double> common_log_activity; // Mean of the three converging values.
     double chemical_potential_norm{};
     double reduced_gibbs{};
     double gibbs_roundoff_guard{};
@@ -116,8 +113,8 @@ struct Sw92PhaseAssignedThreePhaseState {
     double water_role_roundoff_guard{
         std::numeric_limits<double>::quiet_NaN()};
 
-    /// True only when H0/H1 were swapped after convergence to obtain a stable
-    /// representation. The swap never changes equations or publishes L/V.
+    /// Representation-only swap after convergence. It never changes equations
+    /// and never maps H0/H1 to physical liquid/vapor roles.
     bool hydrocarbon_slots_canonicalized{false};
 };
 
@@ -238,7 +235,7 @@ struct Sw92GeneralizedRr3Result {
 
 struct Sw92GeneralizedRr3Evaluation {
     std::array<double, 2> residual{};
-    std::array<double, 3> jacobian{}; // j00, j01, j11
+    std::array<double, 3> jacobian{}; // j00, j01, j11.
     std::vector<double> aqueous;
     std::vector<double> hydrocarbon0;
     std::vector<double> hydrocarbon1;
@@ -343,10 +340,10 @@ inline Sw92GeneralizedRr3Result solve_sw92_generalized_rr3(
         const double j01 = evaluation->jacobian[1];
         const double j11 = evaluation->jacobian[2];
         const double determinant = j00 * j11 - j01 * j01;
-        const double scale =
+        const double determinant_scale =
             std::abs(j00 * j11) + std::abs(j01 * j01) + 1.0;
         if (!std::isfinite(determinant) ||
-            std::abs(determinant) <= 256.0 * stability_eps * scale) {
+            std::abs(determinant) <= 256.0 * stability_eps * determinant_scale) {
             result.status = Sw92GeneralizedRr3Status::degenerate;
             return result;
         }
@@ -400,11 +397,11 @@ inline Sw92GeneralizedRr3Result solve_sw92_generalized_rr3(
         return result;
     }
 
+    const double beta_w = 1.0 - beta[0] - beta[1];
     for (std::size_t i = 0; i < feed.size(); ++i) {
         result.aqueous[i] /= result.raw_aqueous_sum;
         result.hydrocarbon0[i] /= result.raw_hydrocarbon0_sum;
         result.hydrocarbon1[i] /= result.raw_hydrocarbon1_sum;
-        const double beta_w = 1.0 - beta[0] - beta[1];
         const double recovered =
             beta_w * result.aqueous[i] +
             beta[0] * result.hydrocarbon0[i] +
@@ -597,7 +594,7 @@ iterate_sw92_phase_assigned_three_phase_candidate(
         return selected;
     };
 
-    const auto evaluate_state = &result, &parameters, &aqueous_evaluator,
+    const auto evaluate_state = [&result, &aqueous_evaluator,
                                  &nonaqueous_evaluator, &evaluate_selected, &options](
         std::span<const double> log_k_h0,
         std::span<const double> log_k_h1,
@@ -661,8 +658,7 @@ iterate_sw92_phase_assigned_three_phase_candidate(
         const auto selected_h1 = evaluate_selected(
             nonaqueous_evaluator, state.hydrocarbon1_phase.composition);
         state.aqueous_phase.activity = selected_w.activity;
-        state.aqueous_phase.compressibility_factor =
-            selected_w.compressibility_factor;
+        state.aqueous_phase.compressibility_factor = selected_w.compressibility_factor;
         state.hydrocarbon0_phase.activity = selected_h0.activity;
         state.hydrocarbon0_phase.compressibility_factor =
             selected_h0.compressibility_factor;
@@ -833,7 +829,6 @@ iterate_sw92_phase_assigned_three_phase_candidate(
 
             detail::sw92_phase_assigned_canonicalize_h_slots(
                 point, result.component_ids);
-            // Recompute slot-indexed diagnostics after representation-only swap.
             point.aqueous_h0_log_distance =
                 detail::sw92_phase_assigned_log_distance(
                     point.aqueous_phase.composition,
