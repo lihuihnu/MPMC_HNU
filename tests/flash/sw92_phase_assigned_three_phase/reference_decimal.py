@@ -25,15 +25,12 @@ ref = runpy.run_path(str(BASE), run_name="sw92_c2b1_base_reference")
 minimum_phase = ref["minimum_phase"]
 solve_linear = ref["solve_linear"]
 
-# Mutate only the isolated oracle's globals. These names are read by its
-# functions at call time; no production code or repository parameter object is
-# imported.
 g = minimum_phase.__globals__
 g["PRESSURE"] = D("3e6")
 g["TEMPERATURE"] = D("260")
 g["MOLALITY"] = D("0")
 g["GAS_GAS_KIJ"] = D("0")
-g["FEED"] = [D("0.1"), D("0.6"), D("0.3")]  # placeholder; replaced below
+g["FEED"] = [D("0.1"), D("0.6"), D("0.3")]
 
 N = 3
 
@@ -48,7 +45,8 @@ def mu(values, family: str):
 
 
 def valid_composition(values) -> bool:
-    return all(D(0) < value < D(1) for value in values) and sum(values) == D(1)
+    return (all(D(0) < value < D(1) for value in values) and
+            abs(sum(values) - D(1)) <= D("1e-70"))
 
 
 def residual_three(unknown):
@@ -65,8 +63,6 @@ def residual_three(unknown):
 
 
 def solve_three():
-    # Deliberately rough values near the independently discovered branches; the
-    # Newton solve, not these seeds, defines the reference.
     unknown = [D("0.0005"), D("0.056"),
                D("0.04"), D("0.959"),
                D("0.18"), D("0.819")]
@@ -114,7 +110,6 @@ def solve_three():
 
 
 def residual_c1(unknown):
-    # Fix x_CH4^W=0.001 to choose one metastable W(AQ)+H(NA) tie-line.
     w = [D("0.001"), unknown[0], D(1) - D("0.001") - unknown[0]]
     h = composition(unknown[1], unknown[2])
     if not (valid_composition(w) and valid_composition(h)):
