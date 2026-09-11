@@ -56,12 +56,13 @@ void wet_feed_finds_water_phase() {
     require(witness->usable_w_seed() &&
                 witness->water_role_candidate_admissible &&
                 witness->distinct_from_every_retained_na_candidate &&
+                witness->trial_index == 0U &&
                 witness->point.composition[result.water_index] >
                     result.min_retained_na_candidate_water_fraction,
-            "selected W witness failed candidate-generation role/distinction guards");
-    require(result.max_retained_na_candidate_water_fraction >
-                witness->point.composition[result.water_index],
-            "fixture lost its W-like fixed-NA mathematical candidate");
+            "selected W witness failed targeted-start/role/distinction guards");
+    require(result.min_retained_na_candidate_water_fraction <
+                result.max_retained_na_candidate_water_fraction,
+            "wet fixed-NA pair lost its composition/water separation");
     require(!result.global_stability_proven &&
                 !result.accepted_phase_set_published && !result.morphology_resolved,
             "no-W adapter exceeded finite/candidate-only semantics");
@@ -94,8 +95,6 @@ void zero_water_closes_by_inventory() {
 
 void witness_guards() {
     const Vec feed{0.7, 0.3};
-    // Candidate water fractions are 0.9 and 0.1. A future joint solve decides
-    // which candidates can survive as physical H phases.
     const std::vector<Vec> retained{{0.1, 0.9}, {0.9, 0.1}};
     constexpr double min_na_water = 0.1;
 
