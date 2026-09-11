@@ -1,15 +1,18 @@
 #include <mpmc/flash/sw92_profile_c_phase_set.hpp>
 
 #include "../sw92_phase_assigned_pt/physical_sample6.hpp"
+#include "test_support.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
+#include <string_view>
 #include <vector>
 
 namespace {
 namespace fl = mpmc::flash;
+namespace th = mpmc::thermodynamics;
 namespace sample6 = sw92_profile_c_sample6;
 using Vec = std::vector<double>;
 
@@ -29,6 +32,27 @@ double log_distance(const Vec& a, const Vec& b) {
         distance = std::max(distance, std::abs(std::log(a[i]) - std::log(b[i])));
     }
     return distance;
+}
+
+th::Sw92Phase<double> binary_model() {
+    return th::Sw92Phase<double>::from_parameters(
+        sw92_test::binary_parameters(sw92_test::co2, false));
+}
+
+void print_w_witness(std::string_view name, const fl::Sw92PhaseAssignedPtResult& base) {
+    const auto* witness = base.no_w.selected_water_witness();
+    std::cout << name << ": no_w.status=" << static_cast<int>(base.no_w.status)
+              << " no_w.count=" << base.no_w.retained_na_candidate_count();
+    if (witness) {
+        std::cout << " W_tpd=" << witness->point.value
+                  << " W_guard=" << witness->point.roundoff_guard
+                  << " W_stationarity=" << witness->point.stationarity;
+        if (base.no_w.aqueous_appearance_search) {
+            std::cout << " W_tol="
+                      << base.no_w.aqueous_appearance_search->options.tpd_tolerance;
+        }
+    }
+    std::cout << " final.status=" << static_cast<int>(base.status) << '\n';
 }
 
 void print_trials(const fl::Sw92PhaseAssignedHSideWitnessResult& result,
@@ -76,6 +100,11 @@ int main() {
               << " published.status=" << static_cast<int>(published.solution.status)
               << " published.count=" << published.solution.accepted_phase_count()
               << '\n';
+    print_w_witness("sample6-edge", source.base);
+
+    const auto wet = fl::solve_sw92_phase_assigned_pt_boundary_aware(
+        3.0e6, 340.0, Vec{0.7, 0.3}, binary_model(), 0.0);
+    print_w_witness("wet-binary", wet.base);
 
     for (std::size_t i = 0;
          i < source.base.no_w.retained_na_candidate_compositions.size(); ++i) {
@@ -107,11 +136,6 @@ int main() {
         std::cout << "c2a1.status=" << static_cast<int>(source.base.c2a1->status)
                   << " usable=" << source.base.c2a1->usable_witness_count()
                   << " negatives=" << source.base.c2a1->negative_witnesses.size()
-                  << '\n';
-    }
-    if (source.boundary) {
-        std::cout << "boundary.status=" << static_cast<int>(source.boundary->status)
-                  << " neighbor_closed=" << source.boundary->neighbor_locally_closed()
                   << '\n';
     }
     std::cout << "source.diagnostic=" << source.diagnostic << '\n'
