@@ -15,6 +15,16 @@ This adapter performs the missing operation: **re-solve the neighboring
 physical topology from the retained boundary compositions and re-run the
 neighbor-specific stability/topology review**.
 
+## Source-chain provenance
+
+Boundary re-solve is allowed only for one consistent retained chain. The public
+resolver verifies the C1/C2a1/C2b.1/C2b.2 p, T, feed, fixed NaCl molality,
+dataset/revision and ordered component snapshot. It also reuses the existing
+C2a1-to-C2b.1 provenance checks: the selected C2a1 witness index and the C2b.1
+initial H0/H1 logK/fraction seeds must still identify the same phase-addition
+path. A mismatched C2a1 result is therefore `source_chain_inconsistent` before
+any neighboring solve is attempted.
+
 ## Rules
 
 ### H disappearance: `W+H0+H1 -> W+H`
@@ -42,6 +52,12 @@ The lower topology closes only when the no-W solver itself reports locally
 closed one/two-H topology. A renewed W witness, higher-H evidence, root/property
 failure or unresolved disappearance prevents phase deletion.
 
+This distinction matters on an actual three-phase coexistence boundary. For the
+physical Mortezazadeh-Rasaei Sample-6 H0+H1 geometric edge, the fresh no-W solve
+still finds a robust targeted AQ-W appearance witness. The edge is therefore a
+triple-line boundary with an incipient W phase, **not** evidence that W can be
+removed and H0+H1 published as an independently closed no-W state.
+
 ### Simultaneous endpoint
 
 When W and an H disappear together, the surviving H composition seeds the same
@@ -62,6 +78,11 @@ because every C2b.1 attempt reached a disappearance state, the wrapper:
 5. returns a lower locally-closed phase candidate only after the neighbor review
    closes.
 
+Specific higher-phase evidence from the fresh neighbor is not collapsed to a
+generic unresolved status. For example, if the no-W fixed-NA maximum-two-phase
+state still has a further same-family instability, the wrapper propagates
+`higher_phase_count_or_wrong_candidate`.
+
 This adapter still does **not** publish an authoritative phase set:
 
 ```text
@@ -73,19 +94,33 @@ morphology_resolved = false
 It supplies the missing boundary evidence required by the later authoritative
 publication layer.
 
-## Validation strategy
+## Validation
 
-Two types of regression are required.
+The physical Sample-6 independent Decimal(80) oracle is regenerated before the
+C++ tests. Boundary regression then checks two complementary true coexistence
+edges:
 
-1. **True coexistence-edge re-solves** using the physical Mortezazadeh-Rasaei
-   Sample-6 phase vertices from the independent Decimal(80) regression. An edge
-   feed constructed from W+H or H0+H1 lies on the same three-phase common tangent
-   with the third phase at zero amount; the neighboring solver must recover the
-   lower topology without changing formulas or tolerances.
-2. **Artificial large disappearance thresholds** using the tagged synthetic
-   C2b.2 fixture. These are negative tests: if a physically non-negligible phase
-   is merely declared small by a large threshold, the neighbor stability review
-   must find that it is still required and refuse to drop it.
+1. the Sample-6 W+H edge fresh-re-solves as C1 W(AQ)+H(NA) and C2a1 finds no
+   robust additional-H witness, so the two-phase neighbor is locally closed;
+2. the Sample-6 H0+H1 geometric edge fresh-re-solves through the no-W path but
+   still finds an AQ-W appearance witness, so W removal is explicitly refused.
 
-Frontend work remains frozen until boundary re-solve, maximum-three-phase
-coverage and authoritative publication are complete.
+Tagged synthetic tests deliberately raise the phase-disappearance threshold.
+They verify that a numerically small label cannot delete a physically required H
+or W phase, and that higher-phase evidence from a fresh neighbor is preserved.
+A separate provenance regression mutates C2a1 metadata and confirms that the
+resolver rejects the inconsistent chain before re-solving.
+
+Validation run `34567768458` completed successfully on:
+
+- GCC Debug + ASan/UBSan;
+- Clang Release;
+- MSVC Release.
+
+The same run also passed the affected top-level Profile-C PT, C2b.2, no-W,
+C2a1 and C1 suites, with the physical Sample-6 Decimal oracle regenerated on all
+three jobs. No SW92 formula, parameter, tolerance or physical reference anchor
+was changed to obtain the result.
+
+Frontend work remains frozen until maximum-three-phase validation and
+authoritative publication are complete.
