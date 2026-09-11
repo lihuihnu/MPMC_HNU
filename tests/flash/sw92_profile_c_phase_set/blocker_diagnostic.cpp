@@ -31,6 +31,27 @@ double log_distance(const Vec& a, const Vec& b) {
     return distance;
 }
 
+void print_trials(const fl::Sw92PhaseAssignedHSideWitnessResult& result,
+                  const Vec& retained_h, const Vec& h0, const Vec& h1) {
+    if (!result.nonaqueous_search) { return; }
+    std::cout << "effective_tpd=" << result.effective_tpd_tolerance
+              << " common_allowance=" << result.common_reference_allowance << '\n';
+    for (std::size_t i = 0; i < result.nonaqueous_search->trials.size(); ++i) {
+        const auto& trial = result.nonaqueous_search->trials[i];
+        std::cout << "trial[" << i << "] status=" << static_cast<int>(trial.status);
+        if (trial.point) {
+            std::cout << " tpd=" << trial.point->value
+                      << " guard=" << trial.point->roundoff_guard
+                      << " stationarity=" << trial.point->stationarity
+                      << " d_retained=" << log_distance(trial.point->composition, retained_h)
+                      << " d_h0=" << log_distance(trial.point->composition, h0)
+                      << " d_h1=" << log_distance(trial.point->composition, h1)
+                      << " water=" << trial.point->composition.front();
+        }
+        std::cout << '\n';
+    }
+}
+
 } // namespace
 
 int main() {
@@ -79,6 +100,7 @@ int main() {
                   << static_cast<int>(challenged.status)
                   << " usable=" << challenged.usable_witness_count()
                   << " negatives=" << challenged.negative_witnesses.size() << '\n';
+        print_trials(challenged, retained_h, h0, h1);
     }
 
     if (source.base.c2a1) {
