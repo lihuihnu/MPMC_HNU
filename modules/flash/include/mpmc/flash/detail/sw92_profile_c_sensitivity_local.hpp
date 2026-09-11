@@ -27,24 +27,27 @@ struct Sw92ProfileCSensitivityLocalSystem {
     std::size_t compressibility_output{};
     std::size_t density_output{};
     std::size_t output_count{};
-    // Internal chart only: each phase drops its largest accepted component from
-    // the independent coordinates to avoid reconstructing a trace component by
-    // subtracting nearly equal numbers. This does not change external q.
-    std::vector<std::size_t> phase_dependent_components;
+    // Internal chart only. The reference component/phase is the largest accepted
+    // entry, so all base log ratios are <= 0 and softmax reconstruction is
+    // well-scaled. External q remains (p,T,z_0,...,z_{N-2}).
+    std::vector<std::size_t> phase_reference_components;
+    std::size_t phase_fraction_reference{};
     ad::RuntimeValueAndJacobian<double> values;
 };
 
 // Local fixed-phase-set coordinates:
 //
-// u = [N-1 independent mole fractions for each accepted phase,
-//      beta_0..beta_{P-2}]
-// q = [p, T, z_0..z_{N-2}]
+// For each accepted phase alpha choose reference component r_alpha at the
+// largest accepted x. Internal composition unknowns are
+//     eta_{alpha,i} = log(x_{alpha,i}/x_{alpha,r}), i != r.
+// Choose the largest accepted phase fraction as beta reference and use
+//     tau_alpha = log(beta_alpha/beta_r), alpha != r.
+// Softmax reconstruction enforces positivity and exact simplex closure while
+// avoiding both trace-component subtraction and the 1/x scaling of raw mole-
+// fraction coordinates. These are internal IFT coordinates only.
 //
-// For numerical conditioning, phase alpha chooses as its dependent composition
-// the largest component in that accepted phase. The external feed chart remains
-// the public reduced-feed convention with z_{N-1} dependent. The last phase
-// fraction is dependent. The residual has exactly PN-1 equations for PN-1
-// unknowns:
+// q = [p, T, z_0..z_{N-2}], with the last overall-feed component dependent.
+// The residual has exactly PN-1 equations for PN-1 unknowns:
 //   - N common-chemical-potential equations for each phase a>0 versus phase 0;
 //   - N-1 component material balances.
 //
@@ -86,7 +89,7 @@ sw92_profile_c_sensitivity_local_system(
     const std::size_t density_output = compressibility_output + pcount;
     const std::size_t output_count = density_output + pcount;
 
-    std::vector<std::size_t> dependent(pcount, 0U);
+    std::vector<std::size_t> reference_component(pcount, 0U);
     std::vector<double> inputs(variable_count, 0.0);
     for (std::size_t phase = 0; phase < pcount; ++phase) {
         const auto& composition = accepted->phases[phase].composition;
@@ -94,26 +97,55 @@ sw92_profile_c_sensitivity_local_system(
             throw std::invalid_argument(
                 "SW92 sensitivity local system: phase composition dimension mismatch");
         }
-        dependent[phase] = static_cast<std::size_t>(
+        reference_component[phase] = static_cast<std::size_t>(
             std::distance(
                 composition.begin(),
                 std::max_element(composition.begin(), composition.end())));
+        const double reference = composition[reference_component[phase]];
+        if (!std::isfinite(reference) || !(reference > 0.0)) {
+            throw std::domain_error(
+                "SW92 sensitivity local system: invalid composition reference");
+        }
         std::size_t local_column = 0U;
         for (std::size_t i = 0; i < n; ++i) {
-            if (i == dependent[phase]) { continue; }
-            inputs[phase * (n - 1U) + local_column] = composition[i];
+            if (i == reference_component[phase]) { continue; }
+            if (!std::isfinite(composition[i]) || !(composition[i] > 0.0)) {
+                throw std::domain_error(
+                    "SW92 sensitivity local system: log-ratio chart requires positive composition");
+            }
+            inputs[phase * (n - 1U) + local_column] =
+                std::log(composition[i] / reference);
             ++local_column;
         }
-        if (local_column != n - 1U) {
-            throw std::logic_error(
-                "SW92 sensitivity local system: phase chart shape mismatch");
+    }
+
+    const std::size_t beta_offset = pcount * (n - 1U);
+    std::size_t beta_reference = 0U;
+    for (std::size_t phase = 1U; phase < pcount; ++phase) {
+        if (accepted->phases[phase].mole_phase_fraction >
+            accepted->phases[beta_reference].mole_phase_fraction) {
+            beta_reference = phase;
         }
     }
-    const std::size_t beta_offset = pcount * (n - 1U);
-    for (std::size_t phase = 0; phase + 1U < pcount; ++phase) {
-        inputs[beta_offset + phase] =
-            accepted->phases[phase].mole_phase_fraction;
+    const double beta_reference_value =
+        accepted->phases[beta_reference].mole_phase_fraction;
+    if (!std::isfinite(beta_reference_value) || !(beta_reference_value > 0.0)) {
+        throw std::domain_error(
+            "SW92 sensitivity local system: invalid phase-fraction reference");
     }
+    std::size_t beta_column = 0U;
+    for (std::size_t phase = 0; phase < pcount; ++phase) {
+        if (phase == beta_reference) { continue; }
+        const double value = accepted->phases[phase].mole_phase_fraction;
+        if (!std::isfinite(value) || !(value > 0.0)) {
+            throw std::domain_error(
+                "SW92 sensitivity local system: log-ratio chart requires positive phase fractions");
+        }
+        inputs[beta_offset + beta_column] =
+            std::log(value / beta_reference_value);
+        ++beta_column;
+    }
+
     const std::size_t q_offset = unknown_count;
     inputs[q_offset] = source.solution.pressure_pa;
     inputs[q_offset + 1U] = source.solution.temperature_k;
@@ -136,27 +168,36 @@ sw92_profile_c_sensitivity_local_system(
             }
             feed[n - 1U] = Number{1.0} - feed_sum;
 
+            using std::exp;
             std::vector<std::vector<Number>> composition(
                 pcount, std::vector<Number>(n));
-            std::vector<Number> beta(pcount);
             for (std::size_t phase = 0; phase < pcount; ++phase) {
-                Number sum{0.0};
+                Number denominator{1.0};
                 std::size_t local_column = 0U;
                 for (std::size_t i = 0; i < n; ++i) {
-                    if (i == dependent[phase]) { continue; }
+                    if (i == reference_component[phase]) { continue; }
                     composition[phase][i] =
-                        variables[phase * (n - 1U) + local_column];
-                    sum += composition[phase][i];
+                        exp(variables[phase * (n - 1U) + local_column]);
+                    denominator += composition[phase][i];
                     ++local_column;
                 }
-                composition[phase][dependent[phase]] = Number{1.0} - sum;
+                composition[phase][reference_component[phase]] = Number{1.0};
+                for (std::size_t i = 0; i < n; ++i) {
+                    composition[phase][i] /= denominator;
+                }
             }
-            Number beta_sum{0.0};
-            for (std::size_t phase = 0; phase + 1U < pcount; ++phase) {
-                beta[phase] = variables[beta_offset + phase];
-                beta_sum += beta[phase];
+
+            std::vector<Number> beta(pcount);
+            Number beta_denominator{1.0};
+            beta_column = 0U;
+            for (std::size_t phase = 0; phase < pcount; ++phase) {
+                if (phase == beta_reference) { continue; }
+                beta[phase] = exp(variables[beta_offset + beta_column]);
+                beta_denominator += beta[phase];
+                ++beta_column;
             }
-            beta[pcount - 1U] = Number{1.0} - beta_sum;
+            beta[beta_reference] = Number{1.0};
+            for (auto& value : beta) { value /= beta_denominator; }
 
             std::vector<thermodynamics::Sw92PhaseValues<Number, double>> values;
             values.reserve(pcount);
@@ -230,7 +271,8 @@ sw92_profile_c_sensitivity_local_system(
         compressibility_output,
         density_output,
         output_count,
-        std::move(dependent),
+        std::move(reference_component),
+        beta_reference,
         std::move(differentiated)};
 }
 
