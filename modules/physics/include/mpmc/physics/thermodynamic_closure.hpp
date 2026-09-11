@@ -232,7 +232,8 @@ struct PtPhaseSetThermodynamicClosureSnapshot {
             return false;
         }
         const auto& value = *linearization;
-        if (value.component_count != component_ids.size() ||
+        if (value.component_count < 2U ||
+            value.component_count != component_ids.size() ||
             value.phase_count != primal->phases.size() ||
             value.input_count != value.component_count + 1U) {
             return false;
@@ -249,10 +250,7 @@ struct PtPhaseSetThermodynamicClosureSnapshot {
             !product_matches(value.phase_count, value.input_count,
                              value.compressibility_jacobian.size()) ||
             !product_matches(value.phase_count, value.input_count,
-                             value.molar_density_jacobian.size()) ||
-            !product_matches(value.phase_count, value.component_count,
-                             value.phase_count == 0U ? 0U :
-                                 value.phase_count * value.component_count)) {
+                             value.molar_density_jacobian.size())) {
             return false;
         }
         if (value.phase_count != 0U &&
