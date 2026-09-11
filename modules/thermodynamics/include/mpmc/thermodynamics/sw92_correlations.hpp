@@ -13,9 +13,6 @@ namespace mpmc::thermodynamics {
 
 namespace detail {
 
-// Structural scalar adapter matching the existing PR76 AD contract without
-// coupling SW92 thermodynamics to one concrete AD implementation. Production
-// and tests use double and mpmc::ad::Dual<double,N>.
 template <typename Number, typename T>
 concept Sw92Number = std::same_as<Number, T> || requires(const Number& number) {
     typename Number::Scalar;
@@ -55,9 +52,8 @@ template <std::floating_point T>
 }
 } // namespace detail
 
-/// SW92 Eq.(9). c_sw is mol NaCl/kg H2O, not a composition fraction. T and
-/// molality remain model coordinates with molality fixed for the current AD
-/// contract; temperature may carry local AD seeds.
+/// SW92 Eq.(9). c_sw is mol NaCl/kg H2O, not a composition fraction. Prescribed
+/// molality is held fixed in the current AD contract; temperature may carry seeds.
 template <typename Number, std::floating_point T>
     requires detail::Sw92Number<Number, T>
 [[nodiscard]] Number sw92_water_alpha(
@@ -85,8 +81,7 @@ template <typename Number, std::floating_point T>
 }
 
 /// Corrected SW92 AQ water-pair rules: corrected Eq.(12)/Table 2 and Eq.(13),
-/// plus Eqs.(14),(15). `tr` is T/Tc of the non-water component. Temperature
-/// may carry AD seeds; omega and prescribed molality are immutable model data.
+/// plus Eqs.(14),(15). `tr` is T/Tc of the non-water component.
 template <typename Number, std::floating_point T>
     requires detail::Sw92Number<Number, T>
 [[nodiscard]] Number sw92_aqueous_water_kij(
@@ -147,6 +142,11 @@ template <typename Number, std::floating_point T>
     if (!detail::sw92_finite(tr) || !(detail::sw92_value(tr) > T{0}))
         throw std::domain_error("SW92 Eq.(17): Tr must be finite and >0");
     return static_cast<T>(0.19031L) - static_cast<T>(0.05965L)*tr;
+}
+
+template <std::floating_point T>
+[[nodiscard]] T sw92_h2s_nonaqueous_water_kij(T tr) {
+    return sw92_h2s_nonaqueous_water_kij<T, T>(tr);
 }
 
 } // namespace mpmc::thermodynamics
