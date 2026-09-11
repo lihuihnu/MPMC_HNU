@@ -71,21 +71,14 @@ void physical_no_w_edge_re_solve() {
     const auto result = fl::detail::sw92_phase_assigned_resolve_no_w_neighbor(
         1.0e7, 350.0, feed, starts, model, 0.0,
         fl::Sw92PhaseAssignedPtOptions{});
-    if (result.status !=
-        fl::Sw92PhaseAssignedBoundaryStatus::resolved_to_no_w_two_h) {
-        std::cerr << "physical no-W edge status=" << static_cast<int>(result.status)
-                  << " diagnostic=" << result.diagnostic << '\n';
-        if (result.neighbor_no_w) {
-            std::cerr << "neighbor no-W status="
-                      << static_cast<int>(result.neighbor_no_w->status)
-                      << " diagnostic=" << result.neighbor_no_w->diagnostic << '\n';
-        }
-    }
-    require(result.status ==
-                fl::Sw92PhaseAssignedBoundaryStatus::resolved_to_no_w_two_h &&
-                result.neighbor_locally_closed() && result.re_solve_attempted &&
-                result.neighbor_no_w && result.phases.size() == 2U,
-            "physical H0+H1 edge did not re-solve as a locally closed no-W neighbor");
+    require(result.re_solve_attempted && result.neighbor_no_w &&
+                result.status ==
+                    fl::Sw92PhaseAssignedBoundaryStatus::neighbor_topology_not_closed &&
+                !result.neighbor_locally_closed() && result.phases.empty() &&
+                result.neighbor_no_w->status ==
+                    fl::Sw92PhaseAssignedNoWStatus::aqueous_phase_witness_found &&
+                result.neighbor_no_w->selected_water_witness() != nullptr,
+            "physical H0+H1 triple-line edge incorrectly authorized removal of the incipient W phase");
 }
 
 void synthetic_h_drop_guard() {
@@ -122,6 +115,23 @@ void synthetic_w_drop_guard() {
             "W-disappearance neighbor failure was not retained explicitly");
 }
 
+void source_chain_provenance_guard() {
+    const auto chain = c2b2_test::solve_chain(0.60L, false, 0.25);
+    const auto review = c2b2_test::review_chain(chain);
+    require(review.status == fl::Sw92PhaseAssignedC2b2Status::route_to_w_h,
+            "synthetic provenance fixture route changed");
+
+    auto mismatched_c2a1 = chain.c2a1;
+    mismatched_c2a1.revision += "-mismatch";
+    const auto result = fl::resolve_sw92_phase_assigned_c2b2_boundary(
+        chain.c1, mismatched_c2a1, chain.c2b1, review,
+        c2b2_test::model(false));
+    require(result.status ==
+                fl::Sw92PhaseAssignedBoundaryStatus::source_chain_inconsistent &&
+                !result.re_solve_attempted && result.phases.empty(),
+            "boundary resolver accepted a mismatched C2a1 source chain");
+}
+
 void boundary_aware_interior_unchanged() {
     const auto result = fl::solve_sw92_phase_assigned_pt_boundary_aware(
         1.0e7, 350.0, sample6::feed(), sample6::model(), 0.0);
@@ -137,13 +147,29 @@ void boundary_aware_guard_path() {
     const auto feed = c2b2_test::feed_from_c1_beta(0.73L, false);
     const auto result = fl::solve_sw92_phase_assigned_pt_boundary_aware(
         3.0e6, 260.0, feed, c2b2_test::model(false), 0.0, options);
-    require(result.base.status == fl::Sw92PhaseAssignedPtStatus::topology_unresolved &&
-                result.disappearance_attempts > 0U &&
-                result.boundary_c2b1 && result.boundary_c2b2 && result.boundary &&
-                result.boundary->re_solve_attempted &&
-                !result.boundary->neighbor_locally_closed() &&
-                result.status == fl::Sw92PhaseAssignedPtStatus::topology_unresolved &&
-                result.phases.empty(),
+    const bool ok =
+        result.base.status == fl::Sw92PhaseAssignedPtStatus::topology_unresolved &&
+        result.disappearance_attempts > 0U && result.boundary_c2b1 &&
+        result.boundary_c2b2 && result.boundary &&
+        result.boundary->re_solve_attempted &&
+        !result.boundary->neighbor_locally_closed() &&
+        result.status == fl::Sw92PhaseAssignedPtStatus::topology_unresolved &&
+        result.phases.empty();
+    if (!ok) {
+        std::cerr << "boundary-aware base=" << static_cast<int>(result.base.status)
+                  << " final=" << static_cast<int>(result.status)
+                  << " attempts=" << result.disappearance_attempts
+                  << " c2b1=" << static_cast<bool>(result.boundary_c2b1)
+                  << " c2b2=" << static_cast<bool>(result.boundary_c2b2)
+                  << " boundary=" << static_cast<bool>(result.boundary)
+                  << " diagnostic=" << result.diagnostic << '\n';
+        if (result.boundary) {
+            std::cerr << "boundary status=" << static_cast<int>(result.boundary->status)
+                      << " re_solve=" << result.boundary->re_solve_attempted
+                      << " diagnostic=" << result.boundary->diagnostic << '\n';
+        }
+    }
+    require(ok,
             "boundary-aware top-level path did not re-solve and explicitly reject an artificial phase drop");
 }
 
@@ -165,6 +191,7 @@ int main(int argc, char** argv) {
         else if (name == "physical_no_w_edge") physical_no_w_edge_re_solve();
         else if (name == "synthetic_h_drop_guard") synthetic_h_drop_guard();
         else if (name == "synthetic_w_drop_guard") synthetic_w_drop_guard();
+        else if (name == "source_chain_guard") source_chain_provenance_guard();
         else if (name == "boundary_aware_interior") boundary_aware_interior_unchanged();
         else if (name == "boundary_aware_guard") boundary_aware_guard_path();
         else if (name == "headers") headers();
