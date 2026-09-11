@@ -11,6 +11,8 @@ add_executable(mpmc_component_inventory_tests
     component_inventory_test.cpp
     component_inventory_header.cpp)
 target_link_libraries(mpmc_component_inventory_tests PRIVATE mpmc::physics)
+target_include_directories(mpmc_component_inventory_tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
 set_target_properties(mpmc_component_inventory_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 if(MSVC)
