@@ -182,10 +182,6 @@ inline std::optional<std::vector<double>> sw92_phase_assigned_targeted_water_sta
         return std::nullopt;
     }
 
-    // Initialization only: intentionally start even more water-rich than every
-    // retained NA numerical candidate. The final W witness need only establish
-    // a W/H contrast against at least one water-poor NA candidate; the joint
-    // solver later applies the stricter W-vs-all-final-H role guard.
     const double target_water = std::midpoint(max_na_candidate_water_fraction, 1.0);
     const double guard = 256.0 * stability_eps *
         (1.0 + std::abs(max_na_candidate_water_fraction) +
@@ -293,13 +289,6 @@ sw92_phase_assigned_classify_water_witness(
 
 } // namespace detail
 
-/// Profile-C no-W topology adapter.
-///
-/// `no-W` means no retained AQ-family phase. Water remains an ordinary EOS
-/// component in every NA numerical candidate. Fixed-NA phase multiplicity is a
-/// candidate generator; it does not itself prove that every NA candidate has a
-/// physical hydrocarbon role. AQ is then tested only as a NEW water-rich phase
-/// hypothesis, never as a global family reassignment.
 [[nodiscard]] inline Sw92PhaseAssignedNoWResult solve_sw92_phase_assigned_no_w(
     double pressure_pa, double temperature_k, std::span<const double> feed,
     const thermodynamics::Sw92Phase<double>& model,
@@ -425,8 +414,6 @@ sw92_phase_assigned_classify_water_witness(
         return result;
     }
 
-    // No water inventory means an AQ phase cannot appear in a closed,
-    // nonreactive flash. This is a material-balance statement, not morphology.
     if (result.feed[result.water_index] == 0.0) {
         result.status = result.retained_na_candidate_count() == 1U
             ? Sw92PhaseAssignedNoWStatus::no_w_single_h_locally_closed
@@ -452,11 +439,13 @@ sw92_phase_assigned_classify_water_witness(
         aqueous_extra_starts);
     std::vector<std::vector<double>> starts;
     starts.reserve(mandatory + aqueous_extra_starts.size());
-    starts.push_back(*result.targeted_water_start);
+    starts.push_back(*result.targeted_water_start); // sole candidate-generating W start
     for (const auto& candidate : result.retained_na_candidate_compositions) {
-        starts.push_back(candidate); // diagnostic candidate composition under AQ
+        starts.push_back(candidate); // AQ-at-NA diagnostic only
     }
-    for (const auto& extra : aqueous_extra_starts) { starts.push_back(extra); }
+    for (const auto& extra : aqueous_extra_starts) {
+        starts.push_back(extra); // diagnostic in v1; not candidate-generating
+    }
 
     Sw92FamilyStabilityEvaluator aqueous(
         model, nacl_molality_mol_per_kg_water,
@@ -472,6 +461,10 @@ sw92_phase_assigned_classify_water_witness(
             !detail::stability_negative(*trial.point, search.options)) {
             continue;
         }
+        // automatic_starts is false by default and the targeted water start is
+        // inserted first. All H-origin and caller starts remain diagnostic-only
+        // so AQ model descent from an H-like seed cannot create a physical W.
+        if (trial_index != 0U) { continue; }
         result.aqueous_witnesses.push_back(
             detail::sw92_phase_assigned_classify_water_witness(
                 trial_index, *trial.point,
@@ -491,19 +484,25 @@ sw92_phase_assigned_classify_water_witness(
         }
     }
 
-    if (search.status == StabilityStatus::no_instability_found) {
-        result.status = result.retained_na_candidate_count() == 1U
-            ? Sw92PhaseAssignedNoWStatus::no_w_single_h_locally_closed
-            : Sw92PhaseAssignedNoWStatus::no_w_two_h_locally_closed;
-        result.diagnostic =
-            "fixed-NA multiplicity and targeted AQ appearance are locally closed under finite searches; morphology remains unresolved";
-        return result;
+    // Negative diagnostics from retained NA candidates do not make the targeted
+    // W search indeterminate; they are exactly the forbidden model-reassignment
+    // evidence. The targeted start itself, however, must have a resolved result.
+    if (!search.trials.empty()) {
+        const auto targeted_status = search.trials.front().status;
+        if (targeted_status == StabilityTrialStatus::stationary ||
+            targeted_status == StabilityTrialStatus::negative_tpd) {
+            result.status = result.retained_na_candidate_count() == 1U
+                ? Sw92PhaseAssignedNoWStatus::no_w_single_h_locally_closed
+                : Sw92PhaseAssignedNoWStatus::no_w_two_h_locally_closed;
+            result.diagnostic =
+                "fixed-NA multiplicity and targeted AQ appearance are locally closed; H-origin AQ negatives remain diagnostic-only and morphology unresolved";
+            return result;
+        }
     }
 
     result.status = Sw92PhaseAssignedNoWStatus::indeterminate;
-    result.diagnostic = search.status == StabilityStatus::unstable
-        ? "AQ mathematical negative trials exist but none is an admissible distinct W/H-contrast seed; no physical topology conclusion is permitted"
-        : "targeted AQ appearance search is numerically/property indeterminate";
+    result.diagnostic =
+        "targeted AQ water-phase search is numerically/property indeterminate";
     return result;
 }
 
