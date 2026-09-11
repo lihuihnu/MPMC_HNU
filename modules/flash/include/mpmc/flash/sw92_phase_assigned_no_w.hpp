@@ -1,12 +1,14 @@
 #ifndef MPMC_FLASH_SW92_PHASE_ASSIGNED_NO_W_HPP
 #define MPMC_FLASH_SW92_PHASE_ASSIGNED_NO_W_HPP
 
+#include <mpmc/flash/sw92_phase_assigned_joint.hpp>
 #include <mpmc/flash/sw92_split.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -30,7 +32,7 @@ struct Sw92PhaseAssignedNoWOptions {
 
     Sw92PhaseAssignedNoWOptions() {
         // Profile-C water appearance is a role-targeted search. Do not silently
-        // turn it into a whole-simplex AQ/NA model competition by default.
+        // turn it into whole-simplex AQ/NA model competition by default.
         aqueous_appearance.automatic_starts = false;
     }
 };
@@ -48,14 +50,17 @@ enum class Sw92PhaseAssignedNoWStatus {
 struct Sw92PhaseAssignedWaterAppearanceWitness {
     std::size_t trial_index{};
     TpdPoint point;
-    std::vector<double> log_distance_from_retained_h;
-    double trial_minus_max_h_water_fraction{};
+    std::vector<double> log_distance_from_retained_na_candidates;
+    double trial_minus_min_na_water_fraction{};
     double water_role_roundoff_guard{};
-    bool distinct_from_every_retained_h{};
-    bool water_role_admissible{};
+    bool distinct_from_every_retained_na_candidate{};
+    bool water_role_candidate_admissible{};
 
+    /// Candidate-generation evidence only. A later joint W+H... solve must still
+    /// require W to be water-richer than every FINAL retained H phase.
     [[nodiscard]] bool usable_w_seed() const noexcept {
-        return distinct_from_every_retained_h && water_role_admissible;
+        return distinct_from_every_retained_na_candidate &&
+               water_role_candidate_admissible;
     }
 };
 
@@ -72,6 +77,7 @@ struct Sw92PhaseAssignedNoWResult {
 
     double pressure_pa{};
     double temperature_k{};
+    double input_feed_sum{};
     std::vector<double> feed;
     double nacl_molality_mol_per_kg_water{};
     std::size_t water_index{};
@@ -83,16 +89,22 @@ struct Sw92PhaseAssignedNoWResult {
     std::string equilibrium_profile{sw92_phase_assigned_aq_na_joint_profile};
     std::string adapter_convention{sw92_phase_assigned_no_w_convention};
 
-    std::vector<std::vector<double>> retained_h_compositions;
-    std::vector<double> retained_h_fractions;
+    // These are retained fixed-NA numerical candidates. Before a rival W
+    // topology is solved they MUST NOT be interpreted as authoritative physical
+    // hydrocarbon roles merely because they use the NA thermodynamic family.
+    std::vector<std::vector<double>> retained_na_candidate_compositions;
+    std::vector<double> retained_na_candidate_fractions;
     std::vector<double> common_log_activity;
-    double max_retained_h_water_fraction{std::numeric_limits<double>::quiet_NaN()};
+    double min_retained_na_candidate_water_fraction{
+        std::numeric_limits<double>::quiet_NaN()};
+    double max_retained_na_candidate_water_fraction{
+        std::numeric_limits<double>::quiet_NaN()};
     std::optional<std::vector<double>> targeted_water_start;
     std::optional<std::size_t> selected_water_witness_index;
     std::string diagnostic;
 
-    [[nodiscard]] std::size_t retained_h_phase_count() const noexcept {
-        return retained_h_compositions.size();
+    [[nodiscard]] std::size_t retained_na_candidate_count() const noexcept {
+        return retained_na_candidate_compositions.size();
     }
     [[nodiscard]] const Sw92PhaseAssignedWaterAppearanceWitness*
     selected_water_witness() const & noexcept {
@@ -152,10 +164,11 @@ inline double sw92_phase_assigned_no_w_log_distance(
 
 inline std::optional<std::vector<double>> sw92_phase_assigned_targeted_water_start(
     std::span<const double> feed, std::size_t water_index,
-    double max_h_water_fraction) {
+    double max_na_candidate_water_fraction) {
     if (water_index >= feed.size() || !(feed[water_index] > 0.0) ||
-        !std::isfinite(max_h_water_fraction) ||
-        !(max_h_water_fraction >= 0.0) || !(max_h_water_fraction < 1.0)) {
+        !std::isfinite(max_na_candidate_water_fraction) ||
+        !(max_na_candidate_water_fraction >= 0.0) ||
+        !(max_na_candidate_water_fraction < 1.0)) {
         return std::nullopt;
     }
     double nonwater_feed = 0.0;
@@ -169,11 +182,16 @@ inline std::optional<std::vector<double>> sw92_phase_assigned_targeted_water_sta
         return std::nullopt;
     }
 
-    const double target_water = std::midpoint(max_h_water_fraction, 1.0);
+    // Initialization only: intentionally start even more water-rich than every
+    // retained NA numerical candidate. The final W witness need only establish
+    // a W/H contrast against at least one water-poor NA candidate; the joint
+    // solver later applies the stricter W-vs-all-final-H role guard.
+    const double target_water = std::midpoint(max_na_candidate_water_fraction, 1.0);
     const double guard = 256.0 * stability_eps *
-        (1.0 + std::abs(max_h_water_fraction) + std::abs(target_water));
+        (1.0 + std::abs(max_na_candidate_water_fraction) +
+         std::abs(target_water));
     if (!std::isfinite(target_water) || !(target_water < 1.0) ||
-        !(target_water - max_h_water_fraction > guard)) {
+        !(target_water - max_na_candidate_water_fraction > guard)) {
         return std::nullopt;
     }
 
@@ -239,33 +257,36 @@ inline void sw92_phase_assigned_no_w_preflight_starts(
 inline Sw92PhaseAssignedWaterAppearanceWitness
 sw92_phase_assigned_classify_water_witness(
     std::size_t trial_index, const TpdPoint& point,
-    std::span<const std::vector<double>> retained_h,
+    std::span<const std::vector<double>> retained_na_candidates,
     std::span<const double> feed, std::size_t water_index,
-    double max_h_water_fraction, double log_composition_separation) {
+    double min_na_candidate_water_fraction,
+    double log_composition_separation) {
     Sw92PhaseAssignedWaterAppearanceWitness witness;
     witness.trial_index = trial_index;
     witness.point = point;
-    witness.distinct_from_every_retained_h = true;
-    for (const auto& h : retained_h) {
+    witness.distinct_from_every_retained_na_candidate = true;
+    for (const auto& candidate : retained_na_candidates) {
         const double distance = sw92_phase_assigned_no_w_log_distance(
-            point.composition, h, feed);
-        witness.log_distance_from_retained_h.push_back(distance);
+            point.composition, candidate, feed);
+        witness.log_distance_from_retained_na_candidates.push_back(distance);
         if (!std::isfinite(distance) || distance <= log_composition_separation) {
-            witness.distinct_from_every_retained_h = false;
+            witness.distinct_from_every_retained_na_candidate = false;
         }
     }
     if (water_index >= point.composition.size()) {
-        witness.distinct_from_every_retained_h = false;
+        witness.distinct_from_every_retained_na_candidate = false;
         return witness;
     }
     const double trial_water = point.composition[water_index];
-    witness.trial_minus_max_h_water_fraction = trial_water - max_h_water_fraction;
+    witness.trial_minus_min_na_water_fraction =
+        trial_water - min_na_candidate_water_fraction;
     witness.water_role_roundoff_guard = 256.0 * stability_eps *
-        (1.0 + std::abs(trial_water) + std::abs(max_h_water_fraction));
-    witness.water_role_admissible =
-        std::isfinite(witness.trial_minus_max_h_water_fraction) &&
+        (1.0 + std::abs(trial_water) +
+         std::abs(min_na_candidate_water_fraction));
+    witness.water_role_candidate_admissible =
+        std::isfinite(witness.trial_minus_min_na_water_fraction) &&
         std::isfinite(witness.water_role_roundoff_guard) &&
-        witness.trial_minus_max_h_water_fraction >
+        witness.trial_minus_min_na_water_fraction >
             witness.water_role_roundoff_guard;
     return witness;
 }
@@ -275,10 +296,10 @@ sw92_phase_assigned_classify_water_witness(
 /// Profile-C no-W topology adapter.
 ///
 /// `no-W` means no retained AQ-family phase. Water remains an ordinary EOS
-/// component in every NA phase. The first stage reuses the internally complete
-/// fixed-NA one-family flash. The second stage asks only whether a distinct,
-/// water-richer AQ phase should be added. It never classifies retained H phases
-/// as liquid/vapor and never publishes an authoritative phase set.
+/// component in every NA numerical candidate. Fixed-NA phase multiplicity is a
+/// candidate generator; it does not itself prove that every NA candidate has a
+/// physical hydrocarbon role. AQ is then tested only as a NEW water-rich phase
+/// hypothesis, never as a global family reassignment.
 [[nodiscard]] inline Sw92PhaseAssignedNoWResult solve_sw92_phase_assigned_no_w(
     double pressure_pa, double temperature_k, std::span<const double> feed,
     const thermodynamics::Sw92Phase<double>& model,
@@ -297,7 +318,7 @@ sw92_phase_assigned_classify_water_witness(
     result.options = options;
     result.pressure_pa = pressure_pa;
     result.temperature_k = temperature_k;
-    result.input_feed_sum = 0.0;
+    result.input_feed_sum = detail::stability_check_composition(feed);
     result.nacl_molality_mol_per_kg_water = nacl_molality_mol_per_kg_water;
     result.water_index = model.parameters().water_index();
     const auto& parameters = model.parameters();
@@ -346,8 +367,8 @@ sw92_phase_assigned_classify_water_witness(
             result.diagnostic = "fixed-NA single-phase result lacks reference activity";
             return result;
         }
-        result.retained_h_compositions.push_back(result.feed);
-        result.retained_h_fractions.push_back(1.0);
+        result.retained_na_candidate_compositions.push_back(result.feed);
+        result.retained_na_candidate_fractions.push_back(1.0);
         result.common_log_activity.assign(result.feed.size(), 0.0);
         for (std::size_t i = 0; i < result.feed.size(); ++i) {
             if (result.feed[i] > 0.0) {
@@ -363,12 +384,12 @@ sw92_phase_assigned_classify_water_witness(
             result.diagnostic = "fixed-NA accepted pair lost its final-stability evidence";
             return result;
         }
-        // These are deterministic low-/high-Z representation slots only. They
-        // are deliberately exposed as unordered H0/H1, never physical L/V.
-        result.retained_h_compositions.push_back(candidate->fractions.liquid);
-        result.retained_h_compositions.push_back(candidate->fractions.vapor);
-        result.retained_h_fractions.push_back(1.0 - candidate->fractions.vapor_fraction);
-        result.retained_h_fractions.push_back(candidate->fractions.vapor_fraction);
+        result.retained_na_candidate_compositions.push_back(candidate->fractions.liquid);
+        result.retained_na_candidate_compositions.push_back(candidate->fractions.vapor);
+        result.retained_na_candidate_fractions.push_back(
+            1.0 - candidate->fractions.vapor_fraction);
+        result.retained_na_candidate_fractions.push_back(
+            candidate->fractions.vapor_fraction);
         result.common_log_activity = candidate->common_log_activity;
     } else {
         result.status = Sw92PhaseAssignedNoWStatus::indeterminate;
@@ -376,51 +397,64 @@ sw92_phase_assigned_classify_water_witness(
         return result;
     }
 
-    if (result.water_index >= result.feed.size()) {
+    if (result.water_index >= result.feed.size() ||
+        result.retained_na_candidate_compositions.empty()) {
         result.status = Sw92PhaseAssignedNoWStatus::indeterminate;
-        result.diagnostic = "water component index is outside the ordered feed";
+        result.diagnostic = "water index/candidate inventory is invalid";
         return result;
     }
-    result.max_retained_h_water_fraction = 0.0;
-    for (const auto& h : result.retained_h_compositions) {
-        if (h.size() != result.feed.size()) {
+    result.min_retained_na_candidate_water_fraction =
+        std::numeric_limits<double>::infinity();
+    result.max_retained_na_candidate_water_fraction = 0.0;
+    for (const auto& candidate : result.retained_na_candidate_compositions) {
+        if (candidate.size() != result.feed.size()) {
             result.status = Sw92PhaseAssignedNoWStatus::indeterminate;
-            result.diagnostic = "retained fixed-NA phase dimension mismatch";
+            result.diagnostic = "retained fixed-NA candidate dimension mismatch";
             return result;
         }
-        result.max_retained_h_water_fraction = std::max(
-            result.max_retained_h_water_fraction, h[result.water_index]);
+        const double water = candidate[result.water_index];
+        result.min_retained_na_candidate_water_fraction = std::min(
+            result.min_retained_na_candidate_water_fraction, water);
+        result.max_retained_na_candidate_water_fraction = std::max(
+            result.max_retained_na_candidate_water_fraction, water);
+    }
+    if (!std::isfinite(result.min_retained_na_candidate_water_fraction) ||
+        !std::isfinite(result.max_retained_na_candidate_water_fraction)) {
+        result.status = Sw92PhaseAssignedNoWStatus::indeterminate;
+        result.diagnostic = "retained fixed-NA water range is nonrepresentable";
+        return result;
     }
 
     // No water inventory means an AQ phase cannot appear in a closed,
     // nonreactive flash. This is a material-balance statement, not morphology.
     if (result.feed[result.water_index] == 0.0) {
-        result.status = result.retained_h_phase_count() == 1U
+        result.status = result.retained_na_candidate_count() == 1U
             ? Sw92PhaseAssignedNoWStatus::no_w_single_h_locally_closed
             : Sw92PhaseAssignedNoWStatus::no_w_two_h_locally_closed;
         result.diagnostic =
-            "no AQ phase can appear because total water inventory is zero; retained H morphology remains unresolved";
+            "no AQ phase can appear because total water inventory is zero; retained NA morphology remains unresolved";
         return result;
     }
 
     result.targeted_water_start = detail::sw92_phase_assigned_targeted_water_start(
-        result.feed, result.water_index, result.max_retained_h_water_fraction);
+        result.feed, result.water_index,
+        result.max_retained_na_candidate_water_fraction);
     if (!result.targeted_water_start) {
         result.status = Sw92PhaseAssignedNoWStatus::single_phase_role_unresolved;
         result.diagnostic =
-            "a distinct water-richer AQ trial cannot be represented on the active component support; physical single-phase role remains unresolved";
+            "a distinct water-richer AQ trial cannot be represented on active support; physical role/topology remains unresolved";
         return result;
     }
 
-    const std::size_t mandatory = 1U + result.retained_h_phase_count();
+    const std::size_t mandatory = 1U + result.retained_na_candidate_count();
     detail::sw92_phase_assigned_no_w_preflight_starts(
         result.feed, options.aqueous_appearance, mandatory,
         aqueous_extra_starts);
     std::vector<std::vector<double>> starts;
     starts.reserve(mandatory + aqueous_extra_starts.size());
     starts.push_back(*result.targeted_water_start);
-    for (const auto& h : result.retained_h_compositions) {
-        starts.push_back(h); // diagnostic existing-H composition under AQ
+    for (const auto& candidate : result.retained_na_candidate_compositions) {
+        starts.push_back(candidate); // diagnostic candidate composition under AQ
     }
     for (const auto& extra : aqueous_extra_starts) { starts.push_back(extra); }
 
@@ -440,9 +474,10 @@ sw92_phase_assigned_classify_water_witness(
         }
         result.aqueous_witnesses.push_back(
             detail::sw92_phase_assigned_classify_water_witness(
-                trial_index, *trial.point, result.retained_h_compositions,
-                result.feed, result.water_index,
-                result.max_retained_h_water_fraction,
+                trial_index, *trial.point,
+                result.retained_na_candidate_compositions, result.feed,
+                result.water_index,
+                result.min_retained_na_candidate_water_fraction,
                 options.log_composition_separation));
     }
 
@@ -451,23 +486,23 @@ sw92_phase_assigned_classify_water_witness(
             result.selected_water_witness_index = i;
             result.status = Sw92PhaseAssignedNoWStatus::aqueous_phase_witness_found;
             result.diagnostic =
-                "targeted AQ finite search found a robust distinct water-richer phase-addition witness; it is a W seed, not an accepted phase";
+                "targeted AQ finite search found a robust distinct W/H-contrast phase-addition witness; joint Profile-C equations must decide the final W-vs-H role set";
             return result;
         }
     }
 
     if (search.status == StabilityStatus::no_instability_found) {
-        result.status = result.retained_h_phase_count() == 1U
+        result.status = result.retained_na_candidate_count() == 1U
             ? Sw92PhaseAssignedNoWStatus::no_w_single_h_locally_closed
             : Sw92PhaseAssignedNoWStatus::no_w_two_h_locally_closed;
         result.diagnostic =
-            "fixed-NA H multiplicity and targeted AQ appearance are locally closed under finite searches; H morphology remains unresolved";
+            "fixed-NA multiplicity and targeted AQ appearance are locally closed under finite searches; morphology remains unresolved";
         return result;
     }
 
     result.status = Sw92PhaseAssignedNoWStatus::indeterminate;
     result.diagnostic = search.status == StabilityStatus::unstable
-        ? "AQ mathematical negative trials exist but none is a distinct water-richer W seed; no physical topology conclusion is permitted"
+        ? "AQ mathematical negative trials exist but none is an admissible distinct W/H-contrast seed; no physical topology conclusion is permitted"
         : "targeted AQ appearance search is numerically/property indeterminate";
     return result;
 }
