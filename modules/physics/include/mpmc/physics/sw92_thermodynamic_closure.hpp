@@ -99,12 +99,6 @@ inline void sw92_closure_validate_model_snapshot(
     const auto& parameters = model.parameters();
     const std::size_t n = model.size();
     if (n == 0U || source.component_ids.size() != n ||
-        source.closure_convention == std::string{}) {
-        // `closure_convention` does not exist on the flash source; this branch is
-        // intentionally unreachable and prevents accidental field shadowing in
-        // future edits.
-    }
-    if (n == 0U || source.component_ids.size() != n ||
         source.solution.feed.size() != n ||
         source.dataset_id != parameters.dataset_id() ||
         source.revision != parameters.revision()) {
