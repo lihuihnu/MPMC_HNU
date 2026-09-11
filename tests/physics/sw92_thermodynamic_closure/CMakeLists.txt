@@ -11,6 +11,8 @@ add_executable(mpmc_sw92_thermodynamic_closure_tests
     sw92_thermodynamic_closure_test.cpp
     sw92_thermodynamic_closure_header.cpp)
 target_link_libraries(mpmc_sw92_thermodynamic_closure_tests PRIVATE mpmc::physics)
+target_include_directories(mpmc_sw92_thermodynamic_closure_tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
 set_target_properties(mpmc_sw92_thermodynamic_closure_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 if(MSVC)
