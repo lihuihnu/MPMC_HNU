@@ -97,8 +97,7 @@ publication layer.
 ## Validation
 
 The physical Sample-6 independent Decimal(80) oracle is regenerated before the
-C++ tests. Boundary regression then checks two complementary true coexistence
-edges:
+C++ tests. Boundary regression checks two complementary true coexistence edges:
 
 1. the Sample-6 W+H edge fresh-re-solves as C1 W(AQ)+H(NA) and C2a1 finds no
    robust additional-H witness, so the two-phase neighbor is locally closed;
@@ -118,10 +117,10 @@ was validated by GitHub Actions run `34567768458` on:
 - Clang Release;
 - MSVC Release.
 
-The same run also passed the affected top-level Profile-C PT, C2b.2, no-W,
-C2a1 and C1 suites, with the physical Sample-6 Decimal oracle regenerated on all
-three jobs. Later commits only synchronize this scientific/validation document;
-no production code, test, workflow, tolerance, parameter or reference anchor was
+The same run passed the affected top-level Profile-C PT, C2b.2, no-W, C2a1 and
+C1 suites, with the physical Sample-6 Decimal oracle regenerated on all three
+jobs. Later commits only synchronize this scientific/validation document; no
+production code, test, workflow, tolerance, parameter or reference anchor was
 changed after that validated head.
 
 Frontend work remains frozen until maximum-three-phase validation and
