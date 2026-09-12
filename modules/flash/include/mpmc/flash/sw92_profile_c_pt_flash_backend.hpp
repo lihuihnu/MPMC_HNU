@@ -100,13 +100,18 @@ project_sw92_profile_c_transition_report(
             true, true,
             "an additional-H witness was followed by a fresh W(AQ)+H0(NA)+H1(NA) solve and final multiplicity review");
         break;
-    case Sw92PhaseAssignedPtStatus::higher_phase_count_or_wrong_candidate:
-        add(source.phases.empty() ? 2U : source.phases.size(), std::nullopt,
+    case Sw92PhaseAssignedPtStatus::higher_phase_count_or_wrong_candidate: {
+        const bool three_phase_under_review =
+            source.base.c2b2 &&
+            source.base.c2b2->status ==
+                Sw92PhaseAssignedC2b2Status::higher_phase_count_witness_found;
+        add(three_phase_under_review ? 3U : 2U, std::nullopt,
             PtPhaseTransitionTrigger::final_phase_set_instability,
             PtPhaseTransitionResolution::broader_topology_required,
             false, false,
             source.diagnostic);
         break;
+    }
     case Sw92PhaseAssignedPtStatus::topology_unresolved:
         if (source.base.no_w.status ==
             Sw92PhaseAssignedNoWStatus::phase_disappearance_unresolved) {
