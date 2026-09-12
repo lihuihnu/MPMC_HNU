@@ -1,0 +1,48 @@
+name: PT split diagnostic groups
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
+      - '.github/workflows/pt_split_diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: cmake -S tests/flash/pt_split -B build/pt-split-diag -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build/pt-split-diag --config Release --parallel 2
+      - name: Core unit group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split-diag -C Release -R '^flash[.]pt_split[.](rr_|imposed_|balanced_seed|iterate_|split_|pr_|headers|gibbs_|result_guard)' --output-on-failure
+      - name: Boundary group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split-diag -C Release -R '^flash[.]pt_split[.]boundary_' --output-on-failure
+      - name: Stagnation group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split-diag -C Release -R '^flash[.]pt_split[.]stagnation_' --output-on-failure
+      - name: Dew group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split-diag -C Release -R '^flash[.]pt_split[.]dew_limit_' --output-on-failure
+      - name: Diagnostic group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split-diag -C Release -R '^flash[.]pt_split[.]diagnostic_' --output-on-failure
+      - name: Ternary group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split-diag -C Release -R '^flash[.]pt_split[.]ternary_' --output-on-failure
+      - name: Sensitivity group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split-diag -C Release -R '^flash[.]pt_split[.]sensitivity_' --output-on-failure
+      - name: Phase-set group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split-diag -C Release -R '^flash[.]pt_split[.]phase_set_' --output-on-failure
