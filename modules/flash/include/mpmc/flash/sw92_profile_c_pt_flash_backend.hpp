@@ -25,6 +25,120 @@ struct Sw92ProfileCPtFlashBackendOptions {
     Sw92PhaseAssignedPtOptions flash;
 };
 
+// Pure projection of already-owned Profile-C topology/boundary evidence. It does
+// not rerun EOS properties, TPD, joint equations, or neighboring-topology solves.
+[[nodiscard]] inline PtPhaseTransitionReport
+project_sw92_profile_c_transition_report(
+    const Sw92PhaseAssignedBoundaryAwareResult& source) {
+    PtPhaseTransitionReport report;
+    const auto add = [&report](
+        std::size_t from, std::optional<std::size_t> to,
+        PtPhaseTransitionTrigger trigger,
+        PtPhaseTransitionResolution resolution,
+        bool fresh_attempted, bool target_closed,
+        std::string diagnostic) {
+        report.evidence.push_back({
+            from, to, trigger, resolution, fresh_attempted, target_closed,
+            std::string(sw92_profile_c_transition_evidence_profile),
+            std::move(diagnostic)});
+    };
+
+    if (source.boundary) {
+        switch (source.boundary->status) {
+        case Sw92PhaseAssignedBoundaryStatus::resolved_to_w_h:
+        case Sw92PhaseAssignedBoundaryStatus::resolved_to_no_w_two_h:
+            add(3U, 2U, PtPhaseTransitionTrigger::provider_boundary_route,
+                PtPhaseTransitionResolution::accepted_target,
+                source.boundary->re_solve_attempted, true,
+                source.boundary->diagnostic);
+            return report;
+        case Sw92PhaseAssignedBoundaryStatus::resolved_to_no_w_single_h:
+            add(3U, 1U, PtPhaseTransitionTrigger::provider_boundary_route,
+                PtPhaseTransitionResolution::accepted_target,
+                source.boundary->re_solve_attempted, true,
+                source.boundary->diagnostic);
+            return report;
+        case Sw92PhaseAssignedBoundaryStatus::neighbor_topology_not_closed:
+        case Sw92PhaseAssignedBoundaryStatus::higher_phase_count_or_wrong_candidate:
+            add(3U, std::nullopt,
+                PtPhaseTransitionTrigger::phase_disappearance,
+                PtPhaseTransitionResolution::target_resolve_failed,
+                source.boundary->re_solve_attempted, false,
+                source.boundary->diagnostic);
+            return report;
+        case Sw92PhaseAssignedBoundaryStatus::source_chain_inconsistent:
+        case Sw92PhaseAssignedBoundaryStatus::numerical_indeterminate:
+            add(3U, std::nullopt,
+                PtPhaseTransitionTrigger::phase_disappearance,
+                PtPhaseTransitionResolution::indeterminate,
+                source.boundary->re_solve_attempted, false,
+                source.boundary->diagnostic);
+            return report;
+        case Sw92PhaseAssignedBoundaryStatus::no_boundary_route:
+            break;
+        }
+    }
+
+    switch (source.status) {
+    case Sw92PhaseAssignedPtStatus::no_w_single_h_locally_closed:
+        break;
+    case Sw92PhaseAssignedPtStatus::no_w_two_h_locally_closed:
+        add(1U, 2U, PtPhaseTransitionTrigger::initial_stability_witness,
+            PtPhaseTransitionResolution::accepted_target,
+            true, true,
+            "fixed-NA feed instability was followed by a fresh two-phase solve and final review");
+        break;
+    case Sw92PhaseAssignedPtStatus::w_h_locally_closed:
+        add(1U, 2U, PtPhaseTransitionTrigger::provider_topology_witness,
+            PtPhaseTransitionResolution::accepted_target,
+            true, true,
+            "an aqueous-appearance witness was followed by a fresh W(AQ)+H(NA) joint solve and H-side review");
+        break;
+    case Sw92PhaseAssignedPtStatus::w_h0_h1_locally_closed:
+        add(2U, 3U, PtPhaseTransitionTrigger::provider_topology_witness,
+            PtPhaseTransitionResolution::accepted_target,
+            true, true,
+            "an additional-H witness was followed by a fresh W(AQ)+H0(NA)+H1(NA) solve and final multiplicity review");
+        break;
+    case Sw92PhaseAssignedPtStatus::higher_phase_count_or_wrong_candidate:
+        add(source.phases.empty() ? 2U : source.phases.size(), std::nullopt,
+            PtPhaseTransitionTrigger::final_phase_set_instability,
+            PtPhaseTransitionResolution::broader_topology_required,
+            false, false,
+            source.diagnostic);
+        break;
+    case Sw92PhaseAssignedPtStatus::topology_unresolved:
+        if (source.base.no_w.status ==
+            Sw92PhaseAssignedNoWStatus::phase_disappearance_unresolved) {
+            add(2U, 1U, PtPhaseTransitionTrigger::phase_disappearance,
+                PtPhaseTransitionResolution::target_resolve_required,
+                false, false,
+                source.base.no_w.diagnostic);
+        } else if (source.base.c2a1 &&
+            source.base.c2a1->status ==
+                Sw92PhaseAssignedHSideWitnessStatus::
+                    additional_nonaqueous_phase_witness_found) {
+            add(2U, 3U, PtPhaseTransitionTrigger::provider_topology_witness,
+                PtPhaseTransitionResolution::candidate_not_accepted,
+                source.base.c2b1.has_value(), false,
+                source.diagnostic);
+        }
+        break;
+    case Sw92PhaseAssignedPtStatus::numerical_indeterminate:
+        if (source.base.c2a1 &&
+            source.base.c2a1->status ==
+                Sw92PhaseAssignedHSideWitnessStatus::
+                    additional_nonaqueous_phase_witness_found) {
+            add(2U, 3U, PtPhaseTransitionTrigger::provider_topology_witness,
+                PtPhaseTransitionResolution::indeterminate,
+                source.base.c2b1.has_value(), false,
+                source.diagnostic);
+        }
+        break;
+    }
+    return report;
+}
+
 class Sw92ProfileCPtFlashBackend final : public PtFlashBackend {
 public:
     Sw92ProfileCPtFlashBackend(
@@ -51,7 +165,8 @@ public:
         PtFlashBackendResult result;
         result.capability = capability_;
         result.solution = published.solution;
-        result.transition_report = build_transition_report(source);
+        result.transition_report =
+            project_sw92_profile_c_transition_report(source);
         result.provider_result_convention = published.publication_convention;
         result.morphology_resolved =
             Sw92ProfileCPtPhaseSetResult::morphology_resolved;
@@ -122,117 +237,6 @@ private:
         capability.phase_metadata_namespace =
             std::string(sw92_profile_c_phase_metadata_namespace);
         return capability;
-    }
-
-    [[nodiscard]] static PtPhaseTransitionReport build_transition_report(
-        const Sw92PhaseAssignedBoundaryAwareResult& source) {
-        PtPhaseTransitionReport report;
-        const auto add = [&](
-            std::size_t from, std::optional<std::size_t> to,
-            PtPhaseTransitionTrigger trigger,
-            PtPhaseTransitionResolution resolution,
-            bool fresh_attempted, bool target_closed,
-            std::string diagnostic) {
-            report.evidence.push_back({
-                from, to, trigger, resolution, fresh_attempted, target_closed,
-                std::string(sw92_profile_c_transition_evidence_profile),
-                std::move(diagnostic)});
-        };
-
-        if (source.boundary) {
-            switch (source.boundary->status) {
-            case Sw92PhaseAssignedBoundaryStatus::resolved_to_w_h:
-            case Sw92PhaseAssignedBoundaryStatus::resolved_to_no_w_two_h:
-                add(3U, 2U, PtPhaseTransitionTrigger::provider_boundary_route,
-                    PtPhaseTransitionResolution::accepted_target,
-                    source.boundary->re_solve_attempted, true,
-                    source.boundary->diagnostic);
-                return report;
-            case Sw92PhaseAssignedBoundaryStatus::resolved_to_no_w_single_h:
-                add(3U, 1U, PtPhaseTransitionTrigger::provider_boundary_route,
-                    PtPhaseTransitionResolution::accepted_target,
-                    source.boundary->re_solve_attempted, true,
-                    source.boundary->diagnostic);
-                return report;
-            case Sw92PhaseAssignedBoundaryStatus::neighbor_topology_not_closed:
-            case Sw92PhaseAssignedBoundaryStatus::higher_phase_count_or_wrong_candidate:
-                add(3U, std::nullopt,
-                    PtPhaseTransitionTrigger::phase_disappearance,
-                    PtPhaseTransitionResolution::target_resolve_failed,
-                    source.boundary->re_solve_attempted, false,
-                    source.boundary->diagnostic);
-                return report;
-            case Sw92PhaseAssignedBoundaryStatus::source_chain_inconsistent:
-            case Sw92PhaseAssignedBoundaryStatus::numerical_indeterminate:
-                add(3U, std::nullopt,
-                    PtPhaseTransitionTrigger::phase_disappearance,
-                    PtPhaseTransitionResolution::indeterminate,
-                    source.boundary->re_solve_attempted, false,
-                    source.boundary->diagnostic);
-                return report;
-            case Sw92PhaseAssignedBoundaryStatus::no_boundary_route:
-                break;
-            }
-        }
-
-        switch (source.status) {
-        case Sw92PhaseAssignedPtStatus::no_w_single_h_locally_closed:
-            break;
-        case Sw92PhaseAssignedPtStatus::no_w_two_h_locally_closed:
-            add(1U, 2U, PtPhaseTransitionTrigger::initial_stability_witness,
-                PtPhaseTransitionResolution::accepted_target,
-                true, true,
-                "fixed-NA feed instability was followed by a fresh two-phase solve and final review");
-            break;
-        case Sw92PhaseAssignedPtStatus::w_h_locally_closed:
-            add(1U, 2U, PtPhaseTransitionTrigger::provider_topology_witness,
-                PtPhaseTransitionResolution::accepted_target,
-                true, true,
-                "an aqueous-appearance witness was followed by a fresh W(AQ)+H(NA) joint solve and H-side review");
-            break;
-        case Sw92PhaseAssignedPtStatus::w_h0_h1_locally_closed:
-            add(2U, 3U, PtPhaseTransitionTrigger::provider_topology_witness,
-                PtPhaseTransitionResolution::accepted_target,
-                true, true,
-                "an additional-H witness was followed by a fresh W(AQ)+H0(NA)+H1(NA) solve and final multiplicity review");
-            break;
-        case Sw92PhaseAssignedPtStatus::higher_phase_count_or_wrong_candidate:
-            add(source.phases.empty() ? 2U : source.phases.size(), std::nullopt,
-                PtPhaseTransitionTrigger::final_phase_set_instability,
-                PtPhaseTransitionResolution::broader_topology_required,
-                false, false,
-                source.diagnostic);
-            break;
-        case Sw92PhaseAssignedPtStatus::topology_unresolved:
-            if (source.base.no_w.status ==
-                Sw92PhaseAssignedNoWStatus::phase_disappearance_unresolved) {
-                add(2U, 1U, PtPhaseTransitionTrigger::phase_disappearance,
-                    PtPhaseTransitionResolution::target_resolve_required,
-                    false, false,
-                    source.base.no_w.diagnostic);
-            } else if (source.base.c2a1 &&
-                source.base.c2a1->status ==
-                    Sw92PhaseAssignedHSideWitnessStatus::
-                        additional_nonaqueous_phase_witness_found) {
-                add(2U, 3U, PtPhaseTransitionTrigger::provider_topology_witness,
-                    PtPhaseTransitionResolution::candidate_not_accepted,
-                    source.base.c2b1.has_value(), false,
-                    source.diagnostic);
-            }
-            break;
-        case Sw92PhaseAssignedPtStatus::numerical_indeterminate:
-            if (source.base.c2a1 &&
-                source.base.c2a1->status ==
-                    Sw92PhaseAssignedHSideWitnessStatus::
-                        additional_nonaqueous_phase_witness_found) {
-                add(2U, 3U, PtPhaseTransitionTrigger::provider_topology_witness,
-                    PtPhaseTransitionResolution::indeterminate,
-                    source.base.c2b1.has_value(), false,
-                    source.diagnostic);
-            }
-            break;
-        }
-        return report;
     }
 
     [[nodiscard]] static std::string physical_role_id(
