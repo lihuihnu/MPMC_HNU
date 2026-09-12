@@ -38,11 +38,15 @@ set(cases
     pr76_direct_equivalence
     sw92_direct_equivalence
     sw92_three_phase_capability
+    pr76_transition_projection
+    sw92_boundary_transition_projection
+    sw92_boundary_failure_projection
+    transition_contract_guards
     contract_guards
     headers)
 foreach(case IN LISTS cases)
     add_test(NAME flash.pt_flash_backend.${case}
              COMMAND mpmc_pt_flash_backend_tests ${case})
     set_tests_properties(flash.pt_flash_backend.${case} PROPERTIES
-        LABELS "flash;pt_flash_backend;capability;conformance" TIMEOUT 300)
+        LABELS "flash;pt_flash_backend;phase_transition;boundary;capability;conformance" TIMEOUT 300)
 endforeach()

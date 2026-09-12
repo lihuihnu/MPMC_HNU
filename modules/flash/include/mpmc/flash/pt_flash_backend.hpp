@@ -2,6 +2,7 @@
 #define MPMC_FLASH_PT_FLASH_BACKEND_HPP
 
 #include <mpmc/flash/pt_phase_set.hpp>
+#include <mpmc/flash/pt_phase_transition.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -40,6 +41,7 @@ struct PtFlashBackendCapability {
     std::vector<std::string> component_ids;
     std::vector<std::size_t> supported_phase_counts;
     std::vector<PtFlashBackendScalarSetting> scalar_settings;
+    PtPhaseTransitionCapability transition_capability;
 
     bool performs_initial_stability_search{false};
     bool performs_final_phase_set_review{false};
@@ -98,7 +100,8 @@ struct PtFlashBackendCapability {
                 }
             }
         }
-        return maximum_phase_count() > 0U;
+        const std::size_t maximum = maximum_phase_count();
+        return maximum > 0U && transition_capability.structurally_valid(maximum);
     }
 };
 
@@ -125,6 +128,7 @@ struct PtFlashBackendResult {
 
     PtFlashBackendCapability capability;
     PtPhaseSetResult solution;
+    PtPhaseTransitionReport transition_report;
     std::string provider_result_convention;
     std::vector<PtFlashBackendPhaseMetadata> phase_metadata;
     bool morphology_resolved{false};
@@ -135,6 +139,9 @@ struct PtFlashBackendResult {
             solution.capability.maximum_phase_count !=
                 capability.maximum_phase_count() ||
             solution.feed.size() != capability.component_ids.size() ||
+            !transition_report.structurally_valid(
+                capability.transition_capability,
+                capability.maximum_phase_count()) ||
             (solution.global_stability_proven &&
              !capability.global_stability_proven)) {
             return false;

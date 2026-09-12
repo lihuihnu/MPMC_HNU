@@ -150,6 +150,18 @@ std::string expected_family_id(th::SwPhaseFamily family) {
     return "unknown";
 }
 
+Vec edge_feed(const Vec& first, const Vec& second, double second_fraction) {
+    require(first.size() == second.size() && second_fraction > 0.0 &&
+                second_fraction < 1.0,
+            "invalid edge-feed construction");
+    Vec feed(first.size(), 0.0);
+    for (std::size_t i = 0; i < feed.size(); ++i) {
+        feed[i] = (1.0 - second_fraction) * first[i] +
+                  second_fraction * second[i];
+    }
+    return feed;
+}
+
 void pr76_direct_equivalence() {
     const auto model = pr76_binary_model();
     fl::Pr76VleEvaluator evaluator(model);
@@ -162,6 +174,8 @@ void pr76_direct_equivalence() {
     const auto adapted = runtime_backend.solve(request);
 
     const auto& capability = runtime_backend.capability();
+    const auto* one_to_two = capability.transition_capability.edge(1U, 2U);
+    const auto* two_to_one = capability.transition_capability.edge(2U, 1U);
     require(capability.structurally_valid(), "PR76 capability invalid");
     require(capability.backend_id == fl::pr76_pt_flash_backend_id &&
                 capability.model_profile == th::pr76_profile &&
@@ -175,6 +189,12 @@ void pr76_direct_equivalence() {
                 capability.supports_phase_count(2U) &&
                 !capability.supports_phase_count(3U) &&
                 capability.maximum_phase_count() == 2U &&
+                one_to_two != nullptr &&
+                one_to_two->support ==
+                    fl::PtPhaseTransitionSupport::fresh_target_resolve &&
+                two_to_one != nullptr &&
+                two_to_one->support ==
+                    fl::PtPhaseTransitionSupport::detection_only &&
                 capability.performs_initial_stability_search &&
                 capability.performs_final_phase_set_review &&
                 !capability.performs_boundary_neighbor_resolve &&
@@ -184,6 +204,10 @@ void pr76_direct_equivalence() {
     require(adapted.structurally_valid(), "PR76 backend result invalid");
     require(adapted.phase_metadata.empty() && !adapted.morphology_resolved,
             "PR76 backend invented provider phase morphology");
+    require(adapted.transition_report.structurally_valid(
+                capability.transition_capability,
+                capability.maximum_phase_count()),
+            "PR76 transition report invalid");
     require_phase_set_equal(adapted.solution, direct.solution);
 }
 
@@ -221,6 +245,15 @@ void sw92_direct_equivalence() {
                 capability.supports_phase_count(2U) &&
                 capability.supports_phase_count(3U) &&
                 capability.maximum_phase_count() == 3U &&
+                capability.transition_capability.edge(1U, 2U) != nullptr &&
+                capability.transition_capability.edge(2U, 1U) != nullptr &&
+                capability.transition_capability.edge(2U, 3U) != nullptr &&
+                capability.transition_capability.edge(3U, 2U) != nullptr &&
+                capability.transition_capability.edge(3U, 1U) != nullptr &&
+                capability.transition_capability.edge(2U, 1U)->support ==
+                    fl::PtPhaseTransitionSupport::detection_only &&
+                capability.transition_capability.edge(3U, 2U)->support ==
+                    fl::PtPhaseTransitionSupport::fresh_target_resolve &&
                 capability.performs_initial_stability_search &&
                 capability.performs_final_phase_set_review &&
                 capability.performs_boundary_neighbor_resolve &&
@@ -231,6 +264,10 @@ void sw92_direct_equivalence() {
     require(adapted.structurally_valid(), "SW92 backend result invalid");
     require(!adapted.morphology_resolved,
             "SW92 backend invented resolved H morphology");
+    require(adapted.transition_report.structurally_valid(
+                capability.transition_capability,
+                capability.maximum_phase_count()),
+            "SW92 transition report invalid");
     require_phase_set_equal(adapted.solution, direct.solution);
     require(adapted.phase_metadata.size() == direct.phase_metadata.size(),
             "SW92 phase metadata count changed");
@@ -270,6 +307,151 @@ void sw92_three_phase_capability() {
                     "nonaqueous_unclassified" &&
                 adapted.phase_metadata[2].family_id == "nonaqueous",
             "Sample-6 backend metadata invented hydrocarbon morphology");
+    require(adapted.transition_report.evidence.size() == 1U,
+            "Sample-6 transition trail changed");
+    const auto& transition = adapted.transition_report.evidence.front();
+    require(transition.source_phase_count == 2U &&
+                transition.target_phase_count == 3U &&
+                transition.trigger ==
+                    fl::PtPhaseTransitionTrigger::provider_topology_witness &&
+                transition.resolution ==
+                    fl::PtPhaseTransitionResolution::accepted_target &&
+                transition.fresh_target_solve_attempted &&
+                transition.target_topology_closed,
+            "Sample-6 2->3 transition was not published as a fresh accepted target solve");
+}
+
+void pr76_transition_projection() {
+    fl::PtSplitResult source;
+    source.status = fl::PtSplitStatus::two_phase_no_instability_found;
+    auto report = fl::project_pr76_pt_transition_report(source);
+    require(report.evidence.size() == 1U &&
+                report.evidence.front().source_phase_count == 1U &&
+                report.evidence.front().target_phase_count == 2U &&
+                report.evidence.front().resolution ==
+                    fl::PtPhaseTransitionResolution::accepted_target &&
+                report.evidence.front().fresh_target_solve_attempted &&
+                report.evidence.front().target_topology_closed,
+            "PR76 accepted 1->2 projection changed");
+
+    source = {};
+    source.status = fl::PtSplitStatus::indeterminate;
+    source.attempts.emplace_back();
+    source.attempts.back().status = fl::PtSplitAttemptStatus::phase_disappearance;
+    report = fl::project_pr76_pt_transition_report(source);
+    require(report.evidence.size() == 1U &&
+                report.evidence.front().source_phase_count == 2U &&
+                report.evidence.front().target_phase_count == 1U &&
+                report.evidence.front().resolution ==
+                    fl::PtPhaseTransitionResolution::target_resolve_required &&
+                !report.evidence.front().fresh_target_solve_attempted &&
+                !report.evidence.front().target_topology_closed,
+            "PR76 disappearance was incorrectly promoted to an accepted one-phase state");
+
+    source = {};
+    source.status = fl::PtSplitStatus::phase_set_unstable;
+    report = fl::project_pr76_pt_transition_report(source);
+    require(report.evidence.size() == 2U &&
+                report.evidence[1].source_phase_count == 2U &&
+                !report.evidence[1].target_phase_count &&
+                report.evidence[1].resolution ==
+                    fl::PtPhaseTransitionResolution::broader_topology_required,
+            "PR76 final-instability evidence invented a definite three-phase target");
+}
+
+void sw92_boundary_transition_projection() {
+    const auto model = sample6::model();
+    const Vec w = sample6::w();
+    const Vec h0 = sample6::h0();
+    const Vec h1 = sample6::h1();
+    const Vec feed = edge_feed(w, h0, 0.45);
+    const std::vector<Vec> diagnostics{h1};
+
+    auto boundary = fl::detail::sw92_phase_assigned_resolve_w_h_neighbor(
+        1.0e7, 350.0, feed, w, h0, model, 0.0,
+        fl::Sw92PhaseAssignedPtOptions{}, diagnostics);
+    require(boundary.status ==
+                fl::Sw92PhaseAssignedBoundaryStatus::resolved_to_w_h &&
+                boundary.re_solve_attempted && boundary.neighbor_locally_closed(),
+            "physical W+H edge no longer closes under fresh re-solve");
+    fl::Sw92PhaseAssignedBoundaryAwareResult source;
+    source.boundary = std::move(boundary);
+    const auto report = fl::project_sw92_profile_c_transition_report(source);
+    require(report.evidence.size() == 1U,
+            "SW boundary projection count changed");
+    const auto& transition = report.evidence.front();
+    require(transition.source_phase_count == 3U &&
+                transition.target_phase_count == 2U &&
+                transition.trigger ==
+                    fl::PtPhaseTransitionTrigger::provider_boundary_route &&
+                transition.resolution ==
+                    fl::PtPhaseTransitionResolution::accepted_target &&
+                transition.fresh_target_solve_attempted &&
+                transition.target_topology_closed,
+            "fresh SW 3->2 neighbor was not preserved by the generic transition projection");
+}
+
+void sw92_boundary_failure_projection() {
+    const auto model = sample6::model();
+    const Vec h0 = sample6::h0();
+    const Vec h1 = sample6::h1();
+    const Vec feed = edge_feed(h0, h1, 0.90);
+    const std::vector<Vec> starts{h0, h1};
+
+    auto boundary = fl::detail::sw92_phase_assigned_resolve_no_w_neighbor(
+        1.0e7, 350.0, feed, starts, model, 0.0,
+        fl::Sw92PhaseAssignedPtOptions{});
+    require(boundary.status ==
+                fl::Sw92PhaseAssignedBoundaryStatus::neighbor_topology_not_closed &&
+                boundary.re_solve_attempted && !boundary.neighbor_locally_closed(),
+            "physical no-W edge unexpectedly closed after fresh re-solve");
+    fl::Sw92PhaseAssignedBoundaryAwareResult source;
+    source.boundary = std::move(boundary);
+    const auto report = fl::project_sw92_profile_c_transition_report(source);
+    require(report.evidence.size() == 1U &&
+                report.evidence.front().source_phase_count == 3U &&
+                !report.evidence.front().target_phase_count &&
+                report.evidence.front().resolution ==
+                    fl::PtPhaseTransitionResolution::target_resolve_failed &&
+                report.evidence.front().fresh_target_solve_attempted &&
+                !report.evidence.front().target_topology_closed,
+            "failed fresh SW neighbor was silently converted into an accepted lower phase count");
+}
+
+void transition_contract_guards() {
+    fl::PtPhaseTransitionCapability capability;
+    capability.edges = {
+        {1U, 2U, fl::PtPhaseTransitionSupport::fresh_target_resolve, true},
+        {2U, 1U, fl::PtPhaseTransitionSupport::detection_only, true},
+        {2U, 3U, fl::PtPhaseTransitionSupport::fresh_target_resolve, true},
+        {3U, 2U, fl::PtPhaseTransitionSupport::fresh_target_resolve, true}};
+    require(capability.structurally_valid(3U),
+            "valid transition capability rejected");
+
+    fl::PtPhaseTransitionReport report;
+    report.evidence.push_back({
+        1U, 2U, fl::PtPhaseTransitionTrigger::initial_stability_witness,
+        fl::PtPhaseTransitionResolution::accepted_target,
+        true, true, "test/evidence/v1", "accepted"});
+    report.evidence.push_back({
+        2U, 1U, fl::PtPhaseTransitionTrigger::phase_disappearance,
+        fl::PtPhaseTransitionResolution::target_resolve_required,
+        false, false, "test/evidence/v1", "fresh solve required"});
+    require(report.structurally_valid(capability, 3U),
+            "valid transition evidence rejected");
+
+    auto malformed = capability;
+    malformed.edges.push_back(malformed.edges.front());
+    require(!malformed.structurally_valid(3U),
+            "duplicate transition edge accepted");
+
+    auto bad_report = report;
+    bad_report.evidence[1].resolution =
+        fl::PtPhaseTransitionResolution::accepted_target;
+    bad_report.evidence[1].fresh_target_solve_attempted = true;
+    bad_report.evidence[1].target_topology_closed = true;
+    require(!bad_report.structurally_valid(capability, 3U),
+            "detection-only 2->1 edge was promoted to accepted target");
 }
 
 void contract_guards() {
@@ -317,6 +499,10 @@ constexpr Test tests[]{
     {"pr76_direct_equivalence", pr76_direct_equivalence},
     {"sw92_direct_equivalence", sw92_direct_equivalence},
     {"sw92_three_phase_capability", sw92_three_phase_capability},
+    {"pr76_transition_projection", pr76_transition_projection},
+    {"sw92_boundary_transition_projection", sw92_boundary_transition_projection},
+    {"sw92_boundary_failure_projection", sw92_boundary_failure_projection},
+    {"transition_contract_guards", transition_contract_guards},
     {"contract_guards", contract_guards},
     {"headers", headers}};
 
