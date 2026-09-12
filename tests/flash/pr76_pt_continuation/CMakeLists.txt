@@ -51,7 +51,7 @@ foreach(case IN ITEMS
         repeated_three_phase
         invalid_path
         bracket_contract
-        diagnostic_temperature_scan)
+        diagnostic_pt_grid)
     add_test(NAME flash.pr76_pt_continuation.${case}
              COMMAND mpmc_pr76_pt_continuation_tests ${case})
     set_tests_properties(flash.pr76_pt_continuation.${case} PROPERTIES
