@@ -1,90 +1,95 @@
-# MPMC_HNU frontend — Profile-C PT shell
+# MPMC_HNU model-neutral PT frontend
 
-This directory contains the first web frontend increment for MPMC_HNU. It is a
-React + TypeScript + Vite application focused on the validated SW92 Profile-C
-PT topology result contract.
+This React + TypeScript + Vite application consumes the versioned
+[`mpmc.runtime.v1.PtFlashService`](../api/README.md) gRPC-Web contract. It first
+discovers configured PT backends and their exact component inventories, then
+builds the solve form from the selected immutable capability snapshot.
 
-## Scientific boundary
+## Scientific and service boundary
 
-The browser is **not** an EOS or flash implementation. It must not duplicate,
-approximate or reinterpret the C++ thermodynamics and phase-equilibrium logic.
+The browser is not an EOS or flash implementation. It does not:
 
-The authoritative backend entry is conceptually:
+- evaluate thermodynamic properties or roots;
+- decide phase count, stability, common tangency or acceptance;
+- normalize, clip, fill or fit feed composition;
+- infer morphology from phase order, branch, `Z`, role or family IDs;
+- retry an indeterminate solve or fall back to another backend.
 
-```text
-solve_sw92_phase_assigned_pt(p, T, z, model, molality, options)
+The selected backend determines the component IDs and canonical order. Users edit
+only `p`, `T`, and one mole fraction per discovered component. Configured scalar
+settings such as a backend-owned salinity value are discovery provenance and are
+read-only; they are not model-neutral solve inputs.
+
+Provider role/family metadata is shown verbatim with its declared namespace. It is
+not relabeled as liquid, vapor or aqueous by generic frontend code.
+
+## Connection
+
+Set the gRPC-Web base URL when building or serving the application:
+
+```bash
+VITE_MPMC_GRPC_WEB_BASE_URL=https://example.test/pt-api npm run dev
 ```
 
-The frontend contract mirrors its topology statuses and phase-instance fields.
-In particular:
+The client sends binary gRPC-Web requests to:
 
-- aqueous phase instances map to the SW92 AQ family;
-- nonaqueous instances remain `nonaqueous_unclassified`;
-- the UI must not relabel NA as liquid or vapor;
-- locally-closed finite-search candidates are not displayed as globally proven
-  phase sets;
-- `globalStabilityProven`, `acceptedPhaseSetPublished` and
-  `morphologyResolved` are explicitly false in this v1 contract;
-- input compositions are validated but never normalized, clipped or repaired by
-  the browser.
+```text
+<base-url>/mpmc.runtime.v1.PtFlashService/DiscoverPtCapabilities
+<base-url>/mpmc.runtime.v1.PtFlashService/SolvePtFlash
+```
 
-## Backend connection
+The endpoint or proxy must provide the required browser CORS response. If the
+variable is absent, the frontend remains explicitly unconfigured and sends no
+request. This repository does not ship a fake production backend or a deployed
+C++ worker.
 
-No compute transport is fabricated in this increment. `FlashClient` is the
-single injectable boundary. The production entry currently uses
-`unconfiguredFlashClient`, which disables calculation submission and reports
-that the compute service is not configured.
+Startup discovery must complete before solve is enabled. Switching the configured
+backend switches the inventory; component IDs cannot be added, removed or edited
+in the browser. A result provenance snapshot must exactly match the selected
+discovery descriptor or the response is rejected as a wire-contract failure.
 
-A later service increment should implement this interface against an explicit
-versioned MPMC_HNU transport contract. The service remains responsible for
-server-side validation, model/parameter capability checks and all C++
-thermodynamic calculations.
+## Result states
 
-Tests may inject deterministic response fixtures to validate presentation, but
-fixtures must never be shipped as production calculation results.
+The presentation keeps four boundaries visible:
 
-## Current UI
+| State | Source | Presentation |
+| --- | --- | --- |
+| `accepted` | Protobuf result arm | Variable 1..N accepted phase cards and provenance |
+| `phase_set_unstable` | Protobuf result arm | Scientific rejection, zero phase cards |
+| `indeterminate` | Protobuf result arm | Scientific uncertainty with diagnostic/provenance, zero phase cards |
+| `PtServiceError` | Protobuf error arm | Service error code, field and diagnostic |
+| gRPC or wire failure | RPC / client adapter | Connection/deadline/cancel/contract failure |
 
-The initial workspace provides:
+An indeterminate computation is therefore never displayed as “service unavailable,”
+and an RPC/service error is never presented as a thermodynamic decision.
 
-- pressure input in MPa, converted to Pa only at the request boundary;
-- temperature in K;
-- NaCl molality in mol/kg H2O;
-- runtime ordered component IDs and overall mole fractions;
-- exact backend-aligned topology status display;
-- one-, two- and three-phase candidate cards;
-- phase fraction, ordered composition, AQ/NA family and optional Z;
-- explicit diagnostic and scientific-validity messaging;
-- responsive desktop/mobile layout.
+The form allows one in-flight solve. Discovery has a 10-second client deadline,
+solve has a 120-second deadline, both accept cancellation, and neither is retried
+automatically.
 
 ## Development
 
-Requires Node 24.x.
+Requires Node 24.x. Exact direct dependencies and the complete transitive graph are
+pinned by `package.json` and `package-lock.json`.
 
 ```bash
 cd frontend
-npm install --ignore-scripts --no-audit --no-fund
+npm ci --ignore-scripts --no-audit --no-fund
+npm run proto:format-check
+npm run proto:lint
+npm run proto:generate
+git diff --exit-code -- src/gen
 npm run typecheck
 npm test
 npm run build
-npm run dev
 ```
 
-Dependencies are pinned to exact versions in `package.json`. The frontend is an
-independent web build and is not a prerequisite for building or testing the C++
-scientific core.
+The generated `src/gen/mpmc/runtime/v1/pt_service_pb.ts` is committed and must not
+be hand-edited. Tests cover binary Protobuf discovery round-trip, request value/order
+preservation, capability/inventory integrity, variable accepted phases, distinct
+indeterminate/service-error oneof arms, malformed-response rejection, gRPC timeout
+options and no automatic retry.
 
-## Next integration gate
-
-The transport-neutral C++ [model-neutral PT service boundary](../modules/runtime/README.md)
-now defines configured-backend discovery, runtime component inventories,
-ID-keyed requests, variable accepted phase counts, provenance, and explicit
-indeterminate/error outcomes across PR76, SW92 Profile-C, and CPA. This frontend
-has not yet been migrated to or connected through that contract.
-
-The next functional increment is a versioned Protobuf/gRPC-Web adapter and a
-frontend migration that discovers the selected backend before building the
-component form. The adapter must call `mpmc::runtime::PtService`, not the
-model-specific Profile-C API, and must preserve non-accepted outcomes without
-fabricating phase data. Until that transport exists, the disabled compute state
-remains intentional.
+The frontend remains independent of the C++ build. The browser dependencies are
+confined here and do not become prerequisites of `runtime`, `flash` or
+`thermodynamics`.

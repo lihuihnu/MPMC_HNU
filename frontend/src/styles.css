@@ -36,7 +36,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -134,6 +135,21 @@ code {
   flex: 0 0 auto;
 }
 
+.connection-banner-error {
+  border-color: #e9b3b3;
+  background: var(--danger-soft);
+  color: #713030;
+}
+
+.connection-banner code {
+  font-size: 0.78rem;
+}
+
+.banner-button {
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.06fr);
@@ -212,7 +228,7 @@ code {
   background: var(--accent-soft);
 }
 
-.status-chip[data-severity="candidate"] {
+.status-chip[data-severity="accepted"] {
   color: var(--accent-strong);
   background: var(--accent-soft);
 }
@@ -254,11 +270,83 @@ code {
   font-size: 0.76rem;
 }
 
+.model-contract-empty {
+  margin-top: 12px;
+  line-height: 1.5;
+}
+
+.backend-selector {
+  display: grid;
+  gap: 7px;
+  color: #35454b;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.backend-selector select {
+  width: 100%;
+  padding: 10px 34px 10px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  outline: 0;
+  background: #fff;
+  color: var(--ink);
+}
+
+.backend-selector select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(18, 94, 98, 0.11);
+}
+
+.capability-card {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 22px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+
+.capability-primary {
+  display: grid;
+  gap: 5px;
+}
+
+.capability-primary > span,
+.capability-facts,
+.scalar-settings {
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+
+.capability-primary code {
+  overflow-wrap: anywhere;
+  color: #33454b;
+  font-size: 0.76rem;
+}
+
+.capability-facts,
+.scalar-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 15px;
+}
+
+.scalar-settings {
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
 .field-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 26px;
+}
+
+.field-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .field-grid label {
@@ -369,6 +457,19 @@ code {
   background: transparent;
 }
 
+.inventory-component-table .component-table-head,
+.inventory-component-table .component-row {
+  grid-template-columns: minmax(0, 1.25fr) minmax(110px, 0.75fr);
+}
+
+.inventory-component-table .component-row code {
+  min-width: 0;
+  padding: 9px;
+  overflow-wrap: anywhere;
+  color: #33454b;
+  font-size: 0.78rem;
+}
+
 .component-row input:focus {
   border-color: var(--accent);
   background: #fff;
@@ -468,6 +569,17 @@ code {
   line-height: 1.45;
 }
 
+.submit-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.cancel-button {
+  margin-top: 0;
+}
+
 .result-contract-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -500,6 +612,30 @@ code {
   color: #624611;
   font-size: 0.76rem;
   line-height: 1.45;
+}
+
+.scientific-outcome {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 16px;
+  padding: 13px 14px;
+  border: 1px solid #e2c481;
+  border-radius: 10px;
+  background: var(--warning-soft);
+  color: #624611;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.scientific-outcome[data-outcome="indeterminate"] {
+  border-color: #d9abab;
+  background: var(--danger-soft);
+  color: #713030;
+}
+
+.scientific-outcome p,
+.failure-semantics {
+  margin: 0;
 }
 
 .phase-stack {
@@ -544,6 +680,7 @@ code {
 
 .phase-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   margin-top: 8px;
 }
@@ -556,7 +693,7 @@ code {
 .composition-result-head,
 .composition-result-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.55fr);
+  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(100px, 0.55fr));
   gap: 12px;
   padding: 7px 3px;
   font-size: 0.76rem;
@@ -574,8 +711,28 @@ code {
 }
 
 .composition-result-row code,
-.composition-result-head span:last-child {
+.composition-result-head span:not(:first-child) {
   text-align: right;
+}
+
+.service-error-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.service-error,
+.client-failure {
+  border-left: 4px solid var(--danger);
+}
+
+.failure-semantics {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 0.76rem;
 }
 
 .diagnostic-block {
@@ -620,6 +777,29 @@ code {
   overflow-wrap: anywhere;
   font-family: "SFMono-Regular", Consolas, monospace;
   color: #435259;
+}
+
+.transition-details ol {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.transition-details li {
+  line-height: 1.5;
+}
+
+.transition-details li > * {
+  display: block;
+}
+
+.transition-details li code {
+  overflow-wrap: anywhere;
+}
+
+.transition-details li p {
+  margin: 3px 0 0;
 }
 
 .app-footer {
@@ -669,6 +849,11 @@ code {
     grid-template-columns: minmax(0, 1fr) minmax(95px, 0.7fr) 38px;
   }
 
+  .inventory-component-table .component-table-head,
+  .inventory-component-table .component-row {
+    grid-template-columns: minmax(0, 1fr) minmax(95px, 0.72fr);
+  }
+
   .flash-form,
   .result-panel {
     padding: 18px;
@@ -686,5 +871,13 @@ code {
 
   .primary-button {
     width: 100%;
+  }
+
+  .submit-actions {
+    width: 100%;
+  }
+
+  .submit-actions .secondary-button {
+    margin-top: 0;
   }
 }

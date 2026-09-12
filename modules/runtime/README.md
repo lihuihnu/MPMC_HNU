@@ -111,9 +111,10 @@ unchanged. Any backend-owned roundoff-only representation in the returned feed
 is reported as the evaluated feed.
 
 `PtServiceLimits` bounds configured backend count, components per backend, and
-identifier bytes. A future wire/parser layer must additionally bound serialized
-payload bytes, metadata/diagnostic sizes, concurrent work, deadlines, and
-cancellation before allocating untrusted messages; the C++ v1 boundary does not
+identifier bytes. The Protobuf/browser v1 mapping adds post-decode shape and
+display-size guards plus client deadlines/cancellation, but a process host must
+still bound serialized payload bytes, metadata/diagnostic sizes, concurrent work
+and queues before allocating untrusted messages. The C++ v1 boundary does not
 claim those process-level quotas.
 
 ## Result, provenance, and variable phase count
@@ -198,17 +199,20 @@ is not experimental data or a thermodynamic validation. Existing backend suites
 remain the authority for material balance, fugacity equality, final common
 tangent, physical regression, and model-specific provenance.
 
-## Frontend handoff
+## Protobuf/gRPC-Web and frontend handoff
 
-The existing frontend remains intentionally unconnected in this increment. The
-next integration step is a separately versioned Protobuf/gRPC-Web mapping that:
+The separately versioned [`mpmc.runtime.v1` wire contract](../../api/README.md)
+and generated browser client now map discovery, requests, variable accepted phase
+sets, provenance, transition evidence and the response envelope. The frontend:
 
-1. exposes capability discovery before enabling a solve form;
-2. builds component rows from the selected runtime inventory;
-3. submits `PtServiceRequest` without model-specific solver options;
-4. renders the variable accepted phase vector and provenance;
-5. shows `phase_set_unstable`, `indeterminate`, and service errors as distinct
-   states without synthesizing phase data.
+1. completes capability discovery before enabling solve;
+2. builds read-only component identities from the selected runtime inventory;
+3. submits only configured backend ID, Pa, K and ID-keyed mole fractions;
+4. renders the variable accepted phase vector and provider-opaque metadata;
+5. shows `phase_set_unstable`, `indeterminate`, `PtServiceError`, and gRPC/wire
+   failures as distinct states without synthesizing phase data.
 
-That adapter must call `PtService`; it must not call model-specific solvers or
-recreate EOS/flash logic.
+The C++ `runtime` target remains transport-neutral and has no Protobuf/gRPC
+dependency. This repository does not yet provide the process-host adapter or a
+deployed endpoint; that worker must map the schema to `PtService`, not call
+model-specific solvers or recreate EOS/flash logic.
