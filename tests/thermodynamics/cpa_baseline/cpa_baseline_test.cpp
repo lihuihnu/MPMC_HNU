@@ -145,6 +145,44 @@ void analytic_one_site_association() {
             "CPA one-site fixed point disagrees with independent quadratic solution");
 }
 
+double association_helmholtz_rt(
+    double temperature, double density,
+    const std::vector<double>& x,
+    const th::CpaParameterSet& parameters) {
+    const auto association = th::solve_cpa_association(
+        temperature, density, x, parameters);
+    require(association.status == th::CpaAssociationStatus::success,
+            "association Helmholtz reference did not converge");
+    double value_rt = 0.0;
+    for (const auto& site : association.sites) {
+        const double site_x = site.unbonded_fraction;
+        value_rt += x[site.component_index] *
+            static_cast<double>(site.multiplicity) *
+            (std::log(site_x) - 0.5 * site_x + 0.5);
+    }
+    return value_rt;
+}
+
+void association_pressure_helmholtz_crosscheck() {
+    const auto parameters = one_component(true);
+    const std::vector<double> x{1.0};
+    constexpr double temperature = 320.0;
+    constexpr double density = 8000.0;
+    const auto state = th::evaluate_cpa_phase_at_density(
+        temperature, density, x, parameters);
+    const double h = density * 1.0e-5;
+    const double plus = association_helmholtz_rt(
+        temperature, density + h, x, parameters);
+    const double minus = association_helmholtz_rt(
+        temperature, density - h, x, parameters);
+    const double pressure_reference =
+        density * density * th::cpa_gas_constant_j_per_mol_k * temperature *
+        (plus - minus) / (2.0 * h);
+    require(std::abs(state.pressure_association_pa - pressure_reference) <=
+                2.0e-8 * std::max(1.0, std::abs(pressure_reference)),
+            "CPA association pressure disagrees with independent Helmholtz density derivative");
+}
+
 void nonassociating_srk_limit() {
     const auto parameters = one_component(false);
     const std::vector<double> x{1.0};
@@ -215,6 +253,7 @@ constexpr Test tests[]{
     {"parameter_reordering", parameter_reordering},
     {"provenance_retention", provenance_retention},
     {"analytic_one_site", analytic_one_site_association},
+    {"association_pressure", association_pressure_helmholtz_crosscheck},
     {"nonassociating_srk", nonassociating_srk_limit},
     {"association_permutation", association_pressure_and_permutation},
     {"missing_binary", missing_binary_rejected}};
