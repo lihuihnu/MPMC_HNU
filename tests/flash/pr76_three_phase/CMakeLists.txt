@@ -1,0 +1,89 @@
+cmake_minimum_required(VERSION 3.21)
+project(mpmc_pr76_three_phase_tests LANGUAGES CXX)
+
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash" flash-library)
+enable_testing()
+
+option(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS
+       "Enable ASan/UBSan for PR76 three-phase tests" OFF)
+
+add_executable(mpmc_pr76_three_phase_tests
+    pr76_three_phase_test.cpp
+    pr76_three_phase_headers.cpp)
+target_link_libraries(mpmc_pr76_three_phase_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_three_phase_tests PROPERTIES CXX_EXTENSIONS OFF)
+
+add_executable(mpmc_pr76_three_phase_seeded_tests
+    pr76_seeded_max3_test.cpp)
+target_link_libraries(mpmc_pr76_three_phase_seeded_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_three_phase_seeded_tests PROPERTIES CXX_EXTENSIONS OFF)
+
+add_executable(mpmc_pr76_three_phase_reference_test
+    pr76_reference_candidate_test.cpp)
+target_link_libraries(mpmc_pr76_three_phase_reference_test PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_three_phase_reference_test PROPERTIES CXX_EXTENSIONS OFF)
+
+add_dependencies(mpmc_pr76_three_phase_tests
+    mpmc_pr76_three_phase_seeded_tests
+    mpmc_pr76_three_phase_reference_test)
+
+if(MSVC)
+    foreach(target IN ITEMS
+            mpmc_pr76_three_phase_tests
+            mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_reference_test)
+        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
+    endforeach()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    foreach(target IN ITEMS
+            mpmc_pr76_three_phase_tests
+            mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_reference_test)
+        target_compile_options(${target} PRIVATE
+            -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+    endforeach()
+endif()
+
+if(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+        message(FATAL_ERROR "PR76 three-phase sanitizers require Linux GCC/Clang")
+    endif()
+    foreach(target IN ITEMS
+            mpmc_pr76_three_phase_tests
+            mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_reference_test)
+        target_compile_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all)
+    endforeach()
+endif()
+
+set(cases
+    generic_exact
+    generic_disappearance
+    pr76_fresh_two_phase_neighbor
+    headers)
+foreach(case IN LISTS cases)
+    add_test(NAME flash.pr76_three_phase.${case}
+             COMMAND mpmc_pr76_three_phase_tests ${case})
+    set_tests_properties(flash.pr76_three_phase.${case} PROPERTIES
+        LABELS "flash;pr76;three_phase;max3" TIMEOUT 300)
+endforeach()
+
+foreach(case IN ITEMS
+        seeded_max3
+        seeded_component_permutation
+        malformed_start
+        start_requires_instability)
+    add_test(NAME flash.pr76_three_phase.${case}
+             COMMAND mpmc_pr76_three_phase_seeded_tests ${case})
+    set_tests_properties(flash.pr76_three_phase.${case} PROPERTIES
+        LABELS "flash;pr76;three_phase;max3;seeded_multistart" TIMEOUT 300)
+endforeach()
+
+add_test(NAME flash.pr76_three_phase.reference_candidate
+         COMMAND mpmc_pr76_three_phase_reference_test)
+set_tests_properties(flash.pr76_three_phase.reference_candidate PROPERTIES
+    LABELS "flash;pr76;three_phase;max3;reference_candidate" TIMEOUT 300)

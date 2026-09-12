@@ -1,33 +1,29 @@
-name: PT flash backend conformance
+name: PR76 PT max-three-phase baseline
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_max3_phase_set.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_profile_c_pt_flash_backend.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
       - 'modules/flash/include/mpmc/flash/pt_*.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_*.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/**'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/**'
-      - 'tests/flash/pt_flash_backend/**'
-      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
-      - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
-      - 'tests/thermodynamics/sw92/test_support.hpp'
-      - '.github/workflows/pt_flash_backend.yml'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp'
+      - 'tests/flash/pr76_three_phase/**'
+      - '.github/workflows/pr76_three_phase.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pt-flash-backend-${{ github.ref }}
+  group: pr76-three-phase-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  backend:
+  max3:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -58,19 +54,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure PT flash backend conformance
+      - name: Configure PR76 max3
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
             config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
           fi
-          cmake -S tests/flash/pt_flash_backend \
-            -B build/pt-flash-backend \
+          cmake -S tests/flash/pr76_three_phase \
+            -B build/pr76-three-phase \
             "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_PT_FLASH_BACKEND_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+            -DMPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
 
-      - name: Build PT flash backend conformance
-        run: cmake --build build/pt-flash-backend --target mpmc_pt_flash_backend_tests --config ${{ matrix.config }} --parallel 2
+      - name: Build PR76 max3
+        run: cmake --build build/pr76-three-phase --target mpmc_pr76_three_phase_tests --config ${{ matrix.config }} --parallel 2
 
-      - name: Run PT flash backend conformance
-        run: ctest --test-dir build/pt-flash-backend -C ${{ matrix.config }} -R '^flash[.]pt_flash_backend[.]' --verbose --no-tests=error
+      - name: Run PR76 max3
+        run: ctest --test-dir build/pr76-three-phase -C ${{ matrix.config }} -R '^flash[.]pr76_three_phase[.]' --verbose --no-tests=error
