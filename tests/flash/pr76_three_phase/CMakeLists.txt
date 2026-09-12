@@ -72,7 +72,11 @@ foreach(case IN LISTS cases)
         LABELS "flash;pr76;three_phase;max3" TIMEOUT 300)
 endforeach()
 
-foreach(case IN ITEMS seeded_max3 seeded_component_permutation)
+foreach(case IN ITEMS
+        seeded_max3
+        seeded_component_permutation
+        malformed_start
+        start_requires_instability)
     add_test(NAME flash.pr76_three_phase.${case}
              COMMAND mpmc_pr76_three_phase_seeded_tests ${case})
     set_tests_properties(flash.pr76_three_phase.${case} PROPERTIES
