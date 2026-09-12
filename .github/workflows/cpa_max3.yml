@@ -1,0 +1,69 @@
+name: CPA PT max-three-phase baseline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
+      - 'tests/flash/cpa_max3/**'
+      - 'tests/flash/cpa_split/**'
+      - '.github/workflows/cpa_max3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-max3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  max3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure CPA max3
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/cpa_max3 \
+            -B build/cpa-max3 \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_CPA_MAX3_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build CPA max3
+        run: cmake --build build/cpa-max3 --config ${{ matrix.config }} --parallel 2
+
+      - name: Run CPA max3
+        run: ctest --test-dir build/cpa-max3 -C ${{ matrix.config }} -R '^flash[.]cpa_max3[.]' --verbose --no-tests=error
