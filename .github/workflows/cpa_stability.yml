@@ -1,0 +1,68 @@
+name: CPA PT stability
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/cpa_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
+      - 'tests/flash/cpa_stability/**'
+      - '.github/workflows/cpa_stability.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-stability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpa-stability:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure CPA stability
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/cpa_stability \
+            -B build/cpa-stability \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_CPA_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build CPA stability
+        run: cmake --build build/cpa-stability --target mpmc_cpa_stability_tests --config ${{ matrix.config }} --parallel 2
+
+      - name: Run CPA stability
+        run: ctest --test-dir build/cpa-stability -C ${{ matrix.config }} -R '^flash[.]cpa_stability[.]' --verbose --no-tests=error
