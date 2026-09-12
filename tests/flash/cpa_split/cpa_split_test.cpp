@@ -26,7 +26,13 @@ void print_split_summary(const char* label, const fl::CpaPtSplitResult& result) 
               << " attempts=" << result.solution.attempts.size()
               << " selected=" << (result.solution.selected_attempt.has_value() ? 1 : 0);
     for (const auto& attempt : result.solution.attempts) {
-        std::cout << " attempt=" << static_cast<int>(attempt.status);
+        std::cout << " attempt=" << static_cast<int>(attempt.status)
+                  << ",iter=" << attempt.iterations
+                  << ",eval=" << attempt.evaluations
+                  << ",reject=" << attempt.rejected_evaluations;
+        if (attempt.point) {
+            std::cout << ",fug=" << attempt.point->fugacity_norm;
+        }
     }
     if (result.solution.final_stability) {
         std::cout << " final="
@@ -71,6 +77,7 @@ fl::CpaPtSplitResult run_binary(bool swapped) {
     options.initial_stability.max_evaluations = 32U;
     options.final_stability.automatic_starts = false;
     options.final_stability.max_evaluations = 64U;
+    options.iteration.max_evaluations = 100000U;
     return fl::solve_cpa_pt_vle(
         3.0e6, 180.0, feed, evaluator, options, starts, starts);
 }
