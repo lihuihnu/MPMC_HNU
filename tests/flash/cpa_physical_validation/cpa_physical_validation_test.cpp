@@ -16,15 +16,6 @@ void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
 }
 
-th::CpaPtOptions physical_pt_options() {
-    th::CpaPtOptions options;
-    options.scan_intervals = 256U;
-    options.max_evaluations = 4096U;
-    options.pressure_absolute_tolerance_pa = 3.0e-6;
-    options.pressure_relative_tolerance = 1.0e-12;
-    return options;
-}
-
 fl::PtSplitOptions physical_split_options() {
     fl::PtSplitOptions options;
     options.initial_stability.automatic_starts = false;
@@ -70,7 +61,7 @@ fl::CpaPtSplitResult solve_point(
     bool swapped = false) {
     const auto parameters = cpa_physical_test::parameters(swapped);
     const auto model = th::CpaPtPhase::from_parameters(parameters);
-    fl::CpaVleEvaluator evaluator(model, physical_pt_options());
+    fl::CpaVleEvaluator evaluator(model);
     const auto feed = cpa_physical_test::feed(experimental, swapped);
     const auto starts = cpa_physical_test::starts(experimental, swapped);
     return fl::solve_cpa_pt_vle(
@@ -122,35 +113,42 @@ void require_active_association(
             "accepted physical VLE has effectively inactive association sites");
 }
 
-void default_flash_precision_probe() {
+void default_flash_precision() {
+    const auto defaults = fl::cpa_pt_vle_default_phase_options();
+    require(defaults.pressure_absolute_tolerance_pa == 1.0e-7 &&
+                defaults.pressure_relative_tolerance == 1.0e-12,
+            "CPA flash-specific density-root defaults changed");
+
     const auto& experimental = cpa_physical_test::points()[2];
     const auto parameters = cpa_physical_test::parameters(false);
     const auto model = th::CpaPtPhase::from_parameters(parameters);
-    fl::CpaVleEvaluator evaluator(model); // Intentionally current production default.
+    fl::CpaVleEvaluator evaluator(model);
+    require(evaluator.pt_options().pressure_absolute_tolerance_pa ==
+                defaults.pressure_absolute_tolerance_pa &&
+                evaluator.pt_options().pressure_relative_tolerance ==
+                defaults.pressure_relative_tolerance,
+            "CPA VLE evaluator no longer uses flash-specific root defaults");
+
     const auto feed = cpa_physical_test::feed(experimental, false);
     const auto starts = cpa_physical_test::starts(experimental, false);
     const auto result = fl::solve_cpa_pt_vle(
         experimental.pressure_pa, cpa_physical_test::temperature_k,
         feed, evaluator, physical_split_options(), starts);
-    std::cout << "CPA_DEFAULT_PRECISION status="
-              << static_cast<int>(result.solution.status);
-    if (const auto* point = result.solution.candidate()) {
-        std::cout << " fug=" << point->fugacity_norm;
-    }
-    if (result.solution.final_stability) {
-        std::cout << " final="
-                  << static_cast<int>(result.solution.final_stability->status);
-    }
-    std::cout << " absP=" << evaluator.pt_options().pressure_absolute_tolerance_pa
-              << " relP=" << evaluator.pt_options().pressure_relative_tolerance
-              << '\n';
+    require(result.solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
+                result.solution.candidate() != nullptr &&
+                result.solution.final_stability.has_value() &&
+                result.solution.final_stability->status ==
+                    fl::StabilityStatus::no_instability_found &&
+                result.solution.candidate()->fugacity_norm <=
+                    result.solution.options.iteration.fugacity_tolerance,
+            "CPA production flash defaults do not close the associating physical point");
 }
 
 void literature_vle_points() {
     const auto parameters = cpa_physical_test::parameters(false);
     const auto model = th::CpaPtPhase::from_parameters(parameters);
-    const auto pt_options = physical_pt_options();
-    fl::CpaVleEvaluator evaluator(model, pt_options);
+    fl::CpaVleEvaluator evaluator(model);
+    const auto& pt_options = evaluator.pt_options();
 
     double sum_dx = 0.0;
     double sum_dy = 0.0;
@@ -162,6 +160,9 @@ void literature_vle_points() {
         const double direct_mu = experimental_pair_residual(evaluator, experimental);
         const auto feed = cpa_physical_test::feed(experimental, false);
         const auto starts = cpa_physical_test::starts(experimental, false);
+        // Experimental x/y initialize the physical split only. Final common-tangent
+        // review uses the converged model-owned phase compositions that solve_pt_vle
+        // appends internally; measurement error must not be promoted to topology evidence.
         const auto result = fl::solve_cpa_pt_vle(
             experimental.pressure_pa, cpa_physical_test::temperature_k,
             feed, evaluator, physical_split_options(), starts);
@@ -243,7 +244,7 @@ void component_permutation() {
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"parameter_provenance", parameter_provenance},
-    {"default_flash_precision_probe", default_flash_precision_probe},
+    {"default_flash_precision", default_flash_precision},
     {"literature_vle_points", literature_vle_points},
     {"component_permutation", component_permutation}};
 
