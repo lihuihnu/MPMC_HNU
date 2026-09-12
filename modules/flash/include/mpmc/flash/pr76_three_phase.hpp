@@ -120,6 +120,9 @@ struct Pr76PtMax3Options {
     PtSplitOptions two_phase;
     PtThreePhaseOptions three_phase;
     StabilityOptions final_three_phase_stability;
+    // Independent bounded budget for each initialization source class:
+    // caller-supplied continuation hints and automatic negative-TPD witnesses.
+    // One class exhausting its budget must not prevent the other from running.
     std::size_t max_three_phase_attempts{16};
     double new_phase_seed_fraction{0.1};
     std::vector<Pr76PtThreePhaseStart> three_phase_starts;
@@ -160,6 +163,9 @@ struct Pr76PtMax3Result {
     Pr76PtSplitResult base;
     std::vector<Pr76PtThreePhaseAttempt> attempts;
     std::optional<std::size_t> selected_attempt;
+    // True when at least one initialization source class exhausted its own
+    // bounded quota. Exhaustion of continuation hints never suppresses the
+    // automatic negative-TPD witness route, and vice versa.
     bool attempt_limit_reached{false};
     std::string diagnostic;
 
@@ -365,18 +371,29 @@ inline void pr76_pt_max3_check_starts(
     bool saw_higher = false;
     bool saw_boundary = false;
     bool saw_indeterminate = false;
+    std::size_t continuation_attempts = 0U;
+    std::size_t automatic_attempts = 0U;
+    bool continuation_limit_reached = false;
+    bool automatic_limit_reached = false;
 
-    const auto run_attempt = [&](
+    const auto run_attempt = [&] (
         std::span<const double> log_k_1,
         std::span<const double> log_k_2,
         std::array<double, 2> fractions,
         std::array<Pr76RootSide, 3> root_sides,
         std::optional<std::size_t> witness_trial,
         std::optional<std::size_t> supplied_start) {
-        if (result.attempts.size() >= options.max_three_phase_attempts) {
+        const bool continuation = supplied_start.has_value();
+        auto& source_attempts = continuation ? continuation_attempts : automatic_attempts;
+        auto& source_limit = continuation ? continuation_limit_reached
+                                          : automatic_limit_reached;
+        if (source_attempts >= options.max_three_phase_attempts) {
+            source_limit = true;
             result.attempt_limit_reached = true;
             return false;
         }
+        ++source_attempts;
+
         Pr76PtThreePhaseAttempt attempt;
         attempt.witness_trial = witness_trial;
         attempt.supplied_start = supplied_start;
@@ -454,6 +471,7 @@ inline void pr76_pt_max3_check_starts(
     // unless the established two-phase final review has already proved the pair
     // unstable (the branch above). Enumerate numerical root sides because a
     // one-root start does not define which side should be followed if roots split.
+    // Their bounded quota is independent of the automatic witness quota below.
     for (std::size_t start_index = 0;
          start_index < options.three_phase_starts.size(); ++start_index) {
         const auto& start = options.three_phase_starts[start_index];
@@ -473,52 +491,51 @@ inline void pr76_pt_max3_check_starts(
                             {side0, side1, side2}, std::nullopt, start_index)) {
                         return result;
                     }
-                    if (result.attempt_limit_reached) { break; }
+                    if (continuation_limit_reached) { break; }
                 }
-                if (result.attempt_limit_reached) { break; }
+                if (continuation_limit_reached) { break; }
             }
-            if (result.attempt_limit_reached) { break; }
+            if (continuation_limit_reached) { break; }
         }
-        if (result.attempt_limit_reached) { break; }
+        if (continuation_limit_reached) { break; }
     }
 
     // Negative final-stability witnesses remain the automatic 2->3 seed source.
-    // These attempts are still valuable when no explicit continuation hint exists.
-    if (!result.attempt_limit_reached) {
-        const auto source_log_k_1 = detail::pr76_three_phase_log_ratio(
-            pair->fractions.vapor, pair->fractions.liquid, normalized_feed);
-        if (source_log_k_1) {
-            for (std::size_t witness_index = 0;
-                 witness_index < final_search.trials.size(); ++witness_index) {
-                const auto& witness = final_search.trials[witness_index];
-                if (!detail::pr76_negative_final_witness(
-                        witness, final_search.options)) {
-                    continue;
-                }
-                const auto log_k_2 = detail::pr76_three_phase_log_ratio(
-                    witness.point->composition, pair->fractions.liquid,
-                    normalized_feed);
-                if (!log_k_2) { continue; }
-                const auto witness_sides = detail::pr76_witness_root_sides(
-                    pressure_pa, temperature_k, witness.point->composition,
-                    witness.point->branch, model, evaluator.root_options());
-                for (const Pr76RootSide witness_side : witness_sides) {
-                    const double beta_v = pair->fractions.vapor_fraction;
-                    const std::array<double, 2> fractions{
-                        (1.0 - options.new_phase_seed_fraction) * beta_v,
-                        options.new_phase_seed_fraction};
-                    if (run_attempt(
-                            *source_log_k_1, *log_k_2, fractions,
-                            {Pr76RootSide::lower_admissible,
-                             Pr76RootSide::upper_admissible,
-                             witness_side},
-                            witness_index, std::nullopt)) {
-                        return result;
-                    }
-                    if (result.attempt_limit_reached) { break; }
-                }
-                if (result.attempt_limit_reached) { break; }
+    // This source has its own bounded quota, so exhausted or poor continuation
+    // hints can never suppress thermodynamic evidence already found by final TPD.
+    const auto source_log_k_1 = detail::pr76_three_phase_log_ratio(
+        pair->fractions.vapor, pair->fractions.liquid, normalized_feed);
+    if (source_log_k_1) {
+        for (std::size_t witness_index = 0;
+             witness_index < final_search.trials.size(); ++witness_index) {
+            const auto& witness = final_search.trials[witness_index];
+            if (!detail::pr76_negative_final_witness(
+                    witness, final_search.options)) {
+                continue;
             }
+            const auto log_k_2 = detail::pr76_three_phase_log_ratio(
+                witness.point->composition, pair->fractions.liquid,
+                normalized_feed);
+            if (!log_k_2) { continue; }
+            const auto witness_sides = detail::pr76_witness_root_sides(
+                pressure_pa, temperature_k, witness.point->composition,
+                witness.point->branch, model, evaluator.root_options());
+            for (const Pr76RootSide witness_side : witness_sides) {
+                const double beta_v = pair->fractions.vapor_fraction;
+                const std::array<double, 2> fractions{
+                    (1.0 - options.new_phase_seed_fraction) * beta_v,
+                    options.new_phase_seed_fraction};
+                if (run_attempt(
+                        *source_log_k_1, *log_k_2, fractions,
+                        {Pr76RootSide::lower_admissible,
+                         Pr76RootSide::upper_admissible,
+                         witness_side},
+                        witness_index, std::nullopt)) {
+                    return result;
+                }
+                if (automatic_limit_reached) { break; }
+            }
+            if (automatic_limit_reached) { break; }
         }
     }
 
@@ -532,10 +549,12 @@ inline void pr76_pt_max3_check_starts(
             "PR76 max3: three-phase iteration reached a disappearance boundary but the fresh two-phase neighbor did not close";
     } else {
         result.status = Pr76PtMax3Status::indeterminate;
-        result.diagnostic = result.attempt_limit_reached
-            ? "PR76 max3: three-phase attempt quota exhausted without an accepted topology"
+        result.diagnostic = automatic_limit_reached
+            ? "PR76 max3: automatic negative-TPD witness attempt quota exhausted without an accepted topology"
             : (saw_indeterminate
-                ? "PR76 max3: additional-phase evidence exists but no three-phase attempt completed all equilibrium/stability gates"
+                ? (continuation_limit_reached
+                    ? "PR76 max3: continuation-hint quota was exhausted, automatic witnesses were still evaluated, and no three-phase attempt completed all equilibrium/stability gates"
+                    : "PR76 max3: additional-phase evidence exists but no three-phase attempt completed all equilibrium/stability gates")
                 : "PR76 max3: unstable two-phase set lacks a usable additional-phase seed");
     }
     return result;
