@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <set>
 #include <span>
@@ -156,6 +157,19 @@ public:
         result.revision_ = input.revision;
         result.applicability_ = input.applicability;
 
+        const std::size_t n = result.components_.size();
+        require_cpa(n == 0U || n - 1U <=
+                        std::numeric_limits<std::size_t>::max() / n,
+                    ContractErrorCode::size_limit, "cpa.parameters",
+                    "selected pair count overflows size_t");
+        const std::size_t selected_pair_count =
+            n < 2U ? 0U : n * (n - 1U) / 2U;
+        require_cpa(selected_pair_count <= limits.max_pair_records &&
+                        selected_pair_count <=
+                            std::vector<CpaBinaryInteractionInput>{}.max_size(),
+                    ContractErrorCode::size_limit, "cpa.parameters",
+                    "selected pair count exceeds resource limits");
+
         std::set<std::string, std::less<>> catalog_ids;
         for (const auto& component : catalog) { catalog_ids.insert(component.id); }
 
@@ -237,8 +251,7 @@ public:
                         "duplicate unordered binary interaction");
         }
 
-        const std::size_t n = result.components_.size();
-        result.binary_records_.reserve(n > 0U ? n - 1U : 0U);
+        result.binary_records_.reserve(selected_pair_count);
         for (std::size_t i = 0; i < n; ++i) {
             for (std::size_t j = i + 1U; j < n; ++j) {
                 const auto key = ordered_component_pair(
@@ -255,28 +268,29 @@ public:
             }
         }
 
-        const auto site_exists = [&](const std::string& component_id,
-                                     const std::string& site_id) {
-            if (!result.components_.contains(component_id)) { return false; }
-            const auto index = result.components_.index_of(component_id);
-            return std::any_of(result.pure_[index].sites.begin(),
-                               result.pure_[index].sites.end(),
-                               [&](const CpaAssociationSiteInput& site) {
-                                   return site.id == site_id;
-                               });
+        const auto catalog_site_exists = [&](const std::string& component_id,
+                                             const std::string& site_id) {
+            const auto found = pure_by_id.find(component_id);
+            if (found == pure_by_id.end()) { return false; }
+            return std::any_of(
+                found->second->sites.begin(), found->second->sites.end(),
+                [&](const CpaAssociationSiteInput& site) {
+                    return site.id == site_id;
+                });
         };
 
+        std::set<AssociationKey> association_keys;
         for (const auto& pair : input.association_pairs) {
             detail::validate_id(pair.first_component_id, "cpa.association.first_component");
             detail::validate_id(pair.second_component_id, "cpa.association.second_component");
             detail::validate_id(pair.first_site_id, "cpa.association.first_site");
             detail::validate_id(pair.second_site_id, "cpa.association.second_site");
-            require_cpa(result.components_.contains(pair.first_component_id) &&
-                            result.components_.contains(pair.second_component_id),
+            require_cpa(catalog_ids.contains(pair.first_component_id) &&
+                            catalog_ids.contains(pair.second_component_id),
                         ContractErrorCode::unknown_component, "cpa.association",
-                        "association records in this snapshot must reference selected components");
-            require_cpa(site_exists(pair.first_component_id, pair.first_site_id) &&
-                            site_exists(pair.second_component_id, pair.second_site_id),
+                        "association pair references component outside catalog");
+            require_cpa(catalog_site_exists(pair.first_component_id, pair.first_site_id) &&
+                            catalog_site_exists(pair.second_component_id, pair.second_site_id),
                         ContractErrorCode::invalid_pair, "cpa.association",
                         "association pair references undeclared site class");
             validate_value(pair.epsilon_j_per_mol, "cpa.association.epsilon_j_per_mol",
@@ -286,12 +300,18 @@ public:
             const auto key = ordered_association_pair(
                 {pair.first_component_id, pair.first_site_id},
                 {pair.second_component_id, pair.second_site_id});
-            require_cpa(result.association_.emplace(
-                            key, CpaAssociationPairParameters{
-                                pair.epsilon_j_per_mol.value,
-                                pair.beta_dimensionless.value}).second,
+            require_cpa(association_keys.insert(key).second,
                         ContractErrorCode::duplicate_parameter, "cpa.association",
                         "duplicate unordered association site-pair interaction");
+
+            if (!result.components_.contains(pair.first_component_id) ||
+                !result.components_.contains(pair.second_component_id)) {
+                continue;
+            }
+            result.association_.emplace(
+                key, CpaAssociationPairParameters{
+                    pair.epsilon_j_per_mol.value,
+                    pair.beta_dimensionless.value});
             result.association_records_.push_back(pair);
         }
         return result;
