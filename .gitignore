@@ -4,3 +4,5 @@
 /frontend/dist/
 /frontend/.vite/
 /frontend/coverage/
+__pycache__/
+*.py[cod]

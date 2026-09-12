@@ -31,7 +31,6 @@ library adapter, not a production worker executable.
 | serialized response | 4 MiB | adapter pre-publication check and gRPC send limit |
 | concurrent solves | 1 | non-blocking admission gate; excess calls receive `RESOURCE_EXHAUSTED` |
 | gRPC resource quota | 64 MiB | server-builder gRPC memory quota |
-| gRPC worker threads | 16 | resource-quota thread cap for synchronous handlers |
 | discovery deadline | 10 s | finite client deadline required and capped |
 | solve deadline | 120 s | finite client deadline required and capped |
 
@@ -44,7 +43,10 @@ Request size is bounded by `ServerBuilder::SetMaxReceiveMessageSize()` before a
 Protobuf message reaches the handler. `ByteSizeLong()` is checked again so direct
 handler use cannot bypass policy. `configure_pt_grpc_server()` also applies the
 response limit and a `grpc::ResourceQuota` memory bound; it intentionally leaves
-address, credentials, TLS, authentication, and process lifetime to the host.
+address, credentials, TLS, authentication, and process lifetime to the host. The
+[`pt_process`](../pt_process/README.md) module supplies the production
+composition root and mandatory-mTLS host without moving those concerns into the
+adapter.
 
 ## Deadline and cancellation semantics
 
@@ -67,6 +69,17 @@ work against a backend assumed to be serialized.
 zero published phases. `PtServiceError` remains an OK gRPC response on the
 service-error arm. Only wire, resource, process, deadline, cancellation, or
 unexpected adapter failures use non-OK gRPC status.
+
+## Observability hook
+
+An optional `PtGrpcObserver` receives one completion record for every adapter
+call. It separates transport/process completion from the optional
+`PtServiceOutcome`, so a scientific `indeterminate` and a `PtService` error are
+not collapsed into a transport failure. Records contain only method, outcome
+categories, byte counts, elapsed time, and whether `PtService` was reached.
+Pressure, temperature, composition, model parameters, diagnostics, and
+credentials are not part of the observation contract. Observer implementations
+must absorb their own failures and cannot change the RPC result.
 
 ## Build and dependencies
 

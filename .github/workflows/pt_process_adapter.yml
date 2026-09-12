@@ -8,10 +8,12 @@ on:
       - 'deploy/pt-grpc-web/**'
       - 'modules/runtime/**'
       - 'modules/runtime_grpc/**'
+      - 'modules/pt_process/**'
       - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
       - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
       - 'modules/flash/include/mpmc/flash/pt_phase_transition.hpp'
       - 'tests/runtime/pt_grpc_adapter/**'
+      - 'tests/runtime/pt_process_host/**'
       - 'frontend/buf.gen.yaml'
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
@@ -32,7 +34,7 @@ jobs:
   adapter:
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -72,10 +74,70 @@ jobs:
             -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
             -DMPMC_PT_GRPC_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
 
+      - name: Generate isolated mTLS test authorities and identities
+        run: |
+          set -euo pipefail
+          cert_dir="${PWD}/build/pt-process-certs"
+          mkdir -p "${cert_dir}"
+
+          issue_ca() {
+            local name=$1
+            openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+              -subj "/CN=${name}" \
+              -keyout "${cert_dir}/${name}.key" \
+              -out "${cert_dir}/${name}.crt"
+          }
+          issue_identity() {
+            local name=$1
+            local common_name=$2
+            local authority=$3
+            local extension=$4
+            openssl req -newkey rsa:2048 -nodes -sha256 \
+              -subj "/CN=${common_name}" -addext "${extension}" \
+              -keyout "${cert_dir}/${name}.key" \
+              -out "${cert_dir}/${name}.csr"
+            openssl x509 -req -sha256 -days 1 -copy_extensions copy \
+              -in "${cert_dir}/${name}.csr" \
+              -CA "${cert_dir}/${authority}.crt" \
+              -CAkey "${cert_dir}/${authority}.key" \
+              -CAcreateserial -out "${cert_dir}/${name}.crt"
+          }
+
+          issue_ca backend-ca
+          issue_ca edge-ca
+          issue_ca public-ca
+          issue_ca browser-ca
+          issue_identity backend pt-backend.internal backend-ca \
+            "subjectAltName=DNS:pt-backend.internal"
+          issue_identity edge envoy-edge edge-ca \
+            "extendedKeyUsage=clientAuth"
+          issue_identity public api.example.test public-ca \
+            "subjectAltName=DNS:api.example.test"
+          issue_identity browser browser-test-client browser-ca \
+            "extendedKeyUsage=clientAuth"
+          # These one-day identities are job-local test material; the Envoy
+          # container runs under a different UID and needs read-only access.
+          chmod 0644 "${cert_dir}"/*.crt "${cert_dir}"/*.key
+
+      - name: Configure secure PT composition/process host
+        run: |
+          cmake -S tests/runtime/pt_process_host \
+            -B build/pt-process-host \
+            -DCMAKE_BUILD_TYPE=${{ matrix.config }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
+            -DMPMC_PT_PROCESS_ENABLE_SANITIZERS=${{ matrix.sanitizers }} \
+            -DMPMC_PT_PROCESS_TEST_CERT_DIR="${PWD}/build/pt-process-certs"
+
       - name: Build PT process adapter
         run: >-
           cmake --build build/pt-grpc-adapter
           --target mpmc_pt_grpc_adapter_tests mpmc_pt_grpc_golden_server
+          --parallel 2
+
+      - name: Build secure PT composition/process host
+        run: >-
+          cmake --build build/pt-process-host
+          --target mpmc_pt_process_tests mpmc_pt_secure_test_server mpmc_pt_secure_client
           --parallel 2
 
       - name: Run native adapter resource and lifecycle regression
@@ -83,6 +145,20 @@ jobs:
           ctest --test-dir build/pt-grpc-adapter
           -R '^runtime[.]pt_grpc_adapter[.]'
           --verbose --no-tests=error
+
+      - name: Run composition ownership, observability, and native mTLS regression
+        run: >-
+          ctest --test-dir build/pt-process-host
+          -R '^runtime[.]pt_process[.]'
+          --verbose --no-tests=error
+
+      - name: Run production edge renderer regression
+        run: python3 -m unittest discover -s deploy/pt-grpc-web/tests -v
+
+      - name: Enforce model-neutral host and adapter boundary
+        run: >-
+          python3 -m unittest discover
+          -s tests/runtime/pt_process_host -p 'test_*.py' -v
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         if: matrix.cross_language
@@ -103,6 +179,28 @@ jobs:
           --volume "${PWD}/deploy/pt-grpc-web/envoy.yaml:/etc/envoy/envoy.yaml:ro"
           envoyproxy/envoy:v1.36.9
           --mode validate -c /etc/envoy/envoy.yaml
+
+      - name: Render and validate production mTLS edge
+        if: matrix.cross_language
+        run: |
+          set -euo pipefail
+          cert_dir="${PWD}/build/pt-process-certs"
+          python3 deploy/pt-grpc-web/render_production_config.py \
+            --public-host api.example.test \
+            --public-origin https://ui.example.test \
+            --downstream-certificate-chain /run/secrets/public.crt \
+            --downstream-private-key /run/secrets/public.key \
+            --downstream-client-ca /run/secrets/browser-ca.crt \
+            --upstream-server-name pt-backend.internal \
+            --upstream-client-certificate-chain /run/secrets/edge.crt \
+            --upstream-client-private-key /run/secrets/edge.key \
+            --upstream-server-ca /run/secrets/backend-ca.crt \
+            > build/pt-envoy-production.yaml
+          docker run --rm \
+            --volume "${PWD}/build/pt-envoy-production.yaml:/etc/envoy/envoy.yaml:ro" \
+            --volume "${cert_dir}:/run/secrets:ro" \
+            envoyproxy/envoy:v1.36.9 \
+            --mode validate -c /etc/envoy/envoy.yaml
 
       - name: Run TypeScript to C++ gRPC-Web golden
         if: matrix.cross_language
@@ -152,3 +250,117 @@ jobs:
             tail -200 "${server_log}" || true
             exit 1
           fi
+
+      - name: Run production edge mutual-TLS, CORS, health, and metrics regression
+        if: matrix.cross_language
+        run: |
+          set -euo pipefail
+          cert_dir="${PWD}/build/pt-process-certs"
+          server_log="${PWD}/build/pt-process-host/secure-server.log"
+          ASAN_OPTIONS=detect_leaks=0 \
+            ./build/pt-process-host/mpmc_pt_secure_test_server \
+            127.0.0.1:50051 \
+            "${cert_dir}/backend.crt" \
+            "${cert_dir}/backend.key" \
+            "${cert_dir}/edge-ca.crt" >"${server_log}" 2>&1 &
+          server_pid=$!
+          container_name="mpmc-pt-production-envoy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            kill "${server_pid}" 2>/dev/null || true
+            docker rm --force "${container_name}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..50}; do
+            if grep --quiet '^READY ' "${server_log}"; then break; fi
+            sleep 0.1
+          done
+          if ! grep '^READY ' "${server_log}"; then
+            tail -200 "${server_log}" || true
+            exit 1
+          fi
+
+          docker run --detach --rm --network host \
+            --name "${container_name}" \
+            --volume "${PWD}/build/pt-envoy-production.yaml:/etc/envoy/envoy.yaml:ro" \
+            --volume "${cert_dir}:/run/secrets:ro" \
+            envoyproxy/envoy:v1.36.9 \
+            -c /etc/envoy/envoy.yaml
+          for attempt in {1..100}; do
+            if curl --fail --silent http://127.0.0.1:9901/ready >/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          curl --fail --silent http://127.0.0.1:9901/ready >/dev/null
+
+          cluster_state="${PWD}/build/pt-production-clusters.txt"
+          for attempt in {1..100}; do
+            curl --fail --silent http://127.0.0.1:9901/clusters \
+              -o "${cluster_state}"
+            if grep --quiet \
+              'pt_service_native_grpc::127.0.0.1:50051::health_flags::healthy' \
+              "${cluster_state}"; then
+              break
+            fi
+            sleep 0.1
+          done
+          grep --quiet \
+            'pt_service_native_grpc::127.0.0.1:50051::health_flags::healthy' \
+            "${cluster_state}"
+
+          if curl --silent --show-error --noproxy '*' \
+            --cacert "${cert_dir}/public-ca.crt" \
+            --resolve api.example.test:8443:127.0.0.1 \
+            https://api.example.test:8443/ >/dev/null 2>&1; then
+            echo "production edge accepted a client without a certificate"
+            exit 1
+          fi
+
+          ./build/pt-process-host/mpmc_pt_secure_client \
+            127.0.0.1:8443 api.example.test \
+            "${cert_dir}/public-ca.crt" \
+            "${cert_dir}/browser.crt" \
+            "${cert_dir}/browser.key"
+
+          allowed_headers="${PWD}/build/cors-allowed.headers"
+          curl --fail --silent --show-error --noproxy '*' \
+            --cacert "${cert_dir}/public-ca.crt" \
+            --cert "${cert_dir}/browser.crt" \
+            --key "${cert_dir}/browser.key" \
+            --resolve api.example.test:8443:127.0.0.1 \
+            -H 'Origin: https://ui.example.test' \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Host: api.example.test' \
+            -X OPTIONS -D "${allowed_headers}" -o /dev/null \
+            https://api.example.test:8443/mpmc.runtime.v1.PtFlashService/DiscoverPtCapabilities
+          grep --ignore-case --quiet \
+            '^access-control-allow-origin: https://ui.example.test' \
+            "${allowed_headers}"
+          grep --ignore-case --quiet \
+            '^access-control-allow-credentials: true' "${allowed_headers}"
+
+          denied_headers="${PWD}/build/cors-denied.headers"
+          curl --silent --show-error --noproxy '*' \
+            --cacert "${cert_dir}/public-ca.crt" \
+            --cert "${cert_dir}/browser.crt" \
+            --key "${cert_dir}/browser.key" \
+            --resolve api.example.test:8443:127.0.0.1 \
+            -H 'Origin: https://denied.example.test' \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Host: api.example.test' \
+            -X OPTIONS -D "${denied_headers}" -o /dev/null \
+            https://api.example.test:8443/mpmc.runtime.v1.PtFlashService/DiscoverPtCapabilities
+          if grep --ignore-case --quiet '^access-control-allow-origin:' \
+            "${denied_headers}"; then
+            echo "production edge emitted CORS approval for a denied origin"
+            exit 1
+          fi
+
+          metrics_file="${PWD}/build/envoy-prometheus.txt"
+          curl --fail --silent \
+            http://127.0.0.1:9901/stats/prometheus -o "${metrics_file}"
+          grep --quiet '^envoy_' "${metrics_file}"
+          edge_log="${PWD}/build/pt-production-envoy.log"
+          docker logs "${container_name}" >"${edge_log}" 2>&1
+          grep --quiet 'pt_edge_request' "${edge_log}"

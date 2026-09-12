@@ -10,12 +10,14 @@
 #include <cstddef>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <source_location>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 bool pt_grpc_adapter_headers();
 
@@ -40,8 +42,9 @@ void require(bool condition, std::string_view message,
 class ServerHarness {
 public:
     ServerHarness(rt::PtService& service,
-                  adapter::PtGrpcAdapterLimits limits = {})
-        : adapter_(service, limits) {
+                  adapter::PtGrpcAdapterLimits limits = {},
+                  std::shared_ptr<adapter::PtGrpcObserver> observer = {})
+        : adapter_(service, limits, std::move(observer)) {
         diagnostic_stage = "constructing grpc::ServerBuilder";
         grpc::ServerBuilder builder;
         int selected_port = 0;
@@ -84,6 +87,26 @@ private:
     std::unique_ptr<wire::PtFlashService::Stub> stub_;
 };
 
+class RecordingObserver final : public adapter::PtGrpcObserver {
+public:
+    void observe(const adapter::PtGrpcObservation& observation) noexcept override {
+        try {
+            const std::lock_guard lock(mutex_);
+            observations_.push_back(observation);
+        } catch (...) {
+        }
+    }
+
+    [[nodiscard]] std::vector<adapter::PtGrpcObservation> snapshot() const {
+        const std::lock_guard lock(mutex_);
+        return observations_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::vector<adapter::PtGrpcObservation> observations_;
+};
+
 void set_deadline(grpc::ClientContext& context,
                   std::chrono::milliseconds timeout = 2s) {
     context.set_deadline(std::chrono::system_clock::now() + timeout);
@@ -124,7 +147,8 @@ void mapping_and_outcomes() {
         {"golden.accepted", &accepted},
         {"golden.indeterminate", &indeterminate}}};
     rt::PtService service(registrations);
-    ServerHarness server(service);
+    auto observer = std::make_shared<RecordingObserver>();
+    ServerHarness server(service, {}, observer);
 
     grpc::ClientContext discovery_context;
     set_deadline(discovery_context);
@@ -196,6 +220,25 @@ void mapping_and_outcomes() {
                     wire::PT_SERVICE_ERROR_CODE_INVALID_PRESSURE &&
                 accepted.call_count.load() == 1U,
             "PtService error was not kept separate from scientific results");
+
+    const auto observations = observer->snapshot();
+    require(observations.size() == 4U &&
+                observations[0].method ==
+                    adapter::PtGrpcRpcMethod::discover_pt_capabilities &&
+                observations[0].completion ==
+                    adapter::PtGrpcCompletion::completed &&
+                !observations[0].pt_service_called &&
+                !observations[0].service_outcome.has_value() &&
+                observations[1].service_outcome ==
+                    rt::PtServiceOutcome::accepted &&
+                observations[2].service_outcome ==
+                    rt::PtServiceOutcome::indeterminate &&
+                observations[3].service_outcome ==
+                    rt::PtServiceOutcome::error &&
+                observations[1].transport_status == grpc::StatusCode::OK &&
+                observations[2].transport_status == grpc::StatusCode::OK &&
+                observations[3].transport_status == grpc::StatusCode::OK,
+            "adapter observations conflated scientific outcome and transport state");
 }
 
 void wire_and_size_limits() {
