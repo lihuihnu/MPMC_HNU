@@ -66,7 +66,7 @@ void density_side_roles() {
     const auto model = th::CpaPtPhase::from_parameters(parameters);
     fl::CpaVleEvaluator evaluator(model);
     const Vec x{1.0};
-    const auto roots = model.roots(1.0e5, 200.0, x);
+    const auto roots = model.roots(1.0e5, 200.0, x, evaluator.pt_options());
     require(roots.status == th::CpaPtRootStatus::success &&
                 roots.roots.size() == 3U,
             "CPA split role fixture no longer has three simple roots");
@@ -121,7 +121,8 @@ void fixed_seed_reference() {
         throw std::runtime_error("CPA fixed-seed two-phase equations did not converge");
     }
     const auto& state = *attempt.point;
-    require(state.fugacity_norm <= 1e-10 &&
+    require(state.fugacity_norm <=
+                fl::PtSplitIterationOptions{}.fugacity_tolerance &&
                 state.fractions.mass_absolute <= 1e-12 &&
                 state.fractions.mass_relative <= 1e-10,
             "CPA fixed-seed candidate failed fugacity/material-balance invariants");
@@ -147,7 +148,7 @@ fl::CpaPtSplitResult run_full(bool swapped) {
               cpa_split_test::instability_witness[1]};
     const std::vector<Vec> initial_starts{witness};
 
-    fl::PtSplitOptions options;
+    auto options = fl::cpa_pt_vle_default_split_options();
     options.initial_stability.automatic_starts = false;
     options.initial_stability.max_evaluations = 32U;
     options.final_stability.automatic_starts = false;
@@ -174,6 +175,16 @@ void full_two_phase_acceptance() {
         throw std::runtime_error(
             "CPA full stability->split->final-review path did not accept two phases");
     }
+    require(result.solution.attempts.size() >= 2U,
+            "CPA full solve did not attempt both witness role assignments");
+    require(result.solution.attempts[0].witness_as_vapor,
+            "CPA full solve changed deterministic first role assignment");
+    require(result.solution.selected_attempt.has_value() &&
+                !result.solution.attempts[*result.solution.selected_attempt].witness_as_vapor,
+            "CPA full solve did not select the converged alternate role assignment");
+    require(result.solution.options.max_evaluations_per_attempt == 8192U,
+            "CPA split did not preserve its per-attempt fairness budget");
+
     const auto& state = *result.solution.candidate();
     require(state.fugacity_norm <= result.solution.options.iteration.fugacity_tolerance &&
                 state.fractions.mass_absolute <=
