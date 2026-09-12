@@ -19,6 +19,24 @@ void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
 }
 
+void print_split_summary(const char* label, const fl::CpaPtSplitResult& result) {
+    std::cout << "CPA_SPLIT_DIAGNOSTIC " << label
+              << " status=" << static_cast<int>(result.solution.status)
+              << " initial=" << static_cast<int>(result.solution.initial_stability.status)
+              << " attempts=" << result.solution.attempts.size()
+              << " selected=" << (result.solution.selected_attempt.has_value() ? 1 : 0);
+    for (const auto& attempt : result.solution.attempts) {
+        std::cout << " attempt=" << static_cast<int>(attempt.status);
+    }
+    if (result.solution.final_stability) {
+        std::cout << " final="
+                  << static_cast<int>(result.solution.final_stability->status);
+    } else {
+        std::cout << " final=none";
+    }
+    std::cout << " diag=" << result.solution.diagnostic << '\n';
+}
+
 void explicit_density_sides() {
     const auto parameters = cpa_stability_test::pure();
     const auto model = th::CpaPtPhase::from_parameters(parameters);
@@ -59,6 +77,7 @@ fl::CpaPtSplitResult run_binary(bool swapped) {
 
 void binary_vle_baseline() {
     const auto result = run_binary(false);
+    print_split_summary("binary", result);
     require(result.solution.initial_stability.status == fl::StabilityStatus::unstable,
             "CPA VLE fixture no longer starts from robust instability evidence");
     require(result.solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
@@ -86,6 +105,8 @@ void binary_vle_baseline() {
 void component_permutation() {
     const auto first = run_binary(false);
     const auto second = run_binary(true);
+    print_split_summary("permutation-a", first);
+    print_split_summary("permutation-b", second);
     require(first.solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
                 second.solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
                 first.solution.candidate() && second.solution.candidate(),
