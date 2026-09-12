@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace {
 namespace fl = mpmc::flash;
@@ -21,6 +22,14 @@ fl::PtSplitOptions physical_split_options() {
     options.initial_stability.automatic_starts = false;
     options.final_stability.automatic_starts = false;
     return options;
+}
+
+std::vector<std::vector<double>> physical_final_starts(
+    const std::vector<double>& feed) {
+    // The normalized feed is model input, not an experimental phase observation.
+    // It supplies one off-tangent trial in addition to the two converged phase
+    // compositions appended by solve_pt_vle().
+    return {feed};
 }
 
 void parameter_provenance() {
@@ -64,9 +73,10 @@ fl::CpaPtSplitResult solve_point(
     fl::CpaVleEvaluator evaluator(model);
     const auto feed = cpa_physical_test::feed(experimental, swapped);
     const auto starts = cpa_physical_test::starts(experimental, swapped);
+    const auto final_starts = physical_final_starts(feed);
     return fl::solve_cpa_pt_vle(
         experimental.pressure_pa, cpa_physical_test::temperature_k,
-        feed, evaluator, physical_split_options(), starts);
+        feed, evaluator, physical_split_options(), starts, final_starts);
 }
 
 double experimental_pair_residual(
@@ -120,7 +130,6 @@ void default_flash_precision() {
                 defaults.pressure_relative_tolerance == 1.0e-12,
             "CPA flash-specific density-root defaults changed");
 
-    const auto& experimental = cpa_physical_test::points()[2];
     const auto parameters = cpa_physical_test::parameters(false);
     const auto model = th::CpaPtPhase::from_parameters(parameters);
     fl::CpaVleEvaluator evaluator(model);
@@ -130,20 +139,6 @@ void default_flash_precision() {
                 defaults.pressure_relative_tolerance &&
                 evaluator.pt_options().scan_intervals == defaults.scan_intervals,
             "CPA VLE evaluator no longer uses flash-specific root defaults");
-
-    const auto feed = cpa_physical_test::feed(experimental, false);
-    const auto starts = cpa_physical_test::starts(experimental, false);
-    const auto result = fl::solve_cpa_pt_vle(
-        experimental.pressure_pa, cpa_physical_test::temperature_k,
-        feed, evaluator, physical_split_options(), starts);
-    require(result.solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
-                result.solution.candidate() != nullptr &&
-                result.solution.final_stability.has_value() &&
-                result.solution.final_stability->status ==
-                    fl::StabilityStatus::no_instability_found &&
-                result.solution.candidate()->fugacity_norm <=
-                    result.solution.options.iteration.fugacity_tolerance,
-            "CPA production flash defaults do not close the associating physical point");
 }
 
 void literature_vle_points() {
@@ -162,12 +157,13 @@ void literature_vle_points() {
         const double direct_mu = experimental_pair_residual(evaluator, experimental);
         const auto feed = cpa_physical_test::feed(experimental, false);
         const auto starts = cpa_physical_test::starts(experimental, false);
+        const auto final_starts = physical_final_starts(feed);
         // Experimental x/y initialize the physical split only. Final common-tangent
-        // review uses the converged model-owned phase compositions that solve_pt_vle
-        // appends internally; measurement error must not be promoted to topology evidence.
+        // review uses the feed plus the converged model-owned phase compositions;
+        // measurement error must not be promoted to topology evidence.
         const auto result = fl::solve_cpa_pt_vle(
             experimental.pressure_pa, cpa_physical_test::temperature_k,
-            feed, evaluator, physical_split_options(), starts);
+            feed, evaluator, physical_split_options(), starts, final_starts);
 
         std::cout << "CPA_PHYSICAL PkPa=" << experimental.pressure_pa / 1000.0
                   << " direct_mu=" << direct_mu
@@ -243,12 +239,74 @@ void component_permutation() {
             "CPA physical VLE changed under ordered-component permutation");
 }
 
+void final_tpd_56652_safety() {
+    const auto& experimental = cpa_physical_test::points()[2];
+    const auto result = solve_point(experimental, false);
+    const auto& solution = result.solution;
+
+    const auto defaults = fl::cpa_pt_vle_default_phase_options();
+    require(result.pt_options.scan_intervals == defaults.scan_intervals &&
+                result.pt_options.pressure_absolute_tolerance_pa ==
+                    defaults.pressure_absolute_tolerance_pa &&
+                result.pt_options.pressure_relative_tolerance ==
+                    defaults.pressure_relative_tolerance,
+            "56.652 kPa safety regression bypassed CPA flash defaults");
+
+    // Freeze the production acceptance gates used by this regression. The
+    // effective final TPD tolerance additionally contains only the existing
+    // half-fugacity common-reference allowance from solve_pt_vle().
+    require(solution.options.iteration.fugacity_tolerance <= 1.0e-11,
+            "CPA physical safety weakened fugacity tolerance");
+    require(solution.options.iteration.mass_absolute_tolerance <= 1.0e-12 &&
+                solution.options.iteration.mass_relative_tolerance <= 1.0e-10,
+            "CPA physical safety weakened material-balance tolerance");
+    require(solution.options.final_stability.tpd_tolerance <= 1.0e-10,
+            "CPA physical safety weakened final TPD tolerance");
+    require(solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
+                solution.candidate() != nullptr && solution.final_stability.has_value(),
+            "56.652 kPa CPA safety point did not close as accepted two phase");
+
+    const auto& candidate = *solution.candidate();
+    require(candidate.fugacity_norm <= solution.options.iteration.fugacity_tolerance &&
+                candidate.fractions.mass_absolute <=
+                    solution.options.iteration.mass_absolute_tolerance &&
+                candidate.fractions.mass_relative <=
+                    solution.options.iteration.mass_relative_tolerance,
+            "56.652 kPa CPA safety point lost split invariants");
+
+    const auto& final = *solution.final_stability;
+    require(final.status == fl::StabilityStatus::no_instability_found &&
+                final.trials.size() == 3U && final.lowest_sampled.has_value(),
+            "56.652 kPa CPA safety point lost final common-tangent coverage");
+    const auto& feed_trial = final.trials.front();
+    require(feed_trial.status == fl::StabilityTrialStatus::stationary &&
+                feed_trial.point.has_value() && feed_trial.iterations > 0 &&
+                feed_trial.evaluations > 1U &&
+                feed_trial.point->stationarity <= final.options.stationarity_tolerance,
+            "56.652 kPa off-tangent feed trial did not reach stationarity");
+    require(std::abs(feed_trial.initial_composition[0] -
+                     candidate.fractions.liquid[0]) > 1.0e-3 &&
+                std::abs(feed_trial.initial_composition[0] -
+                         candidate.fractions.vapor[0]) > 1.0e-3,
+            "56.652 kPa final review degenerated to phase-tangent starts only");
+    require(std::all_of(
+                final.trials.begin(), final.trials.end(),
+                [](const fl::StabilityTrial& trial) {
+                    return trial.status == fl::StabilityTrialStatus::stationary;
+                }),
+            "56.652 kPa final common-tangent trial remained indeterminate");
+    require(final.lowest_sampled->value >=
+                -final.options.tpd_tolerance - final.lowest_sampled->roundoff_guard,
+            "56.652 kPa final review found negative TPD below the unchanged gate");
+}
+
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"parameter_provenance", parameter_provenance},
     {"default_flash_precision", default_flash_precision},
     {"literature_vle_points", literature_vle_points},
-    {"component_permutation", component_permutation}};
+    {"component_permutation", component_permutation},
+    {"final_tpd_56652_safety", final_tpd_56652_safety}};
 
 } // namespace
 

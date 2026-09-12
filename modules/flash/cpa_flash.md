@@ -52,7 +52,12 @@ A converged pair is not accepted until the final TPD review returns no sampled i
 
 The structural two-phase regression uses an explicitly `synthetic_test` non-associating CPA/SRK-limit binary at `1 MPa, 160 K`. Its offline coexistence anchors are retained only as numerical regression data. A 90/10 phase mixture is used so the existing generic 10% witness seed reconstructs the intended basin without changing generic split tolerances or seeding rules.
 
-An additional associating synthetic fixture contains an explicit association site/pair and is exercised through the CPA split phase-property adapter. Thus the production adapter is association-aware. The current full accepted two-phase topology regression, however, is **not** a physical associating-mixture validation.
+An additional associating synthetic fixture contains an explicit association
+site/pair and is exercised through the CPA split phase-property adapter. The
+complete production VLE path is also validated against five traceable
+methanol(2B)-water(4C) points at 333.15 K; see
+[CPA associating physical validation](cpa_physical_validation.md). This is a
+two-phase physical gate, not a three-phase physical oracle.
 
 ## Fixed three-phase primitive
 
@@ -127,7 +132,9 @@ Focused conformance compares direct CPA max3 publication against runtime `PtFlas
 
 ## Validation boundary
 
-Hosted validation uses GCC Debug + ASan/UBSan, Clang Release and MSVC Release.
+Hosted structural/backend validation uses GCC Debug + ASan/UBSan, Clang Release
+and MSVC Release. CPA associating validation separates the complete Release
+physical regression from a representative GCC Debug + ASan/UBSan safety path.
 
 Current regression evidence covers:
 
@@ -143,7 +150,14 @@ Current regression evidence covers:
 - continuation hints not acting as phase-count evidence;
 - malformed three-phase-start rejection;
 - public-header self containment.
+- five-point associating methanol-water VLE accuracy with unchanged
+  fugacity/material-balance/final-TPD gates;
+- focused 56.652 kPa final-TPD closure from an off-tangent feed start.
 
-The structural phase-split/max3 fixtures are `synthetic_test`. They validate software architecture and numerical state-machine behavior, not experimental CPA accuracy. A traceable **associating** two-/three-phase reference remains a separate validation gate; missing literature parameters or phase results must not be guessed.
+The structural phase-split/max3 fixtures are `synthetic_test`. They validate
+software architecture and numerical state-machine behavior, not experimental
+CPA accuracy. The associating two-phase physical gate is traceable, but a
+compatible three-phase reference remains unavailable; missing literature
+parameters or phase results must not be guessed.
 
 `global_stability_proven` remains false throughout: all TPD decisions are finite searches, not mathematical global proofs.

@@ -74,7 +74,14 @@ The experimental compositions are observations, not exact model equilibrium poin
 
 For each literature point the test constructs a material-balanced feed containing 90 mol% of the reported liquid composition and 10 mol% of the reported vapor composition. The experimental phase compositions are supplied only as **initial split/stability starts**.
 
-They are intentionally **not** supplied as extra final-common-tangent starts. `solve_pt_vle(...)` always appends its own converged liquid/vapor compositions to final stability. This separation is important: experimental measurement/model mismatch must be measured as accuracy error, not promoted into a topology-proof requirement.
+They are intentionally **not** supplied as extra final-common-tangent starts. The
+final review instead receives the normalized feed as a model-input off-tangent
+start, and `solve_pt_vle(...)` appends its own converged liquid/vapor
+compositions. This separation is important: experimental measurement/model
+mismatch must be measured as accuracy error, not promoted into a topology-proof
+requirement. The feed trial is required to iterate to the unchanged stationarity
+gate, so the review cannot silently degenerate into evaluating only its two
+already-converged tangent points.
 
 Each accepted point must pass the unchanged production gates:
 
@@ -82,10 +89,36 @@ Each accepted point must pass the unchanged production gates:
 2. RR/log-K equations converge;
 3. material balance satisfies the existing absolute/relative tolerances;
 4. log-fugacity equality satisfies the existing `1e-11` maximum residual tolerance;
-5. final common-tangent review from model-owned converged phases reports no sampled instability;
+5. final common-tangent review from the feed plus model-owned converged phases reports no sampled instability;
 6. the accepted liquid root is re-evaluated and has a converged, nontrivial association state.
 
 No TPD, stationarity, RR, fugacity, material-balance or phase-fraction acceptance tolerance is relaxed by this validation.
+
+### 56.652 kPa final-TPD audit
+
+The original validation also supplied both observed phase compositions as final
+TPD starts. At 56.652 kPa the vapor-side trial reached `TPD=-5.06e-11`, which is not below
+the existing `1e-10` negative-TPD gate, but the log-descent search terminated in
+`line_search_failed` with stationarity about `3.66e-6`. The conservative
+`indeterminate` publication was therefore correct: this was neither a robust
+negative witness nor a completed stationary trial. It was not caused by the
+global evaluation budget, root topology, or a property failure.
+
+The regression now keeps observations out of topology search and uses the
+normalized feed as the explicit off-tangent start. At 56.652 kPa all three final
+trials (feed, converged liquid, converged vapor) must be stationary, the lowest
+sampled TPD must remain above the unchanged effective negative gate, and the
+existing fugacity and material-balance thresholds are asserted explicitly.
+
+## CI tiers
+
+- Clang Release and MSVC Release run the complete five-point physical/accuracy
+  regression, ordered-component permutation, the focused final-TPD case,
+  provenance, default precision, and public-header checks.
+- GCC Debug with ASan/UBSan runs the representative 56.652 kPa production path,
+  provenance/default precision, and public-header checks. It intentionally does
+  not repeat the five-point accuracy sweep or the two full permutation solves;
+  those are physical regressions rather than additional sanitizer safety paths.
 
 ## CPA flash-specific density-root default
 

@@ -48,15 +48,26 @@ endif()
 foreach(case IN ITEMS
         parameter_provenance
         default_flash_precision
+        final_tpd_56652_safety)
+    add_test(NAME flash.cpa_physical_validation.${case}
+             COMMAND mpmc_cpa_physical_validation_tests ${case})
+    set_tests_properties(flash.cpa_physical_validation.${case} PROPERTIES
+        LABELS "flash;cpa;physical_validation;association;literature;full_physical;sanitizer_safety"
+        TIMEOUT 300)
+endforeach()
+
+foreach(case IN ITEMS
         literature_vle_points
         component_permutation)
     add_test(NAME flash.cpa_physical_validation.${case}
              COMMAND mpmc_cpa_physical_validation_tests ${case})
     set_tests_properties(flash.cpa_physical_validation.${case} PROPERTIES
-        LABELS "flash;cpa;physical_validation;association;literature" TIMEOUT 300)
+        LABELS "flash;cpa;physical_validation;association;literature;full_physical"
+        TIMEOUT 300)
 endforeach()
 
 add_test(NAME flash.cpa_physical_validation.headers
          COMMAND mpmc_cpa_physical_validation_headers)
 set_tests_properties(flash.cpa_physical_validation.headers PROPERTIES
-    LABELS "flash;cpa;physical_validation;headers" TIMEOUT 60)
+    LABELS "flash;cpa;physical_validation;headers;full_physical;sanitizer_safety"
+    TIMEOUT 60)
