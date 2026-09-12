@@ -2,7 +2,7 @@
 
 ## Scope
 
-This gate connects the validated CPA stability provider to the existing model-neutral two-phase PT split orchestration. It does not introduce a second Rachford-Rice or common-tangent implementation.
+This gate connects the validated CPA stability provider to the existing model-neutral two-phase PT split equations and phase-set review. It does not introduce a second Rachford-Rice, fugacity-equilibrium, Gibbs, or common-tangent algorithm.
 
 CPA-specific convention:
 
@@ -36,9 +36,34 @@ These names are inherited from the generic `PtPhaseRole` interface and are candi
 
 A CPA near-multiple/tangent root topology, root-count quota, incomplete bounded root search, no admissible root, or invalid property is propagated through the existing `StabilityPropertyError` contract. It is never converted to a default phase property.
 
+## Inner/outer numerical coordination
+
+The generic split acceptance remains at the existing absolute log-fugacity tolerance (`1e-11` by default). During the first hosted regression of this gate, the standalone CPA PT root default (`1e-10` relative pressure closure) produced an approximately `4e-11` fugacity residual floor at the independent equilibrium anchor. The correct fix is to make the **inner CPA density root more accurate**, not to weaken the outer flash criterion.
+
+`CpaVleEvaluator` therefore uses a split-specific CPA root default:
+
+```text
+pressure_relative_tolerance = 1e-12
+pressure_absolute_tolerance = 1e-7 Pa
+```
+
+The standalone `CpaPtPhase` default remains unchanged. Callers can still pass explicit CPA PT options, but production flash validation must ensure the chosen inner accuracy is compatible with the requested outer fugacity tolerance.
+
+## Attempt-budget fairness
+
+The same hosted diagnosis exposed a generic orchestration issue: one negative-TPD witness is deliberately tried in both material-balanced role assignments. A wrong first assignment could consume the entire global split property budget, preventing the alternate assignment from running.
+
+`PtSplitOptions` therefore gains a bounded `max_evaluations_per_attempt` in addition to the existing global `iteration.max_evaluations`. The underlying RR, fugacity residuals, line search, Gibbs selection and final stability equations are unchanged. The historical repository default remains 20000 provider calls per attempt, while the CPA VLE default sets:
+
+```text
+max_evaluations_per_attempt = 8192
+```
+
+inside the unchanged 20000 global split budget. Thus an unresolved first density-side assignment cannot starve the second assignment, while all work remains bounded. This option is an orchestration resource control, not a thermodynamic tolerance.
+
 ## Reused generic equations and acceptance
 
-`iterate_pt_split(...)` remains unchanged. For each log-K state it:
+`iterate_pt_split(...)` still owns the same equations. For each log-K state it:
 
 1. solves Rachford-Rice for an interior phase fraction;
 2. reconstructs liquid/vapor candidate compositions;
@@ -53,7 +78,7 @@ with the existing guarded log-K/Gibbs descent;
 5. checks absolute and positive-feed relative material balance;
 6. requires non-disappearing, composition/Z-distinct phases.
 
-`solve_pt_vle(...)` also remains unchanged. It owns initial finite stability, negative-witness seeding, candidate Gibbs selection, feed-vs-pair Gibbs comparison and final common-tangent stability review using the all-root CPA stability provider.
+`solve_pt_vle(...)` continues to own initial finite stability, negative-witness seeding, candidate Gibbs selection, feed-vs-pair Gibbs comparison and final common-tangent stability review using the all-root CPA stability provider. Its only behavior extension in this gate is the optional per-attempt resource cap described above.
 
 As for PR76, finite root search + finite TPD multistart means `global_stability_proven=false`.
 
@@ -74,8 +99,8 @@ and the same feed has a robust negative TPD at `w=(0.78,0.22)`.
 The focused suite checks:
 
 - three-root pure SRK limit selects distinct highest-density/lowest-density candidate sides;
-- direct fixed-seed CPA split converges to the independent equilibrium anchor while satisfying material balance and fugacity equality;
-- the complete `stability -> split -> final review` route accepts the two-phase state and lowers Gibbs relative to the original feed;
+- direct fixed-seed CPA split reaches the original `1e-11` fugacity tolerance and the independent equilibrium anchor;
+- the complete `stability -> split -> final review` route actually attempts both witness role assignments, prevents the unresolved first assignment from exhausting the global budget, accepts the converged alternate assignment, lowers Gibbs relative to the feed, and passes final common-tangent review;
 - runtime component permutation preserves phase fraction and remaps both phase compositions by component identity;
 - public-header self containment.
 
@@ -92,4 +117,4 @@ After this gate CPA has an accepted maximum-two-phase PT baseline under the decl
 - physical CPA parameter datasets/experimental validation;
 - flash sensitivities.
 
-The next gate should first publish the accepted CPA 1/2-phase result through the existing generic phase-set/backend contract, then extend the same density-side semantics to the existing model-neutral `PtThreePhase` primitive and max3 orchestration without inventing liquid/L1/L2 morphology labels.
+The next gate should first publish the accepted CPA 1/2-phase result through the existing generic phase-set/backend contract, then extend the same numerical density-side semantics to the existing model-neutral `PtThreePhase` primitive and max3 orchestration without inventing liquid/L1/L2 morphology labels.
