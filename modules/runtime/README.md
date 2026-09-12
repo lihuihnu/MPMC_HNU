@@ -113,7 +113,7 @@ is reported as the evaluated feed.
 `PtServiceLimits` bounds configured backend count, components per backend, and
 identifier bytes. The optional [native gRPC process adapter](../runtime_grpc/README.md)
 adds pre-deserialization and post-decode request limits, response size, gRPC
-memory/thread quotas, solve concurrency admission, and deadline/cancellation
+memory quota, solve concurrency admission, and deadline/cancellation
 publication guards. These process controls remain outside the transport-neutral
 C++ v1 boundary.
 

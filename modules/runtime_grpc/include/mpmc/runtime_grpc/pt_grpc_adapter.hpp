@@ -20,7 +20,6 @@ struct PtGrpcAdapterLimits {
     std::size_t max_serialized_response_bytes{4U * 1024U * 1024U};
     std::size_t max_concurrent_solves{1U};
     std::size_t grpc_resource_quota_bytes{64U * 1024U * 1024U};
-    std::size_t grpc_max_threads{16U};
     std::chrono::milliseconds max_discovery_deadline{10'000};
     std::chrono::milliseconds max_solve_deadline{120'000};
 
@@ -69,7 +68,7 @@ private:
 };
 
 // Applies the same message-size limits before Protobuf request deserialization,
-// attaches bounded gRPC memory/thread quotas, and registers the adapter.
+// attaches a bounded gRPC memory quota, and registers the adapter.
 // Listening address, credentials, TLS, and process lifetime remain application
 // choices.
 void configure_pt_grpc_server(grpc::ServerBuilder& builder,

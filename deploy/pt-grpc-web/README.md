@@ -28,7 +28,7 @@ gRPC-Web framing code.
   `grpc-status-details-bin`.
 
 The adapter independently configures gRPC's pre-deserialization receive limit,
-post-decode size checks, response limit, memory/thread quota, solve concurrency
+post-decode size checks, response limit, memory quota, solve concurrency
 gate, and deadline/cancellation publication checks. Defense at one layer does
 not replace the other.
 

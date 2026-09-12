@@ -43,8 +43,8 @@ adapter queues no rejected solve and performs no automatic retry.
 Request size is bounded by `ServerBuilder::SetMaxReceiveMessageSize()` before a
 Protobuf message reaches the handler. `ByteSizeLong()` is checked again so direct
 handler use cannot bypass policy. `configure_pt_grpc_server()` also applies the
-response limit and `grpc::ResourceQuota` memory/thread bounds; it intentionally leaves address,
-credentials, TLS, authentication, and process lifetime to the host.
+response limit and a `grpc::ResourceQuota` memory bound; it intentionally leaves
+address, credentials, TLS, authentication, and process lifetime to the host.
 
 ## Deadline and cancellation semantics
 

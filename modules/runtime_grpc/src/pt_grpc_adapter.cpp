@@ -369,7 +369,6 @@ bool PtGrpcAdapterLimits::structurally_valid() const noexcept {
            max_serialized_response_bytes > 0U &&
            max_serialized_response_bytes <= max_int &&
            max_concurrent_solves > 0U && grpc_resource_quota_bytes > 0U &&
-           grpc_max_threads > 0U && grpc_max_threads <= max_int &&
            grpc_resource_quota_bytes >= max_serialized_request_bytes &&
            grpc_resource_quota_bytes >= max_serialized_response_bytes &&
            max_discovery_deadline.count() > 0 &&
@@ -526,7 +525,6 @@ void configure_pt_grpc_server(grpc::ServerBuilder& builder,
         static_cast<int>(limits.max_serialized_response_bytes));
     grpc::ResourceQuota quota("mpmc-pt-grpc-process");
     quota.Resize(limits.grpc_resource_quota_bytes);
-    quota.SetMaxThreads(static_cast<int>(limits.grpc_max_threads));
     builder.SetResourceQuota(quota);
     builder.RegisterService(&adapter);
 }

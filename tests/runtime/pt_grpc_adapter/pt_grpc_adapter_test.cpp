@@ -276,17 +276,6 @@ void wire_and_size_limits() {
         rejected = true;
     }
     require(rejected, "invalid process adapter limits were accepted");
-
-    invalid_limits = adapter::PtGrpcAdapterLimits{};
-    invalid_limits.grpc_max_threads = 0U;
-    rejected = false;
-    try {
-        adapter::PtGrpcServiceAdapter invalid_adapter(service, invalid_limits);
-        (void)invalid_adapter;
-    } catch (const std::invalid_argument&) {
-        rejected = true;
-    }
-    require(rejected, "invalid gRPC thread quota was accepted");
 }
 
 void concurrency_gate() {
