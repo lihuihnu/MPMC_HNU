@@ -18,6 +18,42 @@ void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
 }
 
+void print_summary(const fl::Pr76PtMax3Result& result) {
+    std::size_t negative_final = 0U;
+    if (result.base.solution.final_stability) {
+        for (const auto& trial : result.base.solution.final_stability->trials) {
+            if (trial.status == fl::StabilityTrialStatus::negative_tpd) {
+                ++negative_final;
+            }
+        }
+    }
+    std::cerr << "max3_status=" << static_cast<int>(result.status)
+              << " base_status=" << static_cast<int>(result.base.solution.status)
+              << " base_attempts=" << result.base.solution.attempts.size()
+              << " negative_final=" << negative_final
+              << " max3_attempts=" << result.attempts.size()
+              << " selected=" << (result.selected_attempt ? 1 : 0)
+              << " diagnostic=" << result.diagnostic << '\n';
+    for (std::size_t i = 0; i < result.attempts.size(); ++i) {
+        const auto& attempt = result.attempts[i];
+        std::cerr << "attempt[" << i << "] witness=" << attempt.witness_trial
+                  << " eq_status=" << static_cast<int>(attempt.equilibrium.status)
+                  << " eq_iter=" << attempt.equilibrium.iterations
+                  << " eq_eval=" << attempt.equilibrium.evaluations
+                  << " eq_norm="
+                  << (attempt.equilibrium.point
+                          ? attempt.equilibrium.point->chemical_potential_norm
+                          : -1.0)
+                  << " final="
+                  << (attempt.final_stability
+                          ? static_cast<int>(attempt.final_stability->status)
+                          : -1)
+                  << " accepted3=" << attempt.accepted_three_phase
+                  << " accepted2=" << attempt.accepted_two_phase_neighbor
+                  << " eq_diag=" << attempt.equilibrium.diagnostic << '\n';
+    }
+}
+
 void require_unordered_reference_match(const fl::PtThreePhaseState& state) {
     const auto& reference = pr76_max3_test::reference_phases();
     std::array<bool, 3> used{false, false, false};
@@ -47,10 +83,13 @@ void seeded_max3() {
     const auto starts = pr76_max3_test::starts();
     const auto result = fl::solve_pr76_pt_max3(
         1.0e6, 250.0, feed, evaluator, {}, starts, starts);
-    require(result.status == fl::Pr76PtMax3Status::three_phase &&
-                result.three_phase_candidate() != nullptr &&
-                result.selected_attempt.has_value(),
+    if (result.status != fl::Pr76PtMax3Status::three_phase ||
+        result.three_phase_candidate() == nullptr ||
+        !result.selected_attempt.has_value()) {
+        print_summary(result);
+        throw std::runtime_error(
             "seeded PR76 structural fixture did not close at three phases");
+    }
     require_unordered_reference_match(*result.three_phase_candidate());
     const auto& attempt = result.attempts[*result.selected_attempt];
     require(attempt.final_stability &&
@@ -75,9 +114,15 @@ void seeded_component_permutation() {
         1.0e6, 250.0, feed, first_evaluator, {}, first_starts, first_starts);
     const auto second = fl::solve_pr76_pt_max3(
         1.0e6, 250.0, feed, second_evaluator, {}, second_starts, second_starts);
-    require(first.three_phase_candidate() != nullptr &&
-                second.three_phase_candidate() != nullptr,
+    if (first.three_phase_candidate() == nullptr ||
+        second.three_phase_candidate() == nullptr) {
+        std::cerr << "first permutation solve:\n";
+        print_summary(first);
+        std::cerr << "second permutation solve:\n";
+        print_summary(second);
+        throw std::runtime_error(
             "component permutation lost seeded PR76 three-phase solution");
+    }
 
     std::array<Vec, 3> remapped;
     for (std::size_t p = 0; p < 3U; ++p) {
