@@ -91,8 +91,7 @@ void require_active_association(
         [](const th::CpaAssociationSiteState& site) {
             return site.unbonded_fraction < 0.999;
         });
-    require(bonded,
-            "CPA physical VLE association sites are effectively inactive");
+    require(bonded, "CPA physical VLE association sites are effectively inactive");
 }
 
 fl::CpaPtSplitResult solve_point(
@@ -100,13 +99,64 @@ fl::CpaPtSplitResult solve_point(
     bool swapped = false) {
     const auto parameters = cpa_physical_test::parameters(swapped);
     const auto model = th::CpaPtPhase::from_parameters(parameters);
-    const auto pt_options = physical_pt_options();
-    fl::CpaVleEvaluator evaluator(model, pt_options);
+    fl::CpaVleEvaluator evaluator(model, physical_pt_options());
     const auto feed = cpa_physical_test::feed(experimental, swapped);
     const auto starts = cpa_physical_test::starts(experimental, swapped);
     return fl::solve_cpa_pt_vle(
         experimental.pressure_pa, cpa_physical_test::temperature_k,
         feed, evaluator, physical_split_options(), starts, starts);
+}
+
+double experimental_pair_residual(
+    fl::CpaVleEvaluator& evaluator,
+    const cpa_physical_test::ExperimentalVlePoint& experimental) {
+    const auto liquid_x = cpa_physical_test::composition(experimental.liquid_methanol);
+    const auto vapor_y = cpa_physical_test::composition(experimental.vapor_methanol);
+    const auto liquid = evaluator(
+        experimental.pressure_pa, cpa_physical_test::temperature_k,
+        liquid_x, fl::PtPhaseRole::liquid_candidate);
+    const auto vapor = evaluator(
+        experimental.pressure_pa, cpa_physical_test::temperature_k,
+        vapor_y, fl::PtPhaseRole::vapor_candidate);
+    double norm = 0.0;
+    for (std::size_t i = 0; i < liquid_x.size(); ++i) {
+        const double residual =
+            std::log(liquid_x[i]) + liquid.activity.ln_phi[i] -
+            std::log(vapor_y[i]) - vapor.activity.ln_phi[i];
+        norm = std::max(norm, std::abs(residual));
+    }
+    return norm;
+}
+
+void print_solve_diagnostic(
+    const cpa_physical_test::ExperimentalVlePoint& experimental,
+    double direct_residual,
+    const fl::CpaPtSplitResult& result) {
+    std::cout << "CPA_PHYSICAL_AUDIT PkPa=" << experimental.pressure_pa / 1000.0
+              << " direct_mu=" << direct_residual
+              << " initial=" << static_cast<int>(result.solution.initial_stability.status)
+              << " status=" << static_cast<int>(result.solution.status)
+              << " attempts=" << result.solution.attempts.size();
+    if (result.solution.candidate()) {
+        const auto& point = *result.solution.candidate();
+        std::cout << " x_calc=" << point.fractions.liquid[0]
+                  << " y_calc=" << point.fractions.vapor[0]
+                  << " beta=" << point.fractions.vapor_fraction
+                  << " fug=" << point.fugacity_norm;
+    }
+    if (result.solution.final_stability) {
+        std::cout << " final="
+                  << static_cast<int>(result.solution.final_stability->status);
+    } else {
+        std::cout << " final=none";
+    }
+    for (const auto& attempt : result.solution.attempts) {
+        std::cout << " a=" << static_cast<int>(attempt.status)
+                  << ",it=" << attempt.iterations
+                  << ",ev=" << attempt.evaluations;
+        if (attempt.point) { std::cout << ",f=" << attempt.point->fugacity_norm; }
+    }
+    std::cout << " diag=" << result.solution.diagnostic << '\n';
 }
 
 void literature_vle_points() {
@@ -123,30 +173,31 @@ void literature_vle_points() {
     std::size_t accepted = 0U;
 
     for (const auto& experimental : cpa_physical_test::points()) {
+        const double direct_residual = experimental_pair_residual(evaluator, experimental);
         const auto feed = cpa_physical_test::feed(experimental, false);
         const auto starts = cpa_physical_test::starts(experimental, false);
         const auto result = fl::solve_cpa_pt_vle(
             experimental.pressure_pa, cpa_physical_test::temperature_k,
             feed, evaluator, split_options, starts, starts);
-        require(result.solution.status ==
-                    fl::PtSplitStatus::two_phase_no_instability_found &&
-                    result.solution.candidate() != nullptr &&
-                    result.solution.final_stability.has_value() &&
-                    result.solution.final_stability->status ==
-                        fl::StabilityStatus::no_instability_found,
-                "CPA literature methanol-water VLE point did not close as an accepted two-phase state");
+        print_solve_diagnostic(experimental, direct_residual, result);
+
+        if (result.solution.status != fl::PtSplitStatus::two_phase_no_instability_found ||
+            result.solution.candidate() == nullptr ||
+            !result.solution.final_stability ||
+            result.solution.final_stability->status != fl::StabilityStatus::no_instability_found) {
+            continue;
+        }
 
         const auto& point = *result.solution.candidate();
-        const double liquid = point.fractions.liquid[0];
-        const double vapor = point.fractions.vapor[0];
-        const double liquid_error = std::abs(liquid - experimental.liquid_methanol);
-        const double vapor_error = std::abs(vapor - experimental.vapor_methanol);
+        const double liquid_error =
+            std::abs(point.fractions.liquid[0] - experimental.liquid_methanol);
+        const double vapor_error =
+            std::abs(point.fractions.vapor[0] - experimental.vapor_methanol);
         sum_liquid_error += liquid_error;
         sum_vapor_error += vapor_error;
         max_liquid_error = std::max(max_liquid_error, liquid_error);
         max_vapor_error = std::max(max_vapor_error, vapor_error);
         ++accepted;
-
         require(point.fugacity_norm <= result.solution.options.iteration.fugacity_tolerance,
                 "CPA physical VLE accepted point lost fugacity equality");
         require(point.fractions.mass_absolute <=
@@ -155,29 +206,16 @@ void literature_vle_points() {
                     result.solution.options.iteration.mass_relative_tolerance,
                 "CPA physical VLE accepted point lost material balance");
         require_active_association(model, pt_options, experimental.pressure_pa, point);
-
-        std::cout << "CPA_PHYSICAL_VLE PkPa=" << experimental.pressure_pa / 1000.0
-                  << " x_exp=" << experimental.liquid_methanol
-                  << " x_calc=" << liquid
-                  << " y_exp=" << experimental.vapor_methanol
-                  << " y_calc=" << vapor
-                  << " beta=" << point.fractions.vapor_fraction
-                  << '\n';
     }
 
     require(accepted == cpa_physical_test::points().size(),
-            "CPA physical VLE did not evaluate the declared literature points");
+            "CPA physical VLE did not accept every declared literature point");
     const double mean_liquid_error = sum_liquid_error / static_cast<double>(accepted);
     const double mean_vapor_error = sum_vapor_error / static_cast<double>(accepted);
     std::cout << "CPA_PHYSICAL_VLE_SUMMARY mean_dx=" << mean_liquid_error
               << " mean_dy=" << mean_vapor_error
               << " max_dx=" << max_liquid_error
               << " max_dy=" << max_vapor_error << '\n';
-
-    // Folas/Derawi report a CR-1 correlation at 333.15 K with about 0.6% AAD
-    // in bubble pressure and 0.8 percentage points in vapor mole fraction.
-    // This inverse PT-flash check is deliberately looser because experimental
-    // pressure is imposed and both phase compositions are solved simultaneously.
     require(mean_liquid_error <= 0.025 && mean_vapor_error <= 0.025 &&
                 max_liquid_error <= 0.05 && max_vapor_error <= 0.05,
             "CPA literature VLE deviations exceed the declared physical-validation envelope");
