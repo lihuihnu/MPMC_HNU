@@ -47,7 +47,7 @@ endif()
 
 foreach(case IN ITEMS
         parameter_provenance
-        default_flash_precision_probe
+        default_flash_precision
         literature_vle_points
         component_permutation)
     add_test(NAME flash.cpa_physical_validation.${case}
