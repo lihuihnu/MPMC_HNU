@@ -101,6 +101,56 @@ void parameter_reordering() {
             "CPA site-pair interaction lost component identity under reordering");
 }
 
+void runtime_subset_rebuild() {
+    const std::vector<th::Component> catalog{
+        component("A"), component("B"), component("C")};
+    th::CpaParameterInput input;
+    input.dataset_id = "synthetic-cpa-superset";
+    input.revision = "v1";
+    input.applicability = applicability();
+    input.pure.push_back({
+        "A", value(500.0, "Tc-A"), value(0.25, "a0-A"),
+        value(4.0e-5, "b-A"), value(0.7, "c1-A"), {{"H", 1U}}});
+    input.pure.push_back({
+        "B", value(400.0, "Tc-B"), value(0.18, "a0-B"),
+        value(5.0e-5, "b-B"), value(0.5, "c1-B"), {}});
+    input.pure.push_back({
+        "C", value(450.0, "Tc-C"), value(0.21, "a0-C"),
+        value(4.5e-5, "b-C"), value(0.6, "c1-C"), {{"Q", 1U}}});
+    input.binary.push_back({"A", "B", value(0.04, "kij-A-B")});
+    input.binary.push_back({"A", "C", value(0.02, "kij-A-C")});
+    input.binary.push_back({"B", "C", value(0.03, "kij-B-C")});
+    input.association_pairs.push_back({
+        "A", "H", "A", "H",
+        value(10000.0, "epsilon-A-H-A-H"),
+        value(0.02, "beta-A-H-A-H")});
+    input.association_pairs.push_back({
+        "C", "Q", "C", "Q",
+        value(9000.0, "epsilon-C-Q-C-Q"),
+        value(0.015, "beta-C-Q-C-Q")});
+
+    const std::vector<std::string> order_ab{"A", "B"};
+    const std::vector<std::string> order_bc{"B", "C"};
+    const auto ab = th::CpaParameterSet::create(
+        catalog, order_ab, input, th::DataPolicy::allow_synthetic_tests);
+    const auto bc = th::CpaParameterSet::create(
+        catalog, order_bc, input, th::DataPolicy::allow_synthetic_tests);
+
+    require(ab.components().at(0).id == "A" && ab.components().at(1).id == "B" &&
+                ab.association_records().size() == 1U &&
+                ab.association_records()[0].first_component_id == "A" &&
+                ab.association_pair(0, "H", 0, "H") != nullptr,
+            "CPA A/B subset did not select only its association records");
+    require(bc.components().at(0).id == "B" && bc.components().at(1).id == "C" &&
+                bc.association_records().size() == 1U &&
+                bc.association_records()[0].first_component_id == "C" &&
+                bc.association_pair(1, "Q", 1, "Q") != nullptr,
+            "CPA B/C subset did not select only its association records");
+    require(std::abs(ab.kij(0, 1) - 0.04) < 1e-15 &&
+                std::abs(bc.kij(0, 1) - 0.03) < 1e-15,
+            "CPA runtime subset rebuild lost selected binary alignment");
+}
+
 void provenance_retention() {
     const auto first = binary(false);
     const auto second = binary(true);
@@ -251,6 +301,7 @@ void missing_binary_rejected() {
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"parameter_reordering", parameter_reordering},
+    {"runtime_subset", runtime_subset_rebuild},
     {"provenance_retention", provenance_retention},
     {"analytic_one_site", analytic_one_site_association},
     {"association_pressure", association_pressure_helmholtz_crosscheck},
