@@ -1,121 +1,202 @@
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
 import {
-  PROFILE_C_MODEL,
-  type FlashComponentInput,
-  type ProfileCPtRequest,
-  validateProfileCPtRequest,
+  PT_COMPOSITION_ROUNDOFF,
+  validatePtFlashRequest,
+  type PtBackendDescriptor,
+  type PtFlashRequest,
 } from '../domain/flash';
 
 interface FlashFormProps {
-  backendConfigured: boolean;
+  backends: readonly PtBackendDescriptor[];
+  discoveryLoading: boolean;
   busy: boolean;
-  onSubmit: (request: ProfileCPtRequest) => void;
+  onBackendChange: () => void;
+  onCancel: () => void;
+  onSubmit: (request: PtFlashRequest, backend: PtBackendDescriptor) => void;
 }
 
-interface ComponentDraft {
-  key: number;
-  id: string;
-  moleFraction: string;
-}
+type FeedDrafts = ReadonlyMap<string, ReadonlyMap<string, string>>;
 
 function parseFiniteInput(value: string): number {
-  if (value.trim() === '') {
-    return Number.NaN;
-  }
-  return Number(value);
+  return value.trim() === '' ? Number.NaN : Number(value);
 }
 
-export function FlashForm({ backendConfigured, busy, onSubmit }: FlashFormProps) {
-  const nextKey = useRef(3);
+export function FlashForm({
+  backends,
+  discoveryLoading,
+  busy,
+  onBackendChange,
+  onCancel,
+  onSubmit,
+}: FlashFormProps) {
+  const [selectedBackendId, setSelectedBackendId] = useState(
+    () => backends[0]?.configuredBackendId ?? '',
+  );
   const [pressureMpa, setPressureMpa] = useState('10');
   const [temperatureK, setTemperatureK] = useState('350');
-  const [naclMolality, setNaclMolality] = useState('0');
-  const [components, setComponents] = useState<ComponentDraft[]>([
-    { key: 1, id: '', moleFraction: '' },
-    { key: 2, id: '', moleFraction: '' },
-  ]);
+  const [feedDrafts, setFeedDrafts] = useState<FeedDrafts>(() => new Map());
   const [submitted, setSubmitted] = useState(false);
 
-  const request = useMemo<ProfileCPtRequest>(() => {
-    const parsedComponents: FlashComponentInput[] = components.map((component) => ({
-      id: component.id,
-      moleFraction: parseFiniteInput(component.moleFraction),
-    }));
+  useEffect(() => {
+    setSelectedBackendId((current) => {
+      if (backends.some((backend) => backend.configuredBackendId === current)) {
+        return current;
+      }
+      return backends[0]?.configuredBackendId ?? '';
+    });
+  }, [backends]);
+
+  const selectedBackend = useMemo(
+    () =>
+      backends.find(
+        (backend) => backend.configuredBackendId === selectedBackendId,
+      ) ?? null,
+    [backends, selectedBackendId],
+  );
+
+  const request = useMemo<PtFlashRequest | null>(() => {
+    if (selectedBackend === null) {
+      return null;
+    }
+    const drafts = feedDrafts.get(selectedBackend.configuredBackendId);
     return {
+      configuredBackendId: selectedBackend.configuredBackendId,
       pressurePa: parseFiniteInput(pressureMpa) * 1e6,
       temperatureK: parseFiniteInput(temperatureK),
-      naclMolalityMolPerKgWater: parseFiniteInput(naclMolality),
-      components: parsedComponents,
+      feed: selectedBackend.componentInventory.components.map((component) => ({
+        componentId: component.componentId,
+        moleFraction: parseFiniteInput(drafts?.get(component.componentId) ?? ''),
+      })),
     };
-  }, [components, naclMolality, pressureMpa, temperatureK]);
+  }, [feedDrafts, pressureMpa, selectedBackend, temperatureK]);
 
   const validationErrors = useMemo(
-    () => validateProfileCPtRequest(request),
-    [request],
-  );
-
-  const compositionSum = useMemo(
     () =>
-      components.reduce((sum, component) => {
-        const value = parseFiniteInput(component.moleFraction);
-        return Number.isFinite(value) ? sum + value : sum;
-      }, 0),
-    [components],
+      request === null || selectedBackend === null
+        ? []
+        : validatePtFlashRequest(request, selectedBackend),
+    [request, selectedBackend],
   );
 
-  function updateComponent(
-    key: number,
-    field: 'id' | 'moleFraction',
-    value: string,
-  ) {
-    setComponents((current) =>
-      current.map((component) =>
-        component.key === key ? { ...component, [field]: value } : component,
-      ),
-    );
+  const compositionSum = useMemo(() => {
+    if (selectedBackend === null) {
+      return 0;
+    }
+    const drafts = feedDrafts.get(selectedBackend.configuredBackendId);
+    return selectedBackend.componentInventory.components.reduce((sum, component) => {
+      const value = parseFiniteInput(drafts?.get(component.componentId) ?? '');
+      return Number.isFinite(value) ? sum + value : sum;
+    }, 0);
+  }, [feedDrafts, selectedBackend]);
+
+  function selectBackend(configuredBackendId: string) {
+    setSelectedBackendId(configuredBackendId);
+    setSubmitted(false);
+    onBackendChange();
   }
 
-  function addComponent() {
-    const key = nextKey.current;
-    nextKey.current += 1;
-    setComponents((current) => [
-      ...current,
-      { key, id: '', moleFraction: '' },
-    ]);
-  }
-
-  function removeComponent(key: number) {
-    setComponents((current) => current.filter((component) => component.key !== key));
+  function updateMoleFraction(componentId: string, value: string) {
+    if (selectedBackend === null) {
+      return;
+    }
+    const backendId = selectedBackend.configuredBackendId;
+    setFeedDrafts((current) => {
+      const next = new Map(current);
+      const backendDrafts = new Map(current.get(backendId));
+      backendDrafts.set(componentId, value);
+      next.set(backendId, backendDrafts);
+      return next;
+    });
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitted(true);
-    if (!backendConfigured || validationErrors.length > 0 || busy) {
+    if (
+      request === null ||
+      selectedBackend === null ||
+      validationErrors.length > 0 ||
+      busy
+    ) {
       return;
     }
-    onSubmit(request);
+    onSubmit(request, selectedBackend);
   }
 
-  const disabled = !backendConfigured || validationErrors.length > 0 || busy;
+  const capability = selectedBackend?.capability;
 
   return (
     <form className="flash-form" onSubmit={handleSubmit} noValidate>
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Profile-C PT flash</p>
+          <p className="eyebrow">PT service request</p>
           <h2>Calculation input</h2>
         </div>
-        <span className="model-chip">SW92 corrected-original</span>
+        <span className="model-chip">Runtime discovery</span>
       </div>
 
-      <div className="model-contract">
-        <span>Model profile</span>
-        <code>{PROFILE_C_MODEL}</code>
-      </div>
+      <label className="backend-selector">
+        <span>Configured backend</span>
+        <select
+          value={selectedBackendId}
+          onChange={(event) => selectBackend(event.target.value)}
+          disabled={busy || backends.length === 0}
+          aria-label="Configured PT backend"
+        >
+          {backends.length === 0 ? (
+            <option value="">
+              {discoveryLoading ? 'Discovering backends…' : 'No backend available'}
+            </option>
+          ) : null}
+          {backends.map((backend) => (
+            <option
+              value={backend.configuredBackendId}
+              key={backend.configuredBackendId}
+            >
+              {backend.configuredBackendId} · {backend.capability.modelProfile}
+            </option>
+          ))}
+        </select>
+      </label>
 
-      <div className="field-grid">
+      {capability === undefined ? (
+        <div className="model-contract model-contract-empty">
+          <span>
+            Capability discovery must succeed before a component inventory or solve
+            request can be created.
+          </span>
+        </div>
+      ) : (
+        <div className="capability-card">
+          <div className="capability-primary">
+            <span>Model profile</span>
+            <code>{capability.modelProfile}</code>
+          </div>
+          <div className="capability-facts">
+            <span>
+              Phases <strong>{capability.supportedPhaseCounts.join(', ')}</strong>
+            </span>
+            <span>
+              Dataset <strong>{capability.datasetId}</strong>
+            </span>
+            <span>
+              Revision <strong>{capability.revision}</strong>
+            </span>
+          </div>
+          {capability.scalarSettings.length > 0 ? (
+            <div className="scalar-settings" aria-label="Configured backend settings">
+              {capability.scalarSettings.map((setting) => (
+                <span key={setting.id}>
+                  {setting.id} = <strong>{setting.value}</strong> {setting.unit}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <div className="field-grid field-grid-two">
         <label>
           <span>Pressure</span>
           <div className="input-with-unit">
@@ -140,70 +221,51 @@ export function FlashForm({ backendConfigured, busy, onSubmit }: FlashFormProps)
             <span>K</span>
           </div>
         </label>
-        <label>
-          <span>NaCl molality</span>
-          <div className="input-with-unit">
-            <input
-              inputMode="decimal"
-              value={naclMolality}
-              onChange={(event) => setNaclMolality(event.target.value)}
-              aria-label="NaCl molality"
-            />
-            <span>mol/kg H₂O</span>
-          </div>
-        </label>
       </div>
 
       <div className="composition-header">
         <div>
-          <h3>Ordered overall composition</h3>
-          <p>Stable component IDs must match the backend parameter snapshot.</p>
+          <h3>Backend component inventory</h3>
+          <p>IDs and order come from discovery; only mole fractions are editable.</p>
         </div>
-        <div className="composition-sum" data-valid={Math.abs(compositionSum - 1) <= 64 * Number.EPSILON}>
+        <div
+          className="composition-sum"
+          data-valid={Math.abs(compositionSum - 1) <= PT_COMPOSITION_ROUNDOFF}
+        >
           Σz = {compositionSum.toPrecision(8)}
         </div>
       </div>
 
-      <div className="component-table" role="group" aria-label="Overall composition">
+      <div
+        className="component-table inventory-component-table"
+        role="group"
+        aria-label="Overall composition"
+      >
         <div className="component-table-head" aria-hidden="true">
           <span>Component ID</span>
           <span>Mole fraction z</span>
-          <span />
         </div>
-        {components.map((component, index) => (
-          <div className="component-row" key={component.key}>
-            <input
-              value={component.id}
-              onChange={(event) => updateComponent(component.key, 'id', event.target.value)}
-              placeholder={index === 0 ? 'e.g. carbon-dioxide' : 'stable ID'}
-              aria-label={`Component ${index + 1} ID`}
-            />
-            <input
-              inputMode="decimal"
-              value={component.moleFraction}
-              onChange={(event) =>
-                updateComponent(component.key, 'moleFraction', event.target.value)
-              }
-              placeholder="0.0"
-              aria-label={`Component ${index + 1} mole fraction`}
-            />
-            <button
-              className="icon-button"
-              type="button"
-              onClick={() => removeComponent(component.key)}
-              disabled={components.length === 1}
-              aria-label={`Remove component ${index + 1}`}
-              title="Remove component"
-            >
-              ×
-            </button>
-          </div>
-        ))}
+        {selectedBackend?.componentInventory.components.map((component) => {
+          const value =
+            feedDrafts
+              .get(selectedBackend.configuredBackendId)
+              ?.get(component.componentId) ?? '';
+          return (
+            <div className="component-row" key={component.componentId}>
+              <code>{component.componentId}</code>
+              <input
+                inputMode="decimal"
+                value={value}
+                onChange={(event) =>
+                  updateMoleFraction(component.componentId, event.target.value)
+                }
+                placeholder="0.0"
+                aria-label={`${component.componentId} mole fraction`}
+              />
+            </div>
+          );
+        })}
       </div>
-
-      <button className="secondary-button" type="button" onClick={addComponent}>
-        + Add component
-      </button>
 
       {submitted && validationErrors.length > 0 ? (
         <div className="validation-panel" role="alert">
@@ -218,11 +280,23 @@ export function FlashForm({ backendConfigured, busy, onSubmit }: FlashFormProps)
 
       <div className="submit-row">
         <div className="submit-note">
-          The browser never normalizes z or evaluates EOS/flash equations.
+          Browser checks are advisory. The service validates the unchanged request and
+          delegates exactly one solve to the selected backend.
         </div>
-        <button className="primary-button" type="submit" disabled={disabled}>
-          {busy ? 'Computing…' : 'Run PT flash'}
-        </button>
+        <div className="submit-actions">
+          {busy ? (
+            <button className="secondary-button cancel-button" type="button" onClick={onCancel}>
+              Cancel
+            </button>
+          ) : null}
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={selectedBackend === null || busy}
+          >
+            {busy ? 'Computing…' : 'Run PT flash'}
+          </button>
+        </div>
       </div>
     </form>
   );

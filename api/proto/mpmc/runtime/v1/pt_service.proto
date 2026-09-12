@@ -1,0 +1,213 @@
+syntax = "proto3";
+
+package mpmc.runtime.v1;
+
+// Versioned browser/process mapping for mpmc::runtime::PtService. Both methods
+// are unary because v1 publishes immutable discovery snapshots and one complete
+// PT result envelope per request.
+service PtFlashService {
+  rpc DiscoverPtCapabilities(DiscoverPtCapabilitiesRequest) returns (DiscoverPtCapabilitiesResponse);
+  rpc SolvePtFlash(SolvePtFlashRequest) returns (SolvePtFlashResponse);
+}
+
+message DiscoverPtCapabilitiesRequest {}
+
+message DiscoverPtCapabilitiesResponse {
+  optional string wire_contract = 1;
+  optional string service_boundary_convention = 2;
+  optional string capability_convention = 3;
+  repeated PtBackendDescriptor backends = 4;
+}
+
+message PtRuntimeComponent {
+  optional string component_id = 1;
+  optional uint32 feed_index = 2;
+}
+
+message PtRuntimeComponentInventory {
+  optional string convention = 1;
+  repeated PtRuntimeComponent components = 2;
+}
+
+message PtBackendScalarSetting {
+  optional string id = 1;
+  optional double value = 2;
+  optional string unit = 3;
+}
+
+enum PtPhaseTransitionSupport {
+  PT_PHASE_TRANSITION_SUPPORT_UNSPECIFIED = 0;
+  PT_PHASE_TRANSITION_SUPPORT_DETECTION_ONLY = 1;
+  PT_PHASE_TRANSITION_SUPPORT_FRESH_TARGET_RESOLVE = 2;
+}
+
+message PtPhaseTransitionEdgeCapability {
+  optional uint32 source_phase_count = 1;
+  optional uint32 target_phase_count = 2;
+  optional PtPhaseTransitionSupport support = 3;
+  optional bool requires_fresh_target_solve = 4;
+}
+
+message PtPhaseTransitionCapability {
+  optional string convention = 1;
+  repeated PtPhaseTransitionEdgeCapability edges = 2;
+}
+
+message PtBackendCapability {
+  optional string convention = 1;
+  optional string backend_id = 2;
+  optional string model_profile = 3;
+  optional string algorithm_profile = 4;
+  optional string publication_profile = 5;
+  optional string configuration_profile = 6;
+  optional string dataset_id = 7;
+  optional string revision = 8;
+  repeated string component_ids = 9;
+  repeated uint32 supported_phase_counts = 10;
+  repeated PtBackendScalarSetting scalar_settings = 11;
+  optional PtPhaseTransitionCapability transition_capability = 12;
+  optional bool performs_initial_stability_search = 13;
+  optional bool performs_final_phase_set_review = 14;
+  optional bool performs_boundary_neighbor_resolve = 15;
+  optional bool global_stability_proven = 16;
+  optional string phase_metadata_namespace = 17;
+}
+
+message PtBackendDescriptor {
+  optional string configured_backend_id = 1;
+  optional PtBackendCapability capability = 2;
+  optional PtRuntimeComponentInventory component_inventory = 3;
+  optional string convention = 4;
+}
+
+message PtCompositionEntry {
+  optional string component_id = 1;
+  optional double mole_fraction = 2;
+}
+
+message SolvePtFlashRequest {
+  optional string wire_contract = 1;
+  optional string service_request_convention = 2;
+  optional string configured_backend_id = 3;
+  optional double pressure_pa = 4;
+  optional double temperature_k = 5;
+  repeated PtCompositionEntry feed = 6;
+}
+
+message PtPhaseComponent {
+  optional string component_id = 1;
+  optional double mole_fraction = 2;
+  optional double ln_fugacity_coefficient = 3;
+}
+
+message PtPhaseMetadata {
+  optional string role_id = 1;
+  optional string family_id = 2;
+}
+
+message PtPhase {
+  optional uint32 phase_index = 1;
+  optional double mole_phase_fraction = 2;
+  repeated PtPhaseComponent components = 3;
+  optional uint64 provider_branch = 4;
+  optional bool provider_branch_smooth = 5;
+  optional double compressibility_factor = 6;
+  optional PtPhaseMetadata provider_metadata = 7;
+}
+
+enum PtPhaseTransitionTrigger {
+  PT_PHASE_TRANSITION_TRIGGER_UNSPECIFIED = 0;
+  PT_PHASE_TRANSITION_TRIGGER_INITIAL_STABILITY_WITNESS = 1;
+  PT_PHASE_TRANSITION_TRIGGER_FINAL_PHASE_SET_INSTABILITY = 2;
+  PT_PHASE_TRANSITION_TRIGGER_PHASE_DISAPPEARANCE = 3;
+  PT_PHASE_TRANSITION_TRIGGER_PROVIDER_TOPOLOGY_WITNESS = 4;
+  PT_PHASE_TRANSITION_TRIGGER_PROVIDER_BOUNDARY_ROUTE = 5;
+}
+
+enum PtPhaseTransitionResolution {
+  PT_PHASE_TRANSITION_RESOLUTION_UNSPECIFIED = 0;
+  PT_PHASE_TRANSITION_RESOLUTION_ACCEPTED_TARGET = 1;
+  PT_PHASE_TRANSITION_RESOLUTION_TARGET_RESOLVE_REQUIRED = 2;
+  PT_PHASE_TRANSITION_RESOLUTION_TARGET_RESOLVE_FAILED = 3;
+  PT_PHASE_TRANSITION_RESOLUTION_CANDIDATE_NOT_ACCEPTED = 4;
+  PT_PHASE_TRANSITION_RESOLUTION_BROADER_TOPOLOGY_REQUIRED = 5;
+  PT_PHASE_TRANSITION_RESOLUTION_INDETERMINATE = 6;
+}
+
+message PtPhaseTransitionEvidence {
+  optional uint32 source_phase_count = 1;
+  optional uint32 target_phase_count = 2;
+  optional PtPhaseTransitionTrigger trigger = 3;
+  optional PtPhaseTransitionResolution resolution = 4;
+  optional bool fresh_target_solve_attempted = 5;
+  optional bool target_topology_closed = 6;
+  optional string provider_evidence_profile = 7;
+  optional string diagnostic = 8;
+}
+
+message PtPhaseTransitionReport {
+  optional string convention = 1;
+  repeated PtPhaseTransitionEvidence evidence = 2;
+}
+
+message PtResultProvenance {
+  optional PtBackendDescriptor backend = 1;
+  optional string backend_result_convention = 2;
+  optional string phase_set_convention = 3;
+  optional string phase_transition_convention = 4;
+  optional string provider_result_convention = 5;
+}
+
+enum PtComputationOutcome {
+  PT_COMPUTATION_OUTCOME_UNSPECIFIED = 0;
+  PT_COMPUTATION_OUTCOME_ACCEPTED = 1;
+  PT_COMPUTATION_OUTCOME_PHASE_SET_UNSTABLE = 2;
+  PT_COMPUTATION_OUTCOME_INDETERMINATE = 3;
+}
+
+message PtComputationResult {
+  optional PtComputationOutcome outcome = 1;
+  optional PtResultProvenance provenance = 2;
+  optional double pressure_pa = 3;
+  optional double temperature_k = 4;
+  repeated PtCompositionEntry feed = 5;
+  // Accepted phases only. This field must be empty for phase_set_unstable and
+  // indeterminate; diagnostic candidates are never promoted onto the wire.
+  repeated PtPhase phases = 6;
+  optional PtPhaseTransitionReport transition_report = 7;
+  optional bool global_stability_proven = 8;
+  optional bool morphology_resolved = 9;
+  optional string diagnostic = 10;
+}
+
+enum PtServiceErrorCode {
+  PT_SERVICE_ERROR_CODE_UNSPECIFIED = 0;
+  PT_SERVICE_ERROR_CODE_INVALID_CONFIGURED_BACKEND_ID = 1;
+  PT_SERVICE_ERROR_CODE_CONFIGURED_BACKEND_NOT_FOUND = 2;
+  PT_SERVICE_ERROR_CODE_INVALID_PRESSURE = 3;
+  PT_SERVICE_ERROR_CODE_INVALID_TEMPERATURE = 4;
+  PT_SERVICE_ERROR_CODE_COMPONENT_COUNT_MISMATCH = 5;
+  PT_SERVICE_ERROR_CODE_INVALID_COMPONENT_ID = 6;
+  PT_SERVICE_ERROR_CODE_DUPLICATE_COMPONENT = 7;
+  PT_SERVICE_ERROR_CODE_UNKNOWN_COMPONENT = 8;
+  PT_SERVICE_ERROR_CODE_INVALID_MOLE_FRACTION = 9;
+  PT_SERVICE_ERROR_CODE_COMPOSITION_NOT_NORMALIZED = 10;
+  PT_SERVICE_ERROR_CODE_BACKEND_REJECTED_REQUEST = 11;
+  PT_SERVICE_ERROR_CODE_BACKEND_CONTRACT_VIOLATION = 12;
+  PT_SERVICE_ERROR_CODE_BACKEND_EXECUTION_FAILURE = 13;
+}
+
+message PtServiceError {
+  optional PtServiceErrorCode code = 1;
+  optional string field = 2;
+  optional string diagnostic = 3;
+}
+
+message SolvePtFlashResponse {
+  optional string wire_contract = 1;
+  optional string service_result_convention = 2;
+  oneof payload {
+    PtComputationResult result = 3;
+    PtServiceError error = 4;
+  }
+}
