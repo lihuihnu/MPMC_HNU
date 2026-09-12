@@ -101,6 +101,27 @@ void parameter_reordering() {
             "CPA site-pair interaction lost component identity under reordering");
 }
 
+void provenance_retention() {
+    const auto first = binary(false);
+    const auto second = binary(true);
+    require(first.pure_records().size() == 2U && second.pure_records().size() == 2U,
+            "CPA sourced pure records were not retained");
+    require(first.pure_records()[0].component_id == "A" &&
+                first.pure_records()[0].a0_pa_m6_per_mol2.source.locator == "a0-A" &&
+                second.pure_records()[1].component_id == "A" &&
+                second.pure_records()[1].a0_pa_m6_per_mol2.source.locator == "a0-A",
+            "CPA sourced pure provenance lost ordered component identity");
+    require(first.binary_records().size() == 1U &&
+                first.binary_records()[0].kij_dimensionless.source.locator == "kij-A-B",
+            "CPA binary provenance was not retained");
+    require(first.association_records().size() == 1U &&
+                first.association_records()[0].epsilon_j_per_mol.source.locator ==
+                    "epsilon-A-H-A-H" &&
+                first.association_records()[0].beta_dimensionless.source.locator ==
+                    "beta-A-H-A-H",
+            "CPA association provenance was not retained");
+}
+
 void analytic_one_site_association() {
     const auto parameters = one_component(true);
     const std::vector<double> x{1.0};
@@ -192,6 +213,7 @@ void missing_binary_rejected() {
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"parameter_reordering", parameter_reordering},
+    {"provenance_retention", provenance_retention},
     {"analytic_one_site", analytic_one_site_association},
     {"nonassociating_srk", nonassociating_srk_limit},
     {"association_permutation", association_pressure_and_permutation},
