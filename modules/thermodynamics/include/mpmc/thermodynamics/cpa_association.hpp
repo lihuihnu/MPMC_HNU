@@ -154,6 +154,9 @@ inline double cpa_association_strength(
 
     for (std::size_t component = 0; component < parameters.size(); ++component) {
         for (const auto& site : parameters.pure(component).sites) {
+            if (result.sites.size() >= options.max_site_classes) {
+                throw std::length_error("CPA association: site-class quota exceeded");
+            }
             result.sites.push_back({component, site.id, site.multiplicity, 1.0});
         }
     }
@@ -161,9 +164,6 @@ inline double cpa_association_strength(
         result.status = CpaAssociationStatus::no_associating_sites;
         result.diagnostic = "CPA association: configured component set has no association sites";
         return result;
-    }
-    if (result.sites.size() > options.max_site_classes) {
-        throw std::length_error("CPA association: site-class quota exceeded");
     }
 
     std::vector<double> current(result.sites.size(), 1.0);
