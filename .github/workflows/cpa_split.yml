@@ -1,0 +1,70 @@
+name: CPA PT vapor-liquid split baseline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
+      - 'tests/flash/cpa_split/**'
+      - 'tests/flash/cpa_stability/**'
+      - 'tests/thermodynamics/cpa_pt_phase/**'
+      - '.github/workflows/cpa_split.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-split-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  split:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure CPA split
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/cpa_split \
+            -B build/cpa-split \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_CPA_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build CPA split
+        run: cmake --build build/cpa-split --config ${{ matrix.config }} --parallel 2
+
+      - name: Run CPA split
+        run: ctest --test-dir build/cpa-split -C ${{ matrix.config }} -R '^flash[.]cpa_split[.]' --verbose --no-tests=error
