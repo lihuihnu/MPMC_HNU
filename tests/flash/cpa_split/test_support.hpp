@@ -74,6 +74,10 @@ inline th::CpaPtOptions fast_pt_options() {
     th::CpaPtOptions options;
     options.scan_intervals = 128U;
     options.max_evaluations = 2048U;
+    // Match the production CPA VLE precision coordination while keeping the
+    // structural scan smaller for focused test cost.
+    options.pressure_absolute_tolerance_pa = 1.0e-7;
+    options.pressure_relative_tolerance = 1.0e-12;
     return options;
 }
 
