@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <source_location>
 #include <stdexcept>
@@ -167,6 +168,9 @@ void pr76_direct_equivalence() {
                 capability.algorithm_profile == fl::PtSplitResult::convention &&
                 capability.publication_profile ==
                     fl::PtPhaseSetResult::convention &&
+                capability.configuration_profile ==
+                    fl::pr76_pt_flash_backend_configuration_profile &&
+                capability.scalar_settings.empty() &&
                 capability.supports_phase_count(1U) &&
                 capability.supports_phase_count(2U) &&
                 !capability.supports_phase_count(3U) &&
@@ -206,6 +210,13 @@ void sw92_direct_equivalence() {
                     fl::sw92_phase_assigned_pt_convention &&
                 capability.publication_profile ==
                     fl::sw92_profile_c_phase_set_publication_convention &&
+                capability.configuration_profile ==
+                    fl::sw92_profile_c_pt_flash_backend_configuration_profile &&
+                capability.scalar_settings.size() == 1U &&
+                capability.scalar_settings[0].id ==
+                    "nacl_molality_mol_per_kg_water" &&
+                capability.scalar_settings[0].value == molality &&
+                capability.scalar_settings[0].unit == "mol/kg_H2O" &&
                 capability.supports_phase_count(1U) &&
                 capability.supports_phase_count(2U) &&
                 capability.supports_phase_count(3U) &&
@@ -269,6 +280,7 @@ void contract_guards() {
     capability.model_profile = "model";
     capability.algorithm_profile = "algorithm";
     capability.publication_profile = "publication";
+    capability.configuration_profile = "configuration";
     capability.dataset_id = "dataset";
     capability.revision = "revision";
     capability.component_ids = {"a", "b"};
@@ -278,6 +290,15 @@ void contract_guards() {
     capability.supported_phase_counts = {1U, 1U};
     require(!capability.structurally_valid(),
             "duplicate supported phase count accepted");
+    capability.supported_phase_counts = {1U, 2U};
+    capability.scalar_settings = {
+        {"setting", std::numeric_limits<double>::quiet_NaN(), "unit"}};
+    require(!capability.structurally_valid(),
+            "nonfinite backend scalar setting accepted");
+    capability.scalar_settings = {{"setting", 1.0, "unit"},
+                                  {"setting", 2.0, "unit"}};
+    require(!capability.structurally_valid(),
+            "duplicate backend scalar setting ID accepted");
 
     const auto model = pr76_binary_model();
     fl::Pr76VleEvaluator evaluator(model);
