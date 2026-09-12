@@ -18,6 +18,17 @@ void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
 }
 
+template <class Error, class Function>
+void expect_error(Function&& function) {
+    bool caught = false;
+    try {
+        function();
+    } catch (const Error&) {
+        caught = true;
+    }
+    require(caught, "expected exception missing");
+}
+
 fl::Pr76PtMax3Options options_from_starts(const std::vector<Vec>& starts) {
     require(starts.size() == 3U, "three structural starts required");
     fl::Pr76PtMax3Options options;
@@ -166,6 +177,34 @@ void seeded_component_permutation() {
     }
 }
 
+void malformed_start_rejected() {
+    const auto model = pr76_max3_test::model();
+    fl::Pr76VleEvaluator evaluator(model);
+    const auto feed = pr76_max3_test::equal_feed();
+    const auto starts = pr76_max3_test::starts();
+    auto options = options_from_starts(starts);
+    options.three_phase_starts.front().compositions[2].pop_back();
+    expect_error<std::invalid_argument>([&] {
+        (void)fl::solve_pr76_pt_max3(
+            1.0e6, 250.0, feed, evaluator, options, starts, starts);
+    });
+}
+
+void start_requires_instability_evidence() {
+    const auto model = pr76_max3_test::model();
+    fl::Pr76VleEvaluator evaluator(model);
+    const auto starts = pr76_max3_test::starts();
+    const auto feed = pr76_max3_test::reference_phases()[1];
+    const auto result = fl::solve_pr76_pt_max3(
+        1.0e6, 250.0, feed, evaluator,
+        options_from_starts(starts), starts, starts);
+    require(result.base.solution.status != fl::PtSplitStatus::phase_set_unstable,
+            "coexistence-phase feed unexpectedly produced negative final instability evidence");
+    require(result.attempts.empty() &&
+                result.status != fl::Pr76PtMax3Status::three_phase,
+            "three-phase start was consumed without two-phase instability evidence");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -174,6 +213,8 @@ int main(int argc, char** argv) {
         const std::string_view name{argv[1]};
         if (name == "seeded_max3") seeded_max3();
         else if (name == "seeded_component_permutation") seeded_component_permutation();
+        else if (name == "malformed_start") malformed_start_rejected();
+        else if (name == "start_requires_instability") start_requires_instability_evidence();
         else throw std::invalid_argument("unknown test name");
         std::cout << "[PASS] " << name << '\n';
         return 0;
