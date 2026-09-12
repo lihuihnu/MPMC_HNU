@@ -47,6 +47,11 @@ struct PtSplitOptions {
     StabilityOptions initial_stability;
     StabilityOptions final_stability;
     std::size_t max_split_attempts{16}; // Both role assignments of negative TPD witnesses.
+    // Per-attempt provider-call budget inside the global iteration.max_evaluations
+    // budget. The default preserves the historical behavior; backends with costly
+    // or asymmetric candidate-role paths may lower it so one failed assignment
+    // cannot consume the entire global split budget and starve later attempts.
+    std::size_t max_evaluations_per_attempt{20000};
 };
 struct PtSplitState {
     RachfordRiceResult fractions;
@@ -421,6 +426,9 @@ template <typename StabilityProvider, typename PhaseProvider>
     detail::stability_check_options(options.initial_stability);
     detail::stability_check_options(options.final_stability);
     detail::split_check_pt(pressure_pa, temperature_k);
+    if (options.max_split_attempts == 0U || options.max_evaluations_per_attempt == 0U) {
+        throw std::invalid_argument("PT split: attempt/evaluation quota must be positive");
+    }
     const std::size_t n = feed.size();
     if (n == 0 || n > options.iteration.rr.max_components || n > options.final_stability.max_components) {
         throw std::length_error("PT split: component quota exceeded or empty feed");
@@ -469,7 +477,10 @@ template <typename StabilityProvider, typename PhaseProvider>
             PtSplitAttempt attempt;
             if (seed) {
                 auto iteration = options.iteration;
-                iteration.max_evaluations -= result.split_evaluations;
+                const std::size_t remaining =
+                    options.iteration.max_evaluations - result.split_evaluations;
+                iteration.max_evaluations = std::min(
+                    remaining, options.max_evaluations_per_attempt);
                 attempt = iterate_pt_split(pressure_pa, temperature_k, z, *seed, phase_provider, iteration);
             } else { attempt.diagnostic = "finite, positive material-balanced witness seed is not representable"; }
             attempt.witness_trial = k;
