@@ -12,6 +12,8 @@ namespace mpmc::flash {
 
 inline constexpr std::string_view sw92_profile_c_pt_flash_backend_id =
     "SW92/Profile-C/PT/phase-set-backend/v1";
+inline constexpr std::string_view sw92_profile_c_pt_flash_backend_configuration_profile =
+    "SW92/Profile-C/fixed-molality/backend-configuration/v1";
 inline constexpr std::string_view sw92_profile_c_phase_metadata_namespace =
     "SW92/Profile-C/phase-metadata/v1";
 
@@ -26,7 +28,7 @@ public:
         const thermodynamics::Sw92Phase<double>& model,
         Sw92ProfileCPtFlashBackendOptions options = {})
         : model_(model), options_(std::move(options)),
-          capability_(build_capability(model_)) {}
+          capability_(build_capability(model_, options_)) {}
 
     [[nodiscard]] const PtFlashBackendCapability& capability()
         const noexcept override {
@@ -75,7 +77,8 @@ public:
 
 private:
     [[nodiscard]] static PtFlashBackendCapability build_capability(
-        const thermodynamics::Sw92Phase<double>& model) {
+        const thermodynamics::Sw92Phase<double>& model,
+        const Sw92ProfileCPtFlashBackendOptions& options) {
         PtFlashBackendCapability capability;
         capability.backend_id =
             std::string(sw92_profile_c_pt_flash_backend_id);
@@ -85,6 +88,12 @@ private:
             std::string(sw92_phase_assigned_pt_convention);
         capability.publication_profile =
             std::string(sw92_profile_c_phase_set_publication_convention);
+        capability.configuration_profile =
+            std::string(sw92_profile_c_pt_flash_backend_configuration_profile);
+        capability.scalar_settings.push_back({
+            "nacl_molality_mol_per_kg_water",
+            options.nacl_molality_mol_per_kg_water,
+            "mol/kg_H2O"});
         const auto& parameters = model.parameters();
         capability.dataset_id = parameters.dataset_id();
         capability.revision = parameters.revision();
