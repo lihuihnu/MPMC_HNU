@@ -76,7 +76,15 @@ scientific core.
 
 ## Next integration gate
 
-The next functional increment is a real service adapter that maps a versioned
-wire request/response to the top-level C++ Profile-C PT API. Until that exists,
-the disabled compute state is intentional and scientifically safer than mocked
-production results.
+The transport-neutral C++ [model-neutral PT service boundary](../modules/runtime/README.md)
+now defines configured-backend discovery, runtime component inventories,
+ID-keyed requests, variable accepted phase counts, provenance, and explicit
+indeterminate/error outcomes across PR76, SW92 Profile-C, and CPA. This frontend
+has not yet been migrated to or connected through that contract.
+
+The next functional increment is a versioned Protobuf/gRPC-Web adapter and a
+frontend migration that discovers the selected backend before building the
+component form. The adapter must call `mpmc::runtime::PtService`, not the
+model-specific Profile-C API, and must preserve non-accepted outcomes without
+fabricating phase data. Until that transport exists, the disabled compute state
+remains intentional.

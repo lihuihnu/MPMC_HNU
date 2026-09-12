@@ -215,3 +215,9 @@ This frozen v1 contract does not provide:
 - a traceable physical associating CPA three-phase oracle.
 
 The common 1/2/3-phase result and transition vocabulary across PR76, SW92 Profile-C and CPA is now the stable boundary on which the service/frontend integration layer may be built.
+
+The first transport-neutral consumer is now
+[`mpmc::runtime::PtService`](../runtime/README.md). It registers configured
+backend instances, exposes runtime component/capability discovery, and projects
+the frozen result without adding EOS, flash, or acceptance logic. Wire transport
+and the frontend connection remain separate increments.
