@@ -17,6 +17,16 @@ bool phase_equal(const fl::PtCandidatePhase& a, const fl::PtCandidatePhase& b) {
            a.compressibility_factor == b.compressibility_factor;
 }
 
+fl::Pr76PtThreePhaseStart three_phase_start(
+    const std::vector<pr76_max3_test::Vec>& starts) {
+    if (starts.size() != 3U) {
+        throw std::runtime_error("three structural starts required");
+    }
+    fl::Pr76PtThreePhaseStart start;
+    start.compositions = {starts[0], starts[1], starts[2]};
+    return start;
+}
+
 } // namespace
 
 int main() {
@@ -26,13 +36,17 @@ int main() {
         const auto feed = pr76_max3_test::equal_feed();
         const auto starts = pr76_max3_test::starts();
 
+        fl::Pr76PtMax3Options direct_options;
+        direct_options.three_phase_starts.push_back(three_phase_start(starts));
         const auto direct = fl::solve_pr76_pt_max3(
-            1.0e6, 250.0, feed, evaluator, {}, starts, starts);
+            1.0e6, 250.0, feed, evaluator,
+            direct_options, starts, starts);
         const auto published = fl::project_pr76_pt_max3_phase_set(direct);
 
         fl::Pr76PtFlashBackendOptions options;
         options.initial_starts = starts;
         options.final_starts = starts;
+        options.three_phase_starts.push_back(three_phase_start(starts));
         fl::Pr76PtFlashBackend backend(evaluator, options);
         fl::PtFlashBackend& runtime = backend;
         const auto adapted = runtime.solve({1.0e6, 250.0, feed});
