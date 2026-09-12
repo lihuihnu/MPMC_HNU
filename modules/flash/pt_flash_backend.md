@@ -10,6 +10,39 @@ Current adapters:
 - `Sw92ProfileCPtFlashBackend`: SW92 Profile-C boundary-aware 1/2/3-phase route;
 - `CpaPtFlashBackend` v1: CPA stability + explicit-density-side VLE + generic-RR3 maximum-three-phase route.
 
+## Service/frontend handoff freeze
+
+The following model-neutral public semantics are frozen as the **v1 handoff contract** for the next service/frontend layer:
+
+```text
+PT/flash-backend/capability-and-dispatch/v1
+PT/flash-backend/result/v1
+PT/phase-transition-boundary/v1
+```
+
+Conformance tests instantiate PR76, SW92 Profile-C and CPA together and lock the common shape rather than relying on documentation alone.
+
+For all three configured backends the frozen common capability includes:
+
+- supported phase counts `{1,2,3}`;
+- initial feed stability search;
+- final accepted-phase-set review;
+- fresh boundary-neighbor resolution capability;
+- `1 -> 2  fresh_target_resolve`;
+- `2 -> 1  detection_only`;
+- `2 -> 3  fresh_target_resolve`;
+- `3 -> 2  fresh_target_resolve`;
+- `global_stability_proven=false`.
+
+Provider differences remain explicit rather than being forced into a false common taxonomy:
+
+- SW92 Profile-C additionally supports fresh `3 -> 1` and retains its provider-specific AQ/NA/physical-role metadata namespace;
+- PR76 and CPA do not advertise `3 -> 1` and publish no provider morphology metadata;
+- SW92 retains prescribed NaCl molality as configured scalar provenance;
+- PR76 and the current CPA adapter have no generic scalar setting.
+
+A future change that alters the meaning or required shape of the generic request/result/capability/transition contract must introduce a new generic convention version rather than silently changing v1. Backend-specific solver algorithms, parameter datasets and provider result/profile revisions may continue to evolve behind this boundary, but every adapter must continue to pass the frozen conformance suite or explicitly adopt a new generic contract version.
+
 ## Capability snapshot
 
 Each configured backend instance owns a `PtFlashBackendCapability` containing:
@@ -70,7 +103,7 @@ CPA/PT/max3/backend-configuration/v1
 
 PR76 and the current CPA adapter have no generic scalar model setting. SW92 Profile-C records prescribed NaCl molality as `mol/kg_H2O`.
 
-A future wire/service API should still use typed PR/SW/CPA configuration rather than arbitrary string maps.
+The wire/service API should use typed PR/SW/CPA configuration rather than arbitrary string maps.
 
 ## Request and result
 
@@ -144,6 +177,7 @@ Current coverage includes:
 - PR76 max3 direct publication versus runtime backend;
 - SW92 wet-binary / Sample-6 publication and boundary projection;
 - CPA max3 direct publication versus runtime backend using the same structural starts;
+- a three-backend freeze executable that compares the common phase-count/search/transition capability surface;
 - PR76 and CPA `2→3` accepted transition evidence;
 - CPA default-threshold `3→2` fresh-neighbor evidence;
 - capability/configuration/transition structural guards;
@@ -151,17 +185,33 @@ Current coverage includes:
 - public-header self containment;
 - GCC Debug + ASan/UBSan, Clang Release and MSVC Release hosted builds/tests.
 
+## CPA physical-validation status
+
+CPA now has a traceable associating **two-phase** physical validation for methanol(2B) + water(4C) at 333.15 K using published CPA pure/association parameters, explicit CR-1 cross-association records, the published CR-1 binary interaction parameter, and Kurihara et al. experimental P-x-y data.
+
+The full production CPA VLE route closes all five retained interior literature states and keeps active association. The focused five-point regression is frozen at:
+
+```text
+mean |Delta x(MeOH)| <= 0.01
+mean |Delta y(MeOH)| <= 0.01
+max  |Delta x(MeOH)| <= 0.015
+max  |Delta y(MeOH)| <= 0.015
+```
+
+See [cpa_physical_validation.md](cpa_physical_validation.md) for the provenance and validation semantics.
+
+This does **not** upgrade the existing synthetic CPA max3 structural regression into a physical three-phase validation. A physical associating VLLE oracle remains separate until a complete compatible literature chain supplies all CPA pure/association/BIP data and three phase compositions without inference or parameter guessing.
+
 ## Validation boundary and non-capabilities
 
-This contract does not provide:
+This frozen v1 contract does not provide:
 
 - mathematical global-stability certification;
 - guaranteed discovery of every phase basin from finite automatic starts;
 - morphology classification;
 - a backend registry/plugin ABI;
-- wire/service API or frontend model discovery;
-- new flash sensitivities or physics behavior.
+- wire/service transport itself or frontend model discovery UI;
+- new flash sensitivities or physics behavior;
+- a traceable physical associating CPA three-phase oracle.
 
-CPA production code is association-aware, but the current complete CPA VLE/max3 topology regressions use explicitly synthetic non-associating SRK-limit fixtures; association is independently exercised in CPA phase-property/split-provider tests. Traceable associating two-/three-phase physical validation is a separate gate and must not be fabricated from missing parameters or phase data.
-
-The unified boundary now has a common 1/2/3-phase result and transition vocabulary across PR76, SW92 Profile-C and CPA, which is the required backend foundation for later service/frontend integration.
+The common 1/2/3-phase result and transition vocabulary across PR76, SW92 Profile-C and CPA is now the stable boundary on which the service/frontend integration layer may be built.

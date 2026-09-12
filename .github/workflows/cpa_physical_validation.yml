@@ -1,0 +1,89 @@
+name: CPA associating physical validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
+      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
+      - 'tests/flash/cpa_physical_validation/**'
+      - '.github/workflows/cpa_physical_validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-physical-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-physical-regression:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure CPA physical validation
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/cpa_physical_validation \
+            -B build/cpa-physical-validation \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_CPA_PHYSICAL_VALIDATION_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build CPA physical validation
+        run: cmake --build build/cpa-physical-validation --config ${{ matrix.config }} --parallel 2
+
+      - name: Run CPA physical validation
+        run: ctest --test-dir build/cpa-physical-validation -C ${{ matrix.config }} -L '^full_physical$' --verbose --no-tests=error
+
+  sanitizer-safety-regression:
+    name: GCC Debug + ASan/UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure CPA sanitizer safety regression
+        run: |
+          cmake -S tests/flash/cpa_physical_validation \
+            -B build/cpa-physical-validation \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DMPMC_CPA_PHYSICAL_VALIDATION_ENABLE_SANITIZERS=ON
+
+      - name: Build CPA sanitizer safety regression
+        run: cmake --build build/cpa-physical-validation --parallel 2
+
+      - name: Run CPA sanitizer safety regression
+        run: ctest --test-dir build/cpa-physical-validation -L '^sanitizer_safety$' --verbose --no-tests=error

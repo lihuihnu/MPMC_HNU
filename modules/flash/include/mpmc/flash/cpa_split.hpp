@@ -20,6 +20,22 @@ namespace mpmc::flash {
 inline constexpr std::string_view cpa_pt_vle_convention =
     "CPA/PT/VLE/minGibbs-stability-explicit-density-sides/logK-SSI-RR/v1";
 
+// The generic split accepts a two-phase state only at 1e-11 log-fugacity
+// closure. The standalone CPA PT root defaults are intentionally more general,
+// so the flash adapter owns tighter density-root defaults to keep inner root
+// error below the outer equilibrium/stability gates without changing the
+// thermodynamics-layer defaults. The 3e-6 Pa / 1e-12 pair is the tightest
+// validated flash default that closes the full associating water-methanol
+// literature set without driving the bounded density-root search into an
+// avoidable indeterminate path; tighter is not assumed to be numerically better.
+[[nodiscard]] inline thermodynamics::CpaPtOptions
+cpa_pt_vle_default_phase_options() {
+    thermodynamics::CpaPtOptions options;
+    options.pressure_absolute_tolerance_pa = 3.0e-6;
+    options.pressure_relative_tolerance = 1.0e-12;
+    return options;
+}
+
 // Numerical density-root sides only. They are not liquid/vapor morphology labels
 // and root vector indices are never persisted as phase identity across states.
 enum class CpaRootSide {
@@ -143,7 +159,8 @@ class CpaVleEvaluator {
 public:
     explicit CpaVleEvaluator(
         const thermodynamics::CpaPtPhase& model,
-        thermodynamics::CpaPtOptions pt_options = {})
+        thermodynamics::CpaPtOptions pt_options =
+            cpa_pt_vle_default_phase_options())
         : stability_(model, std::move(pt_options)) {}
 
     CpaVleEvaluator(const CpaVleEvaluator&) = delete;
