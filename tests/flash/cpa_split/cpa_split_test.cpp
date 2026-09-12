@@ -18,6 +18,49 @@ void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
 }
 
+void print_attempt(const fl::PtSplitAttempt& attempt, std::string_view prefix) {
+    std::cerr << prefix
+              << " status=" << static_cast<int>(attempt.status)
+              << " iterations=" << attempt.iterations
+              << " evaluations=" << attempt.evaluations
+              << " diagnostic=" << attempt.diagnostic;
+    if (attempt.point) {
+        std::cerr << " fugacity_norm=" << attempt.point->fugacity_norm
+                  << " beta=" << attempt.point->fractions.vapor_fraction
+                  << " mass_abs=" << attempt.point->fractions.mass_absolute
+                  << " mass_rel=" << attempt.point->fractions.mass_relative
+                  << " zL=" << attempt.point->liquid.z
+                  << " zV=" << attempt.point->vapor.z;
+        if (attempt.point->fractions.liquid.size() >= 2U &&
+            attempt.point->fractions.vapor.size() >= 2U) {
+            std::cerr << " x=(" << attempt.point->fractions.liquid[0] << ','
+                      << attempt.point->fractions.liquid[1] << ')'
+                      << " y=(" << attempt.point->fractions.vapor[0] << ','
+                      << attempt.point->fractions.vapor[1] << ')';
+        }
+    }
+    std::cerr << '\n';
+}
+
+void print_solution(const fl::CpaPtSplitResult& result, std::string_view prefix) {
+    std::cerr << prefix
+              << " solution_status=" << static_cast<int>(result.solution.status)
+              << " initial_status="
+              << static_cast<int>(result.solution.initial_stability.status)
+              << " attempts=" << result.solution.attempts.size()
+              << " selected=" << (result.solution.selected_attempt ? 1 : 0)
+              << " diagnostic=" << result.solution.diagnostic;
+    if (result.solution.final_stability) {
+        std::cerr << " final_status="
+                  << static_cast<int>(result.solution.final_stability->status);
+    }
+    std::cerr << '\n';
+    for (std::size_t i = 0; i < result.solution.attempts.size(); ++i) {
+        print_attempt(result.solution.attempts[i],
+                      std::string(prefix) + ".attempt[" + std::to_string(i) + "]");
+    }
+}
+
 void density_side_roles() {
     const auto parameters = cpa_split_test::pure();
     const auto model = th::CpaPtPhase::from_parameters(parameters);
@@ -72,9 +115,11 @@ void fixed_seed_reference() {
         cpa_split_test::pressure_pa,
         cpa_split_test::temperature_k,
         feed, log_k, evaluator);
-    require(attempt.status == fl::PtSplitAttemptStatus::converged &&
-                attempt.point.has_value(),
-            "CPA fixed-seed two-phase equations did not converge");
+    if (attempt.status != fl::PtSplitAttemptStatus::converged ||
+        !attempt.point.has_value()) {
+        print_attempt(attempt, "fixed_seed_reference");
+        throw std::runtime_error("CPA fixed-seed two-phase equations did not converge");
+    }
     const auto& state = *attempt.point;
     require(state.fugacity_norm <= 1e-10 &&
                 state.fractions.mass_absolute <= 1e-12 &&
@@ -119,13 +164,16 @@ void full_two_phase_acceptance() {
     const auto result = run_full(false);
     require(result.solution.initial_stability.status == fl::StabilityStatus::unstable,
             "CPA full split did not preserve initial negative-TPD evidence");
-    require(result.solution.status ==
-                fl::PtSplitStatus::two_phase_no_instability_found &&
-                result.solution.candidate() != nullptr &&
-                result.solution.final_stability.has_value() &&
-                result.solution.final_stability->status ==
-                    fl::StabilityStatus::no_instability_found,
+    if (result.solution.status !=
+            fl::PtSplitStatus::two_phase_no_instability_found ||
+        result.solution.candidate() == nullptr ||
+        !result.solution.final_stability.has_value() ||
+        result.solution.final_stability->status !=
+            fl::StabilityStatus::no_instability_found) {
+        print_solution(result, "full_two_phase");
+        throw std::runtime_error(
             "CPA full stability->split->final-review path did not accept two phases");
+    }
     const auto& state = *result.solution.candidate();
     require(state.fugacity_norm <= result.solution.options.iteration.fugacity_tolerance &&
                 state.fractions.mass_absolute <=
@@ -151,13 +199,17 @@ void full_two_phase_acceptance() {
 void component_permutation() {
     const auto first = run_full(false);
     const auto second = run_full(true);
-    require(first.solution.status ==
-                fl::PtSplitStatus::two_phase_no_instability_found &&
-                second.solution.status ==
-                fl::PtSplitStatus::two_phase_no_instability_found &&
-                first.solution.candidate() != nullptr &&
-                second.solution.candidate() != nullptr,
+    if (first.solution.status !=
+            fl::PtSplitStatus::two_phase_no_instability_found ||
+        second.solution.status !=
+            fl::PtSplitStatus::two_phase_no_instability_found ||
+        first.solution.candidate() == nullptr ||
+        second.solution.candidate() == nullptr) {
+        print_solution(first, "permutation.first");
+        print_solution(second, "permutation.second");
+        throw std::runtime_error(
             "CPA component permutation changed accepted two-phase status");
+    }
     const auto& a = *first.solution.candidate();
     const auto& b = *second.solution.candidate();
     require(std::abs(a.fractions.vapor_fraction - b.fractions.vapor_fraction) < 2e-9 &&
