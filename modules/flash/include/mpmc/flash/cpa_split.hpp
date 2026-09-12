@@ -24,11 +24,14 @@ inline constexpr std::string_view cpa_pt_vle_convention =
 // closure. The standalone CPA PT root defaults are intentionally more general,
 // so the flash adapter owns tighter density-root defaults to keep inner root
 // error below the outer equilibrium/stability gates without changing the
-// thermodynamics-layer defaults.
+// thermodynamics-layer defaults. The 3e-6 Pa / 1e-12 pair is the tightest
+// validated flash default that closes the full associating water-methanol
+// literature set without driving the bounded density-root search into an
+// avoidable indeterminate path; tighter is not assumed to be numerically better.
 [[nodiscard]] inline thermodynamics::CpaPtOptions
 cpa_pt_vle_default_phase_options() {
     thermodynamics::CpaPtOptions options;
-    options.pressure_absolute_tolerance_pa = 1.0e-7;
+    options.pressure_absolute_tolerance_pa = 3.0e-6;
     options.pressure_relative_tolerance = 1.0e-12;
     return options;
 }
