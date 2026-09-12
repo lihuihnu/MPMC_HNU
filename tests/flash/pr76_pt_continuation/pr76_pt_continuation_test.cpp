@@ -97,7 +97,7 @@ void diagnostic_pt_grid() {
                 {pressure_mpa * 1.0e6, temperature}}};
             const auto result = fl::solve_pr76_pt_continuation(
                 path, pr76_max3_test::equal_feed(), evaluator, structural_options());
-            std::cout << ' ' << temperature << 'K@' << pressure_mpa << "MPa:";
+            std::cout << ' ' << temperature << "K@" << pressure_mpa << "MPa:";
             if (result.points.front().accepted_phase_count) {
                 std::cout << *result.points.front().accepted_phase_count;
             } else {
