@@ -5,6 +5,7 @@
 #include <mpmc/flash/pt_flash_backend.hpp>
 
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
