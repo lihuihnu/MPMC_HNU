@@ -115,7 +115,8 @@ void require_active_association(
 
 void default_flash_precision() {
     const auto defaults = fl::cpa_pt_vle_default_phase_options();
-    require(defaults.pressure_absolute_tolerance_pa == 1.0e-7 &&
+    require(defaults.scan_intervals == 512U &&
+                defaults.pressure_absolute_tolerance_pa == 3.0e-6 &&
                 defaults.pressure_relative_tolerance == 1.0e-12,
             "CPA flash-specific density-root defaults changed");
 
@@ -126,7 +127,8 @@ void default_flash_precision() {
     require(evaluator.pt_options().pressure_absolute_tolerance_pa ==
                 defaults.pressure_absolute_tolerance_pa &&
                 evaluator.pt_options().pressure_relative_tolerance ==
-                defaults.pressure_relative_tolerance,
+                defaults.pressure_relative_tolerance &&
+                evaluator.pt_options().scan_intervals == defaults.scan_intervals,
             "CPA VLE evaluator no longer uses flash-specific root defaults");
 
     const auto feed = cpa_physical_test::feed(experimental, false);
