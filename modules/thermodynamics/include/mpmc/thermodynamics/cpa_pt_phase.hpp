@@ -307,10 +307,12 @@ public:
 
             double left_u = samples[i].reduced_density;
             double right_u = samples[i + 1U].reduced_density;
-            double left_r = samples[i].residual_pa;
-            double right_r = samples[i + 1U].residual_pa;
-            double best_u = std::abs(left_r) < std::abs(right_r) ? left_u : right_u;
-            double best_r = std::abs(left_r) < std::abs(right_r) ? left_r : right_r;
+            const double initial_left_r = samples[i].residual_pa;
+            const double initial_right_r = samples[i + 1U].residual_pa;
+            double best_u = std::abs(initial_left_r) < std::abs(initial_right_r)
+                ? left_u : right_u;
+            double best_r = std::abs(initial_left_r) < std::abs(initial_right_r)
+                ? initial_left_r : initial_right_r;
             bool converged = false;
             for (int iteration = 0; iteration < options.max_bisection_iterations;
                  ++iteration) {
@@ -335,10 +337,8 @@ public:
                 }
                 if (mid_sign == left_sign) {
                     left_u = mid_u;
-                    left_r = mid_r;
                 } else {
                     right_u = mid_u;
-                    right_r = mid_r;
                 }
             }
             if (!converged && std::abs(best_r) > pressure_tolerance) {
@@ -441,6 +441,14 @@ public:
                 CpaPtRoot root;
                 root.molar_density_mol_per_m3 = rho;
                 root.pressure_residual_pa = state.pressure_pa - pressure_pa;
+                if (!std::isfinite(root.pressure_residual_pa) ||
+                    std::abs(root.pressure_residual_pa) > pressure_tolerance) {
+                    result.status = CpaPtRootStatus::iteration_limit;
+                    result.diagnostic =
+                        "CPA PT: rebuilt density root no longer satisfies pressure tolerance";
+                    result.roots.clear();
+                    return result;
+                }
                 root.pressure_slope_sign = candidate.slope_sign;
                 cpa_detail::cpa_fill_ln_phi(
                     pressure_pa, temperature_k, composition,
