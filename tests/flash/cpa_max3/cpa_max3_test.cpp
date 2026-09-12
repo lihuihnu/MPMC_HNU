@@ -2,7 +2,6 @@
 
 #include "test_support.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -26,6 +25,10 @@ Vec log_ratio(const Vec& numerator, const Vec& denominator) {
         result[i] = std::log(numerator[i]) - std::log(denominator[i]);
     }
     return result;
+}
+
+const char* side_name(fl::CpaRootSide side) {
+    return side == fl::CpaRootSide::lower_density_admissible ? "L" : "U";
 }
 
 void fixed_three_phase_candidate() {
@@ -57,53 +60,58 @@ void fixed_three_phase_candidate() {
             "CPA structural fixed-three-phase equations did not converge");
 }
 
-void diagnostic_max3_feeds() {
-    constexpr std::array<std::array<double, 3>, 8> beta_values{{
-        {0.45, 0.45, 0.10},
-        {0.45, 0.10, 0.45},
-        {0.10, 0.45, 0.45},
-        {0.60, 0.30, 0.10},
-        {0.30, 0.60, 0.10},
-        {0.30, 0.10, 0.60},
-        {1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0},
-        {0.49, 0.49, 0.02}}};
-
+void diagnostic_equal_feed() {
+    constexpr std::array<double, 3> beta{
+        1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
     const auto parameters = cpa_max3_test::parameters();
     const auto model = th::CpaPtPhase::from_parameters(parameters);
     fl::CpaVleEvaluator evaluator(model, cpa_max3_test::fast_pt_options());
     const auto starts = cpa_max3_test::starts();
+    const auto feed = cpa_max3_test::feed_from_phase_fractions(beta);
 
-    std::cout << "CPA_MAX3_FEEDS";
-    for (std::size_t index = 0; index < beta_values.size(); ++index) {
-        const auto beta = beta_values[index];
-        const auto feed = cpa_max3_test::feed_from_phase_fractions(beta);
-        fl::CpaPtMax3Options options;
-        options.two_phase.initial_stability.automatic_starts = false;
-        options.two_phase.final_stability.automatic_starts = false;
-        options.three_phase_starts.push_back(
-            cpa_max3_test::three_phase_start(beta));
-        const auto result = fl::solve_cpa_pt_max3(
-            cpa_max3_test::pressure_pa, cpa_max3_test::temperature_k,
-            feed, evaluator, options, starts, starts);
-        std::cout << ' ' << index
-                  << ":base=" << static_cast<int>(result.base.solution.status)
-                  << ",max3=" << static_cast<int>(result.status)
-                  << ",attempts=" << result.attempts.size();
-        if (result.base.solution.final_stability) {
-            std::cout << ",final="
-                      << static_cast<int>(result.base.solution.final_stability->status);
-        }
-        if (result.selected_attempt) {
-            std::cout << ",selected=" << *result.selected_attempt;
-        }
+    fl::CpaPtMax3Options options;
+    options.two_phase.initial_stability.automatic_starts = false;
+    options.two_phase.final_stability.automatic_starts = false;
+    options.final_three_phase_stability.automatic_starts = false;
+    options.three_phase_starts.push_back(cpa_max3_test::three_phase_start(beta));
+    const auto result = fl::solve_cpa_pt_max3(
+        cpa_max3_test::pressure_pa, cpa_max3_test::temperature_k,
+        feed, evaluator, options, starts, starts);
+
+    std::cout << "CPA_MAX3_EQUAL base="
+              << static_cast<int>(result.base.solution.status)
+              << " max3=" << static_cast<int>(result.status)
+              << " attempts=" << result.attempts.size();
+    if (result.base.solution.final_stability) {
+        std::cout << " baseFinal="
+                  << static_cast<int>(result.base.solution.final_stability->status);
     }
-    std::cout << '\n';
+    for (std::size_t i = 0; i < result.attempts.size(); ++i) {
+        const auto& attempt = result.attempts[i];
+        std::cout << " a" << i << '='
+                  << side_name(attempt.root_sides[0])
+                  << side_name(attempt.root_sides[1])
+                  << side_name(attempt.root_sides[2])
+                  << "/eq" << static_cast<int>(attempt.equilibrium.status);
+        if (attempt.equilibrium.point) {
+            std::cout << "/mu" << attempt.equilibrium.point->chemical_potential_norm;
+        }
+        if (attempt.final_stability) {
+            std::cout << "/fin" << static_cast<int>(attempt.final_stability->status);
+        }
+        if (attempt.supplied_start) { std::cout << "/sup" << *attempt.supplied_start; }
+        if (attempt.witness_trial) { std::cout << "/wit" << *attempt.witness_trial; }
+    }
+    std::cout << " diag=" << result.diagnostic << '\n';
+
+    require(result.base.solution.status == fl::PtSplitStatus::phase_set_unstable,
+            "CPA max3 equal-feed fixture no longer produces additional-phase evidence");
 }
 
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"fixed_three_phase", fixed_three_phase_candidate},
-    {"diagnostic_feeds", diagnostic_max3_feeds}};
+    {"diagnostic_equal_feed", diagnostic_equal_feed}};
 
 } // namespace
 
