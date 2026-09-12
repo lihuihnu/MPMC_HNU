@@ -87,8 +87,8 @@ void transition_bracket_contract() {
 void diagnostic_pt_grid() {
     const auto model = pr76_max3_test::model();
     fl::Pr76VleEvaluator evaluator(model);
-    constexpr std::array<double, 4> temperatures{332.0, 335.0, 338.0, 340.0};
-    constexpr std::array<double, 7> pressures_mpa{0.55, 0.70, 0.85, 1.00, 1.15, 1.35, 1.60};
+    constexpr std::array<double, 5> temperatures{325.0, 328.0, 330.0, 331.0, 332.0};
+    constexpr std::array<double, 7> pressures_mpa{1.00, 1.15, 1.35, 1.60, 1.90, 2.30, 2.80};
 
     std::cout << "PR76_CONTINUATION_PT_GRID";
     for (const double temperature : temperatures) {
