@@ -70,6 +70,30 @@ jobs:
             -DMPMC_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Compile phase split, boundary, ternary, sensitivity and phase-set regression
         run: cmake --build build/pt-split --target mpmc_pt_split_tests mpmc_pt_boundary_tests mpmc_tpd_stagnation_tests mpmc_dew_limit_tests mpmc_pt_diagnostic_tests mpmc_pt_ternary_tests mpmc_pt_sensitivity_tests mpmc_pt_phase_set_tests --config ${{ matrix.config }} --parallel 2
+      - name: Diagnostic core group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.](rr_|imposed_|balanced_seed|iterate_|split_|pr_|headers|gibbs_|result_guard)' --output-on-failure --no-tests=error
+      - name: Diagnostic boundary group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]boundary_' --output-on-failure --no-tests=error
+      - name: Diagnostic stagnation group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]stagnation_' --output-on-failure --no-tests=error
+      - name: Diagnostic dew group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]dew_limit_' --output-on-failure --no-tests=error
+      - name: Diagnostic summary group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]diagnostic_' --output-on-failure --no-tests=error
+      - name: Diagnostic ternary group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]ternary_' --output-on-failure --no-tests=error
+      - name: Diagnostic sensitivity group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]sensitivity_' --output-on-failure --no-tests=error
+      - name: Diagnostic phase-set group
+        continue-on-error: true
+        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]phase_set_' --output-on-failure --no-tests=error
       - name: Run phase split increment
         run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
       - name: Independently regenerate binary equilibrium references
