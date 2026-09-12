@@ -11,6 +11,7 @@ using Vec = std::vector<double>;
 
 inline constexpr double pressure_pa = 1.0e6;
 inline constexpr double temperature_k = 160.0;
+inline constexpr double lower_density_phase_fraction = 0.1;
 
 // Independent offline chemical-potential equality solve of the explicitly
 // synthetic non-associating CPA/SRK-limit binary from cpa_stability/test_support.hpp.
@@ -25,9 +26,10 @@ inline const std::array<Vec, 2>& coexistence_phases() {
 
 inline Vec feed() {
     const auto& phases = coexistence_phases();
+    const double beta = lower_density_phase_fraction;
     return {
-        0.5 * (phases[0][0] + phases[1][0]),
-        0.5 * (phases[0][1] + phases[1][1])};
+        (1.0 - beta) * phases[0][0] + beta * phases[1][0],
+        (1.0 - beta) * phases[0][1] + beta * phases[1][1]};
 }
 
 inline std::vector<Vec> starts(bool swapped = false) {
