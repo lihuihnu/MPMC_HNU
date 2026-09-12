@@ -125,6 +125,26 @@ void require_active_association(
             "accepted physical VLE has effectively inactive association sites");
 }
 
+void print_final_stability(const fl::PtSplitResult& solution) {
+    if (!solution.final_stability) {
+        std::cout << " final=none";
+        return;
+    }
+    const auto& final = *solution.final_stability;
+    std::cout << " final=" << static_cast<int>(final.status);
+    for (std::size_t i = 0; i < final.trials.size(); ++i) {
+        const auto& trial = final.trials[i];
+        std::cout << " t" << i << '=' << static_cast<int>(trial.status)
+                  << ",it" << trial.iterations
+                  << ",ev" << trial.evaluations;
+        if (trial.point) {
+            std::cout << ",D" << trial.point->value
+                      << ",r" << trial.point->stationarity
+                      << ",b" << trial.point->branch;
+        }
+    }
+}
+
 void literature_vle_points() {
     const auto parameters = cpa_physical_test::parameters(false);
     const auto model = th::CpaPtPhase::from_parameters(parameters);
@@ -159,6 +179,7 @@ void literature_vle_points() {
             std::cout << " tpd_min="
                       << result.solution.final_stability->lowest_sampled->value;
         }
+        print_final_stability(result.solution);
         std::cout << '\n';
 
         require(direct_mu <= 0.10,
