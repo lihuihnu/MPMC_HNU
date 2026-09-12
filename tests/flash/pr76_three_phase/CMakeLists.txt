@@ -18,6 +18,11 @@ add_executable(mpmc_pr76_three_phase_seeded_tests
 target_link_libraries(mpmc_pr76_three_phase_seeded_tests PRIVATE mpmc::flash)
 set_target_properties(mpmc_pr76_three_phase_seeded_tests PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_pr76_three_phase_robustness_tests
+    pr76_max3_robustness_test.cpp)
+target_link_libraries(mpmc_pr76_three_phase_robustness_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_three_phase_robustness_tests PROPERTIES CXX_EXTENSIONS OFF)
+
 add_executable(mpmc_pr76_three_phase_reference_test
     pr76_reference_candidate_test.cpp)
 target_link_libraries(mpmc_pr76_three_phase_reference_test PRIVATE mpmc::flash)
@@ -25,12 +30,14 @@ set_target_properties(mpmc_pr76_three_phase_reference_test PROPERTIES CXX_EXTENS
 
 add_dependencies(mpmc_pr76_three_phase_tests
     mpmc_pr76_three_phase_seeded_tests
+    mpmc_pr76_three_phase_robustness_tests
     mpmc_pr76_three_phase_reference_test)
 
 if(MSVC)
     foreach(target IN ITEMS
             mpmc_pr76_three_phase_tests
             mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_robustness_tests
             mpmc_pr76_three_phase_reference_test)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
     endforeach()
@@ -38,6 +45,7 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     foreach(target IN ITEMS
             mpmc_pr76_three_phase_tests
             mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_robustness_tests
             mpmc_pr76_three_phase_reference_test)
         target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
@@ -52,6 +60,7 @@ if(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS)
     foreach(target IN ITEMS
             mpmc_pr76_three_phase_tests
             mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_robustness_tests
             mpmc_pr76_three_phase_reference_test)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
@@ -81,6 +90,17 @@ foreach(case IN ITEMS
              COMMAND mpmc_pr76_three_phase_seeded_tests ${case})
     set_tests_properties(flash.pr76_three_phase.${case} PROPERTIES
         LABELS "flash;pr76;three_phase;max3;seeded_multistart" TIMEOUT 300)
+endforeach()
+
+foreach(case IN ITEMS
+        automatic_cold_start
+        continuation_budget
+        continuation_3_to_3
+        continuation_3_to_2)
+    add_test(NAME flash.pr76_three_phase.${case}
+             COMMAND mpmc_pr76_three_phase_robustness_tests ${case})
+    set_tests_properties(flash.pr76_three_phase.${case} PROPERTIES
+        LABELS "flash;pr76;three_phase;max3;robustness;continuation" TIMEOUT 300)
 endforeach()
 
 add_test(NAME flash.pr76_three_phase.reference_candidate
