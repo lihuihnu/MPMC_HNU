@@ -1,0 +1,76 @@
+name: Model-neutral PT service boundary
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/runtime/**'
+      - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_phase_transition.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_profile_c_pt_flash_backend.hpp'
+      - 'modules/flash/include/mpmc/flash/cpa_pt_flash_backend.hpp'
+      - 'tests/runtime/pt_service/**'
+      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
+      - 'tests/flash/cpa_max3/test_support.hpp'
+      - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
+      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - '.github/workflows/pt_service.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pt-service-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  service:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure PT service boundary
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/runtime/pt_service \
+            -B build/pt-service \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_PT_SERVICE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build PT service boundary
+        run: cmake --build build/pt-service --target mpmc_pt_service_tests --config ${{ matrix.config }} --parallel 2
+
+      - name: Run PT service boundary
+        run: ctest --test-dir build/pt-service -C ${{ matrix.config }} -R '^runtime[.]pt_service[.]' --verbose --no-tests=error
