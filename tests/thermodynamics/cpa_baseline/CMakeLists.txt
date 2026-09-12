@@ -35,6 +35,7 @@ foreach(case IN ITEMS
         parameter_reordering
         provenance_retention
         analytic_one_site
+        association_pressure
         nonassociating_srk
         association_permutation
         missing_binary)
