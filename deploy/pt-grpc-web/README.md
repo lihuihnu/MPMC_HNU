@@ -73,3 +73,53 @@ exist. Do not replace the exact CORS entries with `*`.
 CI validates this configuration and then exercises the generated TypeScript
 gRPC-Web client against a synthetic C++ golden server. The golden backend is
 explicitly a wire-structure fixture without EOS or physical-validation meaning.
+
+## Versioned deployment bundle
+
+[`production-deployment.template.json`](production-deployment.template.json)
+is the v1 fail-closed input contract. Its `REQUIRED_*` values deliberately make
+the checked-in template non-deployable. Copy it outside the source tree, replace
+them with actual deployment values, and render into a new directory:
+
+```bash
+python3 deploy/pt-grpc-web/render_deployment_bundle.py \
+  /secure/config/mpmc-pt-production.json \
+  --output-directory /secure/rendered/mpmc-pt-v1
+```
+
+The renderer refuses unknown fields, a snapshot other than the compiled
+`MPMC/PT/repository-curated-literature-snapshots/v1@r1`, a non-loopback native
+listener, aliased CA roles, a changed secret root, placeholder identities,
+non-HTTPS origins, and incomplete observability ownership. It emits:
+
+- `envoy.yaml`, with the existing mTLS/CORS/health/resource policies;
+- `pt-host-launch.json`, an argv array for `mpmc_pt_service_host`; and
+- `deployment-metadata.json`, containing only non-secret identity, rotation
+  and collection routing.
+
+The fixed mount contract separates native-backend and edge material:
+
+| Role | Read-only path |
+| --- | --- |
+| backend server leaf/key | `/run/secrets/mpmc-pt/backend/tls.crt`, `tls.key` |
+| backend trust for edge clients | `/run/secrets/mpmc-pt/backend/edge-client-ca.pem` |
+| public API leaf/key | `/run/secrets/mpmc-pt/edge/public.crt`, `public.key` |
+| edge trust for browser clients | `/run/secrets/mpmc-pt/edge/browser-client-ca.pem` |
+| edge upstream leaf/key | `/run/secrets/mpmc-pt/edge/upstream-client.crt`, `upstream-client.key` |
+| edge trust for backend server | `/run/secrets/mpmc-pt/edge/backend-server-ca.pem` |
+
+The four CA identifiers must be distinct. The edge-client CA is dedicated to
+the Envoy-to-backend role; it must not issue unrelated client identities.
+Rotation is explicitly
+`overlapping-trust-bundles-and-rolling-restart`: publish old+new CA bundles,
+rotate leaves and roll both processes, then remove the old CA in a later secret
+generation. The manifest records the responsible owner, maximum leaf lifetime,
+renewal lead time and CA overlap; issuance and automation remain external PKI
+responsibilities.
+
+Envoy metrics remain available only at
+`http://127.0.0.1:9901/stats/prometheus`. Steady-state process and edge logs
+go to stdout as JSON lines; process startup failures use stderr with the same
+JSON discipline. The deployment manifest must name the local or sidecar agents
+that scrape and forward those streams; the service does not embed a vendor
+client or remote credentials.

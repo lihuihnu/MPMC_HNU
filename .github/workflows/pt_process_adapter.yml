@@ -137,7 +137,8 @@ jobs:
       - name: Build secure PT composition/process host
         run: >-
           cmake --build build/pt-process-host
-          --target mpmc_pt_process_tests mpmc_pt_secure_test_server mpmc_pt_secure_client
+          --target mpmc_pt_process_tests mpmc_pt_service_host
+          mpmc_pt_secure_test_server mpmc_pt_secure_client
           --parallel 2
 
       - name: Run native adapter resource and lifecycle regression
@@ -151,6 +152,46 @@ jobs:
           ctest --test-dir build/pt-process-host
           -R '^runtime[.]pt_process[.]'
           --verbose --no-tests=error
+
+      - name: Start repository-curated production entry and discover three backends
+        run: |
+          set -euo pipefail
+          cert_dir="$PWD/build/pt-process-certs"
+          host_log="$PWD/build/pt-process-host/production-host.log"
+          ASAN_OPTIONS=detect_leaks=0 \
+            ./build/pt-process-host/pt-process-library/mpmc_pt_service_host \
+            --listen-address 127.0.0.1:50052 \
+            --tls-certificate-chain "$cert_dir/backend.crt" \
+            --tls-private-key "$cert_dir/backend.key" \
+            --trusted-edge-client-ca "$cert_dir/edge-ca.crt" \
+            >"$host_log" 2>&1 &
+          host_pid=$!
+          cleanup() {
+            kill -TERM "$host_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..100}; do
+            if grep --quiet '"event":"pt_process_ready"' "$host_log"; then
+              break
+            fi
+            if ! kill -0 "$host_pid" 2>/dev/null; then
+              cat "$host_log"
+              exit 1
+            fi
+            sleep 0.1
+          done
+          grep --quiet '"configured_backends":3' "$host_log"
+          ./build/pt-process-host/mpmc_pt_secure_client \
+            127.0.0.1:50052 pt-backend.internal \
+            "$cert_dir/backend-ca.crt" \
+            "$cert_dir/edge.crt" \
+            "$cert_dir/edge.key" \
+            3 pr76.methane-ethane-propane.literature-r1
+          kill -TERM "$host_pid"
+          wait "$host_pid"
+          trap - EXIT
+          grep --quiet '"event":"pt_process_stopped"' "$host_log"
 
       - name: Run production edge renderer regression
         run: python3 -m unittest discover -s deploy/pt-grpc-web/tests -v

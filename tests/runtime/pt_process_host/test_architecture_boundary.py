@@ -12,6 +12,7 @@ class ArchitectureBoundaryTest(unittest.TestCase):
             ROOT / "modules/pt_process/include/mpmc/pt_process/process_host.hpp",
             ROOT / "modules/pt_process/src/composition_root.cpp",
             ROOT / "modules/pt_process/include/mpmc/pt_process/composition_root.hpp",
+            ROOT / "modules/pt_process/src/pt_service_host_main.cpp",
             ROOT / "modules/runtime_grpc/src/pt_grpc_adapter.cpp",
             ROOT / "modules/runtime_grpc/include/mpmc/runtime_grpc/pt_grpc_adapter.hpp",
         )
@@ -35,6 +36,14 @@ class ArchitectureBoundaryTest(unittest.TestCase):
         self.assertNotIn("solve_pr76", factory)
         self.assertNotIn("solve_sw92", factory)
         self.assertNotIn("solve_cpa", factory)
+
+        supplier = (
+            ROOT / "modules/pt_process/src/parameter_snapshot_supplier.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn(".solve(", supplier)
+        self.assertNotIn("solve_pr76", supplier)
+        self.assertNotIn("solve_sw92", supplier)
+        self.assertNotIn("solve_cpa", supplier)
 
 
 if __name__ == "__main__":

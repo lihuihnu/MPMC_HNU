@@ -1,0 +1,38 @@
+{
+  "convention": "MPMC/PT/production-deployment/v1",
+  "deployment_id": "REQUIRED_DEPLOYMENT_ID",
+  "snapshot_bundle": {
+    "id": "MPMC/PT/repository-curated-literature-snapshots/v1",
+    "revision": "r1",
+    "location": "builtin://mpmc/pt/repository-curated-literature-snapshots/v1"
+  },
+  "network": {
+    "api_dns": "REQUIRED_API_DNS",
+    "frontend_origins": [
+      "https://REQUIRED_FRONTEND_DNS"
+    ],
+    "backend_listen_address": "127.0.0.1:50051",
+    "backend_server_dns": "REQUIRED_BACKEND_SERVER_DNS"
+  },
+  "identity": {
+    "secret_mount_root": "/run/secrets/mpmc-pt",
+    "public_server_ca_id": "REQUIRED_PUBLIC_SERVER_CA_ID",
+    "browser_client_ca_id": "REQUIRED_BROWSER_CLIENT_CA_ID",
+    "backend_server_ca_id": "REQUIRED_BACKEND_SERVER_CA_ID",
+    "edge_client_ca_id": "REQUIRED_EDGE_CLIENT_CA_ID",
+    "edge_client_identity": "REQUIRED_EDGE_CLIENT_IDENTITY",
+    "secret_generation": "REQUIRED_SECRET_GENERATION",
+    "rotation_mode": "overlapping-trust-bundles-and-rolling-restart",
+    "certificate_rotation_owner": "REQUIRED_ROTATION_OWNER",
+    "leaf_max_validity_days": 90,
+    "leaf_renew_before_days": 30,
+    "ca_overlap_days": 14
+  },
+  "observability": {
+    "prometheus_scrape_url": "http://127.0.0.1:9901/stats/prometheus",
+    "process_log_target": "stdout-json-lines",
+    "edge_log_target": "stdout-json-lines",
+    "prometheus_collector_id": "REQUIRED_PROMETHEUS_COLLECTOR_ID",
+    "json_log_collector_id": "REQUIRED_JSON_LOG_COLLECTOR_ID"
+  }
+}
