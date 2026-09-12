@@ -26,6 +26,8 @@ namespace adapter = ::mpmc::runtime_grpc;
 namespace wire = ::mpmc::runtime::v1;
 using namespace std::chrono_literals;
 
+std::string_view diagnostic_stage{"test dispatch"};
+
 void require(bool condition, std::string_view message,
              std::source_location where = std::source_location::current()) {
     if (!condition) {
@@ -40,19 +42,26 @@ public:
     ServerHarness(rt::PtService& service,
                   adapter::PtGrpcAdapterLimits limits = {})
         : adapter_(service, limits) {
+        diagnostic_stage = "constructing grpc::ServerBuilder";
         grpc::ServerBuilder builder;
         int selected_port = 0;
+        diagnostic_stage = "adding local listening port";
         builder.AddListeningPort("127.0.0.1:0",
                                  grpc::InsecureServerCredentials(),
                                  &selected_port);
+        diagnostic_stage = "configuring PT gRPC server";
         adapter::configure_pt_grpc_server(builder, adapter_);
+        diagnostic_stage = "building and starting PT gRPC server";
         server_ = builder.BuildAndStart();
         require(server_ != nullptr && selected_port > 0,
                 "failed to start local PT gRPC server");
+        diagnostic_stage = "creating local PT gRPC channel";
         channel_ = grpc::CreateChannel(
             "127.0.0.1:" + std::to_string(selected_port),
             grpc::InsecureChannelCredentials());
+        diagnostic_stage = "creating PT gRPC client stub";
         stub_ = wire::PtFlashService::NewStub(channel_);
+        diagnostic_stage = "running PT gRPC test case";
     }
 
     ~ServerHarness() {
@@ -404,7 +413,7 @@ int main(int argc, char** argv) {
         }
         return 0;
     } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
+        std::cerr << diagnostic_stage << ": " << error.what() << '\n';
         return 1;
     }
 }
