@@ -7,7 +7,9 @@ enable_testing()
 option(MPMC_CPA_BASELINE_ENABLE_SANITIZERS
        "Enable ASan/UBSan for CPA baseline tests" OFF)
 
-add_executable(mpmc_cpa_baseline_tests cpa_baseline_test.cpp)
+add_executable(mpmc_cpa_baseline_tests
+    cpa_baseline_test.cpp
+    cpa_headers.cpp)
 target_link_libraries(mpmc_cpa_baseline_tests PRIVATE mpmc::thermodynamics)
 set_target_properties(mpmc_cpa_baseline_tests PROPERTIES CXX_EXTENSIONS OFF)
 
