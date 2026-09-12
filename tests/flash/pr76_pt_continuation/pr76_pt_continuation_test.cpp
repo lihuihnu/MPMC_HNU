@@ -84,31 +84,28 @@ void transition_bracket_contract() {
             "discrete continuation bracket must not claim an exact boundary");
 }
 
-void diagnostic_temperature_scan() {
+void diagnostic_pt_grid() {
     const auto model = pr76_max3_test::model();
     fl::Pr76VleEvaluator evaluator(model);
-    constexpr std::array<double, 24> temperatures{
-        300.0, 315.0, 325.0, 328.0, 330.0, 332.0, 334.0, 336.0,
-        338.0, 340.0, 342.0, 344.0, 345.0, 346.0, 347.0, 348.0,
-        349.0, 350.0, 352.0, 355.0, 360.0, 375.0, 400.0, 450.0};
-    std::vector<fl::Pr76PtPathState> path;
-    path.reserve(temperatures.size());
-    for (const double temperature : temperatures) {
-        path.push_back({1.0e6, temperature});
-    }
-    const auto result = fl::solve_pr76_pt_continuation(
-        path, pr76_max3_test::equal_feed(), evaluator, structural_options());
+    constexpr std::array<double, 4> temperatures{332.0, 335.0, 338.0, 340.0};
+    constexpr std::array<double, 7> pressures_mpa{0.55, 0.70, 0.85, 1.00, 1.15, 1.35, 1.60};
 
-    std::cout << "PR76_CONTINUATION_DIAGNOSTIC";
-    for (std::size_t i = 0; i < result.points.size(); ++i) {
-        std::cout << ' ' << temperatures[i] << ':';
-        if (result.points[i].accepted_phase_count) {
-            std::cout << *result.points[i].accepted_phase_count;
-        } else {
-            std::cout << 'X';
+    std::cout << "PR76_CONTINUATION_PT_GRID";
+    for (const double temperature : temperatures) {
+        for (const double pressure_mpa : pressures_mpa) {
+            const std::array<fl::Pr76PtPathState, 1> path{{
+                {pressure_mpa * 1.0e6, temperature}}};
+            const auto result = fl::solve_pr76_pt_continuation(
+                path, pr76_max3_test::equal_feed(), evaluator, structural_options());
+            std::cout << ' ' << temperature << 'K@' << pressure_mpa << "MPa:";
+            if (result.points.front().accepted_phase_count) {
+                std::cout << *result.points.front().accepted_phase_count;
+            } else {
+                std::cout << 'X';
+            }
         }
     }
-    std::cout << " brackets=" << result.transition_brackets.size() << '\n';
+    std::cout << '\n';
 }
 
 using Test = std::pair<std::string_view, void (*)()>;
@@ -116,7 +113,7 @@ constexpr Test tests[]{
     {"repeated_three_phase", repeated_three_phase_is_fresh_continuation},
     {"invalid_path", invalid_path_is_rejected_before_solve},
     {"bracket_contract", transition_bracket_contract},
-    {"diagnostic_temperature_scan", diagnostic_temperature_scan}};
+    {"diagnostic_pt_grid", diagnostic_pt_grid}};
 
 } // namespace
 
