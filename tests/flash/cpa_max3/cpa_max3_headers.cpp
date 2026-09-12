@@ -4,5 +4,7 @@
 
 int main() {
     static_assert(mpmc::flash::cpa_pt_max3_convention[0] != '\0');
+    static_assert(!mpmc::flash::PtThreePhaseResult::final_stability_checked);
+    static_assert(!mpmc::flash::CpaPtMax3Result::global_stability_proven);
     return 0;
 }
