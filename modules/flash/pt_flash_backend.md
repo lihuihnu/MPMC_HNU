@@ -21,9 +21,11 @@ Each configured backend instance owns a `PtFlashBackendCapability` containing:
 - thermodynamic model profile;
 - algorithm profile;
 - publication profile;
+- backend configuration profile;
 - dataset/revision identity;
 - ordered component IDs;
 - explicitly supported phase counts;
+- optional opaque scalar configuration provenance `(id,value,unit)`;
 - whether the backend performs an initial stability search;
 - whether it performs a final phase-set stability/review gate;
 - whether it provides a fresh neighboring-topology re-solve for phase-boundary routing;
@@ -41,6 +43,29 @@ Current declared capabilities are:
 
 PR76 is therefore **not** advertised as a three-phase backend by this adapter. SW92 Profile-C keeps `global_stability_proven=false` even when it authoritatively publishes a phase set under its declared finite-search/topology contract.
 
+### Configured-backend provenance
+
+The common request intentionally stays small, but a configured backend must not silently lose thermodynamic configuration that materially identifies the solve.
+
+The capability therefore carries a `configuration_profile` plus optional opaque scalar settings. The generic layer only validates finiteness, non-empty IDs/units and unique setting IDs; it does not interpret them.
+
+Current profiles:
+
+```text
+PR76/PT-VLE/backend-configuration/v1
+SW92/Profile-C/fixed-molality/backend-configuration/v1
+```
+
+PR76 currently publishes no scalar model setting through this layer. SW92 Profile-C publishes:
+
+```text
+id    = nacl_molality_mol_per_kg_water
+value = configured prescribed molality
+unit  = mol/kg_H2O
+```
+
+This preserves the physically relevant prescribed molality in the capability/result snapshot. It still does not turn arbitrary strings into the future service API: a versioned wire contract should expose PR/SW/CPA-specific configuration with explicit typed/`oneof` fields.
+
 ## Request
 
 `PtFlashRequest` contains only:
@@ -55,19 +80,19 @@ The ordered component identity comes from `backend.capability().component_ids`.
 
 This layer does not normalize, clip, reorder or repair compositions. Existing backend validation remains authoritative so wrapping a solver does not create a second input contract with different tolerances.
 
-Model-specific configuration is owned by the configured adapter rather than placed into this generic request. For example, SW92 Profile-C adapter options own prescribed NaCl molality and the existing Profile-C solver options. A future versioned service/wire contract may expose those model-specific configurations through explicit typed/`oneof` fields; this C++ backend layer does not replace that later transport design.
+Model-specific configuration is owned by the configured adapter rather than placed into this generic request. For example, SW92 Profile-C adapter options own prescribed NaCl molality and the existing Profile-C solver options. The material scalar configuration is copied into the capability snapshot as described above; solver-tuning options are not flattened into a generic string map.
 
 ## Result
 
 `PtFlashBackendResult` owns:
 
-- the capability snapshot used for the solve;
+- the capability snapshot used for the solve, including configured-backend provenance;
 - the existing generic `PtPhaseSetResult` without reinterpretation;
 - provider result convention/provenance;
 - optional backend-namespaced phase metadata;
 - a morphology-resolved flag.
 
-The structural guard checks that the generic result's advertised maximum phase count, feed dimension, supported accepted phase count and optional provider phase metadata are consistent with the capability snapshot.
+The structural guard checks that the capability itself is valid, including scalar configuration provenance, and that the generic result's advertised maximum phase count, feed dimension, supported accepted phase count and optional provider phase metadata are consistent with the capability snapshot.
 
 ### Phase metadata
 
@@ -125,9 +150,10 @@ Current coverage includes:
 - PR76 binary direct `solve_pr76_pt_phase_set(...)` versus runtime `PtFlashBackend::solve(...)`;
 - SW92 wet binary direct Profile-C publication versus runtime backend solve;
 - physical Mortezazadeh–Rasaei Sample-6 authoritative three-phase publication through the unified backend;
-- capability identity/phase-count/stability/boundary flags;
+- capability identity/phase-count/stability/boundary/configuration flags;
+- SW prescribed-molality configuration provenance;
 - SW provider metadata preservation without H morphology invention;
-- invalid capability and invalid PR feed guards;
+- invalid capability, duplicate/non-finite scalar-setting and invalid PR feed guards;
 - public-header self containment;
 - GCC Debug + ASan/UBSan, Clang Release and MSVC Release hosted builds/tests.
 
