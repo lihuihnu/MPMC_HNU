@@ -17,18 +17,31 @@ add_executable(mpmc_pr76_three_phase_seeded_tests
     pr76_seeded_max3_test.cpp)
 target_link_libraries(mpmc_pr76_three_phase_seeded_tests PRIVATE mpmc::flash)
 set_target_properties(mpmc_pr76_three_phase_seeded_tests PROPERTIES CXX_EXTENSIONS OFF)
-add_dependencies(mpmc_pr76_three_phase_tests mpmc_pr76_three_phase_seeded_tests)
+
+add_executable(mpmc_pr76_three_phase_reference_test
+    pr76_reference_candidate_test.cpp)
+target_link_libraries(mpmc_pr76_three_phase_reference_test PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_three_phase_reference_test PROPERTIES CXX_EXTENSIONS OFF)
+
+add_dependencies(mpmc_pr76_three_phase_tests
+    mpmc_pr76_three_phase_seeded_tests
+    mpmc_pr76_three_phase_reference_test)
 
 if(MSVC)
-    target_compile_options(mpmc_pr76_three_phase_tests PRIVATE
-        /W4 /WX /permissive- /utf-8)
-    target_compile_options(mpmc_pr76_three_phase_seeded_tests PRIVATE
-        /W4 /WX /permissive- /utf-8)
+    foreach(target IN ITEMS
+            mpmc_pr76_three_phase_tests
+            mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_reference_test)
+        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
+    endforeach()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(mpmc_pr76_three_phase_tests PRIVATE
-        -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
-    target_compile_options(mpmc_pr76_three_phase_seeded_tests PRIVATE
-        -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+    foreach(target IN ITEMS
+            mpmc_pr76_three_phase_tests
+            mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_reference_test)
+        target_compile_options(${target} PRIVATE
+            -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+    endforeach()
 endif()
 
 if(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS)
@@ -36,14 +49,15 @@ if(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS)
        NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
         message(FATAL_ERROR "PR76 three-phase sanitizers require Linux GCC/Clang")
     endif()
-    target_compile_options(mpmc_pr76_three_phase_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-    target_link_options(mpmc_pr76_three_phase_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all)
-    target_compile_options(mpmc_pr76_three_phase_seeded_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-    target_link_options(mpmc_pr76_three_phase_seeded_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all)
+    foreach(target IN ITEMS
+            mpmc_pr76_three_phase_tests
+            mpmc_pr76_three_phase_seeded_tests
+            mpmc_pr76_three_phase_reference_test)
+        target_compile_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all)
+    endforeach()
 endif()
 
 set(cases
@@ -64,3 +78,8 @@ foreach(case IN ITEMS seeded_max3 seeded_component_permutation)
     set_tests_properties(flash.pr76_three_phase.${case} PROPERTIES
         LABELS "flash;pr76;three_phase;max3;seeded_multistart" TIMEOUT 300)
 endforeach()
+
+add_test(NAME flash.pr76_three_phase.reference_candidate
+         COMMAND mpmc_pr76_three_phase_reference_test)
+set_tests_properties(flash.pr76_three_phase.reference_candidate PROPERTIES
+    LABELS "flash;pr76;three_phase;max3;reference_candidate" TIMEOUT 300)
