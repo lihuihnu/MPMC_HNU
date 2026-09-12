@@ -114,10 +114,10 @@ void bidirectional_phase_sequence() {
     const auto model = pr76_max3_test::model();
     fl::Pr76VleEvaluator evaluator(model);
     const std::array<fl::Pr76PtPathState, 4> forward{{
-        {1.90e6, 325.0}, // accepted 3-phase side of the unresolved 3/2 belt
-        {2.80e6, 331.0}, // accepted 2-phase side of that belt
-        {1.00e6, 347.0}, // accepted 2-phase side of the 2/1 temperature boundary
-        {1.00e6, 348.0}  // accepted 1-phase side
+        {1.90e6, 325.0},
+        {2.80e6, 331.0},
+        {1.00e6, 347.0},
+        {1.00e6, 348.0}
     }};
     const std::array<std::size_t, 4> forward_counts{3U, 2U, 2U, 1U};
     const auto forward_result = fl::solve_pr76_pt_continuation(
@@ -151,12 +151,43 @@ void bidirectional_phase_sequence() {
             "reverse PT scan lost 1->2->3 bracket ordering");
 }
 
+void unresolved_point_resets_continuation() {
+    const auto model = pr76_max3_test::model();
+    fl::Pr76VleEvaluator evaluator(model);
+    const std::array<fl::Pr76PtPathState, 3> path{{
+        {1.0e6, 330.0},
+        {1.0e6, 335.0},
+        {1.0e6, 340.0}
+    }};
+    const auto result = fl::solve_pr76_pt_continuation(
+        path, pr76_max3_test::equal_feed(), evaluator, structural_options());
+    require(result.points.size() == 3U && !result.all_points_accepted,
+            "unresolved-reset path unexpectedly accepted every point");
+    require(result.points[0].accepted_phase_count &&
+                *result.points[0].accepted_phase_count == 3U,
+            "unresolved-reset path lost initial three-phase point");
+    require(!result.points[1].accepted_phase_count,
+            "known unresolved audit point unexpectedly became authoritative");
+    require(result.points[2].accepted_phase_count &&
+                *result.points[2].accepted_phase_count == 2U,
+            "post-unresolved point did not fresh-resolve as two phase");
+    require(result.points[2].incoming_hint ==
+                fl::Pr76PtContinuationHintKind::none &&
+                result.points[2].carried_stability_start_count == 0U &&
+                !result.points[2].carried_three_phase_start,
+            "unresolved point failed to clear stale continuation state");
+    require(result.transition_brackets.empty(),
+            "scan bracketed across an unresolved point");
+    require_fresh_state(result.points[2]);
+}
+
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"repeated_three_phase", repeated_three_phase_is_fresh_continuation},
     {"invalid_path", invalid_path_is_rejected_before_solve},
     {"bracket_contract", transition_bracket_contract},
-    {"bidirectional_phase_sequence", bidirectional_phase_sequence}};
+    {"bidirectional_phase_sequence", bidirectional_phase_sequence},
+    {"unresolved_resets", unresolved_point_resets_continuation}};
 
 } // namespace
 
