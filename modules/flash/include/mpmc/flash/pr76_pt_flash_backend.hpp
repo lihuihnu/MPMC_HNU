@@ -27,8 +27,11 @@ struct Pr76PtFlashBackendOptions {
     PtSplitOptions split;
     PtThreePhaseOptions three_phase;
     StabilityOptions final_three_phase_stability;
-    std::size_t max_three_phase_attempts{8};
+    std::size_t max_three_phase_attempts{16};
     double new_phase_seed_fraction{0.1};
+    std::vector<Pr76PtThreePhaseStart> three_phase_starts;
+    std::size_t max_three_phase_starts{16};
+    std::size_t max_three_phase_start_entries{12288};
     std::vector<std::vector<double>> initial_starts;
     std::vector<std::vector<double>> final_starts;
 };
@@ -128,7 +131,7 @@ struct Pr76PtFlashBackendOptions {
         add(2U, 3U, PtPhaseTransitionTrigger::final_phase_set_instability,
             PtPhaseTransitionResolution::accepted_target,
             true, true,
-            "a negative final-stability witness seeded a fresh three-phase solve and the resulting common tangent passed final stability review");
+            "negative final-stability evidence triggered a fresh three-phase solve and the resulting common tangent passed final stability review");
         break;
     case Pr76PtMax3Status::two_phase:
         if (source.two_phase_neighbor() != nullptr) {
@@ -193,6 +196,10 @@ public:
             options_.final_three_phase_stability;
         flash_options.max_three_phase_attempts = options_.max_three_phase_attempts;
         flash_options.new_phase_seed_fraction = options_.new_phase_seed_fraction;
+        flash_options.three_phase_starts = options_.three_phase_starts;
+        flash_options.max_three_phase_starts = options_.max_three_phase_starts;
+        flash_options.max_three_phase_start_entries =
+            options_.max_three_phase_start_entries;
 
         const auto source = solve_pr76_pt_max3(
             request.pressure_pa, request.temperature_k, request.feed,
