@@ -20,11 +20,10 @@ th::CpaPtOptions physical_pt_options() {
     th::CpaPtOptions options;
     options.scan_intervals = 256U;
     options.max_evaluations = 4096U;
-    // The outer flash gate is 1e-11 in log fugacity. The standalone CPA PT
-    // default is intentionally broader; physical flash validation uses a root
-    // pressure residual one decade tighter than that default without changing
-    // any RR/fugacity/TPD acceptance threshold.
-    options.pressure_absolute_tolerance_pa = 1.0e-5;
+    // Audited against the outer 1e-11 log-fugacity / 1e-10 TPD gates.
+    // This is a validation candidate for a future CPA-flash-specific default;
+    // the standalone CpaPtPhase defaults are intentionally untouched here.
+    options.pressure_absolute_tolerance_pa = 3.0e-6;
     options.pressure_relative_tolerance = 1.0e-12;
     return options;
 }
@@ -163,7 +162,7 @@ void literature_vle_points() {
         std::cout << '\n';
 
         require(direct_mu <= 0.10,
-                "literature phase pair is inconsistent with the configured CPA model");
+                "literature phase pair is inconsistent with configured CPA model");
         require(result.solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
                     result.solution.candidate() != nullptr &&
                     result.solution.final_stability.has_value() &&
@@ -191,6 +190,8 @@ void literature_vle_points() {
         require_active_association(model, pt_options, experimental.pressure_pa, point);
     }
 
+    require(accepted == cpa_physical_test::points().size(),
+            "not every literature point was accepted");
     const double mean_dx = sum_dx / static_cast<double>(accepted);
     const double mean_dy = sum_dy / static_cast<double>(accepted);
     std::cout << "CPA_PHYSICAL_SUMMARY mean_dx=" << mean_dx
