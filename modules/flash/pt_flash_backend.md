@@ -7,9 +7,8 @@
 Current adapters:
 
 - `Pr76PtFlashBackend` v2: PR76 maximum-three-phase route;
-- `Sw92ProfileCPtFlashBackend`: SW92 Profile-C boundary-aware 1/2/3-phase route.
-
-CPA is not implemented yet. A future CPA adapter must satisfy the same backend, phase-set and transition contracts after its thermodynamic/stability/equilibrium kernels are independently validated.
+- `Sw92ProfileCPtFlashBackend`: SW92 Profile-C boundary-aware 1/2/3-phase route;
+- `CpaPtFlashBackend` v1: CPA stability + explicit-density-side VLE + generic-RR3 maximum-three-phase route.
 
 ## Capability snapshot
 
@@ -26,12 +25,11 @@ Each configured backend instance owns a `PtFlashBackendCapability` containing:
 
 These are implemented-route capabilities, not statements that a thermodynamic model can never admit another phase.
 
-Current high-level capabilities are:
-
 | backend | phase counts | initial stability | final review | fresh boundary neighbor | global proof |
 | --- | --- | --- | --- | --- | --- |
-| PR76 PT max3 | 1, 2, 3 | yes | yes | yes for 3→2; 2→1 remains detection-only | no |
+| PR76 PT max3 | 1, 2, 3 | yes | yes | yes for 3→2; 2→1 detection-only | no |
 | SW92 Profile-C | 1, 2, 3 | yes | yes, within declared finite topology/search contract | yes | no |
+| CPA PT max3 | 1, 2, 3 | yes | yes | yes for 3→2; 2→1 detection-only | no |
 
 Current transition edges:
 
@@ -48,92 +46,94 @@ SW92 Profile-C:
   2 -> 3  fresh_target_resolve
   3 -> 2  fresh_target_resolve
   3 -> 1  fresh_target_resolve
+
+CPA:
+  1 -> 2  fresh_target_resolve
+  2 -> 1  detection_only
+  2 -> 3  fresh_target_resolve
+  3 -> 2  fresh_target_resolve
 ```
 
-Accepted lower-phase-count boundaries still require the target topology to be solved and reviewed fresh; a small phase fraction alone is not acceptance evidence.
+Accepted lower-phase-count boundaries require the target topology to be solved and reviewed fresh; a small phase fraction alone is not acceptance evidence.
 
 ## Configured-backend provenance
 
 The generic request stays small, but a configured backend must not lose thermodynamic configuration that materially identifies the solve. The capability therefore carries `configuration_profile` plus optional scalar settings. Generic code validates these fields but does not interpret their scientific meaning.
 
-Current configuration profiles:
+Current configuration profiles include:
 
 ```text
 PR76/PT/max3/backend-configuration/v2
 SW92/Profile-C/fixed-molality/backend-configuration/v1
+CPA/PT/max3/backend-configuration/v1
 ```
 
-PR76 currently has no generic scalar model setting. SW92 Profile-C records its prescribed NaCl molality as `mol/kg_H2O`.
+PR76 and the current CPA adapter have no generic scalar model setting. SW92 Profile-C records prescribed NaCl molality as `mol/kg_H2O`.
 
 A future wire/service API should still use typed PR/SW/CPA configuration rather than arbitrary string maps.
 
-## Request
+## Request and result
 
-`PtFlashRequest` contains:
-
-```text
-pressure_pa
-temperature_k
-ordered feed
-```
-
-The ordered component identity comes from `backend.capability().component_ids`. The generic layer does not normalize, clip, reorder or repair the feed; existing backend validation remains authoritative.
-
-Model-specific initialization/tuning belongs to the configured adapter. In particular, PR76 max3 may receive bounded caller-supplied three-phase continuation starts. They are initialization hints only and are ignored unless the existing two-phase final review has already established additional-phase instability.
-
-## Result
+`PtFlashRequest` contains positive finite pressure, temperature and the ordered feed. Ordered component identity comes from `backend.capability().component_ids`. The generic layer does not normalize, clip, reorder or repair the feed; existing backend validation remains authoritative.
 
 `PtFlashBackendResult` owns:
 
 - the capability/configuration snapshot;
-- the generic `PtPhaseSetResult`;
-- the model-neutral `PtPhaseTransitionReport`;
+- generic `PtPhaseSetResult`;
+- model-neutral `PtPhaseTransitionReport`;
 - provider result convention/provenance;
 - optional backend-namespaced phase metadata;
 - morphology-resolved flag.
 
 The structural guard checks phase-count capability, feed dimension, provider metadata alignment and transition/report consistency before exposing an accepted phase set.
 
-## Provider phase metadata
+Model-specific initialization belongs to the configured adapter. PR76 and CPA max3 may receive bounded caller-supplied three-phase continuation starts. Such starts are initialization hints only: they are ignored unless the current two-phase final review has already established additional-phase instability, and they never bypass final three-phase stability.
+
+## Provider phase metadata and morphology
 
 Provider metadata remain opaque to the generic layer.
 
-SW92 Profile-C uses:
+SW92 Profile-C uses its AQ/NA/physical-role namespace. H0/H1 remain `nonaqueous_unclassified`; AQ/NA family or root branch is not promoted to LV/LL morphology.
 
-```text
-SW92/Profile-C/phase-metadata/v1
-role_id:   aqueous | nonaqueous_unclassified
-family_id: aqueous | nonaqueous
-```
-
-H0/H1 remain `nonaqueous_unclassified`; AQ/NA family or cubic-root branch is not promoted to LV/LL morphology.
-
-PR76 publishes no provider-specific phase morphology. Its numerical lower/upper admissible-root sides and the historical VLE candidate roles are solver coordinates, not universal liquid/vapor classification.
+PR76 and CPA publish no provider-specific phase morphology. PR lower/upper admissible-root sides, CPA lower/upper density-root sides and historical VLE candidate roles are numerical solver coordinates, not universal phase classification.
 
 ## PR76 max3 adapter
 
-`Pr76PtFlashBackend` v2 calls `solve_pr76_pt_max3(...)`, which retains the existing PR76 VLE route as its first stage.
-
-The max3 route is:
+`Pr76PtFlashBackend` calls the established PR76 max3 route:
 
 ```text
 feed stability
-    -> existing two-phase solve
-    -> existing two-phase final common-tangent review
-    -> if stable: publish 1/2 phase
-    -> if unstable: additional-phase evidence
-         -> fixed three-phase material balance + chemical-potential solve
-         -> three-phase common-tangent final review
-         -> accept 3 phase OR retain unresolved/higher-topology evidence
+ -> two-phase solve
+ -> two-phase final common-tangent review
+ -> if unstable: fixed three-phase equilibrium
+ -> three-phase final common-tangent review
+ -> accept 3 phase, or fresh-resolve a disappearance neighbor
 ```
 
-A converged three-phase disappearance does not delete a phase. The two surviving compositions seed a fresh complete PR76 VLE solve; only a independently closed neighbor may publish `3 -> 2 accepted_target`.
-
-Caller-supplied three-phase starts are bounded, validated continuation hints. They cannot trigger 2→3 and cannot bypass final stability. See [pr76_three_phase.md](pr76_three_phase.md) for the detailed numerical contract.
+A converged three-phase disappearance never directly deletes a phase. See [pr76_three_phase.md](pr76_three_phase.md).
 
 ## SW92 Profile-C adapter
 
-`Sw92ProfileCPtFlashBackend` continues to run the established boundary-aware Profile-C driver once and purely projects its authoritative publication and transition evidence. It does not rerun TPD, change topology, classify H morphology, or reinterpret AQ/NA semantics.
+`Sw92ProfileCPtFlashBackend` runs the established boundary-aware Profile-C driver once and purely projects its authoritative phase-set publication and transition evidence. It does not rerun TPD, change topology, classify H morphology, or reinterpret AQ/NA semantics.
+
+## CPA max3 adapter
+
+`CpaPtFlashBackend` calls `solve_cpa_pt_max3(...)`.
+
+CPA stability uses the minimum-Gibbs mechanically admissible density root at each composition. Fixed VLE and fixed three-phase slots use explicit lower-/upper-density admissible root sides so distinct candidate slots do not collapse onto the same Gibbs-envelope root. Those density sides are numerical branch coordinates only.
+
+The route is:
+
+```text
+CPA all-root/minimum-Gibbs feed stability
+ -> explicit-density-side two-phase RR/logK solve
+ -> all-root final two-phase TPD review
+ -> if unstable: generic generalized-RR3 + chemical-potential solve
+ -> all-root final three-phase TPD review
+ -> accept 3 phase OR fresh-resolve a disappearance neighbor
+```
+
+A `3 -> 2` result is published only after the surviving compositions seed a fresh complete CPA VLE solve whose own final TPD review closes. See [cpa_flash.md](cpa_flash.md).
 
 ## Conformance requirement
 
@@ -141,28 +141,27 @@ An adapter is not accepted merely because it compiles. Focused regression requir
 
 Current coverage includes:
 
-- PR76 max3 direct orchestration/publication versus runtime backend using the same explicit structural continuation hints;
-- PR76 capability `{1,2,3}` and `2→3` accepted transition evidence;
-- SW92 wet-binary direct publication versus runtime backend;
-- physical SW92 Sample-6 authoritative three-phase publication;
-- SW92 fresh-neighbor boundary projection;
+- PR76 max3 direct publication versus runtime backend;
+- SW92 wet-binary / Sample-6 publication and boundary projection;
+- CPA max3 direct publication versus runtime backend using the same structural starts;
+- PR76 and CPA `2→3` accepted transition evidence;
+- CPA default-threshold `3→2` fresh-neighbor evidence;
 - capability/configuration/transition structural guards;
 - provider metadata preservation without morphology invention;
 - public-header self containment;
 - GCC Debug + ASan/UBSan, Clang Release and MSVC Release hosted builds/tests.
 
-Any future backend, including CPA, should add equivalent direct-vs-adapter conformance before frontend/service discovery exposes it.
+## Validation boundary and non-capabilities
 
-## Non-capabilities
-
-This backend contract still does not provide:
+This contract does not provide:
 
 - mathematical global-stability certification;
-- guaranteed discovery of all PR76 three-phase basins from default finite automatic starts;
+- guaranteed discovery of every phase basin from finite automatic starts;
 - morphology classification;
-- CPA thermodynamics or flash;
-- backend registry/plugin ABI;
+- a backend registry/plugin ABI;
 - wire/service API or frontend model discovery;
 - new flash sensitivities or physics behavior.
 
-Those remain separate gates. The unified boundary now has a common 1/2/3-phase result and transition vocabulary for both PR76 and SW92, which is the prerequisite for later CPA and frontend integration.
+CPA production code is association-aware, but the current complete CPA VLE/max3 topology regressions use explicitly synthetic non-associating SRK-limit fixtures; association is independently exercised in CPA phase-property/split-provider tests. Traceable associating two-/three-phase physical validation is a separate gate and must not be fabricated from missing parameters or phase data.
+
+The unified boundary now has a common 1/2/3-phase result and transition vocabulary across PR76, SW92 Profile-C and CPA, which is the required backend foundation for later service/frontend integration.
