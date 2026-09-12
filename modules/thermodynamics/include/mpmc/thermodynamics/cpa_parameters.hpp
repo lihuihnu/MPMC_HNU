@@ -11,7 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -20,8 +19,6 @@ namespace mpmc::thermodynamics {
 inline constexpr std::string_view cpa_profile =
     "CPA/SRK-physical/simplified-rdf-1999/explicit-site-pairs/v1";
 
-// Values are stored in explicit SI fields rather than inferred from a generic unit.
-// Each datum still carries the same repository-wide provenance contract.
 struct CpaSourcedValue {
     double value{};
     Provenance source;
@@ -142,8 +139,8 @@ public:
         detail::require_text(input.revision, "cpa.revision");
         input.applicability.validate(policy);
 
-        CpaParameterSet result;
-        result.components_ = OrderedComponents::select(catalog, order, policy, limits);
+        CpaParameterSet result(
+            OrderedComponents::select(catalog, order, policy, limits));
         result.dataset_id_ = input.dataset_id;
         result.revision_ = input.revision;
         result.applicability_ = input.applicability;
@@ -302,9 +299,10 @@ public:
     [[nodiscard]] const Applicability& applicability() const noexcept { return applicability_; }
 
 private:
-    CpaParameterSet() = default;
-    OrderedComponents components_ = OrderedComponents::select(
-        std::span<const Component>{}, std::span<const std::string>{});
+    explicit CpaParameterSet(OrderedComponents components)
+        : components_(std::move(components)) {}
+
+    OrderedComponents components_;
     std::vector<CpaPureParameters> pure_;
     std::map<std::pair<std::string, std::string>, double> kij_;
     std::map<cpa_detail::AssociationKey, CpaAssociationPairParameters> association_;
