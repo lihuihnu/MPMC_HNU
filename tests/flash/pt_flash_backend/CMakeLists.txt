@@ -16,7 +16,7 @@ target_include_directories(mpmc_pt_flash_backend_tests PRIVATE
 set_target_properties(mpmc_pt_flash_backend_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_pt_flash_backend_pr76_max3_tests
-    pr76_max3_backend_test.cpp)
+    pr76_max3_seeded_backend_test.cpp)
 target_link_libraries(mpmc_pt_flash_backend_pr76_max3_tests PRIVATE mpmc::flash)
 set_target_properties(mpmc_pt_flash_backend_pr76_max3_tests PROPERTIES CXX_EXTENSIONS OFF)
 add_dependencies(mpmc_pt_flash_backend_tests mpmc_pt_flash_backend_pr76_max3_tests)
@@ -66,4 +66,4 @@ endforeach()
 add_test(NAME flash.pt_flash_backend.pr76_max3_equivalence
          COMMAND mpmc_pt_flash_backend_pr76_max3_tests)
 set_tests_properties(flash.pt_flash_backend.pr76_max3_equivalence PROPERTIES
-    LABELS "flash;pt_flash_backend;pr76;three_phase;max3;conformance" TIMEOUT 300)
+    LABELS "flash;pt_flash_backend;pr76;three_phase;max3;seeded_multistart;conformance" TIMEOUT 300)
