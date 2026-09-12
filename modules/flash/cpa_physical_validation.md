@@ -2,7 +2,7 @@
 
 ## Scope
 
-This validation gate tests the already-implemented CPA PT flash path against a traceable **associating** binary VLE system. It does not fit parameters, change production equations, relax flash/stability tolerances, or claim a three-phase physical oracle.
+This validation gate tests the implemented CPA PT flash path against a traceable **associating** binary VLE system. It does not fit parameters, relax flash/stability acceptance tolerances, or claim a three-phase physical oracle.
 
 The validated system is methanol + water at `T = 333.15 K` using the repository profile
 
@@ -85,9 +85,25 @@ Each accepted point must pass the unchanged production gates:
 5. final common-tangent review from model-owned converged phases reports no sampled instability;
 6. the accepted liquid root is re-evaluated and has a converged, nontrivial association state.
 
-No TPD, stationarity, RR, fugacity, material-balance or phase-fraction acceptance tolerance is changed by this validation.
+No TPD, stationarity, RR, fugacity, material-balance or phase-fraction acceptance tolerance is relaxed by this validation.
 
-The physical-validation root search uses tighter numerical pressure-root tolerances than the standalone CPA PT default so that inner root error remains below the unchanged outer flash residual gates. This is test configuration only; no production default is changed.
+## CPA flash-specific density-root default
+
+The audit exposed a numerical-layer mismatch between the standalone CPA PT root default and the stricter outer flash equations. The thermodynamics-layer `CpaPtOptions{}` remains unchanged; `CpaVleEvaluator` now owns a **flash-specific** default:
+
+```text
+scan_intervals = 512                 # unchanged from standalone default
+pressure_absolute_tolerance_pa = 3e-6
+pressure_relative_tolerance    = 1e-12
+```
+
+The reason is not that a smaller root residual is always better. A focused physical probe showed:
+
+- the old standalone root default (`1e-4 Pa`, `1e-10` relative) can close a representative physical VLE point, but leaves the resulting fugacity residual close to the `1e-11` outer gate and is unnecessarily expensive;
+- an over-tightened `1e-7 Pa` flash candidate produced an indeterminate path at the low-pressure literature point under the same bounded finite root search;
+- `3e-6 Pa / 1e-12` closes the full five-point associating literature set while preserving the original 512 scan intervals and unchanged outer flash/stability tolerances.
+
+Therefore the validated value is frozen as a **numerical flash default**, not as a physical model parameter and not as a modification to standalone CPA phase-property semantics. Callers may still supply explicit `CpaPtOptions` when a different audited numerical regime is required.
 
 ## Frozen accuracy envelope
 
@@ -100,7 +116,7 @@ max  |Delta x(MeOH)| = 0.00737
 max  |Delta y(MeOH)| = 0.00937
 ```
 
-The regression therefore freezes a stricter envelope than the initial audit threshold:
+The regression freezes:
 
 ```text
 mean |Delta x| <= 0.01
@@ -109,7 +125,7 @@ max  |Delta x| <= 0.015
 max  |Delta y| <= 0.015
 ```
 
-The vapor mean threshold is consistent with the published CR-1 correlation scale (`Delta y * 100 = 0.8`) while still leaving room for platform-level floating-point differences.
+The vapor mean threshold is consistent with the published CR-1 correlation scale (`Delta y * 100 = 0.8`) while retaining a small cross-platform numerical margin.
 
 Ordered-component permutation is independently required to preserve the physical solution.
 
