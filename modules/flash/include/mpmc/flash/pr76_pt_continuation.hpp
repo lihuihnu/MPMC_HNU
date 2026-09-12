@@ -204,8 +204,8 @@ inline void pr76_pt_continuation_check_path(
 
     Pr76PtContinuationResult result;
     result.options = options;
-    const double feed_sum = stability_check_composition(feed);
-    result.feed = stability_normalize(feed, feed_sum);
+    const double feed_sum = detail::stability_check_composition(feed);
+    result.feed = detail::stability_normalize(feed, feed_sum);
     result.points.reserve(path.size());
     result.transition_brackets.reserve(path.size() > 1U ? path.size() - 1U : 0U);
 
@@ -295,8 +295,6 @@ inline void pr76_pt_continuation_check_path(
             previous_three_phase =
                 detail::pr76_pt_continuation_three_phase_start(accepted.solve);
         } else {
-            // Never propagate a candidate through an unresolved point. The next
-            // state starts from configured fallback starts only.
             previous_phase_count.reset();
             previous_compositions.clear();
             previous_three_phase.reset();
