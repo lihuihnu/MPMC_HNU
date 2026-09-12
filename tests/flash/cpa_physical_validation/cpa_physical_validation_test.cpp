@@ -78,7 +78,7 @@ fl::CpaPtSplitResult solve_point(
     const auto starts = cpa_physical_test::starts(experimental, swapped);
     return fl::solve_cpa_pt_vle(
         experimental.pressure_pa, cpa_physical_test::temperature_k,
-        feed, evaluator, physical_split_options(), starts, starts);
+        feed, evaluator, physical_split_options(), starts);
 }
 
 double experimental_pair_residual(
@@ -163,7 +163,7 @@ void literature_vle_points() {
         const auto starts = cpa_physical_test::starts(experimental, false);
         const auto result = fl::solve_cpa_pt_vle(
             experimental.pressure_pa, cpa_physical_test::temperature_k,
-            feed, evaluator, physical_split_options(), starts, starts);
+            feed, evaluator, physical_split_options(), starts);
 
         std::cout << "CPA_PHYSICAL PkPa=" << experimental.pressure_pa / 1000.0
                   << " direct_mu=" << direct_mu
