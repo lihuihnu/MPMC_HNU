@@ -4,6 +4,7 @@
 #include <mpmc/flash/pt_phase_set.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -13,6 +14,14 @@ namespace mpmc::flash {
 
 inline constexpr std::string_view pt_flash_backend_convention =
     "PT/flash-backend/capability-and-dispatch/v1";
+
+// Opaque configured-backend scalar provenance. The generic layer validates and
+// transports these values but assigns no scientific meaning to their IDs.
+struct PtFlashBackendScalarSetting {
+    std::string id;
+    double value{};
+    std::string unit;
+};
 
 // Capability belongs to one configured backend instance. The ordered component
 // snapshot and dataset/revision therefore describe the exact model instance that
@@ -25,10 +34,12 @@ struct PtFlashBackendCapability {
     std::string model_profile;
     std::string algorithm_profile;
     std::string publication_profile;
+    std::string configuration_profile;
     std::string dataset_id;
     std::string revision;
     std::vector<std::string> component_ids;
     std::vector<std::size_t> supported_phase_counts;
+    std::vector<PtFlashBackendScalarSetting> scalar_settings;
 
     bool performs_initial_stability_search{false};
     bool performs_final_phase_set_review{false};
@@ -57,7 +68,8 @@ struct PtFlashBackendCapability {
     [[nodiscard]] bool structurally_valid() const noexcept {
         if (backend_id.empty() || model_profile.empty() ||
             algorithm_profile.empty() || publication_profile.empty() ||
-            dataset_id.empty() || revision.empty() || component_ids.empty() ||
+            configuration_profile.empty() || dataset_id.empty() ||
+            revision.empty() || component_ids.empty() ||
             supported_phase_counts.empty()) {
             return false;
         }
@@ -71,6 +83,17 @@ struct PtFlashBackendCapability {
             if (supported_phase_counts[i] == 0U) { return false; }
             for (std::size_t j = i + 1U; j < supported_phase_counts.size(); ++j) {
                 if (supported_phase_counts[i] == supported_phase_counts[j]) {
+                    return false;
+                }
+            }
+        }
+        for (std::size_t i = 0; i < scalar_settings.size(); ++i) {
+            if (scalar_settings[i].id.empty() || scalar_settings[i].unit.empty() ||
+                !std::isfinite(scalar_settings[i].value)) {
+                return false;
+            }
+            for (std::size_t j = i + 1U; j < scalar_settings.size(); ++j) {
+                if (scalar_settings[i].id == scalar_settings[j].id) {
                     return false;
                 }
             }
