@@ -29,9 +29,8 @@ public:
         if (model_.size() == 0U) {
             throw std::invalid_argument("CPA stability: empty configured model");
         }
-        // Validate the numerical contract at construction rather than allowing
-        // an invalid option set to fail only after a TPD search has started.
-        thermodynamics::cpa_detail::validate_cpa_pt_options(pt_options_);
+        // CpaPtPhase::roots owns validation of its public numerical options.
+        // The flash adapter deliberately does not depend on thermodynamics detail APIs.
     }
 
     CpaStabilityEvaluator(const CpaStabilityEvaluator&) = delete;
