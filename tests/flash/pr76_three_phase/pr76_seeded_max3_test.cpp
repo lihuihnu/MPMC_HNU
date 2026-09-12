@@ -18,6 +18,15 @@ void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
 }
 
+fl::Pr76PtMax3Options options_from_starts(const std::vector<Vec>& starts) {
+    require(starts.size() == 3U, "three structural starts required");
+    fl::Pr76PtMax3Options options;
+    fl::Pr76PtThreePhaseStart start;
+    start.compositions = {starts[0], starts[1], starts[2]};
+    options.three_phase_starts.push_back(std::move(start));
+    return options;
+}
+
 void print_summary(const fl::Pr76PtMax3Result& result) {
     std::size_t negative_final = 0U;
     if (result.base.solution.final_stability) {
@@ -36,7 +45,12 @@ void print_summary(const fl::Pr76PtMax3Result& result) {
               << " diagnostic=" << result.diagnostic << '\n';
     for (std::size_t i = 0; i < result.attempts.size(); ++i) {
         const auto& attempt = result.attempts[i];
-        std::cerr << "attempt[" << i << "] witness=" << attempt.witness_trial
+        std::cerr << "attempt[" << i << "] witness="
+                  << (attempt.witness_trial
+                          ? static_cast<long long>(*attempt.witness_trial) : -1LL)
+                  << " supplied="
+                  << (attempt.supplied_start
+                          ? static_cast<long long>(*attempt.supplied_start) : -1LL)
                   << " eq_status=" << static_cast<int>(attempt.equilibrium.status)
                   << " eq_iter=" << attempt.equilibrium.iterations
                   << " eq_eval=" << attempt.equilibrium.evaluations
@@ -81,8 +95,9 @@ void seeded_max3() {
     fl::Pr76VleEvaluator evaluator(model);
     const auto feed = pr76_max3_test::equal_feed();
     const auto starts = pr76_max3_test::starts();
+    const auto options = options_from_starts(starts);
     const auto result = fl::solve_pr76_pt_max3(
-        1.0e6, 250.0, feed, evaluator, {}, starts, starts);
+        1.0e6, 250.0, feed, evaluator, options, starts, starts);
     if (result.status != fl::Pr76PtMax3Status::three_phase ||
         result.three_phase_candidate() == nullptr ||
         !result.selected_attempt.has_value()) {
@@ -92,6 +107,8 @@ void seeded_max3() {
     }
     require_unordered_reference_match(*result.three_phase_candidate());
     const auto& attempt = result.attempts[*result.selected_attempt];
+    require(attempt.supplied_start && *attempt.supplied_start == 0U,
+            "accepted structural solution did not preserve supplied-start provenance");
     require(attempt.final_stability &&
                 attempt.final_stability->status ==
                     fl::StabilityStatus::no_instability_found,
@@ -111,9 +128,11 @@ void seeded_component_permutation() {
     const auto first_starts = pr76_max3_test::starts(false);
     const auto second_starts = pr76_max3_test::starts(true);
     const auto first = fl::solve_pr76_pt_max3(
-        1.0e6, 250.0, feed, first_evaluator, {}, first_starts, first_starts);
+        1.0e6, 250.0, feed, first_evaluator,
+        options_from_starts(first_starts), first_starts, first_starts);
     const auto second = fl::solve_pr76_pt_max3(
-        1.0e6, 250.0, feed, second_evaluator, {}, second_starts, second_starts);
+        1.0e6, 250.0, feed, second_evaluator,
+        options_from_starts(second_starts), second_starts, second_starts);
     if (first.three_phase_candidate() == nullptr ||
         second.three_phase_candidate() == nullptr) {
         std::cerr << "first permutation solve:\n";
