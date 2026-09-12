@@ -38,10 +38,11 @@ The client sends binary gRPC-Web requests to:
 <base-url>/mpmc.runtime.v1.PtFlashService/SolvePtFlash
 ```
 
-The endpoint or proxy must provide the required browser CORS response. If the
-variable is absent, the frontend remains explicitly unconfigured and sends no
-request. This repository does not ship a fake production backend or a deployed
-C++ worker.
+The endpoint or proxy must provide the required browser CORS response. The
+repository includes an audited [development/CI Envoy edge](../deploy/pt-grpc-web/README.md)
+and a thin [native C++ adapter](../modules/runtime_grpc/README.md), but no
+model-configured production worker or deployed endpoint. If the variable is
+absent, the frontend remains explicitly unconfigured and sends no request.
 
 Startup discovery must complete before solve is enabled. Switching the configured
 backend switches the inventory; component IDs cannot be added, removed or edited
@@ -89,6 +90,12 @@ be hand-edited. Tests cover binary Protobuf discovery round-trip, request value/
 preservation, capability/inventory integrity, variable accepted phases, distinct
 indeterminate/service-error oneof arms, malformed-response rejection, gRPC timeout
 options and no automatic retry.
+
+An additional cross-language golden starts a synthetic C++ `PtService`, maps it
+through the native gRPC adapter and Envoy, and exercises discovery, accepted,
+indeterminate, service-error, provenance, variable-phase, and CORS behavior with
+this generated TypeScript client. It has software-contract meaning only and is
+not a physical regression.
 
 The frontend remains independent of the C++ build. The browser dependencies are
 confined here and do not become prerequisites of `runtime`, `flash` or
