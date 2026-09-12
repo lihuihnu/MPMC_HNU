@@ -25,6 +25,7 @@ target_link_libraries(mpmc_pt_secure_client PRIVATE mpmc::runtime_grpc)
 
 set(all_targets
     mpmc_pt_process
+    mpmc_pt_service_host
     mpmc_pt_process_tests
     mpmc_pt_secure_test_server
     mpmc_pt_secure_client)
@@ -57,12 +58,36 @@ if(MPMC_PT_PROCESS_ENABLE_SANITIZERS)
     endforeach()
 endif()
 
-foreach(case IN ITEMS composition_root observer headers)
+foreach(case IN ITEMS
+        composition_root
+        repository_snapshot_bundle
+        observer
+        headers)
     add_test(NAME runtime.pt_process.${case}
              COMMAND mpmc_pt_process_tests ${case})
     set_tests_properties(runtime.pt_process.${case} PROPERTIES
         LABELS "runtime;grpc;process_host;composition" TIMEOUT 30)
 endforeach()
+
+add_test(NAME runtime.pt_process.production_manifest
+         COMMAND mpmc_pt_service_host --print-snapshot-manifest)
+set_tests_properties(runtime.pt_process.production_manifest PROPERTIES
+    LABELS "runtime;grpc;process_host;composition;provenance"
+    PASS_REGULAR_EXPRESSION
+        "\"bundle_id\":\"MPMC/PT/repository-curated-literature-snapshots/v1\""
+    TIMEOUT 30)
+
+add_test(NAME runtime.pt_process.production_rejects_relative_secrets
+    COMMAND mpmc_pt_service_host
+        --tls-certificate-chain relative.crt
+        --tls-private-key relative.key
+        --trusted-edge-client-ca relative-ca.pem)
+set_tests_properties(
+    runtime.pt_process.production_rejects_relative_secrets
+    PROPERTIES
+        LABELS "runtime;grpc;process_host;tls;configuration"
+        WILL_FAIL TRUE
+        TIMEOUT 30)
 
 if(MPMC_PT_PROCESS_TEST_CERT_DIR)
     add_test(NAME runtime.pt_process.mtls_host

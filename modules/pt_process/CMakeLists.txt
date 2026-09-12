@@ -12,6 +12,7 @@ add_library(mpmc_pt_process STATIC
     src/composition_root.cpp
     src/configured_backends.cpp
     src/json_line_observer.cpp
+    src/parameter_snapshot_supplier.cpp
     src/process_host.cpp)
 add_library(mpmc::pt_process ALIAS mpmc_pt_process)
 target_compile_features(mpmc_pt_process PUBLIC cxx_std_20)
@@ -19,3 +20,8 @@ target_include_directories(mpmc_pt_process PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(mpmc_pt_process PUBLIC mpmc::runtime_grpc)
 set_target_properties(mpmc_pt_process PROPERTIES CXX_EXTENSIONS OFF)
+
+add_executable(mpmc_pt_service_host src/pt_service_host_main.cpp)
+target_compile_features(mpmc_pt_service_host PRIVATE cxx_std_20)
+target_link_libraries(mpmc_pt_service_host PRIVATE mpmc::pt_process)
+set_target_properties(mpmc_pt_service_host PROPERTIES CXX_EXTENSIONS OFF)
