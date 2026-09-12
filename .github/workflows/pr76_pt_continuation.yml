@@ -1,0 +1,74 @@
+name: PR76 PT continuation scan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_split.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp'
+      - 'tests/flash/pr76_pt_continuation/**'
+      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
+      - '.github/workflows/pr76_pt_continuation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr76-pt-continuation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  continuation:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure PR76 PT continuation
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/pr76_pt_continuation \
+            -B build/pr76-pt-continuation \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_PR76_PT_CONTINUATION_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build PR76 PT continuation
+        run: cmake --build build/pr76-pt-continuation --config ${{ matrix.config }} --parallel 2
+
+      - name: Run PR76 PT continuation
+        run: ctest --test-dir build/pr76-pt-continuation -C ${{ matrix.config }} -R '^flash[.]pr76_pt_continuation[.]' --verbose --no-tests=error
