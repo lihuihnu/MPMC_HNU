@@ -20,7 +20,7 @@ inline constexpr double temperature_k = 250.0;
 inline th::Provenance source(std::string locator) {
     return {th::SourceKind::synthetic_test,
             "MPMC_HNU CPA max3 symmetric structural fixture",
-            "v1", std::move(locator),
+            "v2", std::move(locator),
             "Artificial non-associating CPA/SRK-limit values exercise max3 topology only; not experimental validation",
             "tests/flash/cpa_max3/test_support.hpp",
             "Repository structural regression"};
@@ -44,27 +44,27 @@ inline th::CpaParameterSet parameters(bool swap_heavy = false) {
 
     th::CpaParameterInput input;
     input.dataset_id = "synthetic-cpa-max3-symmetric";
-    input.revision = "v1";
+    input.revision = "v2-positive-amix";
     input.applicability = {
         std::nullopt, std::nullopt, source("dataset-applicability")};
     input.pure.push_back({
         "A", value(300.0, "Tc-A"),
-        value(1.4837953514927054, "a0-A"),
+        value(2.1669137917460031, "a0-A"),
         value(1.0e-5, "b-A"), value(0.5, "c1-A"), {}});
     input.pure.push_back({
         "B", value(600.0, "Tc-B"),
         value(1.0, "a0-B"),
-        value(2.0e-5, "b-B"), value(0.8, "c1-B"), {}});
+        value(1.0e-5, "b-B"), value(0.8, "c1-B"), {}});
     input.pure.push_back({
         "C", value(600.0, "Tc-C"),
         value(1.0, "a0-C"),
-        value(2.0e-5, "b-C"), value(0.8, "c1-C"), {}});
+        value(1.0e-5, "b-C"), value(0.8, "c1-C"), {}});
     input.binary.push_back({
-        "A", "B", value(4.7164403200255292, "kij-A-B")});
+        "A", "B", value(0.0062372475020341213, "kij-A-B")});
     input.binary.push_back({
-        "A", "C", value(4.7164403200255292, "kij-A-C")});
+        "A", "C", value(0.0062372475020341213, "kij-A-C")});
     input.binary.push_back({
-        "B", "C", value(4.6708058982499905, "kij-B-C")});
+        "B", "C", value(0.027527443626889001, "kij-B-C")});
 
     return th::CpaParameterSet::create(
         catalog, order, input, th::DataPolicy::allow_synthetic_tests);
@@ -72,13 +72,14 @@ inline th::CpaParameterSet parameters(bool swap_heavy = false) {
 
 inline th::CpaPtOptions fast_pt_options() {
     th::CpaPtOptions options;
-    options.scan_intervals = 128U;
-    options.max_evaluations = 2048U;
+    options.scan_intervals = 256U;
+    options.max_evaluations = 4096U;
     return options;
 }
 
-// Independent offline solution of the synthetic SRK-limit common-tangent
-// equations. Production CPA kernels must independently re-evaluate and accept it.
+// Independent offline solution of the explicitly synthetic positive-a_mix
+// SRK-limit common-tangent equations. Production CPA kernels must independently
+// re-evaluate every root/property/equilibrium gate before accepting it.
 inline const std::array<Vec, 3>& reference_phases() {
     static const std::array<Vec, 3> phases{{
         {0.1, 0.8, 0.1},
