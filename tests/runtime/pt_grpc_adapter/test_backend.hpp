@@ -22,7 +22,7 @@ enum class BackendOutcome {
     indeterminate
 };
 
-inline fl::PtFlashBackendCapability capability(
+inline fl::PtFlashBackendCapability make_capability(
     std::string backend_id = "golden/backend/v1") {
     fl::PtFlashBackendCapability result;
     result.backend_id = std::move(backend_id);
@@ -51,7 +51,7 @@ inline fl::PtFlashBackendCapability capability(
 class Backend final : public fl::PtFlashBackend {
 public:
     explicit Backend(BackendOutcome outcome = BackendOutcome::accepted)
-        : outcome_(outcome), capability_(capability()) {}
+        : outcome_(outcome), capability_(make_capability()) {}
 
     [[nodiscard]] const fl::PtFlashBackendCapability& capability()
         const noexcept override {
