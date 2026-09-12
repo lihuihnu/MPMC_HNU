@@ -12,21 +12,27 @@ add_executable(mpmc_cpa_physical_validation_tests
 target_link_libraries(mpmc_cpa_physical_validation_tests PRIVATE mpmc::flash)
 set_target_properties(mpmc_cpa_physical_validation_tests PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_cpa_physical_numeric_audit
+    cpa_physical_numeric_audit.cpp)
+target_link_libraries(mpmc_cpa_physical_numeric_audit PRIVATE mpmc::flash)
+set_target_properties(mpmc_cpa_physical_numeric_audit PROPERTIES CXX_EXTENSIONS OFF)
+
 add_executable(mpmc_cpa_physical_validation_headers
     cpa_physical_validation_headers.cpp)
 target_link_libraries(mpmc_cpa_physical_validation_headers PRIVATE mpmc::flash)
 set_target_properties(mpmc_cpa_physical_validation_headers PROPERTIES CXX_EXTENSIONS OFF)
 
+set(all_targets
+    mpmc_cpa_physical_validation_tests
+    mpmc_cpa_physical_numeric_audit
+    mpmc_cpa_physical_validation_headers)
+
 if(MSVC)
-    foreach(target IN ITEMS
-            mpmc_cpa_physical_validation_tests
-            mpmc_cpa_physical_validation_headers)
+    foreach(target IN LISTS all_targets)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
     endforeach()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    foreach(target IN ITEMS
-            mpmc_cpa_physical_validation_tests
-            mpmc_cpa_physical_validation_headers)
+    foreach(target IN LISTS all_targets)
         target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
     endforeach()
@@ -37,15 +43,18 @@ if(MPMC_CPA_PHYSICAL_VALIDATION_ENABLE_SANITIZERS)
        NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
         message(FATAL_ERROR "CPA physical validation sanitizers require Linux GCC/Clang")
     endif()
-    foreach(target IN ITEMS
-            mpmc_cpa_physical_validation_tests
-            mpmc_cpa_physical_validation_headers)
+    foreach(target IN LISTS all_targets)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all)
     endforeach()
 endif()
+
+add_test(NAME flash.cpa_physical_validation.numeric_audit
+         COMMAND mpmc_cpa_physical_numeric_audit)
+set_tests_properties(flash.cpa_physical_validation.numeric_audit PROPERTIES
+    LABELS "flash;cpa;physical_validation;numeric_audit" TIMEOUT 300)
 
 foreach(case IN ITEMS
         parameter_provenance
