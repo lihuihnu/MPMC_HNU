@@ -41,9 +41,8 @@ endif()
 
 foreach(case IN ITEMS
         explicit_density_sides
-        binary_vle
-        component_permutation
-        associating_provider)
+        associating_provider
+        diagnostic_vle_grid)
     add_test(NAME flash.cpa_split.${case}
              COMMAND mpmc_cpa_split_tests ${case})
     set_tests_properties(flash.cpa_split.${case} PROPERTIES
