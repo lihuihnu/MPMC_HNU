@@ -2,15 +2,13 @@
 
 #include "../pr76_three_phase/synthetic_fixture.hpp"
 
+#include <algorithm>
 #include <array>
-#include <iostream>
 #include <stdexcept>
 #include <string_view>
-#include <vector>
 
 namespace {
 namespace fl = mpmc::flash;
-using pr76_max3_test::Vec;
 
 void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
@@ -84,28 +82,73 @@ void transition_bracket_contract() {
             "discrete continuation bracket must not claim an exact boundary");
 }
 
-void diagnostic_pt_grid() {
+void require_fresh_state(const fl::Pr76PtContinuationPointResult& point) {
+    require(point.solve.base.solution.initial_stability.pressure_pa ==
+                point.state.pressure_pa &&
+                point.solve.base.solution.initial_stability.temperature_k ==
+                    point.state.temperature_k,
+            "continuation point did not own a fresh solve at its current PT state");
+}
+
+void require_phase_sequence(
+    const fl::Pr76PtContinuationResult& result,
+    std::span<const std::size_t> expected) {
+    require(result.all_points_accepted && result.points.size() == expected.size(),
+            "ordered PT sequence contains unresolved points");
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        require(result.points[i].accepted_phase_count &&
+                    *result.points[i].accepted_phase_count == expected[i],
+                "ordered PT sequence changed accepted phase count");
+        require_fresh_state(result.points[i]);
+    }
+    require(result.transition_brackets.size() == 2U,
+            "ordered PT sequence did not expose exactly two topology brackets");
+    for (const auto& bracket : result.transition_brackets) {
+        require(bracket.adjacent_phase_count_step &&
+                    !bracket.exact_boundary_resolved,
+                "phase-count bracket invented an exact boundary or skipped a topology");
+    }
+}
+
+void bidirectional_phase_sequence() {
     const auto model = pr76_max3_test::model();
     fl::Pr76VleEvaluator evaluator(model);
-    constexpr std::array<double, 5> temperatures{325.0, 328.0, 330.0, 331.0, 332.0};
-    constexpr std::array<double, 7> pressures_mpa{1.00, 1.15, 1.35, 1.60, 1.90, 2.30, 2.80};
+    const std::array<fl::Pr76PtPathState, 4> forward{{
+        {1.90e6, 325.0}, // accepted 3-phase side of the unresolved 3/2 belt
+        {2.80e6, 331.0}, // accepted 2-phase side of that belt
+        {1.00e6, 347.0}, // accepted 2-phase side of the 2/1 temperature boundary
+        {1.00e6, 348.0}  // accepted 1-phase side
+    }};
+    const std::array<std::size_t, 4> forward_counts{3U, 2U, 2U, 1U};
+    const auto forward_result = fl::solve_pr76_pt_continuation(
+        forward, pr76_max3_test::equal_feed(), evaluator, structural_options());
+    require_phase_sequence(forward_result, forward_counts);
+    require(forward_result.transition_brackets[0].left_phase_count == 3U &&
+                forward_result.transition_brackets[0].right_phase_count == 2U &&
+                forward_result.transition_brackets[1].left_phase_count == 2U &&
+                forward_result.transition_brackets[1].right_phase_count == 1U,
+            "forward PT scan lost 3->2->1 bracket ordering");
+    require(forward_result.points[1].incoming_hint ==
+                fl::Pr76PtContinuationHintKind::three_phase &&
+                forward_result.points[1].carried_three_phase_start &&
+                !forward_result.points[1].carried_three_phase_start_consumed,
+            "3->2 point must carry, but not need to consume, the previous 3-phase hint");
+    require(forward_result.points[2].incoming_hint ==
+                fl::Pr76PtContinuationHintKind::two_phase &&
+                !forward_result.points[2].carried_three_phase_start,
+            "two-phase continuation leaked a stale three-phase hint");
 
-    std::cout << "PR76_CONTINUATION_PT_GRID";
-    for (const double temperature : temperatures) {
-        for (const double pressure_mpa : pressures_mpa) {
-            const std::array<fl::Pr76PtPathState, 1> path{{
-                {pressure_mpa * 1.0e6, temperature}}};
-            const auto result = fl::solve_pr76_pt_continuation(
-                path, pr76_max3_test::equal_feed(), evaluator, structural_options());
-            std::cout << ' ' << temperature << "K@" << pressure_mpa << "MPa:";
-            if (result.points.front().accepted_phase_count) {
-                std::cout << *result.points.front().accepted_phase_count;
-            } else {
-                std::cout << 'X';
-            }
-        }
-    }
-    std::cout << '\n';
+    auto reverse = forward;
+    std::reverse(reverse.begin(), reverse.end());
+    const std::array<std::size_t, 4> reverse_counts{1U, 2U, 2U, 3U};
+    const auto reverse_result = fl::solve_pr76_pt_continuation(
+        reverse, pr76_max3_test::equal_feed(), evaluator, structural_options());
+    require_phase_sequence(reverse_result, reverse_counts);
+    require(reverse_result.transition_brackets[0].left_phase_count == 1U &&
+                reverse_result.transition_brackets[0].right_phase_count == 2U &&
+                reverse_result.transition_brackets[1].left_phase_count == 2U &&
+                reverse_result.transition_brackets[1].right_phase_count == 3U,
+            "reverse PT scan lost 1->2->3 bracket ordering");
 }
 
 using Test = std::pair<std::string_view, void (*)()>;
@@ -113,7 +156,7 @@ constexpr Test tests[]{
     {"repeated_three_phase", repeated_three_phase_is_fresh_continuation},
     {"invalid_path", invalid_path_is_rejected_before_solve},
     {"bracket_contract", transition_bracket_contract},
-    {"diagnostic_pt_grid", diagnostic_pt_grid}};
+    {"bidirectional_phase_sequence", bidirectional_phase_sequence}};
 
 } // namespace
 
@@ -123,13 +166,11 @@ int main(int argc, char** argv) {
         for (const auto& [name, run] : tests) {
             if (name == argv[1]) {
                 run();
-                std::cout << "[PASS] " << name << '\n';
                 return 0;
             }
         }
         throw std::invalid_argument("unknown test name");
-    } catch (const std::exception& error) {
-        std::cerr << "[FAIL] " << error.what() << '\n';
+    } catch (const std::exception&) {
         return 1;
     }
 }
