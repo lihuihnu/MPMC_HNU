@@ -1,6 +1,7 @@
 #ifndef MPMC_RUNTIME_GRPC_PT_GRPC_ADAPTER_HPP
 #define MPMC_RUNTIME_GRPC_PT_GRPC_ADAPTER_HPP
 
+#include <mpmc/runtime_grpc/pt_grpc_observer.hpp>
 #include <mpmc/runtime/pt_service.hpp>
 
 #include <grpcpp/grpcpp.h>
@@ -9,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <memory>
 
 namespace mpmc::runtime_grpc {
 
@@ -35,7 +37,8 @@ class PtGrpcServiceAdapter final
 public:
     explicit PtGrpcServiceAdapter(
         ::mpmc::runtime::PtService& service,
-        PtGrpcAdapterLimits limits = {});
+        PtGrpcAdapterLimits limits = {},
+        std::shared_ptr<PtGrpcObserver> observer = {});
 
     PtGrpcServiceAdapter(const PtGrpcServiceAdapter&) = delete;
     PtGrpcServiceAdapter& operator=(const PtGrpcServiceAdapter&) = delete;
@@ -61,9 +64,11 @@ public:
 private:
     [[nodiscard]] bool try_acquire_solve() noexcept;
     void release_solve() noexcept;
+    void observe(PtGrpcObservation observation) const noexcept;
 
     ::mpmc::runtime::PtService& service_;
     PtGrpcAdapterLimits limits_;
+    std::shared_ptr<PtGrpcObserver> observer_;
     std::atomic<std::size_t> in_flight_solves_{0U};
 };
 

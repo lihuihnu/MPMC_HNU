@@ -376,28 +376,64 @@ bool PtGrpcAdapterLimits::structurally_valid() const noexcept {
 }
 
 PtGrpcServiceAdapter::PtGrpcServiceAdapter(core::PtService& service,
-                                           PtGrpcAdapterLimits limits)
-    : service_(service), limits_(limits) {
+                                           PtGrpcAdapterLimits limits,
+                                           std::shared_ptr<PtGrpcObserver> observer)
+    : service_(service), limits_(limits), observer_(std::move(observer)) {
     if (!limits_.structurally_valid()) {
         throw std::invalid_argument("invalid PT gRPC process adapter limits");
     }
+}
+
+void PtGrpcServiceAdapter::observe(PtGrpcObservation observation) const noexcept {
+    if (observer_) { observer_->observe(observation); }
 }
 
 grpc::Status PtGrpcServiceAdapter::DiscoverPtCapabilities(
     grpc::ServerContext* context,
     const wire::DiscoverPtCapabilitiesRequest* request,
     wire::DiscoverPtCapabilitiesResponse* response) {
+    const auto started_at = std::chrono::steady_clock::now();
+    const auto finish = [&](grpc::Status result, PtGrpcCompletion completion) {
+        std::size_t request_bytes = 0U;
+        std::size_t response_bytes = 0U;
+        try {
+            if (request != nullptr) { request_bytes = request->ByteSizeLong(); }
+            if (response != nullptr) { response_bytes = response->ByteSizeLong(); }
+        } catch (...) {
+            // Observation is best-effort and must not replace the RPC result.
+        }
+        observe({PtGrpcRpcMethod::discover_pt_capabilities,
+                 completion,
+                 result.error_code(),
+                 std::nullopt,
+                 false,
+                 request_bytes,
+                 response_bytes,
+                 std::chrono::duration_cast<std::chrono::microseconds>(
+                     std::chrono::steady_clock::now() - started_at)});
+        return result;
+    };
     if (context == nullptr || request == nullptr || response == nullptr) {
-        return internal_error();
+        return finish(internal_error(), PtGrpcCompletion::internal_failure);
     }
     response->Clear();
     auto status = lifecycle_status(*context, limits_.max_discovery_deadline);
-    if (!status.ok()) { return status; }
+    if (!status.ok()) {
+        return finish(status, status.error_code() == grpc::StatusCode::CANCELLED
+                                  ? PtGrpcCompletion::cancelled
+                                  : status.error_code() ==
+                                            grpc::StatusCode::DEADLINE_EXCEEDED
+                                        ? PtGrpcCompletion::deadline_exceeded
+                                        : PtGrpcCompletion::invalid_request);
+    }
     if (request->ByteSizeLong() > limits_.max_serialized_request_bytes) {
-        return resource_exhausted(
-            "serialized discovery request exceeds the process adapter limit");
+        return finish(
+            resource_exhausted(
+                "serialized discovery request exceeds the process adapter limit"),
+            PtGrpcCompletion::request_limit);
     }
 
+    PtGrpcCompletion completion = PtGrpcCompletion::completed;
     try {
         response->set_wire_contract(pt_wire_contract.data(),
                                     pt_wire_contract.size());
@@ -419,13 +455,30 @@ grpc::Status PtGrpcServiceAdapter::DiscoverPtCapabilities(
     } catch (const std::bad_alloc&) {
         status = resource_exhausted(
             "PT capability discovery exhausted process memory");
+        completion = PtGrpcCompletion::memory_exhausted;
     } catch (const std::exception&) {
         status = internal_error();
+        completion = PtGrpcCompletion::internal_failure;
     } catch (...) {
         status = internal_error();
+        completion = PtGrpcCompletion::internal_failure;
     }
-    if (!status.ok()) { response->Clear(); }
-    return status;
+    if (!status.ok()) {
+        response->Clear();
+        if (completion == PtGrpcCompletion::completed &&
+            status.error_code() == grpc::StatusCode::RESOURCE_EXHAUSTED) {
+            completion = PtGrpcCompletion::response_limit;
+        } else if (completion == PtGrpcCompletion::completed &&
+                   status.error_code() == grpc::StatusCode::CANCELLED) {
+            completion = PtGrpcCompletion::cancelled;
+        } else if (completion == PtGrpcCompletion::completed &&
+                   status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
+            completion = PtGrpcCompletion::deadline_exceeded;
+        } else if (completion == PtGrpcCompletion::completed) {
+            completion = PtGrpcCompletion::internal_failure;
+        }
+    }
+    return finish(status, completion);
 }
 
 bool PtGrpcServiceAdapter::try_acquire_solve() noexcept {
@@ -447,54 +500,115 @@ void PtGrpcServiceAdapter::release_solve() noexcept {
 grpc::Status PtGrpcServiceAdapter::SolvePtFlash(
     grpc::ServerContext* context, const wire::SolvePtFlashRequest* request,
     wire::SolvePtFlashResponse* response) {
+    const auto started_at = std::chrono::steady_clock::now();
+    bool pt_service_called = false;
+    std::optional<core::PtServiceOutcome> service_outcome;
+    const auto finish = [&](grpc::Status result, PtGrpcCompletion completion) {
+        std::size_t request_bytes = 0U;
+        std::size_t response_bytes = 0U;
+        try {
+            if (request != nullptr) { request_bytes = request->ByteSizeLong(); }
+            if (response != nullptr) { response_bytes = response->ByteSizeLong(); }
+        } catch (...) {
+            // Observation is best-effort and must not replace the RPC result.
+        }
+        observe({PtGrpcRpcMethod::solve_pt_flash,
+                 completion,
+                 result.error_code(),
+                 service_outcome,
+                 pt_service_called,
+                 request_bytes,
+                 response_bytes,
+                 std::chrono::duration_cast<std::chrono::microseconds>(
+                     std::chrono::steady_clock::now() - started_at)});
+        return result;
+    };
     if (context == nullptr || request == nullptr || response == nullptr) {
-        return internal_error();
+        return finish(internal_error(), PtGrpcCompletion::internal_failure);
     }
     response->Clear();
     auto status = lifecycle_status(*context, limits_.max_solve_deadline);
-    if (!status.ok()) { return status; }
+    if (!status.ok()) {
+        return finish(status, status.error_code() == grpc::StatusCode::CANCELLED
+                                  ? PtGrpcCompletion::cancelled
+                                  : status.error_code() ==
+                                            grpc::StatusCode::DEADLINE_EXCEEDED
+                                        ? PtGrpcCompletion::deadline_exceeded
+                                        : PtGrpcCompletion::invalid_request);
+    }
 
     core::PtServiceRequest service_request;
+    PtGrpcCompletion completion = PtGrpcCompletion::completed;
     try {
         status = parse_request(*request, limits_.max_serialized_request_bytes,
                                service_request);
     } catch (const std::bad_alloc&) {
-        return resource_exhausted("PT request mapping exhausted process memory");
+        return finish(
+            resource_exhausted("PT request mapping exhausted process memory"),
+            PtGrpcCompletion::memory_exhausted);
     } catch (const std::exception&) {
-        return invalid_wire("PT request could not be mapped to service v1");
+        return finish(
+            invalid_wire("PT request could not be mapped to service v1"),
+            PtGrpcCompletion::invalid_request);
     }
-    if (!status.ok()) { return status; }
+    if (!status.ok()) {
+        return finish(status,
+                      status.error_code() == grpc::StatusCode::RESOURCE_EXHAUSTED
+                          ? PtGrpcCompletion::request_limit
+                          : PtGrpcCompletion::invalid_request);
+    }
     if (!try_acquire_solve()) {
-        return resource_exhausted(
-            "maximum concurrent PT solves are already in flight");
+        return finish(
+            resource_exhausted(
+                "maximum concurrent PT solves are already in flight"),
+            PtGrpcCompletion::concurrency_limit);
     }
 
     status = lifecycle_status(*context, limits_.max_solve_deadline);
     if (!status.ok()) {
         release_solve();
-        return status;
+        return finish(status,
+                      status.error_code() == grpc::StatusCode::CANCELLED
+                          ? PtGrpcCompletion::cancelled
+                          : status.error_code() ==
+                                    grpc::StatusCode::DEADLINE_EXCEEDED
+                                ? PtGrpcCompletion::deadline_exceeded
+                                : PtGrpcCompletion::invalid_request);
     }
 
     core::PtServiceResponse service_response;
     try {
         // The only scientific delegation in this adapter.
+        pt_service_called = true;
         service_response = service_.solve(service_request);
+        service_outcome = service_response.outcome;
     } catch (const std::bad_alloc&) {
         release_solve();
-        return resource_exhausted("PT service solve exhausted process memory");
+        return finish(
+            resource_exhausted("PT service solve exhausted process memory"),
+            PtGrpcCompletion::memory_exhausted);
     } catch (const std::exception&) {
         release_solve();
-        return {grpc::StatusCode::INTERNAL,
-                "PT service boundary raised an unexpected exception"};
+        return finish(
+            {grpc::StatusCode::INTERNAL,
+             "PT service boundary raised an unexpected exception"},
+            PtGrpcCompletion::internal_failure);
     } catch (...) {
         release_solve();
-        return {grpc::StatusCode::INTERNAL,
-                "PT service boundary raised a non-standard exception"};
+        return finish(
+            {grpc::StatusCode::INTERNAL,
+             "PT service boundary raised a non-standard exception"},
+            PtGrpcCompletion::internal_failure);
     }
     release_solve();
 
     status = lifecycle_status(*context, limits_.max_solve_deadline);
-    if (!status.ok()) { return status; }
+    if (!status.ok()) {
+        return finish(status,
+                      status.error_code() == grpc::StatusCode::CANCELLED
+                          ? PtGrpcCompletion::cancelled
+                          : PtGrpcCompletion::deadline_exceeded);
+    }
     try {
         map_service_response(service_response, *response);
         if (response->ByteSizeLong() > limits_.max_serialized_response_bytes) {
@@ -504,13 +618,21 @@ grpc::Status PtGrpcServiceAdapter::SolvePtFlash(
     } catch (const std::bad_alloc&) {
         status = resource_exhausted(
             "PT response mapping exhausted process memory");
+        completion = PtGrpcCompletion::memory_exhausted;
     } catch (const std::exception&) {
         status = internal_error();
+        completion = PtGrpcCompletion::internal_failure;
     } catch (...) {
         status = internal_error();
+        completion = PtGrpcCompletion::internal_failure;
     }
     clear_on_error(status, *response);
-    return status;
+    if (!status.ok() && completion == PtGrpcCompletion::completed) {
+        completion = status.error_code() == grpc::StatusCode::RESOURCE_EXHAUSTED
+                         ? PtGrpcCompletion::response_limit
+                         : PtGrpcCompletion::internal_failure;
+    }
+    return finish(status, completion);
 }
 
 void configure_pt_grpc_server(grpc::ServerBuilder& builder,
