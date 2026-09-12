@@ -1,0 +1,67 @@
+name: CPA PT density-root and fugacity kernel
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
+      - 'modules/thermodynamics/cpa*.md'
+      - 'tests/thermodynamics/cpa_pt_phase/**'
+      - '.github/workflows/cpa_pt_phase.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-pt-phase-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpa-pt-phase:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure CPA PT phase
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/thermodynamics/cpa_pt_phase \
+            -B build/cpa-pt-phase \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_CPA_PT_PHASE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build CPA PT phase
+        run: cmake --build build/cpa-pt-phase --target mpmc_cpa_pt_phase_tests --config ${{ matrix.config }} --parallel 2
+
+      - name: Run CPA PT phase
+        run: ctest --test-dir build/cpa-pt-phase -C ${{ matrix.config }} -R '^thermodynamics[.]cpa_pt_phase[.]' --verbose --no-tests=error
