@@ -33,6 +33,7 @@ endif()
 
 foreach(case IN ITEMS
         parameter_reordering
+        provenance_retention
         analytic_one_site
         nonassociating_srk
         association_permutation
