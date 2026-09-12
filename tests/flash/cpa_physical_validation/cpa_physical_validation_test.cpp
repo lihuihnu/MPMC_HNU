@@ -20,8 +20,6 @@ th::CpaPtOptions physical_pt_options() {
     th::CpaPtOptions options;
     options.scan_intervals = 256U;
     options.max_evaluations = 4096U;
-    // Audited against the outer 1e-11 log-fugacity / 1e-10 TPD gates.
-    // The standalone CpaPtPhase defaults remain untouched by this validation.
     options.pressure_absolute_tolerance_pa = 3.0e-6;
     options.pressure_relative_tolerance = 1.0e-12;
     return options;
@@ -124,6 +122,30 @@ void require_active_association(
             "accepted physical VLE has effectively inactive association sites");
 }
 
+void default_flash_precision_probe() {
+    const auto& experimental = cpa_physical_test::points()[2];
+    const auto parameters = cpa_physical_test::parameters(false);
+    const auto model = th::CpaPtPhase::from_parameters(parameters);
+    fl::CpaVleEvaluator evaluator(model); // Intentionally current production default.
+    const auto feed = cpa_physical_test::feed(experimental, false);
+    const auto starts = cpa_physical_test::starts(experimental, false);
+    const auto result = fl::solve_cpa_pt_vle(
+        experimental.pressure_pa, cpa_physical_test::temperature_k,
+        feed, evaluator, physical_split_options(), starts);
+    std::cout << "CPA_DEFAULT_PRECISION status="
+              << static_cast<int>(result.solution.status);
+    if (const auto* point = result.solution.candidate()) {
+        std::cout << " fug=" << point->fugacity_norm;
+    }
+    if (result.solution.final_stability) {
+        std::cout << " final="
+                  << static_cast<int>(result.solution.final_stability->status);
+    }
+    std::cout << " absP=" << evaluator.pt_options().pressure_absolute_tolerance_pa
+              << " relP=" << evaluator.pt_options().pressure_relative_tolerance
+              << '\n';
+}
+
 void literature_vle_points() {
     const auto parameters = cpa_physical_test::parameters(false);
     const auto model = th::CpaPtPhase::from_parameters(parameters);
@@ -140,9 +162,6 @@ void literature_vle_points() {
         const double direct_mu = experimental_pair_residual(evaluator, experimental);
         const auto feed = cpa_physical_test::feed(experimental, false);
         const auto starts = cpa_physical_test::starts(experimental, false);
-        // Experimental x/y initialize the physical split only. Final common-tangent
-        // review uses the converged model-owned phase compositions that solve_pt_vle
-        // appends internally; measurement error must not be promoted to topology evidence.
         const auto result = fl::solve_cpa_pt_vle(
             experimental.pressure_pa, cpa_physical_test::temperature_k,
             feed, evaluator, physical_split_options(), starts);
@@ -200,9 +219,6 @@ void literature_vle_points() {
               << " mean_dy=" << mean_dy
               << " max_dx=" << max_dx
               << " max_dy=" << max_dy << '\n';
-    // Folas Table 2.1 reports Delta(y)*100=0.8 for this 333.15 K CR-1
-    // correlation. The five-point repository subset is therefore frozen at a
-    // one-mole-percent mean and 1.5-mole-percent pointwise envelope.
     require(mean_dx <= 0.01 && mean_dy <= 0.01 &&
                 max_dx <= 0.015 && max_dy <= 0.015,
             "CPA literature VLE deviations exceed physical-validation envelope");
@@ -227,6 +243,7 @@ void component_permutation() {
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"parameter_provenance", parameter_provenance},
+    {"default_flash_precision_probe", default_flash_precision_probe},
     {"literature_vle_points", literature_vle_points},
     {"component_permutation", component_permutation}};
 
