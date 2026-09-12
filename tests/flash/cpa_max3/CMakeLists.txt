@@ -39,7 +39,10 @@ if(MPMC_CPA_MAX3_ENABLE_SANITIZERS)
     endforeach()
 endif()
 
-foreach(case IN ITEMS fixed_three_phase diagnostic_equal_feed)
+foreach(case IN ITEMS
+        fixed_three_phase
+        two_to_three
+        diagnostic_disappearance)
     add_test(NAME flash.cpa_max3.${case}
              COMMAND mpmc_cpa_max3_tests ${case})
     set_tests_properties(flash.cpa_max3.${case} PROPERTIES
