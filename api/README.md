@@ -17,10 +17,13 @@ runtime contract. Protobuf and gRPC types do not enter `runtime`, `flash`, or
 run stability analysis, alter phase count, normalize feed, retry an indeterminate
 solve, or select a fallback backend.
 
-This increment defines the schema, generated TypeScript descriptors, strict
-browser mapping, and gRPC-Web client. It does not add a C++ process host or deploy
-an endpoint. A worker implementing this schema must project to/from the existing
-`PtService` and call `PtService::solve` exactly once per `SolvePtFlash` RPC.
+The repository now provides the schema, generated TypeScript descriptors, strict
+browser mapping, gRPC-Web client, and an optional
+[native C++ process adapter](../modules/runtime_grpc/README.md). It does not ship
+a model-configured production worker or deployed endpoint. A worker constructs
+its registered backends outside the adapter; the adapter projects to/from the
+existing `PtService` and calls `PtService::solve` exactly once per admitted
+`SolvePtFlash` RPC.
 
 ## Version and compatibility rules
 
@@ -90,21 +93,30 @@ one RPC and the form permits only one in-flight solve. Discovery defaults to a
 A deadline/cancellation is a transport failure even if server-side work may have
 started.
 
-## Server adapter obligations
+## Native adapter policy
 
-A process host remains responsible for controls that cannot be enforced after a
-browser has decoded a message:
+`mpmc::runtime_grpc::PtGrpcServiceAdapter` implements the mapping obligations:
 
-1. bound serialized request bytes, metadata, diagnostics, concurrency and queued
-   work before untrusted allocation;
-2. validate required field presence, v1 convention strings, enums, indices and
-   checked integer conversions;
-3. forward the unchanged ID-keyed request to `PtService` and map its response
+1. bound serialized request bytes before handler deserialization and again after
+   decode, plus bound serialized responses and gRPC memory;
+2. reject rather than queue work above the configured solve-concurrency limit;
+3. require and cap RPC deadlines, observe cancellation before entry/publication,
+   and suppress a response when the post-solve check observes either condition;
+4. validate required field presence, v1 convention strings, and checked integer
+   conversions;
+5. forward the unchanged ID-keyed request to `PtService` and map its response
    envelope without recomputing scientific acceptance;
-4. return `PtServiceError` as the Protobuf error arm with gRPC OK;
-5. reserve non-OK gRPC statuses for process/transport/auth/resource/deadline or
+6. return `PtServiceError` as the Protobuf error arm with gRPC OK;
+7. reserve non-OK gRPC statuses for process/transport/auth/resource/deadline or
    cancellation failures outside the completed `PtServiceResponse`;
-6. configure gRPC-Web/CORS directly or through an audited proxy.
+8. expose ordinary native gRPC and leave gRPC-Web/CORS to the audited Envoy edge.
+
+The adapter cannot preempt an already-entered backend because the frozen generic
+backend contract has no cancellation token. Such work retains its solve permit
+until it returns and its late response is discarded. A process host remains
+responsible for constructing real registered backends, credentials, TLS,
+authentication/authorization, deployed CORS origins, address binding, lifecycle,
+and operational observability.
 
 The browser additionally rejects more than 64 discovered backends, more than 256
 components per backend, more than 64 phases/phase-count declarations, excessive

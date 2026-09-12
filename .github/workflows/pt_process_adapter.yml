@@ -1,0 +1,154 @@
+name: PT gRPC process adapter
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - 'deploy/pt-grpc-web/**'
+      - 'modules/runtime/**'
+      - 'modules/runtime_grpc/**'
+      - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_phase_transition.hpp'
+      - 'tests/runtime/pt_grpc_adapter/**'
+      - 'frontend/buf.gen.yaml'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'frontend/src/api/**'
+      - 'frontend/src/domain/flash.ts'
+      - 'frontend/src/gen/**'
+      - '.github/workflows/pt_process_adapter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pt-process-adapter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  adapter:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan + TS golden
+            compiler: g++
+            config: Debug
+            sanitizers: 'ON'
+            cross_language: true
+          - name: Clang Release
+            compiler: clang++
+            config: Release
+            sanitizers: 'OFF'
+            cross_language: false
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Ubuntu 24.04 Protobuf and gRPC packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libgrpc++-dev=1.51.1-4.1build5 \
+            protobuf-compiler-grpc=1.51.1-4.1build5 \
+            libprotobuf-dev=3.21.12-8.2ubuntu0.3 \
+            protobuf-compiler=3.21.12-8.2ubuntu0.3
+          protoc --version
+          grpc_cpp_plugin --version || true
+
+      - name: Configure PT process adapter
+        run: |
+          cmake -S tests/runtime/pt_grpc_adapter \
+            -B build/pt-grpc-adapter \
+            -DCMAKE_BUILD_TYPE=${{ matrix.config }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
+            -DMPMC_PT_GRPC_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+
+      - name: Build PT process adapter
+        run: >-
+          cmake --build build/pt-grpc-adapter
+          --target mpmc_pt_grpc_adapter_tests mpmc_pt_grpc_golden_server
+          --parallel 2
+
+      - name: Run native adapter resource and lifecycle regression
+        run: >-
+          ctest --test-dir build/pt-grpc-adapter
+          -R '^runtime[.]pt_grpc_adapter[.]'
+          --verbose --no-tests=error
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        if: matrix.cross_language
+        with:
+          node-version: '24.21.0'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install exact TypeScript golden-test dependencies
+        if: matrix.cross_language
+        working-directory: frontend
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate Envoy gRPC-Web and CORS configuration
+        if: matrix.cross_language
+        run: >-
+          docker run --rm
+          --volume "${PWD}/deploy/pt-grpc-web/envoy.yaml:/etc/envoy/envoy.yaml:ro"
+          envoyproxy/envoy:v1.36.9
+          --mode validate -c /etc/envoy/envoy.yaml
+
+      - name: Run TypeScript to C++ gRPC-Web golden
+        if: matrix.cross_language
+        run: |
+          set -euo pipefail
+          server_log="${PWD}/build/pt-grpc-adapter/golden-server.log"
+          ASAN_OPTIONS=detect_leaks=0 \
+            ./build/pt-grpc-adapter/mpmc_pt_grpc_golden_server \
+            127.0.0.1:50051 >"${server_log}" 2>&1 &
+          server_pid=$!
+          container_name="mpmc-pt-envoy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            kill "${server_pid}" 2>/dev/null || true
+            docker rm --force "${container_name}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..50}; do
+            if grep --quiet '^READY ' "${server_log}"; then break; fi
+            sleep 0.1
+          done
+          if ! grep '^READY ' "${server_log}"; then
+            tail -200 "${server_log}" || true
+            exit 1
+          fi
+
+          docker run --detach --rm --network host \
+            --name "${container_name}" \
+            --volume "${PWD}/deploy/pt-grpc-web/envoy.yaml:/etc/envoy/envoy.yaml:ro" \
+            envoyproxy/envoy:v1.36.9 \
+            -c /etc/envoy/envoy.yaml
+          for attempt in {1..100}; do
+            if curl --fail --silent http://127.0.0.1:9901/ready >/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          if ! curl --fail --silent http://127.0.0.1:9901/ready; then
+            docker logs "${container_name}" || true
+            exit 1
+          fi
+
+          if ! (cd frontend && \
+            MPMC_PT_GOLDEN_ENDPOINT=http://127.0.0.1:8080 \
+            npm test -- src/api/ptProcessGolden.test.ts); then
+            docker logs "${container_name}" || true
+            tail -200 "${server_log}" || true
+            exit 1
+          fi

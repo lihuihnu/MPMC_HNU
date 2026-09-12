@@ -111,11 +111,11 @@ unchanged. Any backend-owned roundoff-only representation in the returned feed
 is reported as the evaluated feed.
 
 `PtServiceLimits` bounds configured backend count, components per backend, and
-identifier bytes. The Protobuf/browser v1 mapping adds post-decode shape and
-display-size guards plus client deadlines/cancellation, but a process host must
-still bound serialized payload bytes, metadata/diagnostic sizes, concurrent work
-and queues before allocating untrusted messages. The C++ v1 boundary does not
-claim those process-level quotas.
+identifier bytes. The optional [native gRPC process adapter](../runtime_grpc/README.md)
+adds pre-deserialization and post-decode request limits, response size, gRPC
+memory/thread quotas, solve concurrency admission, and deadline/cancellation
+publication guards. These process controls remain outside the transport-neutral
+C++ v1 boundary.
 
 ## Result, provenance, and variable phase count
 
@@ -213,6 +213,8 @@ sets, provenance, transition evidence and the response envelope. The frontend:
    failures as distinct states without synthesizing phase data.
 
 The C++ `runtime` target remains transport-neutral and has no Protobuf/gRPC
-dependency. This repository does not yet provide the process-host adapter or a
-deployed endpoint; that worker must map the schema to `PtService`, not call
-model-specific solvers or recreate EOS/flash logic.
+dependency. [`runtime_grpc`](../runtime_grpc/README.md) now provides an optional
+thin native adapter and the repository provides a development/CI Envoy edge, but
+no model-configured production worker, TLS/auth policy, or deployed endpoint.
+Any worker still constructs its backends and registry outside the adapter; only
+`PtService` may dispatch a solve.
