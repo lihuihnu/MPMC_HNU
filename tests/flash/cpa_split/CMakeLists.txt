@@ -41,6 +41,7 @@ endif()
 
 foreach(case IN ITEMS
         explicit_density_sides
+        structural_anchor_residual
         binary_vle
         component_permutation
         associating_provider)
