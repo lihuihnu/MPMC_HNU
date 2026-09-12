@@ -1,0 +1,72 @@
+name: PR76 PT max-three-phase baseline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flash/include/mpmc/flash/pt_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_max3_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp'
+      - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp'
+      - 'tests/flash/pr76_three_phase/**'
+      - '.github/workflows/pr76_three_phase.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr76-three-phase-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  max3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure PR76 max3
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flash/pr76_three_phase \
+            -B build/pr76-three-phase \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build PR76 max3
+        run: cmake --build build/pr76-three-phase --target mpmc_pr76_three_phase_tests --config ${{ matrix.config }} --parallel 2
+
+      - name: Run PR76 max3
+        run: ctest --test-dir build/pr76-three-phase -C ${{ matrix.config }} -R '^flash[.]pr76_three_phase[.]' --verbose --no-tests=error
