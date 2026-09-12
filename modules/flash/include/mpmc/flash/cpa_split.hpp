@@ -19,6 +19,26 @@ namespace mpmc::flash {
 inline constexpr const char* cpa_pt_vle_convention =
     "CPA/PT/two-phase/density-side-logK-RR-common-tangent/v1";
 
+// The generic PT split requires 1e-11 log-fugacity closure. CPA density roots
+// therefore need materially tighter pressure closure than the standalone
+// phase-property default; otherwise root error becomes the outer residual floor.
+[[nodiscard]] inline thermodynamics::CpaPtOptions
+cpa_pt_vle_default_phase_options() {
+    thermodynamics::CpaPtOptions options;
+    options.pressure_absolute_tolerance_pa = 1.0e-7;
+    options.pressure_relative_tolerance = 1.0e-12;
+    return options;
+}
+
+// Keep the generic global split budget unchanged, but cap one numerical role
+// assignment so a wrong density-side initialization cannot consume all provider
+// calls before the alternate assignment is attempted.
+[[nodiscard]] inline PtSplitOptions cpa_pt_vle_default_split_options() {
+    PtSplitOptions options;
+    options.max_evaluations_per_attempt = 8192U;
+    return options;
+}
+
 // The three-argument call is the all-admissible-root minimum-Gibbs stability
 // provider. The four-argument call requests one numerical density side for the
 // split iteration. These candidate roles are not physical morphology labels.
@@ -26,7 +46,8 @@ class CpaVleEvaluator {
 public:
     explicit CpaVleEvaluator(
         const thermodynamics::CpaPtPhase& model,
-        thermodynamics::CpaPtOptions pt_options = {})
+        thermodynamics::CpaPtOptions pt_options =
+            cpa_pt_vle_default_phase_options())
         : stability_(model, std::move(pt_options)) {}
 
     CpaVleEvaluator(const CpaVleEvaluator&) = delete;
@@ -144,7 +165,7 @@ struct CpaPtSplitResult {
     double pressure_pa, double temperature_k,
     std::span<const double> feed,
     CpaVleEvaluator& evaluator,
-    PtSplitOptions options = {},
+    PtSplitOptions options = cpa_pt_vle_default_split_options(),
     std::span<const std::vector<double>> initial_starts = {},
     std::span<const std::vector<double>> final_starts = {}) {
     if (feed.size() != evaluator.model().size()) {
