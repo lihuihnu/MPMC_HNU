@@ -33,6 +33,7 @@ endif()
 
 foreach(case IN ITEMS
         parameter_reordering
+        runtime_subset
         provenance_retention
         analytic_one_site
         association_pressure
