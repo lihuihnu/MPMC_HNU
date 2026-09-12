@@ -42,7 +42,11 @@ endif()
 foreach(case IN ITEMS
         fixed_three_phase
         two_to_three
-        diagnostic_disappearance)
+        three_to_two
+        component_permutation
+        backend_equivalence
+        hint_not_evidence
+        malformed_start)
     add_test(NAME flash.cpa_max3.${case}
              COMMAND mpmc_cpa_max3_tests ${case})
     set_tests_properties(flash.cpa_max3.${case} PROPERTIES
