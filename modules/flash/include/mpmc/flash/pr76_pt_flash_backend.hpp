@@ -13,6 +13,8 @@ namespace mpmc::flash {
 
 inline constexpr std::string_view pr76_pt_flash_backend_id =
     "PR76/PT-VLE/phase-set-backend/v1";
+inline constexpr std::string_view pr76_pt_flash_backend_configuration_profile =
+    "PR76/PT-VLE/backend-configuration/v1";
 inline constexpr std::string_view pr76_pt_flash_backend_result_convention =
     "PR76/PT-VLE/phase-set-backend-result/v1";
 
@@ -54,7 +56,8 @@ public:
             source.revision != capability_.revision ||
             source.component_ids != capability_.component_ids ||
             source.model_profile != capability_.model_profile ||
-            source.phase_convention != thermodynamics::pr76_pt_convention) {
+            std::string_view{source.phase_convention} !=
+                thermodynamics::pr76_pt_convention) {
             reject_adapter_result(
                 result, "PR76 backend: provider/model provenance mismatch");
             return result;
@@ -76,6 +79,8 @@ private:
         capability.algorithm_profile = PtSplitResult::convention;
         capability.publication_profile =
             std::string(PtPhaseSetResult::convention);
+        capability.configuration_profile =
+            std::string(pr76_pt_flash_backend_configuration_profile);
         const auto& parameters = evaluator.model().parameters();
         capability.dataset_id = parameters.dataset_id();
         capability.revision = parameters.revision();
