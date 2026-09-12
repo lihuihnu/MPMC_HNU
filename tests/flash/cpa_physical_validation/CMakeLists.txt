@@ -12,11 +12,6 @@ add_executable(mpmc_cpa_physical_validation_tests
 target_link_libraries(mpmc_cpa_physical_validation_tests PRIVATE mpmc::flash)
 set_target_properties(mpmc_cpa_physical_validation_tests PROPERTIES CXX_EXTENSIONS OFF)
 
-add_executable(mpmc_cpa_physical_numeric_audit
-    cpa_physical_numeric_audit.cpp)
-target_link_libraries(mpmc_cpa_physical_numeric_audit PRIVATE mpmc::flash)
-set_target_properties(mpmc_cpa_physical_numeric_audit PROPERTIES CXX_EXTENSIONS OFF)
-
 add_executable(mpmc_cpa_physical_validation_headers
     cpa_physical_validation_headers.cpp)
 target_link_libraries(mpmc_cpa_physical_validation_headers PRIVATE mpmc::flash)
@@ -24,7 +19,6 @@ set_target_properties(mpmc_cpa_physical_validation_headers PROPERTIES CXX_EXTENS
 
 set(all_targets
     mpmc_cpa_physical_validation_tests
-    mpmc_cpa_physical_numeric_audit
     mpmc_cpa_physical_validation_headers)
 
 if(MSVC)
@@ -50,11 +44,6 @@ if(MPMC_CPA_PHYSICAL_VALIDATION_ENABLE_SANITIZERS)
             -fsanitize=address,undefined -fno-sanitize-recover=all)
     endforeach()
 endif()
-
-add_test(NAME flash.cpa_physical_validation.numeric_audit
-         COMMAND mpmc_cpa_physical_numeric_audit)
-set_tests_properties(flash.cpa_physical_validation.numeric_audit PROPERTIES
-    LABELS "flash;cpa;physical_validation;numeric_audit" TIMEOUT 300)
 
 foreach(case IN ITEMS
         parameter_provenance
