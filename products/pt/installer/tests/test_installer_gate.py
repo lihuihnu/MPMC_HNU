@@ -140,6 +140,7 @@ class InstallerGateTest(unittest.TestCase):
         self.assertIn("--build=never", workflow)
         self.assertNotIn("actions/cache/save@", workflow)
         self.assertIn("unsigned-installer-candidate", workflow)
+        self.assertIn("pkgutil --expand-full", workflow)
         for runner in ("ubuntu-24.04", "windows-2022", "macos-15"):
             self.assertIn(f"os: {runner}", workflow)
 
@@ -166,6 +167,9 @@ class InstallerGateTest(unittest.TestCase):
             self.assertNotIn(forbidden, implementation)
         for generator in ('"DEB"', '"WIX"', '"productbuild"'):
             self.assertIn(generator, implementation)
+        self.assertEqual(
+            implementation.count("CPACK_RESOURCE_FILE_LICENSE"), 1
+        )
 
 
 if __name__ == "__main__":

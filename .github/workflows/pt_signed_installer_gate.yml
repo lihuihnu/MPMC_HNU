@@ -181,10 +181,16 @@ jobs:
         run: |
           set -euo pipefail
           package=build/pt-installer-package/mpmc-pt-0.1.0-macos-arm64.pkg
-          pkgutil --payload-files "$package" | tee build/pkg-payload.txt
+          expanded="$RUNNER_TEMP/mpmc-pt-pkg-expanded"
+          test ! -e "$expanded"
+          pkgutil --expand-full "$package" "$expanded"
+          find "$expanded" -type f | sort | tee build/pkg-payload.txt
           grep --fixed-strings 'mpmc_pt_service_host' build/pkg-payload.txt
           grep --fixed-strings 'product-staging-manifest.json' build/pkg-payload.txt
           grep --fixed-strings 'candidate-notice.txt' build/pkg-payload.txt
+          host=$(find "$expanded" -type f -name mpmc_pt_service_host -print -quit)
+          test -n "$host"
+          test -x "$host"
           command -v codesign
           command -v productsign
           xcrun --find notarytool

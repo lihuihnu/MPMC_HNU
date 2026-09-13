@@ -134,10 +134,11 @@ set(mpmc_runtime_dependency_filters
 if(WIN32)
     list(APPEND mpmc_runtime_dependency_filters
         POST_EXCLUDE_REGEXES
-            # CMake lowercases Windows DLL names while applying runtime
-            # dependency filters.  Keep the resolved-path filter lowercase as
-            # well; otherwise System32 DLLs are copied into the staging tree.
-            ".*[/\\\\]windows[/\\\\]system32[/\\\\].*")
+            # Windows dependency names are matched case-insensitively, but the
+            # directory portion of a resolved path can retain runner-specific
+            # casing.  Match the Windows directory segment explicitly so no
+            # operating-system DLL is copied into the staging tree.
+            ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*")
 elseif(APPLE)
     list(APPEND mpmc_runtime_dependency_filters
         POST_EXCLUDE_REGEXES

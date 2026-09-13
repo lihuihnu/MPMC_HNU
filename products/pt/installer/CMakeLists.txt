@@ -5,6 +5,14 @@ set(MPMC_PT_STAGING_DIR "" CACHE PATH
     "Absolute path to one validated PT product staging tree")
 set(MPMC_PT_INSTALLER_TARGET "" CACHE STRING
     "Installer target: linux-x86_64, windows-x86_64, or macos-arm64")
+# Project licensing is not yet decided.  Never let CPack substitute its own
+# generic license/readme text into an engineering candidate.
+set(CPACK_RESOURCE_FILE_LICENSE
+    "${CMAKE_CURRENT_LIST_DIR}/candidate-notice.txt")
+set(CPACK_RESOURCE_FILE_README
+    "${CMAKE_CURRENT_LIST_DIR}/candidate-notice.txt")
+set(CPACK_RESOURCE_FILE_WELCOME
+    "${CMAKE_CURRENT_LIST_DIR}/candidate-notice.txt")
 
 if(NOT IS_ABSOLUTE "${MPMC_PT_STAGING_DIR}" OR
    NOT IS_DIRECTORY "${MPMC_PT_STAGING_DIR}")
@@ -59,10 +67,6 @@ elseif(MPMC_PT_INSTALLER_TARGET STREQUAL "windows-x86_64")
     # "https://github.com/lihuihnu/MPMC_HNU/products/pt") is stable for
     # upgrades and belongs only to this product identity.
     set(CPACK_WIX_UPGRADE_GUID "4D54F0D2-922A-5E2C-98E4-F0640F891BBA")
-    # Project licensing is not yet decided.  Display the explicit candidate
-    # notice instead of CMake's generic license text in the WiX UI.
-    set(CPACK_RESOURCE_FILE_LICENSE
-        "${CMAKE_CURRENT_LIST_DIR}/candidate-notice.txt")
     set(CPACK_PACKAGE_INSTALL_DIRECTORY "MPMC PT")
 elseif(MPMC_PT_INSTALLER_TARGET STREQUAL "macos-arm64")
     set(mpmc_expected_profile "macos-armv8-release")

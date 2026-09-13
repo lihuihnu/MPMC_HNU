@@ -46,11 +46,13 @@ class ProductBoundaryTest(unittest.TestCase):
         self.assertIn('"^ext-ms-.*"', cmake)
         self.assertNotIn('"^ext-ms-win-.*"', cmake)
         self.assertIn(
-            '".*[/\\\\\\\\]windows[/\\\\\\\\]system32[/\\\\\\\\].*"',
+            '".*[/\\\\\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss]'
+            '[/\\\\\\\\].*"',
             cmake,
         )
         self.assertNotIn(
-            '".*[/\\\\\\\\]Windows[/\\\\\\\\]System32[/\\\\\\\\].*"',
+            '".*[/\\\\\\\\]windows[/\\\\\\\\]system32'
+            '[/\\\\\\\\].*"',
             cmake,
         )
         grpc_headers = (
