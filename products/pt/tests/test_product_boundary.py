@@ -50,6 +50,17 @@ class ProductBoundaryTest(unittest.TestCase):
         self.assertIn("#pragma warning(push)", grpc_headers)
         self.assertIn("#pragma warning(disable : 4996)", grpc_headers)
         self.assertIn("#pragma warning(pop)", grpc_headers)
+        self.assertIn("#if defined(pascal)", grpc_headers)
+        self.assertIn("#undef pascal", grpc_headers)
+        runtime_grpc_cmake = (
+            REPOSITORY_ROOT / "modules/runtime_grpc/CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "/FI${CMAKE_CURRENT_SOURCE_DIR}/include/mpmc/runtime_grpc/"
+            "grpc_headers.hpp",
+            runtime_grpc_cmake,
+        )
+        self.assertNotIn("/wd4996", runtime_grpc_cmake)
         for runner in ("ubuntu-24.04", "windows-2022", "macos-15"):
             self.assertIn(f"os: {runner}", workflow)
         for profile in (
@@ -62,6 +73,12 @@ class ProductBoundaryTest(unittest.TestCase):
                 PRODUCT_ROOT / "conan" / "profiles" / profile
             ).read_text(encoding="utf-8")
             self.assertIn("build_type=Release", profile_text)
+
+        staged_probe = (PRODUCT_ROOT / "tests/staged_probe.cpp").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("std::chrono::seconds(5)", staged_probe)
+        self.assertIn("status.error_code()", staged_probe)
 
     def test_staging_does_not_absorb_web_or_model_logic(self):
         cmake = (PRODUCT_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")

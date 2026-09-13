@@ -59,6 +59,14 @@ target_include_directories(mpmc_pt_wire_generated SYSTEM PUBLIC
 target_link_libraries(mpmc_pt_wire_generated PUBLIC
     protobuf::libprotobuf gRPC::grpc++)
 set_target_properties(mpmc_pt_wire_generated PROPERTIES CXX_EXTENSIONS OFF)
+if(MSVC)
+    # Generated gRPC sources include the same upstream header that
+    # self-references a deprecated credential type. Force our narrowly scoped
+    # compatibility wrapper before generated code so the upstream diagnostic
+    # is contained without disabling C4996 for project sources.
+    target_compile_options(mpmc_pt_wire_generated PRIVATE
+        "/FI${CMAKE_CURRENT_SOURCE_DIR}/include/mpmc/runtime_grpc/grpc_headers.hpp")
+endif()
 
 add_library(mpmc_runtime_grpc STATIC src/pt_grpc_adapter.cpp)
 add_library(mpmc::runtime_grpc ALIAS mpmc_runtime_grpc)

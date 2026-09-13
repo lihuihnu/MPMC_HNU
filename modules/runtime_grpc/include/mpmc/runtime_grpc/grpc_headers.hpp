@@ -26,4 +26,13 @@
 #pragma warning(pop)
 #endif
 
+// Windows SDK compatibility headers still publish `pascal` as a global
+// calling-convention macro. It collides with the transport-neutral SI unit
+// enumerator Unit::pascal when a consumer includes gRPC first. Nothing in the
+// PT transport boundary relies on that legacy macro, so do not leak it past
+// this third-party include boundary.
+#if defined(pascal)
+#undef pascal
+#endif
+
 #endif // MPMC_RUNTIME_GRPC_GRPC_HEADERS_HPP
