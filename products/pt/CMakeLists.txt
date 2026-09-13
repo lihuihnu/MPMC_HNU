@@ -127,7 +127,10 @@ endif()
 set(mpmc_runtime_dependency_filters
     PRE_EXCLUDE_REGEXES
         "^api-ms-win-.*"
-        "^ext-ms-win-.*")
+        # Windows API-set contract names are virtual loader interfaces, not
+        # redistributable DLLs. This covers both ext-ms-win32-* and the
+        # ext-ms-onecore-* contracts reported by current Windows runners.
+        "^ext-ms-.*")
 if(WIN32)
     list(APPEND mpmc_runtime_dependency_filters
         POST_EXCLUDE_REGEXES

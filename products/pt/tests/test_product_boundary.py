@@ -43,6 +43,8 @@ class ProductBoundaryTest(unittest.TestCase):
         self.assertIn("RESTORE_ONLY_DEPENDENCIES_OK", workflow)
         self.assertIn("/external:W0", cmake)
         self.assertNotIn("/wd4996", cmake)
+        self.assertIn('"^ext-ms-.*"', cmake)
+        self.assertNotIn('"^ext-ms-win-.*"', cmake)
         grpc_headers = (
             REPOSITORY_ROOT
             / "modules/runtime_grpc/include/mpmc/runtime_grpc/grpc_headers.hpp"
