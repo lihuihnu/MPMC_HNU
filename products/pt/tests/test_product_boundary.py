@@ -42,6 +42,7 @@ class ProductBoundaryTest(unittest.TestCase):
         self.assertIn("--no-remote", stage)
         self.assertIn("RESTORE_ONLY_DEPENDENCIES_OK", workflow)
         self.assertIn("/external:W0", cmake)
+        self.assertIn("/external:env:INCLUDE", cmake)
         self.assertNotIn("/wd4996", cmake)
         for runner in ("ubuntu-24.04", "windows-2022", "macos-15"):
             self.assertIn(f"os: {runner}", workflow)
