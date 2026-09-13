@@ -1,0 +1,102 @@
+name: PT cross-platform product staging
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - 'modules/ad/**'
+      - 'modules/thermodynamics/**'
+      - 'modules/flash/**'
+      - 'modules/runtime/**'
+      - 'modules/runtime_grpc/**'
+      - 'modules/pt_process/**'
+      - 'tests/runtime/pt_grpc_adapter/**'
+      - 'products/pt/**'
+      - '.github/workflows/pt_product_staging.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pt-product-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stage:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64 Release
+            os: ubuntu-24.04
+            triplet: x64-linux
+          - name: Windows x64 Release
+            os: windows-2022
+            triplet: x64-windows
+          - name: macOS arm64 Release
+            os: macos-15
+            triplet: arm64-osx
+
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/vcpkg-binary-cache
+      VCPKG_BINARY_SOURCES: clear;default,readwrite
+      VCPKG_TOOLCHAIN_FILE: ${{ github.workspace }}/build/vcpkg/scripts/buildsystems/vcpkg.cmake
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Check out locked vcpkg baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: microsoft/vcpkg
+          ref: a1cae005c39be7b18ba319fced856b68d7276271
+          path: build/vcpkg
+          persist-credentials: false
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: build/vcpkg-binary-cache
+          key: pt-product-${{ matrix.triplet }}-${{ hashFiles('products/pt/vcpkg.json') }}
+
+      - name: Bootstrap vcpkg on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./build/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./build/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Configure locked PT product
+        run: >-
+          cmake -S products/pt -B build/pt-product
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_TOOLCHAIN_FILE }}
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+          -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }}
+          -DBUILD_TESTING=ON
+
+      - name: Build PT product and staging probes
+        run: cmake --build build/pt-product --config Release --parallel 2
+
+      - name: Run contract and installed-product regression
+        run: >-
+          ctest --test-dir build/pt-product -C Release
+          --output-on-failure --no-tests=error
+
+      - name: Upload unsigned staging tree
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mpmc-pt-${{ matrix.triplet }}-unsigned-staging
+          path: build/pt-product/stage
+          if-no-files-found: error
+          retention-days: 7

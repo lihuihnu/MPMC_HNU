@@ -159,6 +159,12 @@ void install_signal_handlers() {
         throw std::runtime_error(
             "PT production host could not install stop signal handlers");
     }
+#ifdef _WIN32
+    if (std::signal(SIGBREAK, request_stop) == SIG_ERR) {
+        throw std::runtime_error(
+            "PT production host could not install the Windows stop handler");
+    }
+#endif
 }
 
 void write_json_string(std::ostream& output, std::string_view value) {
