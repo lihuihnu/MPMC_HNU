@@ -19,11 +19,17 @@ endif()
 file(READ "${CMAKE_CURRENT_LIST_DIR}/vcpkg.json" mpmc_vcpkg_manifest)
 string(JSON MPMC_PT_VCPKG_BASELINE
     GET "${mpmc_vcpkg_manifest}" builtin-baseline)
-if(NOT MPMC_PT_VCPKG_BASELINE MATCHES "^[0-9a-f]{40}$")
+string(LENGTH "${MPMC_PT_VCPKG_BASELINE}" mpmc_vcpkg_baseline_length)
+if(NOT mpmc_vcpkg_baseline_length EQUAL 40 OR
+   NOT MPMC_PT_VCPKG_BASELINE MATCHES "^[0-9a-f]+$")
     message(FATAL_ERROR "The PT product vcpkg baseline must be a full commit SHA")
 endif()
-if(NOT MPMC_PT_PRODUCT_BUILD_REVISION MATCHES
-   "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+string(LENGTH "${MPMC_PT_PRODUCT_BUILD_REVISION}"
+       mpmc_product_build_revision_length)
+if(mpmc_product_build_revision_length LESS 1 OR
+   mpmc_product_build_revision_length GREATER 128 OR
+   NOT MPMC_PT_PRODUCT_BUILD_REVISION MATCHES
+       "^[A-Za-z0-9][A-Za-z0-9._+-]*$")
     message(FATAL_ERROR
         "MPMC_PT_PRODUCT_BUILD_REVISION must be a stable non-secret identifier")
 endif()

@@ -61,7 +61,8 @@ jobs:
           persist-credentials: false
 
       - name: Restore vcpkg binary cache
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        id: vcpkg-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: build/vcpkg-binary-cache
           key: pt-product-${{ matrix.triplet }}-${{ hashFiles('products/pt/vcpkg.json') }}
@@ -87,6 +88,13 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
           -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }}
           -DBUILD_TESTING=ON
+
+      - name: Save completed vcpkg binary packages
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: build/vcpkg-binary-cache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build PT product and staging probes
         run: cmake --build build/pt-product --config Release --parallel 2

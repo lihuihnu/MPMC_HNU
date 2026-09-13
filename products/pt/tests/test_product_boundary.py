@@ -32,6 +32,12 @@ class ProductBoundaryTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn(f"ref: {LOCKED_VCPKG_BASELINE}", workflow)
         self.assertNotIn("self-hosted", workflow)
+        self.assertIn("uses: actions/cache/restore@", workflow)
+        self.assertIn("uses: actions/cache/save@", workflow)
+        self.assertIn(
+            "if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'",
+            workflow,
+        )
         for runner in ("ubuntu-24.04", "windows-2022", "macos-15"):
             self.assertIn(f"os: {runner}", workflow)
 
