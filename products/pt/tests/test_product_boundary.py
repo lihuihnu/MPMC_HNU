@@ -39,6 +39,8 @@ class ProductBoundaryTest(unittest.TestCase):
             workflow,
         )
         self.assertIn("-DVCPKG_OVERLAY_TRIPLETS=", workflow)
+        self.assertIn("-DVCPKG_HOST_TRIPLET=${{ matrix.triplet }}", workflow)
+        self.assertIn("-DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}", workflow)
         for runner in ("ubuntu-24.04", "windows-2022", "macos-15"):
             self.assertIn(f"os: {runner}", workflow)
         for triplet in (

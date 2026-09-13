@@ -31,6 +31,7 @@ cmake -S products/pt -B build/pt-product \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake \
   -DVCPKG_OVERLAY_TRIPLETS=$PWD/products/pt/triplets \
+  -DVCPKG_HOST_TRIPLET=x64-linux-release \
   -DVCPKG_TARGET_TRIPLET=x64-linux-release \
   -DMPMC_PT_PRODUCT_BUILD_REVISION=<git-commit> \
   -DBUILD_TESTING=ON
