@@ -48,6 +48,14 @@ jobs:
       - name: Detect hosted compiler profile
         run: conan profile detect --force
 
+      - name: List published Windows gRPC package IDs
+        if: runner.os == 'Windows'
+        run: >-
+          conan list "grpc/1.81.1:*"
+          -r=conancenter
+          -p "os=Windows AND arch=x86_64"
+          --format=compact
+
       - name: Require complete prebuilt dependency graph
         run: >-
           conan install
