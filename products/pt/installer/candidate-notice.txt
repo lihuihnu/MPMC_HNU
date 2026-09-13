@@ -1,0 +1,9 @@
+MPMC PT installer candidate -- NOT FOR END-USER DISTRIBUTION
+
+This package is unsigned engineering evidence produced by the signed-installer
+staging gate. It is not a public release and is not release-eligible.
+
+Production release remains blocked until the project license and platform trust
+identities are approved, Windows payload and MSI signatures are timestamped,
+the macOS payload and installer are signed/notarized/stapled, and a signed APT
+repository is configured for the Debian package.

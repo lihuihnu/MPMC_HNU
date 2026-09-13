@@ -45,6 +45,14 @@ class ProductBoundaryTest(unittest.TestCase):
         self.assertNotIn("/wd4996", cmake)
         self.assertIn('"^ext-ms-.*"', cmake)
         self.assertNotIn('"^ext-ms-win-.*"', cmake)
+        self.assertIn(
+            '".*[/\\\\\\\\]windows[/\\\\\\\\]system32[/\\\\\\\\].*"',
+            cmake,
+        )
+        self.assertNotIn(
+            '".*[/\\\\\\\\]Windows[/\\\\\\\\]System32[/\\\\\\\\].*"',
+            cmake,
+        )
         grpc_headers = (
             REPOSITORY_ROOT
             / "modules/runtime_grpc/include/mpmc/runtime_grpc/grpc_headers.hpp"

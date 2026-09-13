@@ -1,7 +1,10 @@
 # PT cross-platform product staging
 
 This directory defines the relocatable native PT product staging gate. It is
-not an end-user installer and does not add a desktop shell.
+not an end-user installer and does not add a desktop shell. The downstream
+[`installer`](installer/README.md) gate consumes this staging tree without
+calling model code and produces explicitly unsigned native installer
+candidates.
 
 Hosted product CI consumes the checked-in Conan lock and one fixed Release
 profile. All packages must already be published: both dependency seeding and
@@ -115,5 +118,7 @@ the accepted/indeterminate/service-error and deadline/cancel mappings.
 - Test CA private keys are generated only in a temporary test directory and
   are deleted after the smoke test.
 - GitHub artifacts from this gate are unsigned engineering evidence. They are
-  not public releases; project licensing, platform signing, notarization,
-  desktop per-install identity and update policy remain later gates.
+  not public releases. The separate signed-installer staging gate now checks
+  native packaging and signing-tool readiness, while project licensing,
+  production platform identities/notarization, desktop per-install identity
+  and update policy remain blocked release gates.

@@ -134,7 +134,10 @@ set(mpmc_runtime_dependency_filters
 if(WIN32)
     list(APPEND mpmc_runtime_dependency_filters
         POST_EXCLUDE_REGEXES
-            ".*[/\\\\]Windows[/\\\\]System32[/\\\\].*")
+            # CMake lowercases Windows DLL names while applying runtime
+            # dependency filters.  Keep the resolved-path filter lowercase as
+            # well; otherwise System32 DLLs are copied into the staging tree.
+            ".*[/\\\\]windows[/\\\\]system32[/\\\\].*")
 elseif(APPLE)
     list(APPEND mpmc_runtime_dependency_filters
         POST_EXCLUDE_REGEXES
@@ -245,6 +248,14 @@ if(BUILD_TESTING)
             "${CMAKE_CURRENT_LIST_DIR}/tests/test_conan_metadata.py")
     set_tests_properties(product.pt.restore_only_dependency_metadata PROPERTIES
         LABELS "product;staging;dependencies;provenance"
+        TIMEOUT 30)
+
+    add_test(NAME product.pt.installer_gate_contract
+        COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+            -s "${CMAKE_CURRENT_LIST_DIR}/installer/tests"
+            -p "test_*.py" -v)
+    set_tests_properties(product.pt.installer_gate_contract PROPERTIES
+        LABELS "product;installer;architecture;provenance"
         TIMEOUT 30)
 
     add_test(NAME product.pt.staged_mtls_discovery
