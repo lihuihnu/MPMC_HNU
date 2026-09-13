@@ -1,0 +1,30 @@
+{
+  "convention": "MPMC/PT/product-staging/v1",
+  "product": {
+    "id": "mpmc-pt",
+    "version": "@PROJECT_VERSION@",
+    "build_revision": "@MPMC_PT_PRODUCT_BUILD_REVISION@"
+  },
+  "platform": {
+    "system_name": "@CMAKE_SYSTEM_NAME@",
+    "system_processor": "@CMAKE_SYSTEM_PROCESSOR@",
+    "dependency_profile": "@MPMC_PT_PRODUCT_DEPENDENCY_PROFILE@"
+  },
+  "dependencies": {
+    "provider": "@MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER@",
+    "provider_version": "@MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER_VERSION@",
+    "lock_kind": "@MPMC_PT_PRODUCT_DEPENDENCY_LOCK_KIND@",
+    "lock_id": "@MPMC_PT_PRODUCT_DEPENDENCY_LOCK_ID@"
+  },
+  "entry": {
+    "path": "@CMAKE_INSTALL_BINDIR@/mpmc_pt_service_host@CMAKE_EXECUTABLE_SUFFIX@",
+    "transport": "native-grpc-mtls",
+    "loopback_only": true,
+    "requires_explicit_tls_paths": true
+  },
+  "snapshot_bundle": {
+    "id": "MPMC/PT/repository-curated-literature-snapshots/v1",
+    "revision": "r1",
+    "location": "builtin://mpmc/pt/repository-curated-literature-snapshots/v1"
+  }
+}

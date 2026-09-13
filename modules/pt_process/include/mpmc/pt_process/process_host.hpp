@@ -2,8 +2,7 @@
 #define MPMC_PT_PROCESS_PROCESS_HOST_HPP
 
 #include <mpmc/pt_process/composition_root.hpp>
-
-#include <grpcpp/server.h>
+#include <mpmc/runtime_grpc/grpc_headers.hpp>
 
 #include <atomic>
 #include <chrono>

@@ -5,8 +5,6 @@
 #include <mpmc/flash/pt_phase_transition.hpp>
 #include <mpmc/runtime/pt_service_contract.hpp>
 
-#include <grpcpp/resource_quota.h>
-
 #include <chrono>
 #include <cstdint>
 #include <exception>
