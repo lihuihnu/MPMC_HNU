@@ -5,6 +5,10 @@ on:
     branches: [feat/cross-platform-product-staging-v1]
     paths:
       - '.github/workflows/pt_prebuilt_dependency_probe.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/pt_prebuilt_dependency_probe.yml'
   workflow_dispatch:
 
 permissions:
