@@ -38,8 +38,19 @@ class ProductBoundaryTest(unittest.TestCase):
             "if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'",
             workflow,
         )
+        self.assertIn("-DVCPKG_OVERLAY_TRIPLETS=", workflow)
         for runner in ("ubuntu-24.04", "windows-2022", "macos-15"):
             self.assertIn(f"os: {runner}", workflow)
+        for triplet in (
+            "x64-linux-release",
+            "x64-windows-release",
+            "arm64-osx-release",
+        ):
+            self.assertIn(f"triplet: {triplet}", workflow)
+            triplet_text = (PRODUCT_ROOT / "triplets" / f"{triplet}.cmake").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("set(VCPKG_BUILD_TYPE release)", triplet_text)
 
     def test_staging_does_not_absorb_web_or_model_logic(self):
         cmake = (PRODUCT_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")

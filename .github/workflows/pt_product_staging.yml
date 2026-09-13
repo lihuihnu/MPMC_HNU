@@ -34,13 +34,13 @@ jobs:
         include:
           - name: Linux x64 Release
             os: ubuntu-24.04
-            triplet: x64-linux
+            triplet: x64-linux-release
           - name: Windows x64 Release
             os: windows-2022
-            triplet: x64-windows
+            triplet: x64-windows-release
           - name: macOS arm64 Release
             os: macos-15
-            triplet: arm64-osx
+            triplet: arm64-osx-release
 
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/vcpkg-binary-cache
@@ -85,6 +85,7 @@ jobs:
           cmake -S products/pt -B build/pt-product
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_TOOLCHAIN_FILE }}
+          -DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/products/pt/triplets
           -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
           -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }}
           -DBUILD_TESTING=ON
