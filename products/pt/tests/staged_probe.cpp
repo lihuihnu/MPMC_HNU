@@ -127,13 +127,21 @@ int main(int argc, char** argv) {
         auto stub = wire::PtFlashService::NewStub(channel);
 
         grpc::ClientContext discovery_context;
+        // Keep deliberate headroom below the adapter's 10-second maximum.
+        // A client deadline equal to the policy limit can round slightly above
+        // it while gRPC converts clocks at the process boundary.
         discovery_context.set_deadline(std::chrono::system_clock::now() +
-                                       std::chrono::seconds(10));
+                                       std::chrono::seconds(5));
         wire::DiscoverPtCapabilitiesRequest request;
         wire::DiscoverPtCapabilitiesResponse response;
         const auto status = stub->DiscoverPtCapabilities(
             &discovery_context, request, &response);
-        require(status.ok(), "staged capability discovery RPC failed");
+        if (!status.ok()) {
+            throw std::runtime_error(
+                "staged capability discovery RPC failed (code " +
+                std::to_string(static_cast<int>(status.error_code())) +
+                "): " + status.error_message());
+        }
         verify_discovery(response);
         verify_service_error(*stub);
         std::cout << "STAGED_PRODUCT_OK\n";

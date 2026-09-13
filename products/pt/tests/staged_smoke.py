@@ -184,16 +184,45 @@ def _validate_stage(stage: pathlib.Path, host_relative_path: pathlib.Path) -> pa
         )
     )
     if (
-        dependencies.get("provider") != "vcpkg"
-        or dependencies.get("builtin_baseline")
-        != dependency_manifest.get("builtin-baseline")
+        dependencies.get("provider") != "conan"
+        or dependency_manifest.get("provider") != "conan"
+        or dependency_manifest.get("convention")
+        != "MPMC/PT/conan-dependency-manifest/v1"
+        or dependencies.get("provider_version")
+        != dependency_manifest.get("client_version")
+        or dependencies.get("lock_kind") != "conan-lock-sha256"
+        or dependencies.get("lock_id")
+        != dependency_manifest.get("lock_sha256")
+        or manifest.get("platform", {}).get("dependency_profile")
+        != dependency_manifest.get("profile")
     ):
-        raise RuntimeError("staged dependency baseline provenance changed")
+        raise RuntimeError("staged dependency provenance changed")
+    packages = {
+        package.get("name"): package
+        for package in dependency_manifest.get("packages", [])
+        if isinstance(package, dict)
+    }
+    if set(packages) != {
+        "abseil",
+        "c-ares",
+        "grpc",
+        "openssl",
+        "protobuf",
+        "re2",
+        "zlib",
+    }:
+        raise RuntimeError("staged dependency package set changed")
+    for name, package in packages.items():
+        if not all(
+            package.get(field)
+            for field in ("reference", "package_id", "package_revision", "license")
+        ):
+            raise RuntimeError(f"staged {name} provenance is incomplete")
     serialized = manifest_path.read_text(encoding="utf-8")
     if str(stage.parent) in serialized:
         raise RuntimeError("staged product manifest contains a build-tree path")
 
-    for package in ("grpc", "protobuf", "openssl"):
+    for package in packages:
         copyright_path = (
             stage / "share" / "mpmc-pt" / "third-party" / package / "copyright"
         )

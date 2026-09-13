@@ -4,25 +4,82 @@ project(mpmc_pt_product VERSION 0.1.0 LANGUAGES CXX)
 include(CTest)
 include(GNUInstallDirs)
 
-option(MPMC_PT_PRODUCT_REQUIRE_VCPKG
-       "Require the locked product vcpkg manifest" ON)
 set(MPMC_PT_PRODUCT_BUILD_REVISION "unversioned-local-build" CACHE STRING
     "Stable source revision recorded in the staged product manifest")
+set(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER "" CACHE STRING
+    "Dependency provider used for this product staging build")
 
-if(MPMC_PT_PRODUCT_REQUIRE_VCPKG AND NOT DEFINED VCPKG_TARGET_TRIPLET)
-    message(FATAL_ERROR
-        "The PT product staging build requires the locked vcpkg manifest. "
-        "Configure with "
-        "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake")
+if(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER STREQUAL "" AND
+   DEFINED MPMC_PT_PRODUCT_DEPENDENCY_METADATA_DIR)
+    set(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER "conan")
+elseif(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER STREQUAL "" AND
+       DEFINED VCPKG_TARGET_TRIPLET)
+    set(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER "vcpkg")
 endif()
 
-file(READ "${CMAKE_CURRENT_LIST_DIR}/vcpkg.json" mpmc_vcpkg_manifest)
-string(JSON MPMC_PT_VCPKG_BASELINE
-    GET "${mpmc_vcpkg_manifest}" builtin-baseline)
-string(LENGTH "${MPMC_PT_VCPKG_BASELINE}" mpmc_vcpkg_baseline_length)
-if(NOT mpmc_vcpkg_baseline_length EQUAL 40 OR
-   NOT MPMC_PT_VCPKG_BASELINE MATCHES "^[0-9a-f]+$")
-    message(FATAL_ERROR "The PT product vcpkg baseline must be a full commit SHA")
+if(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER STREQUAL "conan")
+    foreach(required_variable IN ITEMS
+            MPMC_PT_PRODUCT_DEPENDENCY_METADATA_DIR
+            MPMC_PT_PRODUCT_OPENSSL_EXECUTABLE
+            MPMC_PT_PRODUCT_CONAN_PROFILE_ID
+            MPMC_PT_PRODUCT_CONAN_LOCK_SHA256
+            MPMC_PT_PRODUCT_CONAN_VERSION)
+        if(NOT DEFINED ${required_variable} OR
+           "${${required_variable}}" STREQUAL "")
+            message(FATAL_ERROR
+                "The PT product staging build requires ${required_variable} "
+                "from a validated restore-only Conan graph")
+        endif()
+    endforeach()
+    if(NOT MPMC_PT_PRODUCT_CONAN_PROFILE_ID MATCHES
+           "^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+        message(FATAL_ERROR "The Conan profile id is not a stable identifier")
+    endif()
+    string(LENGTH "${MPMC_PT_PRODUCT_CONAN_LOCK_SHA256}"
+           mpmc_conan_lock_sha256_length)
+    if(NOT mpmc_conan_lock_sha256_length EQUAL 64 OR
+       NOT MPMC_PT_PRODUCT_CONAN_LOCK_SHA256 MATCHES "^[0-9a-f]+$")
+        message(FATAL_ERROR "The Conan lock digest must be a SHA-256 value")
+    endif()
+    if(NOT EXISTS
+       "${MPMC_PT_PRODUCT_DEPENDENCY_METADATA_DIR}/dependency-manifest.json")
+        message(FATAL_ERROR "The generated Conan dependency manifest is missing")
+    endif()
+    if(NOT IS_DIRECTORY
+       "${MPMC_PT_PRODUCT_DEPENDENCY_METADATA_DIR}/third-party")
+        message(FATAL_ERROR "The generated Conan license set is missing")
+    endif()
+    if(NOT EXISTS "${MPMC_PT_PRODUCT_OPENSSL_EXECUTABLE}")
+        message(FATAL_ERROR "The OpenSSL executable for the mTLS smoke is missing")
+    endif()
+    set(MPMC_PT_PRODUCT_DEPENDENCY_PROFILE
+        "${MPMC_PT_PRODUCT_CONAN_PROFILE_ID}")
+    set(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER_VERSION
+        "${MPMC_PT_PRODUCT_CONAN_VERSION}")
+    set(MPMC_PT_PRODUCT_DEPENDENCY_LOCK_KIND "conan-lock-sha256")
+    set(MPMC_PT_PRODUCT_DEPENDENCY_LOCK_ID
+        "${MPMC_PT_PRODUCT_CONAN_LOCK_SHA256}")
+elseif(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER STREQUAL "vcpkg")
+    if(NOT DEFINED VCPKG_TARGET_TRIPLET OR
+       NOT DEFINED VCPKG_INSTALLED_DIR)
+        message(FATAL_ERROR
+            "The vcpkg target triplet and installed directory are required")
+    endif()
+    file(READ "${CMAKE_CURRENT_LIST_DIR}/vcpkg.json" mpmc_vcpkg_manifest)
+    string(JSON MPMC_PT_VCPKG_BASELINE
+        GET "${mpmc_vcpkg_manifest}" builtin-baseline)
+    string(LENGTH "${MPMC_PT_VCPKG_BASELINE}" mpmc_vcpkg_baseline_length)
+    if(NOT mpmc_vcpkg_baseline_length EQUAL 40 OR
+       NOT MPMC_PT_VCPKG_BASELINE MATCHES "^[0-9a-f]+$")
+        message(FATAL_ERROR "The PT product vcpkg baseline must be a full SHA")
+    endif()
+    set(MPMC_PT_PRODUCT_DEPENDENCY_PROFILE "${VCPKG_TARGET_TRIPLET}")
+    set(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER_VERSION "builtin")
+    set(MPMC_PT_PRODUCT_DEPENDENCY_LOCK_KIND "vcpkg-builtin-baseline")
+    set(MPMC_PT_PRODUCT_DEPENDENCY_LOCK_ID "${MPMC_PT_VCPKG_BASELINE}")
+else()
+    message(FATAL_ERROR
+        "MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER must be conan or vcpkg")
 endif()
 string(LENGTH "${MPMC_PT_PRODUCT_BUILD_REVISION}"
        mpmc_product_build_revision_length)
@@ -41,7 +98,11 @@ add_subdirectory("${mpmc_repository_root}/modules/pt_process"
 
 function(mpmc_pt_product_enable_strict_warnings target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
+        # Imported dependency include directories are SYSTEM by default. Keep
+        # project warnings fatal while preventing diagnostics originating in
+        # pinned third-party headers from being promoted by /WX.
+        target_compile_options(${target} PRIVATE
+            /W4 /WX /permissive- /utf-8 /external:W0)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
@@ -97,23 +158,30 @@ configure_file(
     @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/product-staging-manifest.json"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/mpmc-pt")
-install(FILES "${CMAKE_CURRENT_LIST_DIR}/vcpkg.json"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/mpmc-pt"
-    RENAME "dependency-manifest.json")
-
-if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+if(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER STREQUAL "conan")
+    install(FILES
+        "${MPMC_PT_PRODUCT_DEPENDENCY_METADATA_DIR}/dependency-manifest.json"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/mpmc-pt"
+        RENAME "dependency-manifest.json")
+    install(DIRECTORY
+        "${MPMC_PT_PRODUCT_DEPENDENCY_METADATA_DIR}/third-party/"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/mpmc-pt/third-party")
+else()
+    install(FILES "${CMAKE_CURRENT_LIST_DIR}/vcpkg.json"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/mpmc-pt"
+        RENAME "dependency-manifest.json")
     set(mpmc_vcpkg_share
         "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share")
     foreach(package IN ITEMS grpc protobuf openssl)
         if(NOT EXISTS "${mpmc_vcpkg_share}/${package}/copyright")
             message(FATAL_ERROR
-                "Locked dependency ${package} has no staged copyright file")
+                "Locked vcpkg dependency ${package} has no copyright file")
         endif()
     endforeach()
     file(GLOB mpmc_dependency_copyrights CONFIGURE_DEPENDS
         "${mpmc_vcpkg_share}/*/copyright")
     if(NOT mpmc_dependency_copyrights)
-        message(FATAL_ERROR "The locked dependency copyright set is empty")
+        message(FATAL_ERROR "The locked vcpkg dependency copyright set is empty")
     endif()
     foreach(copyright_file IN LISTS mpmc_dependency_copyrights)
         get_filename_component(package_directory "${copyright_file}" DIRECTORY)
@@ -122,17 +190,16 @@ if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
             DESTINATION
                 "${CMAKE_INSTALL_DATADIR}/mpmc-pt/third-party/${package_name}")
     endforeach()
-elseif(MPMC_PT_PRODUCT_REQUIRE_VCPKG)
-    message(FATAL_ERROR "The locked vcpkg installation directory is unavailable")
 endif()
 
 if(BUILD_TESTING)
     find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
-    find_program(MPMC_PT_PRODUCT_OPENSSL_EXECUTABLE NAMES openssl
-        HINTS
-            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/openssl"
-        REQUIRED)
-
+    if(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER STREQUAL "vcpkg")
+        find_program(MPMC_PT_PRODUCT_OPENSSL_EXECUTABLE NAMES openssl
+            HINTS
+                "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/openssl"
+            REQUIRED)
+    endif()
     add_executable(mpmc_pt_product_probe
         "${CMAKE_CURRENT_LIST_DIR}/tests/staged_probe.cpp")
     target_compile_features(mpmc_pt_product_probe PRIVATE cxx_std_20)
@@ -168,6 +235,13 @@ if(BUILD_TESTING)
             "${CMAKE_CURRENT_LIST_DIR}/tests/test_product_boundary.py")
     set_tests_properties(product.pt.architecture_boundary PROPERTIES
         LABELS "product;staging;architecture"
+        TIMEOUT 30)
+
+    add_test(NAME product.pt.restore_only_dependency_metadata
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_LIST_DIR}/tests/test_conan_metadata.py")
+    set_tests_properties(product.pt.restore_only_dependency_metadata PROPERTIES
+        LABELS "product;staging;dependencies;provenance"
         TIMEOUT 30)
 
     add_test(NAME product.pt.staged_mtls_discovery

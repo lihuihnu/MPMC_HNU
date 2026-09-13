@@ -14,6 +14,13 @@ on:
       - 'tests/runtime/pt_grpc_adapter/**'
       - 'products/pt/**'
       - '.github/workflows/pt_product_staging.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'products/pt/conanfile.txt'
+      - 'products/pt/conan.lock'
+      - 'products/pt/conan/profiles/**'
+      - '.github/workflows/pt_product_staging.yml'
   workflow_dispatch:
 
 permissions:
@@ -24,79 +31,134 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  stage:
-    name: ${{ matrix.name }}
+  seed:
+    name: Seed ${{ matrix.name }} dependencies
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Linux x64 Release
             os: ubuntu-24.04
-            triplet: x64-linux-release
+            profile: linux-x86_64-release
           - name: Windows x64 Release
             os: windows-2022
-            triplet: x64-windows-release
+            profile: windows-x86_64-release
           - name: macOS arm64 Release
             os: macos-15
-            triplet: arm64-osx-release
+            profile: macos-armv8-release
 
     env:
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/vcpkg-binary-cache
-      VCPKG_BINARY_SOURCES: clear;default,readwrite
-      VCPKG_TOOLCHAIN_FILE: ${{ github.workspace }}/build/vcpkg/scripts/buildsystems/vcpkg.cmake
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
-      - name: Check out locked vcpkg baseline
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: microsoft/vcpkg
-          ref: a1cae005c39be7b18ba319fced856b68d7276271
-          path: build/vcpkg
-          persist-credentials: false
+      - name: Install pinned Conan client
+        run: python -m pip install --disable-pip-version-check conan==2.32.0
 
-      - name: Restore vcpkg binary cache
-        id: vcpkg-cache
+      - name: Restore exact Conan dependency cache
+        id: conan-cache
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
-          path: build/vcpkg-binary-cache
-          key: pt-product-${{ matrix.triplet }}-${{ hashFiles('products/pt/vcpkg.json') }}
+          path: ${{ env.CONAN_HOME }}
+          key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
 
-      - name: Create vcpkg binary cache directory
-        run: cmake -E make_directory "${{ env.VCPKG_DEFAULT_BINARY_CACHE }}"
+      - name: Download published binaries on cache miss
+        if: steps.conan-cache.outputs.cache-hit != 'true'
+        run: >-
+          conan install products/pt
+          --lockfile=products/pt/conan.lock
+          --profile:all=products/pt/conan/profiles/${{ matrix.profile }}
+          --build=never
+          --output-folder=build/conan-seed
 
-      - name: Bootstrap vcpkg on Unix
-        if: runner.os != 'Windows'
-        shell: bash
-        run: ./build/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+      - name: Verify seed from cache with source builds disabled
+        run: >-
+          conan install products/pt
+          --lockfile=products/pt/conan.lock
+          --profile:all=products/pt/conan/profiles/${{ matrix.profile }}
+          --no-remote
+          --build=never
+          --output-folder=build/conan-seed-verify
 
-      - name: Bootstrap vcpkg on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./build/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+      - name: Save only the completed Conan dependency cache
+        if: steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ env.CONAN_HOME }}
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+
+  stage:
+    name: ${{ matrix.name }}
+    needs: seed
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64 Release
+            os: ubuntu-24.04
+            profile: linux-x86_64-release
+          - name: Windows x64 Release
+            os: windows-2022
+            profile: windows-x86_64-release
+          - name: macOS arm64 Release
+            os: macos-15
+            profile: macos-armv8-release
+
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Conan client
+        run: python -m pip install --disable-pip-version-check conan==2.32.0
+
+      - name: Restore seeded Conan dependency cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ env.CONAN_HOME }}
+          key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+          fail-on-cache-miss: true
+
+      - name: Resolve locked graph offline
+        run: >-
+          conan install products/pt
+          --lockfile=products/pt/conan.lock
+          --profile:all=products/pt/conan/profiles/${{ matrix.profile }}
+          --no-remote
+          --build=never
+          --output-folder=build/conan-generators
+          --format=json
+          > build/conan-graph.json
+
+      - name: Validate restore-only dependency evidence (RESTORE_ONLY_DEPENDENCIES_OK)
+        run: >-
+          python products/pt/scripts/prepare_conan_metadata.py
+          --graph=build/conan-graph.json
+          --lockfile=products/pt/conan.lock
+          --output=build/conan-metadata
+          --profile-id=${{ matrix.profile }}
+          --conan-version=2.32.0
 
       - name: Configure locked PT product
         run: >-
-          cmake -S products/pt -B build/pt-product
+          cmake
+          -C build/conan-metadata/dependency-metadata.cmake
+          -S products/pt
+          -B build/pt-product
           -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_TOOLCHAIN_FILE }}
-          -DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/products/pt/triplets
-          -DVCPKG_HOST_TRIPLET=${{ matrix.triplet }}
-          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
           -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }}
           -DBUILD_TESTING=ON
-
-      - name: Save completed vcpkg binary packages
-        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: build/vcpkg-binary-cache
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build PT product and staging probes
         run: cmake --build build/pt-product --config Release --parallel 2
@@ -109,7 +171,7 @@ jobs:
       - name: Upload unsigned staging tree
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mpmc-pt-${{ matrix.triplet }}-unsigned-staging
+          name: mpmc-pt-${{ matrix.profile }}-unsigned-staging
           path: build/pt-product/stage
           if-no-files-found: error
           retention-days: 7

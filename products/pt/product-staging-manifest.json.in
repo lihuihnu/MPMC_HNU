@@ -8,11 +8,13 @@
   "platform": {
     "system_name": "@CMAKE_SYSTEM_NAME@",
     "system_processor": "@CMAKE_SYSTEM_PROCESSOR@",
-    "vcpkg_target_triplet": "@VCPKG_TARGET_TRIPLET@"
+    "dependency_profile": "@MPMC_PT_PRODUCT_DEPENDENCY_PROFILE@"
   },
   "dependencies": {
-    "provider": "vcpkg",
-    "builtin_baseline": "@MPMC_PT_VCPKG_BASELINE@"
+    "provider": "@MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER@",
+    "provider_version": "@MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER_VERSION@",
+    "lock_kind": "@MPMC_PT_PRODUCT_DEPENDENCY_LOCK_KIND@",
+    "lock_id": "@MPMC_PT_PRODUCT_DEPENDENCY_LOCK_ID@"
   },
   "entry": {
     "path": "@CMAKE_INSTALL_BINDIR@/mpmc_pt_service_host@CMAKE_EXECUTABLE_SUFFIX@",
