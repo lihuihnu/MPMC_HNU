@@ -52,7 +52,7 @@ jobs:
         run: >-
           conan install
           --requires=grpc/1.81.1
-          --requires=protobuf/6.33.4
+          --requires=protobuf/6.33.5
           --requires=openssl/3.6.4
           --requires=abseil/20260107.1
           --requires=re2/20251105
