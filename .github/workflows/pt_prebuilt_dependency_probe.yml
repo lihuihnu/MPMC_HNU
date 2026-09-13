@@ -25,14 +25,14 @@ jobs:
         include:
           - name: Linux x64 Release
             os: ubuntu-24.04
-            conan-settings: -s compiler.cppstd=17
+            conan_settings: -s compiler.cppstd=17
           - name: Windows x64 Release
             os: windows-2022
             # ConanCenter's MSVC binaries use the VS 2022 v143 package ID.
-            conan-settings: -s compiler.cppstd=17 -s compiler.version=193
+            conan_settings: -s compiler.cppstd=17 -s compiler.version=193
           - name: macOS arm64 Release
             os: macos-15
-            conan-settings: -s compiler.cppstd=17
+            conan_settings: -s compiler.cppstd=17
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -56,7 +56,7 @@ jobs:
           --requires=c-ares/1.34.8
           --requires=zlib/1.3.2
           -s build_type=Release
-          ${{ matrix.conan-settings }}
+          ${{ matrix.conan_settings }}
           -o grpc/*:secure=True
           --build=never
           --format=json
