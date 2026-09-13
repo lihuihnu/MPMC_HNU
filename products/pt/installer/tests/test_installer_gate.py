@@ -33,6 +33,9 @@ class InstallerGateTest(unittest.TestCase):
         share_directory.mkdir(parents=True)
         entry_name = pathlib.PurePosixPath(target.entry).name
         (bin_directory / entry_name).write_bytes(b"host")
+        if target_id == "windows-x86_64":
+            for name in MODULE.WINDOWS_REQUIRED_BINARIES - {entry_name}:
+                (bin_directory / name).write_bytes(b"runtime")
         staging = {
             "convention": "MPMC/PT/product-staging/v1",
             "product": {

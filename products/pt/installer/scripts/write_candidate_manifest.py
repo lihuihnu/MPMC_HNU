@@ -69,6 +69,17 @@ EXPECTED_DEPENDENCIES = {
 }
 FORBIDDEN_SECRET_SUFFIXES = {".key", ".p12", ".pfx", ".jks", ".keystore"}
 WINDOWS_ALLOWED_BINARIES = {
+    "concrt140.dll",
+    "mpmc_pt_service_host.exe",
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll",
+    "msvcp140_codecvt_ids.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+}
+WINDOWS_REQUIRED_BINARIES = {
     "mpmc_pt_service_host.exe",
     "msvcp140.dll",
     "vcruntime140.dll",
@@ -215,6 +226,12 @@ def validate_stage(
             raise RuntimeError(
                 "Windows staging contains unreviewed or system binaries: "
                 f"{unexpected}"
+            )
+        missing = sorted(WINDOWS_REQUIRED_BINARIES - binary_names)
+        if missing:
+            raise RuntimeError(
+                "Windows staging is missing app-local MSVC runtime binaries: "
+                f"{missing}"
             )
 
     return staging, dependencies, staging_path, dependency_path

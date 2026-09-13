@@ -160,9 +160,10 @@ jobs:
           Write-Host "WINDOWS_SIGNTOOL_READY=$($signTool.FullName)"
           $destination = Join-Path $env:RUNNER_TEMP 'mpmc-pt-msi-administrative-image'
           New-Item -ItemType Directory -Force -Path $destination | Out-Null
-          & msiexec.exe /a $package /qn "TARGETDIR=$destination"
-          if ($LASTEXITCODE -ne 0) {
-            throw "MSI administrative extraction failed: $LASTEXITCODE"
+          $arguments = @('/a', $package, '/qn', "TARGETDIR=$destination")
+          $process = Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "MSI administrative extraction failed: $($process.ExitCode)"
           }
           foreach ($name in @(
             'mpmc_pt_service_host.exe',
@@ -181,9 +182,17 @@ jobs:
         run: |
           set -euo pipefail
           package=build/pt-installer-package/mpmc-pt-0.1.0-macos-arm64.pkg
-          expanded="$RUNNER_TEMP/mpmc-pt-pkg-expanded"
+          xar -tf "$package" | tee build/pkg-archive.txt
+          grep --fixed-strings 'Distribution' build/pkg-archive.txt
+          grep --fixed-strings 'Resources/License.txt' build/pkg-archive.txt
+          component=$(find \
+            build/pt-installer-package/_CPack_Packages/Darwin/productbuild \
+            -path '*/Contents/Packages/*' -type f \
+            -name 'MPMC PT Runtime' -print -quit)
+          test -n "$component"
+          expanded="$RUNNER_TEMP/mpmc-pt-component-expanded"
           test ! -e "$expanded"
-          pkgutil --expand-full "$package" "$expanded"
+          pkgutil --expand-full "$component" "$expanded"
           find "$expanded" -type f | sort | tee build/pkg-payload.txt
           grep --fixed-strings 'mpmc_pt_service_host' build/pkg-payload.txt
           grep --fixed-strings 'product-staging-manifest.json' build/pkg-payload.txt

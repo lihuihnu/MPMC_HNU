@@ -50,7 +50,8 @@ fail unless all of these are approved and configured:
 
 - the project license and release version/channel;
 - a Windows code-signing identity usable by the hosted runner plus an approved
-  RFC 3161 timestamp service;
+  RFC 3161 timestamp service, and final approval of the compiler-runtime
+  redistribution notices;
 - Apple Developer ID Application and Installer identities plus App Store
   Connect notarization credentials and team identifier; and
 - an APT repository origin/suite/component, archive signing identity, public

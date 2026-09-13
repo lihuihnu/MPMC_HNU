@@ -4,6 +4,14 @@ project(mpmc_pt_product VERSION 0.1.0 LANGUAGES CXX)
 include(CTest)
 include(GNUInstallDirs)
 
+if(MSVC)
+    # Install compiler-provided app-local redistributables.  Runtime dependency
+    # discovery below excludes the Windows operating-system directory, which
+    # is not a valid source for redistributable application payloads.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    include(InstallRequiredSystemLibraries)
+endif()
+
 set(MPMC_PT_PRODUCT_BUILD_REVISION "unversioned-local-build" CACHE STRING
     "Stable source revision recorded in the staged product manifest")
 set(MPMC_PT_PRODUCT_DEPENDENCY_PROVIDER "" CACHE STRING
