@@ -2,8 +2,6 @@
 
 #include "test_backend.hpp"
 
-#include <grpcpp/grpcpp.h>
-
 #include <array>
 #include <iostream>
 #include <memory>

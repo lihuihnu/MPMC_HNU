@@ -42,8 +42,14 @@ class ProductBoundaryTest(unittest.TestCase):
         self.assertIn("--no-remote", stage)
         self.assertIn("RESTORE_ONLY_DEPENDENCIES_OK", workflow)
         self.assertIn("/external:W0", cmake)
-        self.assertIn("/external:env:INCLUDE", cmake)
         self.assertNotIn("/wd4996", cmake)
+        grpc_headers = (
+            REPOSITORY_ROOT
+            / "modules/runtime_grpc/include/mpmc/runtime_grpc/grpc_headers.hpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("#pragma warning(push)", grpc_headers)
+        self.assertIn("#pragma warning(disable : 4996)", grpc_headers)
+        self.assertIn("#pragma warning(pop)", grpc_headers)
         for runner in ("ubuntu-24.04", "windows-2022", "macos-15"):
             self.assertIn(f"os: {runner}", workflow)
         for profile in (

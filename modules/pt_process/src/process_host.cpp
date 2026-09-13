@@ -2,11 +2,6 @@
 
 #include <mpmc/runtime_grpc/pt_grpc_adapter.hpp>
 
-#include <grpc/grpc_security_constants.h>
-#include <grpcpp/health_check_service_interface.h>
-#include <grpcpp/security/server_credentials.h>
-#include <grpcpp/server_builder.h>
-
 #include <algorithm>
 #include <fstream>
 #include <limits>

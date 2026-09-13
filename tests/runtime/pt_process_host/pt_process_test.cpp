@@ -9,9 +9,6 @@
 #include "../../flash/pr76_three_phase/synthetic_fixture.hpp"
 #include "test_support.hpp"
 
-#include <grpcpp/create_channel.h>
-#include <grpcpp/security/credentials.h>
-#include <grpcpp/support/channel_arguments.h>
 #include <mpmc/runtime/v1/pt_service.grpc.pb.h>
 
 #include <chrono>

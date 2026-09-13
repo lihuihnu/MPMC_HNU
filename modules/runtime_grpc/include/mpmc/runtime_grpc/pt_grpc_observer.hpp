@@ -2,8 +2,7 @@
 #define MPMC_RUNTIME_GRPC_PT_GRPC_OBSERVER_HPP
 
 #include <mpmc/runtime/pt_service_contract.hpp>
-
-#include <grpcpp/support/status.h>
+#include <mpmc/runtime_grpc/grpc_headers.hpp>
 
 #include <chrono>
 #include <cstddef>

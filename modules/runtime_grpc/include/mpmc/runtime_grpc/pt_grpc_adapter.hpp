@@ -4,7 +4,6 @@
 #include <mpmc/runtime_grpc/pt_grpc_observer.hpp>
 #include <mpmc/runtime/pt_service.hpp>
 
-#include <grpcpp/grpcpp.h>
 #include <mpmc/runtime/v1/pt_service.grpc.pb.h>
 
 #include <atomic>

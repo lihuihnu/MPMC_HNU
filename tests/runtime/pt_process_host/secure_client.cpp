@@ -1,6 +1,4 @@
-#include <grpcpp/create_channel.h>
-#include <grpcpp/security/credentials.h>
-#include <grpcpp/support/channel_arguments.h>
+#include <mpmc/runtime_grpc/grpc_headers.hpp>
 #include <mpmc/runtime/v1/pt_service.grpc.pb.h>
 
 #include <charconv>

@@ -98,12 +98,11 @@ add_subdirectory("${mpmc_repository_root}/modules/pt_process"
 
 function(mpmc_pt_product_enable_strict_warnings target)
     if(MSVC)
-        # Imported dependencies are SYSTEM by default; INCLUDE holds the MSVC
-        # and Windows SDK roots. Keep project /I paths at /W4 /WX while
-        # preventing external-header diagnostics from being promoted by /WX.
+        # Imported dependency include directories are SYSTEM by default. Keep
+        # project warnings fatal while lowering diagnostics in those headers.
+        # grpc_headers.hpp handles one upstream C4996 at include scope only.
         target_compile_options(${target} PRIVATE
-            /W4 /WX /permissive- /utf-8
-            /external:env:INCLUDE /external:W0)
+            /W4 /WX /permissive- /utf-8 /external:W0)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
