@@ -66,6 +66,9 @@ jobs:
           path: build/vcpkg-binary-cache
           key: pt-product-${{ matrix.triplet }}-${{ hashFiles('products/pt/vcpkg.json') }}
 
+      - name: Create vcpkg binary cache directory
+        run: cmake -E make_directory "${{ env.VCPKG_DEFAULT_BINARY_CACHE }}"
+
       - name: Bootstrap vcpkg on Unix
         if: runner.os != 'Windows'
         shell: bash
