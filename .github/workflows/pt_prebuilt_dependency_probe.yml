@@ -32,8 +32,7 @@ jobs:
             conan_settings: -s compiler.cppstd=gnu17
           - name: Windows x64 Release
             os: windows-2022
-            # ConanCenter's MSVC binaries use the VS 2022 v143 package ID.
-            conan_settings: -s compiler.cppstd=14 -s compiler.version=193
+            conan_settings: -s compiler.cppstd=20
           - name: macOS arm64 Release
             os: macos-15
             conan_settings: -s compiler.cppstd=gnu17
@@ -52,8 +51,8 @@ jobs:
       - name: Require complete prebuilt dependency graph
         run: >-
           conan install
-          --requires=grpc/1.83.1
-          --requires=protobuf/6.33.5
+          --requires=grpc/1.81.1
+          --requires=protobuf/6.33.4
           --requires=openssl/3.6.4
           --requires=abseil/20260107.1
           --requires=re2/20251105
