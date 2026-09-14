@@ -16,8 +16,10 @@ export const MODEL_SESSION_HEADER = 'x-mpmc-model-session';
 declare const referenceBrand: unique symbol;
 /** In-memory capability owned by exactly one client/session; never a wire handle. */
 export interface ModelReference { readonly [referenceBrand]: true }
-export type ModelCreateInput = Omit<MessageInitShape<typeof CreateModelRequestSchema>, 'wireContract'>;
-export type ModelSolveInput = Omit<MessageInitShape<typeof SolveModelRequestSchema>, 'wireContract' | 'modelHandle'>;
+// Preserve Protobuf-ES's full-message / initializer union under strict optionals.
+type OmitEach<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+export type ModelCreateInput = OmitEach<MessageInitShape<typeof CreateModelRequestSchema>, 'wireContract'>;
+export type ModelSolveInput = OmitEach<MessageInitShape<typeof SolveModelRequestSchema>, 'wireContract' | 'modelHandle'>;
 export interface ModelCallOptions { signal?: AbortSignal; timeoutMs?: number }
 export interface ModelSessionConnection {
   models: Client<typeof ModelConfigurationService>;
