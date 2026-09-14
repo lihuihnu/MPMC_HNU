@@ -139,7 +139,8 @@ adapter tests, not physical validation, RNG certification or a TSan result.
 The focused GitHub-hosted GCC ASan/UBSan, Clang and MSVC jobs instrument/build the
 new library and tests, retaining all earlier model-configuration regressions.
 
-Next: an additive versioned configuration-service boundary, with bounded parsing,
-model-handle/error mapping and create/describe/solve/release roundtrip tests.
-Public hints, one-sided applicability, API/UI and product vertical slices remain
-open Gate items; do not reinterpret existing `configured_backend_id` wire fields.
+The [additive configuration service](../model_configuration_grpc/README.md) now
+provides bounded protobuf/gRPC mapping and create/describe/solve/release tests.
+Production session routing, shared clients/UI, public hints, one-sided applicability
+and product vertical slices remain open Gate items. Existing `configured_backend_id`
+wire fields retain their old meanings.

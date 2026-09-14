@@ -1,12 +1,14 @@
 # Public thermodynamic model configuration — executable PR76 models
 
-The first four increments of the **unified model configuration + PR76 Expert
+The first five increments of the **unified model configuration + PR76 Expert
 parameter interface Gate** prepare immutable parameter and numerical-settings
 snapshots and combine them in an [executable PR76 model](executable_model.md).
 The [versioned solver contract](solver_settings.md) resolves an explicit preset
 and maps complete public settings to the existing PR76 solver options.
 A [bounded native registry](registry.md) adds opaque model handles and release.
-Web/Electron/Android creation endpoints remain later work.
+An [optional versioned gRPC service](../model_configuration_grpc/README.md) now
+provides native RPC creation/description/solve/release. Web/Electron/Android
+client and production-host integration remain later work.
 Parameter preparation and executable creation never silently select settings.
 
 ## Current boundary
@@ -120,8 +122,9 @@ The optional `mpmc::pr76_model_registry` target adds capacity reservations, opaq
 handles, release/close and one-shot solve leases. Releasing a handle prevents new
 access while preserving admitted work and its capacity charge until destruction.
 
-Next add the separately versioned service mapping, shared Expert UI,
-Electron/Android integration and final
+The separately versioned configuration service adds bounded gRPC mapping and
+real native roundtrip tests. Next connect authorized production-session routing
+and the shared clients before Expert UI, Electron/Android integration and final
 regression. The full Gate additionally requires end-to-end dynamic-vs-direct flash parity,
 session lifecycle and all three existing configured-backend product regressions.
 

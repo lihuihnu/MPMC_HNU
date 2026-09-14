@@ -1,0 +1,106 @@
+name: Versioned model configuration service
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/model_configuration_grpc/**'
+      - 'modules/model_configuration/**'
+      - 'modules/runtime/**'
+      - 'modules/runtime_grpc/**'
+      - 'api/proto/mpmc/runtime/v1/pt_service.proto'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp'
+      - 'modules/thermodynamics/CMakeLists.txt'
+      - 'modules/flash/CMakeLists.txt'
+      - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
+      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
+      - 'tests/model_configuration/**'
+      - 'tests/runtime/pt_grpc_adapter/**'
+      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
+      - 'products/pt/conanfile.txt'
+      - 'products/pt/conan.lock'
+      - 'products/pt/conan/profiles/*'
+      - '.github/workflows/model_configuration_grpc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: model-configuration-grpc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Model RPC GCC + ASan/UBSan
+            compiler: g++
+            config: Debug
+            sanitizers: 'ON'
+          - name: Model RPC Clang Release
+            compiler: clang++
+            config: Release
+            sanitizers: 'OFF'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install existing pinned Ubuntu gRPC and Protobuf dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libgrpc++-dev=1.51.1-4.1build5 \
+            protobuf-compiler-grpc=1.51.1-4.1build5 \
+            libprotobuf-dev=3.21.12-8.2ubuntu0.3 \
+            protobuf-compiler=3.21.12-8.2ubuntu0.3
+      - name: Configure model RPC and unchanged v1 regressions
+        run: |
+          cmake -S tests/model_configuration/grpc -B build/model-grpc \
+            -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
+            -DMPMC_MODEL_GRPC_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Build model RPC and unchanged v1 regressions
+        run: cmake --build build/model-grpc --parallel 2
+      - name: Run real gRPC roundtrips and v1 compatibility
+        run: ctest --test-dir build/model-grpc -R '^model[.]grpc' --verbose --no-tests=error
+
+  windows:
+    name: Model RPC MSVC Release
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+      PROFILE: windows-x86_64-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install existing pinned Conan client
+        run: python -m pip install --disable-pip-version-check conan==2.32.0
+      - name: Restore staging-proven Windows dependencies
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ env.CONAN_HOME }}
+          key: pt-product-conan-v1-${{ env.PROFILE }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+          fail-on-cache-miss: true
+      - name: Resolve existing locked dependency graph offline
+        run: >-
+          conan install products/pt --lockfile=products/pt/conan.lock
+          --profile:all=products/pt/conan/profiles/${{ env.PROFILE }}
+          --no-remote --build=never --output-folder=build/conan-generators
+      - name: Configure model RPC and unchanged v1 regressions
+        run: >-
+          cmake -S tests/model_configuration/grpc -B build/model-grpc
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
+      - name: Build model RPC and unchanged v1 regressions
+        run: cmake --build build/model-grpc --config Release --parallel 2
+      - name: Run real gRPC roundtrips and v1 compatibility
+        run: ctest --test-dir build/model-grpc -C Release -R '^model[.]grpc' --verbose --no-tests=error
