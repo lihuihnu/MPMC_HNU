@@ -1,0 +1,12 @@
+{
+  "extends": "../../../frontend/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "web/**/*.ts",
+    "web/**/*.tsx",
+    "../../../frontend/src/**/*.ts",
+    "../../../frontend/src/**/*.tsx"
+  ]
+}
