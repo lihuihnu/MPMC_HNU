@@ -2,11 +2,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fromJson, toJson, type JsonObject, type JsonValue } from '@bufbuild/protobuf';
-import { Code, ConnectError } from '@connectrpc/connect';
+import { Code } from '@connectrpc/connect';
+import { modelCleanupComplete } from './modelCleanupProbe';
 import { app, session, type BrowserWindow } from 'electron';
 import { MODEL_DESKTOP_CONVENTION, type ModelDesktopReply } from '../../src/api/modelDesktopContract';
 import { MODEL_SESSION_HEADER, MODEL_WIRE_CONTRACT, ModelSessionClient } from '../../src/api/modelSessionClient';
-import { CreateModelRequestSchema, FullPtResultSchema, ModelServiceErrorSchema, ModelSnapshotSchema, SolveModelRequestSchema } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
+import { CreateModelRequestSchema, FullPtResultSchema, ModelSnapshotSchema, SolveModelRequestSchema } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
 import { createDesktopModelConnection } from '../modelConnection';
 import { registerModelDesktopIpc } from '../modelDesktopIpc';
 import { PtHostSession } from '../hostSession';
@@ -106,16 +107,13 @@ async function run() {
     const headers = new Headers(observer.headers); headers.set(MODEL_SESSION_HEADER, id);
     return { headers, timeoutMs: 5_000 };
   }
-  async function gone(entry: Observed, expected = 'session.not_found') {
+  async function gone(entry: Observed, expected: 'session.not_found' | 'registry.model_not_found' = 'session.not_found') {
     const deadline = Date.now() + 10_000;
     while (true) {
       try {
         await observer.models.describeModel({ wireContract: MODEL_WIRE_CONTRACT, modelHandle: entry.handle }, options(entry.id));
       } catch (cause) {
-        const error = ConnectError.from(cause);
-        requireThat(error.code === Code.NotFound, 'Observer received an unexpected gRPC cleanup code.');
-        requireThat(error.findDetails(ModelServiceErrorSchema)[0]?.code === expected, 'Observer cleanup domain mismatch.');
-        return;
+        if (modelCleanupComplete(cause, expected)) return;
       }
       requireThat(Date.now() < deadline, 'Native host retained the closed model/session.');
       await new Promise(yes => setTimeout(yes, 10));
@@ -197,8 +195,8 @@ async function run() {
     // Run the production typed adapter in the actual sandboxed renderer, not in main.
     const rendererCode = readFileSync(resolve('desktop-model-test-dist/model-renderer-smoke.js'), 'utf8');
     const typedA = await window(); const typedB = await window();
-    await typedA.webContents.executeJavaScript(rendererCode);
-    await typedB.webContents.executeJavaScript(rendererCode);
+    await typedA.webContents.executeJavaScript(`${rendererCode}\n;void 0;`);
+    await typedB.webContents.executeJavaScript(`${rendererCode}\n;void 0;`);
     async function renderer(target: BrowserWindow, operation: string, ...args: JsonValue[]): Promise<JsonObject> {
       return await target.webContents.executeJavaScript(
         `MpmcModelRendererSmoke[${JSON.stringify(operation)}](${args.map(arg => JSON.stringify(arg)).join(',')})`,
@@ -239,8 +237,10 @@ async function run() {
   }
   requireThat(logs.some(line => line.includes('"event":"pt_process_stopped"')), 'Native host did not shut down.');
 }
+// Test lifetime extends beyond the final window through asynchronous host teardown.
+app.on('window-all-closed', () => {});
 const watchdog = setTimeout(() => { console.error('Model IPC smoke timed out.'); app.exit(1); }, 180_000);
 void app.whenReady().then(async () => {
-  try { await run(); clearTimeout(watchdog); app.exit(0); }
+  try { await run(); clearTimeout(watchdog); console.info('MODEL_DESKTOP_IPC_COMPLETE'); app.exit(0); }
   catch (cause) { console.error(cause instanceof Error ? cause.message : 'Model IPC smoke failed.'); app.exit(1); }
 });

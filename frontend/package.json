@@ -19,7 +19,7 @@
     "desktop:typecheck": "tsc --noEmit -p tsconfig.desktop.json",
     "desktop:bundle": "vite build --config desktop/vite.main.config.ts && vite build --config desktop/vite.smoke.config.ts",
     "desktop:model-bundle": "vite build --config desktop/vite.model-smoke.config.ts && vite build --config desktop/vite.model-renderer.config.ts",
-    "desktop:model-smoke": "electron desktop-model-test-dist/model-ipc-smoke.mjs",
+    "desktop:model-smoke": "node desktop/tests/runModelIpcSmoke.mjs",
     "desktop:real-smoke": "electron desktop-test-dist/real-backend-smoke.mjs",
     "desktop:package": "node desktop/packageDesktop.mjs",
     "test": "vitest run",

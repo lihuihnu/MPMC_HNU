@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { modelCleanupComplete } from './modelCleanupProbe';
 import { fromJson, type JsonValue } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { expect, it } from 'vitest';
@@ -57,12 +58,7 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
       try {
         await observer.models.describeModel({ wireContract: MODEL_WIRE_CONTRACT, modelHandle: entry.handle }, options(entry.id));
       } catch (cause) {
-        const error = ConnectError.from(cause);
-        expect(error.code).toBe(Code.NotFound);
-        expect(error.findDetails(ModelServiceErrorSchema)).toMatchObject([
-          { wireContract: MODEL_WIRE_CONTRACT, code: 'session.not_found' },
-        ]);
-        return;
+        if (modelCleanupComplete(cause, 'session.not_found')) return;
       }
       expect(Date.now(), 'server retained a disconnected model/session').toBeLessThan(end);
       await new Promise(resolve => setTimeout(resolve, 10));

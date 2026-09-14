@@ -103,7 +103,7 @@ jobs:
         run: |
           npm run typecheck
           npm run desktop:typecheck
-          npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts
+          npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts desktop/tests/modelCleanupProbe.test.ts
       - name: Install pinned Electron binary for actual window IPC verification
         if: matrix.sanitizers == 'ON'
         working-directory: frontend
@@ -174,7 +174,7 @@ jobs:
         run: |
           npm run typecheck
           npm run desktop:typecheck
-          npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts
+          npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts desktop/tests/modelCleanupProbe.test.ts
       - name: Install pinned Electron binary for actual window IPC verification
         working-directory: frontend
         run: node node_modules/electron/install.js
@@ -246,7 +246,7 @@ jobs:
         run: |
           npm run typecheck
           npm run desktop:typecheck
-          npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts
+          npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts desktop/tests/modelCleanupProbe.test.ts
       - name: Install pinned Electron binary for actual window IPC verification
         working-directory: frontend
         run: node node_modules/electron/install.js
