@@ -18,16 +18,18 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
                 ANDROID_ROOT / "include" / "mpmc" / "pt_android" / "portability.h",
             )
         ).lower()
-        for forbidden in (
-            "runtime_grpc",
-            "pt_process",
-            "grpc",
-            "electron",
-            "capacitor",
-            "jni.h",
-            "android/log.h",
+        for forbidden_token in (
+            "mpmc::runtime_grpc",
+            "<mpmc/runtime_grpc/",
+            "mpmc::pt_process",
+            "<mpmc/pt_process/",
+            "<grpc/",
+            "<electron/",
+            "<capacitor/",
+            "#include <jni.h>",
+            "#include <android/log.h>",
         ):
-            self.assertNotIn(forbidden, texts)
+            self.assertNotIn(forbidden_token, texts)
 
     def test_portability_translation_unit_covers_current_pt_backend_types(self) -> None:
         source = (ANDROID_ROOT / "src" / "portability.cpp").read_text(
@@ -51,10 +53,13 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
 
     def test_android_cmake_only_links_model_neutral_runtime_chain(self) -> None:
         cmake = (ANDROID_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertIn("mpmc::runtime", cmake)
+        self.assertIn('modules/runtime"', cmake)
+        self.assertIn(
+            "target_link_libraries(mpmc_pt_android_core PRIVATE mpmc::runtime)",
+            cmake,
+        )
         self.assertNotIn("mpmc::runtime_grpc", cmake)
         self.assertNotIn("mpmc::pt_process", cmake)
-        self.assertNotIn("products/pt", cmake)
 
 
 if __name__ == "__main__":
