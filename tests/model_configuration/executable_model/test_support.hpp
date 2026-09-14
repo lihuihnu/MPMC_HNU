@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -141,6 +142,31 @@ inline fl::PtFlashBackendResult direct(const th::Pr76Phase<double>& model,
 inline const fl::PtFlashRequest single{1e6, 250.0, {1.0, 0.0, 0.0}};
 inline const fl::PtFlashRequest ternary{1e6, 250.0, pr76_max3_test::equal_feed()};
 inline const fl::PtFlashRequest binary{7.6e6, 270.0, {0.30, 0.70}};
+
+struct RequestLocationCase { fl::PtFlashRequest request; const char* field; };
+inline std::vector<RequestLocationCase> request_location_cases() {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+    const double eps = std::numeric_limits<double>::epsilon();
+    std::vector<RequestLocationCase> cases;
+    for (double invalid : {0.0, -1.0, nan, inf, -inf}) {
+        cases.push_back({{invalid, 250.0, single.feed}, "pressure_pa"});
+        cases.push_back({{1e6, invalid, single.feed}, "temperature_k"});
+    }
+    for (const auto& feed : std::vector<std::vector<double>>{
+             {}, {1.0}, {0.0, 0.0, 0.0}, {0.4, 0.4, 0.4}, {0.5, 0.5 + 128.0 * eps, 0.0}}) {
+        cases.push_back({{1e6, 250.0, feed}, "feed"});
+    }
+    for (double invalid : {-0.1, 1.1, nan, inf, -inf}) {
+        cases.push_back({{1e6, 250.0, {0.5, invalid, 0.5}}, "feed[1]"});
+    }
+    cases.push_back({{1e6, 250.0, {0.5, 0.5, nan}}, "feed[2]"});
+    // Stable first-invalid-field priority, without interpolating values/IDs.
+    cases.push_back({{-1.0, -1.0, single.feed}, "pressure_pa"});
+    cases.push_back({{-1.0, -1.0, {1.0}}, "feed"});
+    return cases;
+}
+
 
 // Entire existing result envelope, including NON-accepted candidates/evidence.
 // Exact equality tests adapter parity, not independent thermodynamic accuracy.

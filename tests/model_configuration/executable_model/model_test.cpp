@@ -175,6 +175,10 @@ void resource_limits() {
 template <class F>
 std::pair<std::string, std::string> error(F&& f) {
     try { f(); }
+    // Located subclasses retain the native standard category and message.
+    catch (const std::invalid_argument& e) { return {typeid(std::invalid_argument).name(), e.what()}; }
+    catch (const std::domain_error& e) { return {typeid(std::domain_error).name(), e.what()}; }
+    catch (const std::length_error& e) { return {typeid(std::length_error).name(), e.what()}; }
     catch (const std::exception& e) { return {typeid(e).name(), e.what()}; }
     throw std::runtime_error("invalid request unexpectedly returned");
 }
@@ -205,6 +209,52 @@ void applicability() {
         require(actual == expected, "declared-domain exception changed");
     }
     compare(model->solve(single), direct(native, single));
+}
+void request_locations() {
+    const auto native = pr76_max3_test::model();
+    auto model = create(definition(native), preset());
+    for (const auto& item : request_location_cases()) {
+        bool located = false;
+        try { (void)model->solve(item.request); }
+        catch (const mc::Pr76SolveRequestError& e) {
+            require(e.field() == item.field, "wrong native request location"); located = true;
+        }
+        require(located, "missing native request location");
+        require(error([&] { (void)model->solve(item.request); }) ==
+                error([&] { (void)direct(native, item.request); }), "located native category/message changed");
+        compare(model->solve(single), direct(native, single));
+    }
+    // Tolerated floating-point normalization and inactive zero components retain
+    // the native result and leave the submitted feed untouched.
+    const fl::PtFlashRequest near_sum{1e6, 250.0,
+        {0.5, 0.5 + 32.0 * std::numeric_limits<double>::epsilon(), 0.0}};
+    const auto original = near_sum.feed;
+    compare(model->solve(near_sum), direct(native, near_sum));
+    require(near_sum.feed == original, "request diagnostics changed the input feed");
+
+    const auto bounded_native = changed_model(true);
+    auto bounded = create(definition(bounded_native), preset());
+    for (const auto& item : std::vector<RequestLocationCase>{
+             {{0.8e6, 250.0, single.feed}, "pressure_pa"}, {{1.2e6, 250.0, single.feed}, "pressure_pa"},
+             {{1e6, 239.0, single.feed}, "temperature_k"}, {{1e6, 261.0, single.feed}, "temperature_k"}}) {
+        bool located = false;
+        try { (void)bounded->solve(item.request); }
+        catch (const mc::Pr76SolveRequestError& e) { located = e.field() == item.field; }
+        require(located, "declared interval rejection lost its field");
+    }
+    for (const auto& pt : std::vector<fl::PtFlashRequest>{
+             {0.9e6, 240.0, single.feed}, {1.1e6, 260.0, single.feed}}) {
+        compare(bounded->solve(pt), direct(bounded_native, pt));
+    }
+    auto limited_settings = custom(); limited_settings.final_two_phase_stability.max_starts = 1;
+    auto limited = create(definition(native), limited_settings);
+    bool coarse = false;
+    try { (void)limited->solve(single); }
+    catch (const std::length_error& e) {
+        require(dynamic_cast<const mc::Pr76SolveRequestError*>(&e) == nullptr,
+                "valid request was blamed for a search resource failure"); coarse = true;
+    }
+    require(coarse, "expected native search resource failure");
 }
 void admission() {
     // Deterministic overlap/exception checks on the exact production guard; no
@@ -257,6 +307,7 @@ int main(int argc, char** argv) {
         else if (name == "creation_errors") { creation_errors(); }
         else if (name == "resource_limits") { resource_limits(); }
         else if (name == "request_errors") { request_errors(); }
+        else if (name == "request_locations") { request_locations(); }
         else if (name == "applicability") { applicability(); }
         else if (name == "admission") { admission(); }
         else if (name == "parallel_models") { parallel_models(); }

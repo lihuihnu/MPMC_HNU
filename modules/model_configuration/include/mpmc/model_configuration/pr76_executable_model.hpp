@@ -5,8 +5,12 @@
 #include <mpmc/model_configuration/pr76_solver_settings.hpp>
 
 #include <atomic>
+#include <cmath>
 #include <memory>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace mpmc::model_configuration {
 
@@ -17,7 +21,27 @@ public:
     Pr76ModelBusyError() : std::runtime_error("PR76 model already has an active solve") {}
 };
 
+// Additive location interface: the concrete exception also retains the original
+// std::invalid_argument/domain_error/length_error base and its what() text.
+// Only already-rejected native requests acquire this metadata.
+class Pr76SolveRequestError {
+public:
+    virtual ~Pr76SolveRequestError() = default;
+    [[nodiscard]] const std::string& field() const noexcept { return field_; }
+protected:
+    explicit Pr76SolveRequestError(std::string field) : field_(std::move(field)) {}
+private:
+    std::string field_;
+};
+
 namespace detail {
+template <class Exception>
+class Pr76LocatedRequestError final : public Exception, public Pr76SolveRequestError {
+public:
+    Pr76LocatedRequestError(const Exception& original, std::string field)
+        : Exception(original), Pr76SolveRequestError(std::move(field)) {}
+};
+
 class Pr76SolveGuard {
 public:
     explicit Pr76SolveGuard(std::atomic_flag& active) : active_(active) {
@@ -80,10 +104,54 @@ public:
     }
     [[nodiscard]] flash::PtFlashBackendResult solve(const flash::PtFlashRequest& request) override {
         const detail::Pr76SolveGuard guard(active_);
-        return backend_.solve(request);
+        try { return backend_.solve(request); }
+        catch (const std::invalid_argument& error) { locate_rejection(request, error); }
+        catch (const std::domain_error& error) { locate_rejection(request, error); }
+        catch (const std::length_error& error) { locate_rejection(request, error); }
     }
 
 private:
+    // Diagnosis runs only after the native backend rejects. It neither admits a
+    // request nor changes numerical validation/normalization. Unknown failures
+    // are rethrown unchanged instead of attributing internal errors to a field.
+    [[nodiscard]] std::optional<std::string> rejected_request_field(
+        const flash::PtFlashRequest& request) const {
+        if (request.feed.size() != evaluator_.model().size()) { return "feed"; }
+        try { flash::detail::split_check_pt(request.pressure_pa, request.temperature_k); }
+        catch (const std::domain_error&) {
+            return !std::isfinite(request.pressure_pa) || request.pressure_pa <= 0
+                ? "pressure_pa" : "temperature_k";
+        }
+        try { (void)flash::detail::stability_check_composition(request.feed); }
+        catch (const std::domain_error&) {
+            for (std::size_t i = 0; i < request.feed.size(); ++i) {
+                const double value = request.feed[i];
+                if (!std::isfinite(value) || value < 0 || value > 1) {
+                    return "feed[" + std::to_string(i) + "]";
+                }
+            }
+            return "feed"; // Aggregate normalization failure has no single culprit.
+        }
+        const auto& bounds = parameter_snapshot_.parameters().applicability();
+        if (bounds.pressure_pa &&
+            (static_cast<long double>(request.pressure_pa) < bounds.pressure_pa->lower ||
+             static_cast<long double>(request.pressure_pa) > bounds.pressure_pa->upper)) {
+            return "pressure_pa";
+        }
+        if (bounds.temperature_k &&
+            (static_cast<long double>(request.temperature_k) < bounds.temperature_k->lower ||
+             static_cast<long double>(request.temperature_k) > bounds.temperature_k->upper)) {
+            return "temperature_k";
+        }
+        return std::nullopt;
+    }
+    template <class Exception>
+    [[noreturn]] void locate_rejection(const flash::PtFlashRequest& request, const Exception& error) const {
+        if (auto field = rejected_request_field(request)) {
+            throw detail::Pr76LocatedRequestError<Exception>(error, std::move(*field));
+        }
+        throw; // Preserve the original exception, including its dynamic type.
+    }
     static Pr76ModelParameters prepare_parameters(
         const ThermodynamicModelDefinition& definition, ModelConfigurationLimits parameter_limits,
         PtSolverSafetyLimits solver_limits, ModelDataPolicy policy) {

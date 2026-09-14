@@ -245,6 +245,53 @@ void domain_errors() {
     }
     compare(native_result(solve(server, made.model_handle()).result()), direct(pr76_max3_test::model(), single));
 }
+void solve_request_paths() {
+    mc::Pr76ModelRegistry registry({}, synthetic); Server server(registry);
+    const auto made = create(server);
+    const auto check = [&](const wire::SolveModelRequest& r, std::string_view code,
+                           std::string_view field, SC expected = SC::INVALID_ARGUMENT) {
+        wire::SolveModelResponse out;
+        const auto status = solve(server, r, out); error(status, expected, code);
+        google::rpc::Status envelope; wire::ModelServiceError detail;
+        require(envelope.ParseFromString(status.error_details()) &&
+                envelope.details(0).UnpackTo(&detail) && detail.field() == field,
+                "wrong solve request field");
+        require(!out.has_result(), "rejected solve published a result");
+    };
+    for (const auto& item : request_location_cases()) {
+        check(solve_request(made.model_handle(), item.request), "request.rejected", item.field);
+        compare(native_result(solve(server, made.model_handle()).result()), direct(pr76_max3_test::model(), single));
+    }
+    auto r = solve_request(made.model_handle()); r.clear_pressure_pa();
+    check(r, "wire.missing_field", "pressure_pa");
+    r.clear_temperature_k(); check(r, "wire.missing_field", "pressure_pa");
+    r = solve_request(made.model_handle()); r.clear_temperature_k();
+    check(r, "wire.missing_field", "temperature_k");
+    r = solve_request(made.model_handle()); r.clear_feed();
+    for (std::size_t i = 0; i <= registry.limits().solver.max_components; ++i) { r.add_feed(0.0); }
+    check(r, "wire.feed_limit", "feed", SC::RESOURCE_EXHAUSTED);
+    wire::DescribeModelResponse snapshot; ok(describe(server, made.model_handle(), snapshot));
+    require(snapshot.snapshot().SerializeAsString() == made.snapshot().SerializeAsString(),
+            "invalid solves mutated the stored model");
+    ok(release(server, made.model_handle()));
+
+    const auto bounded_native = changed_model(true);
+    const auto bounded = create(server, request(definition(bounded_native)));
+    for (const auto& item : std::vector<RequestLocationCase>{
+             {{0.8e6, 250.0, single.feed}, "pressure_pa"}, {{1.2e6, 250.0, single.feed}, "pressure_pa"},
+             {{1e6, 239.0, single.feed}, "temperature_k"}, {{1e6, 261.0, single.feed}, "temperature_k"}}) {
+        check(solve_request(bounded.model_handle(), item.request), "request.rejected", item.field);
+    }
+    compare(native_result(solve(server, bounded.model_handle()).result()), direct(bounded_native, single));
+    ok(release(server, bounded.model_handle()));
+    auto limited_request = request(); auto settings = custom();
+    settings.final_two_phase_stability.max_starts = 1;
+    api::encode_settings(settings, *limited_request.mutable_settings());
+    const auto limited = create(server, limited_request);
+    check(solve_request(limited.model_handle()), "request.rejected", "request");
+    ok(release(server, limited.model_handle()));
+    require(registry.status().resident_models == 0, "solve errors leaked model/lease capacity");
+}
 void registry_errors() {
     mc::Pr76ModelRegistryLimits limits; limits.max_models = 1;
     mc::Pr76ModelRegistry registry(limits, synthetic); Server server(registry);
@@ -411,6 +458,7 @@ int main(int argc, char** argv) {
         else if (name == "nested_decode_paths") { nested_decode_paths(); }
         else if (name == "decode_context_paths") { decode_context_paths(); }
         else if (name == "domain_errors") { domain_errors(); }
+        else if (name == "solve_request_paths") { solve_request_paths(); }
         else if (name == "registry_errors") { registry_errors(); }
         else if (name == "host_quota") { host_quota(); }
         else if (name == "busy_and_release") { busy_and_release(); }

@@ -49,7 +49,27 @@ Independent models can solve concurrently because they share no mutable workspac
 
 `solve` passes P [Pa], T [K] and mole feed in snapshot component order to the
 existing backend once. It does not rebuild parameters, change settings, inject
-hints, repair input or cache a previous result. Native errors propagate unchanged.
+hints, repair input or cache a previous result. Native acceptance/rejection and
+numerical outcomes remain authoritative. After a native input exception, the
+model can attach the `Pr76SolveRequestError` location interface while preserving
+the original `std::invalid_argument`, `std::domain_error` or `std::length_error`
+base and `what()` text. Catch those standard categories as before, or catch the
+location interface first to read `field()`. Located errors have a derived dynamic
+type; code must not require exact `typeid` equality with the standard base.
+
+Diagnosis executes only on a rejected call and reuses native PT/composition
+validation, including its compensated sum and normalization tolerance. It emits
+`pressure_pa`, `temperature_k`, `feed` (length/aggregate normalization), or
+`feed[index]` (a nonfinite or out-of-range mole fraction). Indices refer to the
+submitted snapshot component order. Declared dataset intervals use the prepared
+native snapshot and inclusive endpoints. Absent ranges remain unknown.
+For multiple invalid fields the diagnostic priority is feed dimension, PT,
+individual feed values, aggregate normalization, then declared P/T bounds.
+This is an advisory invalid-request location, not a claim about an internal
+throw site or an aggregate error report. No exception-message parsing is used.
+A valid request that hits an internal search/resource/property failure keeps
+its original exception without a fabricated request field. Result envelopes,
+per-model admission release and model isolation remain unchanged.
 
 The returned **entire existing `PtFlashBackendResult`** owns capability/model and
 dataset identity, solution state/status/feed, candidate phases (also when not
@@ -76,11 +96,11 @@ would not provide safe execution lifetime; extending the process host would coup
 native callers to transport composition. A small optional owner reuses all existing
 scientific algorithms and avoids a premature registry or workspace refactor.
 
-The independent `tests/model_configuration/executable_model` project has 13 cases:
+The independent `tests/model_configuration/executable_model` project has 14 cases:
 full-envelope direct-C++ parity for single/binary/ternary cold search; changed-kij
 A/B isolation; independent settings/root-budget exhaustion; draft/owner/result
 lifetime; construction failure and host limits; input exceptions and declared
-bounds; deterministic admission/unwind; parallel A/B solves. The public header
+bounds; precise request locations, normalization boundary and coarse internal-failure fallback; deterministic admission/unwind; parallel A/B solves. The public header
 is compiled separately with ownership/const-interface static assertions.
 
 Expected results come from separately constructed native PR76 models/options,
@@ -100,4 +120,5 @@ run or a general thread-local-workspace redesign.
 The separate [bounded registry](registry.md) now owns these models, issues opaque
 handles and retains admitted solves through release/close. It accounts for model
 slots until destruction. Standalone factory users still own lifetime themselves.
-API, UI and end-to-end product integration remain deferred.
+The versioned model service and desktop typed client now transport safe error
+locations; UI configuration forms remain deferred.

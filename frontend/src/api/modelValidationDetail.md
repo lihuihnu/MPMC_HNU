@@ -26,6 +26,17 @@ no field is fabricated when none is provided. Older native services can still
 return coarse aliases such as `scalar.value`. Parameter keys remain keys even when they contain dots
 or happen to look numeric. Native validation remains authoritative.
 
+For solve validation, `request.rejected` can identify `pressure_pa`,
+`temperature_k`, `feed` (dimension or aggregate normalization), or `feed[1]`
+(an invalid item in submitted component order). Missing P/T uses the same fields
+with `wire.missing_field`. Only canonical nonnegative decimal feed indices are
+accepted: keys, pairs, signs, fractions and leading zeroes are not feed indices.
+Native declared-interval violations also identify P/T. This metadata is added
+only after native rejection; internal failures with valid input remain coarse.
+A rejected solve does not invalidate ownership or require reconnect. Old v1
+clients keep their status-only shape, and older services can still return `PT`
+or `request`. Protocol/detail versions are unchanged.
+
 | Boundary/version | Behavior |
 | --- | --- |
 | Native service v1 | Same rich-error envelope/status/domain codes; decode fields now retain enclosing records. Numerical validation unchanged. |
@@ -67,9 +78,11 @@ Tests cover bounded binary decoding, exact paths, privacy filtering, immutable
 copies, protocol compatibility and shared version ownership. Official real
 sandboxed renderer regressions retain v1 traffic and execute v2 native parameter,
 settings, preset and coarse solve validation failures, explicit recovery, full
-result equality and independent window reclamation. `MODEL_VALIDATION_DETAIL_OK`
-and `MODEL_NESTED_VALIDATION_PATH_OK` are required by the smoke launcher alongside
+result equality and independent window reclamation. `MODEL_VALIDATION_DETAIL_OK`,
+`MODEL_NESTED_VALIDATION_PATH_OK` and `MODEL_SOLVE_VALIDATION_PATH_OK` are required by the smoke launcher alongside
 all existing completion markers. Nested missing scalar values and provenance
 kinds are checked through the real native host, with explicit reconnect/recreate
-and recovered full-result equality.
+and recovered full-result equality. Solve coverage includes missing, zero,
+negative and nonfinite P/T, feed shape/item/sum failures, Protobuf JSON nonfinite
+roundtrips and full-result recovery after every failure on the same reference.
 UI field rendering and configuration forms remain separate work.

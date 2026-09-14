@@ -7,7 +7,7 @@ const child = spawnSync(electron, ['desktop-model-test-dist/model-ipc-smoke.mjs'
 });
 process.stdout.write(child.stdout ?? '');
 process.stderr.write(child.stderr ?? '');
-const complete = ['MODEL_NESTED_VALIDATION_PATH_OK', 'MODEL_VALIDATION_DETAIL_OK', 'MODEL_RENDERER_CLIENT_OK', 'MODEL_DESKTOP_IPC_OK', 'MODEL_DESKTOP_IPC_COMPLETE']
+const complete = ['MODEL_SOLVE_VALIDATION_PATH_OK', 'MODEL_NESTED_VALIDATION_PATH_OK', 'MODEL_VALIDATION_DETAIL_OK', 'MODEL_RENDERER_CLIENT_OK', 'MODEL_DESKTOP_IPC_OK', 'MODEL_DESKTOP_IPC_COMPLETE']
   .every(marker => (child.stdout ?? '').split(/\r?\n/u).some(line => line === marker || line.startsWith(`${marker} `)));
 if (child.error || child.status !== 0 || !complete) {
   console.error('Model IPC smoke did not complete all assertions and host teardown.');

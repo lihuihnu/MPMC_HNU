@@ -48,8 +48,12 @@ function safeField(field: unknown, privateValues: readonly string[]): field is s
   while (offset < field.length) {
     segment.lastIndex = offset;
     const match = segment.exec(field);
-    if (!match || !names.has(match[1]!) ||
-        (match[2] !== undefined && !['components', 'pure', 'binary'].includes(match[1]!))) return false;
+    if (!match || !names.has(match[1]!)) return false;
+    if (match[2] !== undefined) {
+      if (match[1] === 'feed') {
+        if (!/^(0|[1-9][0-9]*)$/u.test(match[2])) return false;
+      } else if (!['components', 'pure', 'binary'].includes(match[1]!)) return false;
+    }
     offset = segment.lastIndex;
   }
   return !field.endsWith('.');

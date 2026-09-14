@@ -123,6 +123,17 @@ only a block/request. Paths are advisory locations, not JSON Pointers or an
 aggregate validation report; existing coarse paths from older services remain
 valid. This refinement does not change the wire or validation-detail version.
 
+Solve errors retain `INVALID_ARGUMENT` and `request.rejected`, with an advisory
+`pressure_pa`, `temperature_k`, `feed`, or `feed[index]` from the owning model's
+already-rejected native request. Length/normalization failures identify the whole
+feed; nonfinite/out-of-range items identify their zero-based submitted index.
+Missing wire scalars retain `wire.missing_field` and now distinguish pressure
+from temperature. The existing host feed cap remains `wire.feed_limit` / `feed`.
+Declared model interval violations identify P or T without widening the range.
+Valid inputs rejected by internal search limits retain the coarse `request`
+fallback. The adapter never parses exception messages, copies input values into
+paths or changes numerical acceptance. Existing auth/session/lease order remains.
+
 All existing `ModelConfigurationErrorCode` values have explicit code mappings.
 Finite/deadline-policy errors use `rpc.deadline_required` / `rpc.deadline_limit`
 with INVALID_ARGUMENT. Codes are service semantics, not exception-message parsing.

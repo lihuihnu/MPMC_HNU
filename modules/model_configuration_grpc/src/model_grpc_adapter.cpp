@@ -134,6 +134,7 @@ grpc::Status translate_exception() {
         default: return error_status(StatusCode::INTERNAL, "registry.internal_failure");
         }
     }
+    catch (const mc::Pr76SolveRequestError& e) { return error_status(StatusCode::INVALID_ARGUMENT, "request.rejected", e.field()); }
     catch (const mc::Pr76ModelBusyError&) { return error_status(StatusCode::RESOURCE_EXHAUSTED, "model.busy"); }
     catch (const std::bad_alloc&) { return error_status(StatusCode::RESOURCE_EXHAUSTED, "rpc.memory_exhausted"); }
     catch (const std::invalid_argument&) { return error_status(StatusCode::INVALID_ARGUMENT, "request.rejected", "request"); }
@@ -239,8 +240,11 @@ grpc::Status ModelGrpcServiceAdapter::SolveModel(grpc::ServerContext* context,
     const wire::SolveModelRequest* request, wire::SolveModelResponse* response) {
     return dispatch(context, request, response, authorize_, limits_, requests_, [&] {
         require_handle(*request);
-        if (!request->has_pressure_pa() || !request->has_temperature_k()) {
-            fail(StatusCode::INVALID_ARGUMENT, "wire.missing_field", "PT");
+        if (!request->has_pressure_pa()) {
+            fail(StatusCode::INVALID_ARGUMENT, "wire.missing_field", "pressure_pa");
+        }
+        if (!request->has_temperature_k()) {
+            fail(StatusCode::INVALID_ARGUMENT, "wire.missing_field", "temperature_k");
         }
         if (static_cast<std::size_t>(request->feed_size()) > registry_.limits().solver.max_components) {
             fail(StatusCode::RESOURCE_EXHAUSTED, "wire.feed_limit", "feed");

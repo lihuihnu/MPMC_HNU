@@ -92,3 +92,29 @@ export async function invalidNestedFieldsAndRecover() {
   }
   return { failures, ...(await solve()) };
 }
+
+export async function invalidSolveFieldsAndRecover() {
+  if (!client || !current) throw new Error('Renderer model missing.');
+  const baseline = await solve();
+  const invalid: SolveModelRequest[] = [];
+  for (const field of ['pressurePa', 'temperatureK'] as const) {
+    for (const value of [undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      invalid.push({ ...state, [field]: value });
+    }
+  }
+  for (const feed of [[], [1], [0.5, -0.1], [0.5, 1.1], [0.5, Number.NaN],
+    [0.5, Number.POSITIVE_INFINITY], [0.5, Number.NEGATIVE_INFINITY], [0.4, 0.4], [0, 0]]) {
+    invalid.push({ ...state, feed });
+  }
+  const failures = [];
+  for (const request of invalid) {
+    let failure;
+    try { await client.solve(current, request); } catch (cause) { failure = error(cause); }
+    if (!failure || client.requiresReconnect) throw new Error('Read-only solve validation changed ownership.');
+    failures.push(failure);
+    if (JSON.stringify((await solve()).result) !== JSON.stringify(baseline.result)) {
+      throw new Error('Same-model recovery changed the complete result.');
+    }
+  }
+  return { failures, recovered: failures.length, ...(await solve()) };
+}

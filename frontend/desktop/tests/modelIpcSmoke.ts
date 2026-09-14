@@ -211,8 +211,8 @@ async function run() {
     requireThat(invalid.code === Code.InvalidArgument && invalid.category === 'invalid_argument' && invalid.source === 'ipc',
       'Native validation error lost its typed renderer status.');
     requireThat((invalid.validation as JsonObject)?.version === MODEL_VALIDATION_DETAIL_VERSION &&
-      (invalid.validation as JsonObject)?.code === 'request.rejected' && (invalid.validation as JsonObject)?.field === 'request',
-      'Native coarse solve validation location changed.');
+      (invalid.validation as JsonObject)?.code === 'request.rejected' && (invalid.validation as JsonObject)?.field === 'pressure_pa',
+      'Native pressure validation location changed.');
     equal((await renderer(typedA, 'solve')).result!, expectedResult);
     const releasedTyped = await renderer(typedA, 'releaseAndRecreate');
     requireThat((releasedTyped.released as JsonObject).reason === 'renderer.stale_reference', 'Released renderer reference was reused.');
@@ -250,6 +250,23 @@ async function run() {
     equal(nested.result!, expectedResult);
     console.info('MODEL_NESTED_VALIDATION_PATH_OK native indexed scalar/provenance paths, explicit recovery and full result');
 
+    const solveFields = await renderer(typedA, 'invalidSolveFieldsAndRecover');
+    const solveLocations = ['pressure_pa', 'pressure_pa', 'pressure_pa', 'pressure_pa', 'pressure_pa', 'pressure_pa',
+      'temperature_k', 'temperature_k', 'temperature_k', 'temperature_k', 'temperature_k', 'temperature_k',
+      'feed', 'feed', 'feed[1]', 'feed[1]', 'feed[1]', 'feed[1]', 'feed[1]', 'feed', 'feed'];
+    const solveFailures = solveFields.failures as JsonObject[];
+    requireThat(solveFailures.length === solveLocations.length && solveFields.recovered === solveLocations.length,
+      'Solve location/recovery cases were skipped.');
+    solveLocations.forEach((field, index) => {
+      const failure = solveFailures[index]!; const detail = failure.validation as JsonObject;
+      const code = index === 0 || index === 6 ? 'wire.missing_field' : 'request.rejected';
+      requireThat(failure.code === Code.InvalidArgument && failure.category === 'invalid_argument' && failure.source === 'ipc' &&
+        detail?.version === MODEL_VALIDATION_DETAIL_VERSION && detail?.code === code && detail?.field === field,
+        'Native PT/feed location or nonfinite value lost across the renderer boundary.');
+    });
+    equal(solveFields.result!, expectedResult);
+    console.info('MODEL_SOLVE_VALIDATION_PATH_OK missing/nonfinite PT, feed items/shape/sum and same-model full-result recovery');
+
     const typedEntryA = { ...observed.at(-1)! }; typedA.destroy(); await gone(typedEntryA);
     equal((await renderer(typedB, 'solve')).result!, expectedResult);
     typedB.destroy(); await gone(typedEntryB);
@@ -257,7 +274,7 @@ async function run() {
     const last = [...observed].reverse().find(entry => !entry.closed)!;
     await ipc.dispose(); await ipc.dispose(); await gone(last);
     requireThat(observed.every(entry => entry.closed), 'An IPC transport survived disposal.');
-    const output = JSON.stringify(replies) + JSON.stringify({ invalid, recovery, fields, nested }) + logs.join('\n');
+    const output = JSON.stringify(replies) + JSON.stringify({ invalid, recovery, fields, nested, solveFields }) + logs.join('\n');
     requireThat(!output.includes(connection.bearerToken), 'Private host credential leaked.');
     for (const entry of observed) {
       requireThat(!output.includes(entry.id) && !output.includes(entry.handle), 'Private native routing data leaked.');
