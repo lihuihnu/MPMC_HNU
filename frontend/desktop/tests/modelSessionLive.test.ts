@@ -77,8 +77,47 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
     expect(solved.temperatureK).toBe(state.temperatureK);
     expect(solved.feed).toEqual(state.feed);
     expect(solved.candidatePhaseSet?.phases).toHaveLength(2);
+    const expectHintedEquivalent = (actual: typeof solved) => {
+      // A continuation start may choose a numerically different legal iteration
+      // path. Direct C++/wire parity is exact in the dedicated native test; this
+      // desktop lifecycle check only requires the same published state within a
+      // tight cross-platform numerical allowance, while all metadata stays exact.
+      const { candidatePhaseSet: actualSet, ...actualEnvelope } = actual;
+      const { candidatePhaseSet: solvedSet, ...solvedEnvelope } = solved;
+      expect(actualEnvelope).toEqual(solvedEnvelope);
+      expect(actualSet?.phases).toHaveLength(solvedSet?.phases.length ?? 0);
+      for (let i = 0; i < (solvedSet?.phases.length ?? 0); ++i) {
+        const a = actualSet!.phases[i]!;
+        const e = solvedSet!.phases[i]!;
+        const {
+          composition: aComposition,
+          lnFugacityCoefficient: aLnPhi,
+          molePhaseFraction: aFraction,
+          compressibilityFactor: aZ,
+          ...aMetadata
+        } = a;
+        const {
+          composition: eComposition,
+          lnFugacityCoefficient: eLnPhi,
+          molePhaseFraction: eFraction,
+          compressibilityFactor: eZ,
+          ...eMetadata
+        } = e;
+        expect(aMetadata).toEqual(eMetadata);
+        expect(aFraction).toBeCloseTo(eFraction!, 10);
+        expect(aZ).toBeCloseTo(eZ!, 10);
+        expect(aComposition).toHaveLength(eComposition.length);
+        expect(aLnPhi).toHaveLength(eLnPhi.length);
+        for (let j = 0; j < eComposition.length; ++j) {
+          expect(aComposition[j]).toBeCloseTo(eComposition[j]!, 10);
+        }
+        for (let j = 0; j < eLnPhi.length; ++j) {
+          expect(aLnPhi[j]).toBeCloseTo(eLnPhi[j]!, 10);
+        }
+      }
+    };
     // Same typed client/transport, now carrying the public per-solve hint DTO.
-    expect(await client.solve(initial.model, hintedState)).toEqual(solved);
+    expectHintedEquivalent(await client.solve(initial.model, hintedState));
     // A following cold call proves hints were not cached in the client/session/model.
     expect(await client.solve(initial.model, state)).toEqual(solved);
     expect(await client.describe(initial.model)).toEqual(initial.snapshot);
@@ -105,7 +144,9 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
       await expect(observer.models.describeModel({ wireContract: MODEL_WIRE_CONTRACT, modelHandle: previous.handle },
         options(observed.at(-1)!.id))).rejects.toMatchObject({ code: Code.NotFound });
       const made = await client.create(definition);
-      expect(await client.solve(made.model, i % 2 === 0 ? hintedState : state)).toEqual(solved);
+      const next = await client.solve(made.model, i % 2 === 0 ? hintedState : state);
+      if (i % 2 === 0) expectHintedEquivalent(next);
+      else expect(next).toEqual(solved);
       old = made.model;
     }
     const last = { ...observed.at(-1)! };
@@ -115,7 +156,7 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
 
     // Exercise the actual desktop gateway composition, still without renderer IPC/UI.
     await gateway.models.connect(); const made = await gateway.models.create(definition);
-    expect(await gateway.models.solve(made.model, hintedState)).toEqual(solved);
+    expectHintedEquivalent(await gateway.models.solve(made.model, hintedState));
     expect(await gateway.models.solve(made.model, state)).toEqual(solved);
     await gateway.models.reconnect();
     await expect(gateway.models.describe(made.model)).rejects.toMatchObject({ code: Code.NotFound });
