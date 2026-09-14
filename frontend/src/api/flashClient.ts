@@ -49,10 +49,10 @@ export class BackendNotConfiguredError extends Error {
 export class PtTransportError extends Error {
   readonly code: Code;
 
-  constructor(error: ConnectError) {
-    super(error.rawMessage || 'The gRPC-Web request failed.');
+  constructor(code: Code, message: string) {
+    super(message || 'The PT RPC failed.');
     this.name = 'PtTransportError';
-    this.code = error.code;
+    this.code = code;
   }
 }
 
@@ -78,7 +78,11 @@ async function invoke<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
   } catch (cause) {
-    throw new PtTransportError(ConnectError.from(cause));
+    const error = ConnectError.from(cause);
+    throw new PtTransportError(
+      error.code,
+      error.rawMessage || 'The gRPC-Web request failed.',
+    );
   }
 }
 

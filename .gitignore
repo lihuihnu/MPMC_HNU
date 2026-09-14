@@ -2,6 +2,9 @@
 /CMakeUserPresets.json
 /frontend/node_modules/
 /frontend/dist/
+/frontend/desktop-dist/
+/frontend/desktop-test-dist/
+/frontend/build/
 /frontend/.vite/
 /frontend/coverage/
 __pycache__/
