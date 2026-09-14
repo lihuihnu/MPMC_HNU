@@ -54,9 +54,12 @@ PR76 / SW92 / CPA
 The shell pins Capacitor `8.5.2` and React `19.2.3`. The generated Android Studio
 project is deliberately **not** committed: CI generates it from the pinned
 Capacitor input, sets the native compatibility floor to API 26, overlays the
-small Java plugin, embeds the validated x86_64 native core, and builds a debug
-engineering APK. This keeps generated Gradle/template churn out of the main
-repository.
+small Java plugin, embeds both validated `arm64-v8a` and `x86_64` native cores,
+and builds one universal debug engineering APK. This lets the same APK install
+on ordinary 64-bit ARM Android phones while remaining executable on the existing
+x86_64 CI emulator. The package gate opens the generated APK as a ZIP and fails
+closed unless both native payloads are present at the standard Android paths.
+This keeps generated Gradle/template churn out of the main repository.
 
 The app-local Java plugin is transport only. It runs native work on one dedicated
 executor thread and contains no EOS equations, parameter data, phase-selection
@@ -71,10 +74,11 @@ Three independent Android gates protect the path:
   `arm64-v8a` and `x86_64`, including the product JNI exports;
 - `PT Android JNI emulator`: retain the minimal no-UI JNI/PtService
   discovery/solve regression;
-- `PT Android Product Shell`: build the shared React UI, generate the Capacitor
-  project, build the debug APK, boot an API 35 x86_64 emulator, render the real
-  React UI, and exercise JavaScript -> Capacitor -> JNI -> `PtService` discovery
-  plus one accepted PR76, SW92, and CPA solve.
+- `PT Android Product Shell`: build both native ABIs, require both native cores
+  inside one universal APK, build the shared React UI, generate the Capacitor
+  project, boot an API 35 x86_64 emulator, render the real React UI, and exercise
+  JavaScript -> Capacitor -> JNI -> `PtService` discovery plus one accepted
+  PR76, SW92, and CPA solve.
 
 Android's native accessibility hierarchy exposes a WebView as one opaque node,
 so it cannot by itself prove which React DOM content rendered. For the debug
