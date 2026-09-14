@@ -44,11 +44,17 @@ struct PtProcessHostOptions {
     std::string listen_address{"127.0.0.1:50051"};
     PtProcessTlsIdentity tls;
     std::chrono::seconds shutdown_grace{10};
+    // Explicit engineering-desktop mode. It is accepted only on an
+    // OS-selected IPv4 loopback port and only when the adapter requires a
+    // per-launch bearer token. Production deployment must leave this false.
+    bool desktop_loopback_session{false};
 
     [[nodiscard]] bool structurally_valid() const noexcept;
 };
 
-// Synchronous native gRPC host with mandatory verified client certificates.
+// Synchronous native gRPC host. Production uses mandatory verified client
+// certificates. The explicit desktop session alternative is restricted to an
+// ephemeral IPv4 loopback listener plus adapter-enforced bearer authentication.
 // Lifecycle methods may be called from a process-control thread; start() is a
 // one-shot operation and must complete before wait()/shutdown() are invoked.
 // The referenced PtCompositionRoot must outlive this host.

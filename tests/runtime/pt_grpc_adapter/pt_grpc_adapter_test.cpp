@@ -42,8 +42,10 @@ class ServerHarness {
 public:
     ServerHarness(rt::PtService& service,
                   adapter::PtGrpcAdapterLimits limits = {},
-                  std::shared_ptr<adapter::PtGrpcObserver> observer = {})
-        : adapter_(service, limits, std::move(observer)) {
+                  std::shared_ptr<adapter::PtGrpcObserver> observer = {},
+                  adapter::PtGrpcAuthenticationOptions authentication = {})
+        : adapter_(service, limits, std::move(observer),
+                   std::move(authentication)) {
         diagnostic_stage = "constructing grpc::ServerBuilder";
         grpc::ServerBuilder builder;
         int selected_port = 0;
@@ -109,6 +111,10 @@ private:
 void set_deadline(grpc::ClientContext& context,
                   std::chrono::milliseconds timeout = 2s) {
     context.set_deadline(std::chrono::system_clock::now() + timeout);
+}
+
+void set_bearer(grpc::ClientContext& context, std::string_view token) {
+    context.AddMetadata("authorization", "Bearer " + std::string(token));
 }
 
 wire::SolvePtFlashRequest request(std::string configured_backend_id) {
@@ -329,6 +335,82 @@ void wire_and_size_limits() {
     require(rejected, "invalid process adapter limits were accepted");
 }
 
+void bearer_authentication() {
+    constexpr std::string_view token =
+        "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
+    pt_grpc_test::Backend backend;
+    const std::array<rt::PtServiceBackendRegistration, 1> registrations{{
+        {"golden.accepted", &backend}}};
+    rt::PtService service(registrations);
+    auto observer = std::make_shared<RecordingObserver>();
+    adapter::PtGrpcAuthenticationOptions authentication;
+    authentication.bearer_token = token;
+    ServerHarness server(service, {}, observer, std::move(authentication));
+    require(server.adapter().requires_bearer_token(),
+            "desktop adapter did not retain bearer authentication");
+
+    grpc::ClientContext missing_context;
+    set_deadline(missing_context);
+    wire::DiscoverPtCapabilitiesRequest discovery_request;
+    wire::DiscoverPtCapabilitiesResponse missing_response;
+    const auto missing = server.stub().DiscoverPtCapabilities(
+        &missing_context, discovery_request, &missing_response);
+    require(missing.error_code() == grpc::StatusCode::UNAUTHENTICATED &&
+                missing_response.backends_size() == 0,
+            "missing desktop bearer reached capability discovery");
+
+    grpc::ClientContext wrong_context;
+    set_deadline(wrong_context);
+    set_bearer(wrong_context,
+               "0123456789abcdefghijklmnopqrstuvwxyzABCDEFH");
+    const auto value = request("golden.accepted");
+    wire::SolvePtFlashResponse wrong_response;
+    const auto wrong = server.stub().SolvePtFlash(
+        &wrong_context, value, &wrong_response);
+    require(wrong.error_code() == grpc::StatusCode::UNAUTHENTICATED &&
+                wrong_response.payload_case() ==
+                    wire::SolvePtFlashResponse::PAYLOAD_NOT_SET &&
+                backend.call_count.load() == 0U,
+            "wrong desktop bearer reached PtService");
+
+    grpc::ClientContext accepted_context;
+    set_deadline(accepted_context);
+    set_bearer(accepted_context, token);
+    wire::SolvePtFlashResponse accepted_response;
+    const auto accepted = server.stub().SolvePtFlash(
+        &accepted_context, value, &accepted_response);
+    require(accepted.ok() && accepted_response.has_result() &&
+                accepted_response.result().outcome() ==
+                    wire::PT_COMPUTATION_OUTCOME_ACCEPTED &&
+                backend.call_count.load() == 1U,
+            "authenticated desktop request did not call PtService exactly once");
+
+    const auto observations = observer->snapshot();
+    require(observations.size() == 3U &&
+                observations[0].completion ==
+                    adapter::PtGrpcCompletion::authentication_failure &&
+                observations[1].completion ==
+                    adapter::PtGrpcCompletion::authentication_failure &&
+                !observations[0].pt_service_called &&
+                !observations[1].pt_service_called &&
+                observations[2].completion ==
+                    adapter::PtGrpcCompletion::completed &&
+                observations[2].pt_service_called,
+            "desktop authentication observations changed dispatch semantics");
+
+    adapter::PtGrpcAuthenticationOptions short_token;
+    short_token.bearer_token = "too-short";
+    bool rejected = false;
+    try {
+        adapter::PtGrpcServiceAdapter invalid(
+            service, {}, {}, std::move(short_token));
+        (void)invalid;
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "invalid desktop bearer policy was accepted");
+}
+
 void concurrency_gate() {
     pt_grpc_test::Backend backend;
     backend.block();
@@ -443,6 +525,8 @@ int main(int argc, char** argv) {
             mapping_and_outcomes();
         } else if (test_case == "wire_and_size_limits") {
             wire_and_size_limits();
+        } else if (test_case == "bearer_authentication") {
+            bearer_authentication();
         } else if (test_case == "concurrency_gate") {
             concurrency_gate();
         } else if (test_case == "deadline_and_cancel") {

@@ -45,6 +45,12 @@ class ProductBoundaryTest(unittest.TestCase):
         self.assertNotIn("/wd4996", cmake)
         self.assertIn('"^ext-ms-.*"', cmake)
         self.assertNotIn('"^ext-ms-win-.*"', cmake)
+        self.assertIn("include(InstallRequiredSystemLibraries)", cmake)
+        self.assertIn(
+            '".*[/\\\\\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss]'
+            '[/\\\\\\\\].*"',
+            cmake,
+        )
         grpc_headers = (
             REPOSITORY_ROOT
             / "modules/runtime_grpc/include/mpmc/runtime_grpc/grpc_headers.hpp"
@@ -81,6 +87,14 @@ class ProductBoundaryTest(unittest.TestCase):
         )
         self.assertIn("std::chrono::seconds(5)", staged_probe)
         self.assertIn("status.error_code()", staged_probe)
+
+        desktop = workflow.split("  desktop:", maxsplit=1)[1]
+        self.assertIn("needs: stage", desktop)
+        self.assertIn("uses: actions/download-artifact@", desktop)
+        self.assertNotIn("conan install", desktop)
+        self.assertNotIn("cmake --build", desktop)
+        self.assertIn("npm run desktop:real-smoke", desktop)
+        self.assertIn("timeout-minutes: 20", desktop)
 
     def test_staging_does_not_absorb_web_or_model_logic(self):
         cmake = (PRODUCT_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")

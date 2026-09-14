@@ -25,10 +25,12 @@ PtCompositionRoot::PtCompositionRoot(
     std::vector<OwnedConfiguredPtBackend> backends,
     runtime::PtServiceLimits service_limits,
     runtime_grpc::PtGrpcAdapterLimits adapter_limits,
-    std::shared_ptr<runtime_grpc::PtGrpcObserver> observer)
+    std::shared_ptr<runtime_grpc::PtGrpcObserver> observer,
+    runtime_grpc::PtGrpcAuthenticationOptions authentication)
     : owned_backends_(std::move(backends)),
       registrations_(registrations_for(owned_backends_)),
       service_(registrations_, service_limits),
-      adapter_(service_, adapter_limits, std::move(observer)) {}
+      adapter_(service_, adapter_limits, std::move(observer),
+               std::move(authentication)) {}
 
 } // namespace mpmc::pt_process

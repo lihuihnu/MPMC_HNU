@@ -12,23 +12,30 @@
     "proto:lint": "buf lint ../api",
     "proto:generate": "buf generate --template buf.gen.yaml",
     "typecheck": "tsc --noEmit",
+    "desktop:typecheck": "tsc --noEmit -p tsconfig.desktop.json",
+    "desktop:bundle": "vite build --config desktop/vite.main.config.ts && vite build --config desktop/vite.smoke.config.ts",
+    "desktop:real-smoke": "electron desktop-test-dist/real-backend-smoke.mjs",
+    "desktop:package": "node desktop/packageDesktop.mjs",
     "test": "vitest run",
-    "build": "npm run typecheck && vite build"
+    "build": "npm run typecheck && npm run desktop:typecheck && vite build && npm run desktop:bundle"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",
     "@connectrpc/connect": "2.2.0",
+    "@connectrpc/connect-node": "2.2.0",
     "@connectrpc/connect-web": "2.2.0",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",
+    "@electron/packager": "20.3.0",
     "@bufbuild/protoc-gen-es": "2.15.0",
     "@types/node": "24.13.4",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.1",
+    "electron": "44.3.0",
     "typescript": "7.0.2",
     "vite": "8.2.2",
     "vitest": "5.0.0"

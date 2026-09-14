@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "electron"]
+  },
+  "include": [
+    "desktop/**/*.ts",
+    "src/api/desktopBridge.ts",
+    "src/api/flashClient.ts",
+    "src/api/ptWire.ts",
+    "src/domain/flash.ts",
+    "src/gen/mpmc/runtime/v1/pt_service_pb.ts"
+  ]
+}

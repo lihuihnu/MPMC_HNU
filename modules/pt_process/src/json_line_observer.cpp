@@ -22,6 +22,8 @@ std::string_view completion_name(
     runtime_grpc::PtGrpcCompletion completion) noexcept {
     switch (completion) {
     case runtime_grpc::PtGrpcCompletion::completed: return "completed";
+    case runtime_grpc::PtGrpcCompletion::authentication_failure:
+        return "authentication_failure";
     case runtime_grpc::PtGrpcCompletion::invalid_request:
         return "invalid_request";
     case runtime_grpc::PtGrpcCompletion::request_limit: return "request_limit";

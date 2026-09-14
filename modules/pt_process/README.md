@@ -2,8 +2,10 @@
 
 `mpmc::pt_process` is the executable-application boundary around the frozen PT
 service contract. It owns configured backend object graphs, registers their
-`PtFlashBackend` views in one `PtService`, exposes that service through one gRPC
-adapter, and hosts the adapter with mandatory mutual TLS.
+`PtFlashBackend` views in one `PtService`, and exposes that service through one
+gRPC adapter. Production hosting uses mandatory mutual TLS; the same executable
+also has one explicit, authenticated, ephemeral-loopback child mode for the
+Electron desktop product.
 
 ## Assembly boundary
 
@@ -69,6 +71,15 @@ applicability and citations without model parameter values. Runtime overrides
 accept only absolute TLS paths. `SIGINT`/`SIGTERM` trigger the existing
 health-first graceful shutdown.
 
+`--desktop-session-token-stdin` is a separate process-session contract, not a
+deployment credential downgrade. It rejects listener and TLS flags, binds only
+an OS-selected `127.0.0.1:0` port, and requires a 256-bit random base64url bearer
+token on the first stdin line before serving. The adapter authenticates every
+discovery/solve RPC before `PtService`; the next stdin line or pipe EOF requests
+graceful shutdown. The token is absent from argv, environment, readiness events,
+responses, and observer logs. Public/non-loopback use of this mode is rejected,
+and the production mTLS mode rejects a desktop bearer configuration.
+
 The default adapter admits one solve at a time because the currently configured
 PR76 and CPA evaluators own reusable sequential scratch. Raising concurrency is
 permitted only after every reachable backend object graph has been audited for
@@ -76,12 +87,14 @@ concurrent calls.
 
 ## Security and operations
 
-The native host has no insecure credential mode. It requires a server certificate,
-private key, and trusted client CA, then asks gRPC to require and verify every
-client certificate. In the recommended deployment, it listens on loopback and
-trusts only the Envoy edge client CA. Certificate issuance and identity
-authorization remain deployment policy; this module does not fabricate a JWT
-issuer, JWKS, user directory, or role model.
+The production mode has no insecure credential option. It requires a server
+certificate, private key, and trusted client CA, then asks gRPC to require and
+verify every client certificate. The desktop alternative is plaintext only on
+an ephemeral IPv4 loopback socket and adds a per-launch bearer unknown to other
+local clients; it is not accepted on a configured address. In the recommended
+deployment, production listens on loopback and trusts only the Envoy edge client
+CA. Certificate issuance and identity authorization remain deployment policy;
+this module does not fabricate a JWT issuer, JWKS, user directory, or role model.
 
 The default gRPC health service publishes both the overall server and
 `mpmc.runtime.v1.PtFlashService`. Graceful shutdown marks both non-serving before

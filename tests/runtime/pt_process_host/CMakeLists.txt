@@ -62,6 +62,7 @@ foreach(case IN ITEMS
         composition_root
         repository_snapshot_bundle
         observer
+        desktop_host
         headers)
     add_test(NAME runtime.pt_process.${case}
              COMMAND mpmc_pt_process_tests ${case})
