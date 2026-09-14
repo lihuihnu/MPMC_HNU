@@ -26,7 +26,7 @@ public final class MpmcPtPlugin extends Plugin {
     public void discover(PluginCall call) {
         NATIVE_EXECUTOR.execute(() -> {
             String json = NativeBridge.discoverJson();
-            debugDiscovery(json);
+            logDiscoveryEvidence(json);
             resolveJson(call, json);
         });
     }
@@ -59,7 +59,7 @@ public final class MpmcPtPlugin extends Plugin {
                         temperatureK,
                         componentIds,
                         moleFractions);
-                debugSolve(configuredBackendId, json);
+                logSolveEvidence(configuredBackendId, json);
                 resolveJson(call, json);
             } catch (JSONException error) {
                 rejectOnUiThread(
@@ -75,10 +75,12 @@ public final class MpmcPtPlugin extends Plugin {
         });
     }
 
-    private static void debugDiscovery(String json) {
-        if (!BuildConfig.DEBUG) {
-            return;
-        }
+    // Product Shell v1 emits bounded operational evidence on all builds. These
+    // markers contain only configured backend identity and phase count; request
+    // state, compositions, thermodynamic parameters, and credentials are never
+    // logged. Avoid depending on generated BuildConfig so the app-local plugin
+    // remains template-neutral across Capacitor Android revisions.
+    private static void logDiscoveryEvidence(String json) {
         try {
             JSONObject payload = new JSONObject(json);
             JSONArray backends = payload.optJSONArray("backends");
@@ -90,10 +92,7 @@ public final class MpmcPtPlugin extends Plugin {
         }
     }
 
-    private static void debugSolve(String configuredBackendId, String json) {
-        if (!BuildConfig.DEBUG) {
-            return;
-        }
+    private static void logSolveEvidence(String configuredBackendId, String json) {
         try {
             JSONObject payload = new JSONObject(json);
             JSONObject response = payload.optJSONObject("response");
