@@ -115,7 +115,8 @@ by the existing implementation.
 
 Three-phase property evaluations are bounded per attempt. Attempt limits remain
 independent for caller-supplied hints and automatic negative-TPD witnesses; the
-mapper does not combine these budgets or reinterpret hints as phase evidence.
+settings mapper does not combine these budgets or reinterpret hints as phase
+evidence.
 
 ## Validation and host safety ceilings
 
@@ -157,15 +158,34 @@ flash-time budget or cancellation facility. The executable model factory checks
 the model component count against this policy, and service admission must retain
 the existing serialized evaluator-workspace contract.
 
-## Scope and verification
+## Per-solve hints and state-dependent validation
 
-The numerical adapter returns explicitly **empty initial/final/three-phase hint
-lists**. Public composition/continuation hint mapping is a later increment;
-current native callers may supply hints independently. In particular, disabling
-automatic initial multistart without providing native starts still fails under
-the existing empty-search rule. Feed support, start storage and generated-start
-checks remain state dependent and execute in the existing solver; preparing
-settings does not certify that every possible P/T/z request is solvable.
+`Pr76SolverConfiguration` deliberately keeps the prepared backend's
+initial/final/three-phase start lists empty. Starts are **not settings**: they
+belong to a particular solve state and must not make the immutable settings
+snapshot depend on a previous P/T/z point.
+
+The executable PR76 model now exposes the separate stdlib-only
+`pt-solve-hints/v1` DTO and `solve(request, hints)` overload documented in
+[the executable model contract](executable_model.md). That per-call adapter copies
+the already prepared native options, injects the supplied starts into the existing
+native fields, and leaves the stored settings/coarse backend unchanged.
+
+Version and host storage ceilings are checked at the public boundary before hint
+storage is copied. Feed support, exact component dimension, composition
+normalization, generated-start capacity, final-two-phase reservation, three-phase
+simplex feasibility, and native attempt budgets remain state dependent and are
+validated by the existing solver against the **current request**. Preparing
+settings therefore never certifies that every possible P/T/z request or hint set
+is solvable. Disabling automatic initial multistart still requires a valid
+per-solve initial start under the existing empty-search rule.
+
+This division is intentional: public settings describe persistent numerical
+policy; public solve hints describe ephemeral initialization. Hints remain search
+initializers only and do not become thermodynamic evidence or bypass equilibrium,
+material-balance or final stability gates.
+
+## Scope and verification
 
 The independent test project `tests/model_configuration/solver_settings` covers
 all 57 fields for missing-value rejection; a separately constructed direct C++
@@ -179,11 +199,17 @@ Z, ln(phi), diagnostic and provenance for single-/three-phase results and root,
 initial stability, final two-phase and final three-phase budget exhaustion.
 They reuse `tests/flash/pr76_three_phase/synthetic_fixture.hpp`; seeded comparisons
 apply identical native hints to both paths. Exact same-platform equality is
-required. This validates mapping, not independent EOS accuracy or a public
-registry/API path.
+required. This validates settings mapping, not independent EOS accuracy.
 
-The focused official-hosted workflow runs the 14 new cases on GCC ASan/UBSan,
-Clang Release and MSVC Release, alongside the previous parameter tests. Commands:
+The separate executable-model suite adds direct-C++ public-hint parity,
+accepted-result continuation parity, unresolved-state clearing, and nested
+state-dependent hint validation against independently assembled native options.
+At commit `6db1ae25`, the official model-configuration workflow passed GCC Debug
++ ASan/UBSan, Clang Release and MSVC Release; GCC reported 17/17 executable-model
+cases and the existing registry remained 17/17.
+
+The focused official-hosted workflow keeps the solver-settings 14-case suite on
+all three compilers alongside parameter/executable/registry coverage. Commands:
 
 ```bash
 cmake -S tests/model_configuration/solver_settings -B build/solver-settings \
@@ -195,7 +221,8 @@ ctest --test-dir build/solver-settings -R '^model[.]solver_settings[.]' --verbos
 No existing EOS/flash formula, tolerance default, v1 wire meaning, configured
 PR/SW/CPA backend or product call site is changed. An additive settings module
 was chosen over exposing native Options types or changing existing defaults.
-Executable model ownership is provided by [the PR76 factory](executable_model.md).
-The optional [bounded registry](registry.md) adds handle/release lifetime.
-Public hints, API/UI, one-sided applicability and full three-platform product
-regressions remain later Gate items.
+Executable model ownership and per-solve hints are provided by
+[the PR76 factory](executable_model.md). The optional [bounded registry](registry.md)
+adds handle/release lifetime. Hint serialization through registry/service/desktop
+transport, API/UI controls, one-sided applicability and full product-facing
+configuration work remain later Gate items; UI stays deferred.
