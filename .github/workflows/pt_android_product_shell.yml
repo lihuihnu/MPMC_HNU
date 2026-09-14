@@ -190,6 +190,6 @@ jobs:
             build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-debug.apk
             build/pt-android-product-shell-evidence/emulator.txt
             build/pt-android-product-shell-evidence/logcat.txt
-            build/pt-android-product-shell-evidence/window.xml
+            build/pt-android-product-shell-evidence/dom.json
           if-no-files-found: warn
           retention-days: 7
