@@ -47,7 +47,10 @@ string(JSON mpmc_file_digest GET "${mpmc_release_identity_json}" authenticode fi
 string(JSON mpmc_timestamp_protocol GET "${mpmc_release_identity_json}" authenticode timestamp_protocol)
 string(JSON mpmc_timestamp_digest GET "${mpmc_release_identity_json}" authenticode timestamp_digest)
 
-set(mpmc_guid_regex "^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$")
+# CMake's regular-expression engine does not support {n} repetition. Keep the
+# GUID grammar explicit so valid fixed Windows identities are portable across
+# the CMake versions used by hosted runners.
+set(mpmc_guid_regex "^[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]$")
 if(NOT mpmc_identity_convention STREQUAL
        "MPMC/PT/windows-desktop-release-identity/v1" OR
    NOT mpmc_product_id STREQUAL "mpmc-pt-desktop" OR
