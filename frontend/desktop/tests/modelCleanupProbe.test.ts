@@ -6,10 +6,12 @@ import { ModelServiceErrorSchema } from '../../src/gen/mpmc/model_configuration/
 import { modelCleanupComplete } from './modelCleanupProbe';
 
 function response(status: Code, code: string, wireContract = MODEL_WIRE_CONTRACT) {
-  return new ConnectError('private remote text', status, undefined, [{
+  const error = new ConnectError('private remote text', status);
+  error.details.push({
     type: ModelServiceErrorSchema.typeName,
     value: toBinary(ModelServiceErrorSchema, create(ModelServiceErrorSchema, { wireContract, code })),
-  }]);
+  });
+  return error;
 }
 it('requires terminal session absence after an admitted registry closes', () => {
   const sequence = [response(Code.FailedPrecondition, 'registry.closed'), response(Code.NotFound, 'session.not_found')];
