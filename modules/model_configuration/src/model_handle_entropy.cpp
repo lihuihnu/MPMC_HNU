@@ -11,6 +11,12 @@
 #include <bcrypt.h>
 #elif defined(__linux__)
 #include <sys/random.h>
+#elif defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_OSX
+#include <Security/SecBase.h>
+#include <Security/SecRandom.h>
+#endif
 #endif
 
 namespace mpmc::model_configuration {
@@ -28,6 +34,12 @@ ModelHandleEntropy system_model_handle_entropy() {
     // interrupted or incomplete. Never downgrade to a predictable fallback.
     const auto received = ::getrandom(bytes.data(), bytes.size(), GRND_NONBLOCK);
     if (received >= 0 && static_cast<std::size_t>(received) == bytes.size()) {
+        return bytes;
+    }
+#elif defined(__APPLE__) && TARGET_OS_OSX
+    ModelHandleEntropy bytes{};
+    // macOS system CSPRNG; return only a successful complete request.
+    if (SecRandomCopyBytes(kSecRandomDefault, bytes.size(), bytes.data()) == errSecSuccess) {
         return bytes;
     }
 #endif

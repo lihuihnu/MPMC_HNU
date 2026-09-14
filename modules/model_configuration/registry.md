@@ -96,11 +96,15 @@ The built-in Linux adapter requests 32 bytes from
 [`getrandom`](https://man7.org/linux/man-pages/man2/getrandom.2.html) with
 `GRND_NONBLOCK`; incomplete/unavailable entropy fails creation. Windows uses
 [`BCryptGenRandom`](https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptgenrandom)
-with the system-preferred RNG. Neither adapter falls back to a counter-only token,
+with the system-preferred RNG. macOS uses
+[`SecRandomCopyBytes`](https://developer.apple.com/documentation/security/secrandomcopybytes(_:_:_:))
+with `kSecRandomDefault`, linked through the SDK's Security.framework, and accepts
+only `errSecSuccess`. No adapter falls back to a counter-only token,
 `std::random_device`, a clock or a user-space seeded PRNG. Other platforms must
 supply a host-owned `ModelHandleEntropySource`; the default fails closed there.
-Native platform entropy support is verified on Linux/Windows only; this does not
-claim Android/macOS product integration. A supplied callback must provide fresh
+The official macOS arm64 job exercises the native source through registry and
+authenticated host-session tests; iOS/Android support is not claimed.
+A supplied callback must provide fresh
 cryptographic entropy, be thread-safe and propagate failure. Deterministic test
 sources are explicitly unsuitable for production and cannot come from a draft.
 
@@ -138,6 +142,10 @@ non-reuse separately from production OS entropy tests. These are ownership and
 adapter tests, not physical validation, RNG certification or a TSan result.
 The focused GitHub-hosted GCC ASan/UBSan, Clang and MSVC jobs instrument/build the
 new library and tests, retaining all earlier model-configuration regressions.
+The service workflow also runs all 17 registry cases on macOS/AppleClang, alongside
+the 31 gRPC, host-session and unchanged v1 cases, using actual OS entropy for
+production-path creation. Injected entropy failures verify rollback without
+claiming to induce a failure inside the OS random service.
 
 The [additive configuration service](../model_configuration_grpc/README.md) now
 provides bounded protobuf/gRPC mapping and create/describe/solve/release tests.

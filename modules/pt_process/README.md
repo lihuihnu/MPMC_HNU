@@ -123,5 +123,5 @@ control-pipe EOF still stops the whole host and now reclaims its models as well.
 See [the session protocol, limits and lifetime contract](../model_configuration_grpc/README.md#authenticated-host-sessions-increment-6).
 The existing listener bounds and v1 routing remain in force. A native mTLS edge
 certificate does not identify a Web user, so new Envoy routes and UI clients remain
-deferred. Linux/Windows have built-in registry entropy; other platforms need a
+deferred. Linux/Windows/macOS have built-in registry entropy; other platforms need a
 secure host-supplied source and the CLI default fails closed for model sessions.

@@ -107,3 +107,45 @@ jobs:
         run: cmake --build build/model-grpc --config Release --parallel 2
       - name: Run real gRPC roundtrips and v1 compatibility
         run: ctest --test-dir build/model-grpc -C Release -R '^model[.]grpc' --verbose --no-tests=error
+
+  macos:
+    name: Model RPC macOS arm64 Release
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+      PROFILE: macos-armv8-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install existing pinned Conan client
+        run: python -m pip install --disable-pip-version-check conan==2.32.0
+      - name: Restore staging-proven macOS dependencies
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ env.CONAN_HOME }}
+          key: pt-product-conan-v1-${{ env.PROFILE }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+          fail-on-cache-miss: true
+      - name: Resolve existing locked dependency graph offline
+        run: >-
+          conan install products/pt --lockfile=products/pt/conan.lock
+          --profile:all=products/pt/conan/profiles/${{ env.PROFILE }}
+          --no-remote --build=never --output-folder=build/conan-generators
+      - name: Configure model RPC and unchanged v1 regressions
+        run: |
+          python tests/model_configuration/grpc/generate_certificates.py build/model-session-certs
+          cmake -S tests/model_configuration/grpc -B build/model-grpc \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMPMC_MODEL_SESSION_CERT_DIR=${{ github.workspace }}/build/model-session-certs \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
+      - name: Build model RPC and unchanged v1 regressions
+        run: cmake --build build/model-grpc --parallel 2
+      - name: Run real gRPC creation, isolation and process disconnect regressions
+        run: ctest --test-dir build/model-grpc -R '^model[.]grpc' --verbose --no-tests=error
+      - name: Configure and build standalone registry regressions
+        run: |
+          cmake -S tests/model_configuration/registry -B build/model-registry -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/model-registry --parallel 2
+      - name: Run registry entropy, isolation and lifetime regressions
+        run: ctest --test-dir build/model-registry -R '^model[.]registry[.]' --verbose --no-tests=error

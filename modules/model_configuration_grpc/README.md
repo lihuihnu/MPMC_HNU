@@ -131,9 +131,9 @@ wire decoder compares results against directly constructed native PR76 models;
 expected results do not reuse production result encoding. Fixtures remain the
 repository's attributed binary and explicitly synthetic structural examples.
 
-The focused official-hosted workflow runs GCC ASan/UBSan, Clang and MSVC. Linux
-reuses existing pinned apt packages; Windows restores the existing locked Conan
-dependency graph without upgrading it. No product packaging or unrelated UI tests
+The focused official-hosted workflow runs GCC ASan/UBSan, Clang, MSVC and macOS
+AppleClang. Linux reuses existing pinned apt packages; Windows and macOS restore
+the existing locked Conan dependency graph without upgrading it. No product packaging or unrelated UI tests
 are selected. Scientific kernels, existing v1 schema/adapter and configured
 backends stay unchanged. TLS/Envoy deployment, cross-language clients, UI, public
 hints, one-sided applicability and full product integration remain later gates.
@@ -194,9 +194,9 @@ closes sessions before gRPC Shutdown/Wait. Native production mTLS identifies the
 connecting certificate; behind Envoy that is the **edge identity**, not a Web user.
 Existing Envoy routes intentionally still expose only PtFlashService v1. Do not
 expose these new routes before an authoritative end-user policy is connected.
-Linux and Windows use the registry's built-in secure entropy sources; other hosts
-must supply a secure source to ModelSessionService (the existing default fails
-closed). No new platform entropy implementation, certificate enrollment/revocation,
+Linux, Windows and macOS use the registry's built-in secure entropy sources;
+other hosts must supply a secure source to ModelSessionService (the existing
+default fails closed). No certificate enrollment/revocation,
 Web identity mapping, frontend session client or UI is claimed.
 
 The hosted suite adds real native-host bearer/mTLS isolation, stream cancellation,
