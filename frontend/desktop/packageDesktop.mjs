@@ -299,7 +299,9 @@ async function main() {
     throw new Error('Electron packager returned an unexpected output set.');
   }
   const packageRoot = packagePaths[0];
-  const packagedDesktopExecutable = releaseIdentity?.releaseExecutable ?? 'MPMC-PT-Desktop-Preview.exe';
+  const packagedDesktopExecutable = releaseIdentity?.releaseExecutable ?? (
+    platform === 'win32' ? `${electronExecutable}.exe` : electronExecutable
+  );
   const packagedHost = await findNamed(packageRoot, executable);
   const packagedDesktop = await findNamed(packageRoot, packagedDesktopExecutable);
   const packagedManifest = await findNamed(packageRoot, basename(desktopManifestPath));
