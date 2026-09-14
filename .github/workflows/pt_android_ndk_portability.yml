@@ -1,0 +1,137 @@
+name: PT Android NDK portability
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/ad/**'
+      - 'modules/thermodynamics/**'
+      - 'modules/flash/**'
+      - 'modules/runtime/**'
+      - 'products/pt_android/**'
+      - '.github/workflows/pt_android_ndk_portability.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'modules/ad/**'
+      - 'modules/thermodynamics/**'
+      - 'modules/flash/**'
+      - 'modules/runtime/**'
+      - 'products/pt_android/**'
+      - '.github/workflows/pt_android_ndk_portability.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pt-android-ndk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boundary:
+    name: Android isolation contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate isolated Android boundary
+        run: >-
+          python -m unittest discover
+          -s products/pt_android/tests
+          -p 'test_*.py' -v
+
+  build:
+    name: Android ${{ matrix.abi }} core portability
+    needs: boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            machine: AArch64
+          - abi: x86_64
+            machine: Advanced Micro Devices X86-64
+    env:
+      NDK_VERSION: 30.0.16248370
+      ANDROID_API: 26
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Ensure exact Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [[ -z "$sdk_root" ]]; then
+            echo 'Android SDK root is unavailable on the hosted runner.' >&2
+            exit 1
+          fi
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            echo "sdkmanager is unavailable: $sdkmanager" >&2
+            exit 1
+          fi
+          ndk_home="$sdk_root/ndk/$NDK_VERSION"
+          if [[ ! -d "$ndk_home" ]]; then
+            yes | "$sdkmanager" --licenses >/dev/null || true
+            "$sdkmanager" --install "ndk;$NDK_VERSION"
+          fi
+          test -f "$ndk_home/build/cmake/android.toolchain.cmake"
+          echo "MPMC_ANDROID_NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
+
+      - name: Configure isolated Android core
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake \
+            -S products/pt_android \
+            -B "build/pt-android-${{ matrix.abi }}" \
+            -DCMAKE_TOOLCHAIN_FILE="$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-26 \
+            -DANDROID_STL=c++_shared \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Android shared core
+        run: >-
+          cmake --build "build/pt-android-${{ matrix.abi }}"
+          --config Release --parallel 2
+
+      - name: Validate ELF architecture and exported ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t libraries < <(
+            find "build/pt-android-${{ matrix.abi }}" \
+              -type f -name 'libmpmc_pt_android_core.so' -print
+          )
+          if [[ ${#libraries[@]} -ne 1 ]]; then
+            printf 'Expected exactly one Android core library, found %s\n' "${#libraries[@]}" >&2
+            exit 1
+          fi
+          library="${libraries[0]}"
+          toolchain="$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$toolchain/llvm-readelf" -h "$library" | tee "build/android-${{ matrix.abi }}-elf.txt"
+          "$toolchain/llvm-readelf" -h "$library" | grep -F "Machine:" | grep -F '${{ matrix.machine }}'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'mpmc_pt_android_core_abi_version'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'mpmc_pt_android_core_convention'
+          cp "$library" "build/libmpmc_pt_android_core-${{ matrix.abi }}.so"
+          echo 'ANDROID_NDK_PT_CORE_PORTABILITY_OK abi=${{ matrix.abi }}'
+
+      - name: Upload Android portability library
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mpmc-pt-android-${{ matrix.abi }}-portability-v1
+          path: |
+            build/libmpmc_pt_android_core-${{ matrix.abi }}.so
+            build/android-${{ matrix.abi }}-elf.txt
+          if-no-files-found: error
+          retention-days: 7
