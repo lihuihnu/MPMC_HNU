@@ -1,0 +1,31 @@
+{
+  "convention": "MPMC/PT/windows-desktop-release-identity/v1",
+  "product_id": "mpmc-pt-desktop",
+  "product_name": "MPMC PT Desktop",
+  "publisher": "MPMC_HNU",
+  "platform": "windows-x86_64",
+  "install_directory": "MPMC PT Desktop",
+  "upgrade_guid": "40656E02-E6EE-59D5-A5A6-73F3C3C452D6",
+  "release": {
+    "channel": "rc",
+    "sequence": 1,
+    "display_version": "0.1.0-rc.1",
+    "msi_product_version": "0.1.0",
+    "product_guid": "68080E81-97BF-5EDE-A618-FE9DE579A101"
+  },
+  "application": {
+    "engineering_executable": "MPMC-PT-Desktop-Preview.exe",
+    "release_executable": "MPMC-PT-Desktop.exe",
+    "electron_bundle_id": "io.github.lihuihnu.mpmc.pt-desktop"
+  },
+  "authenticode": {
+    "file_digest": "SHA256",
+    "timestamp_protocol": "RFC3161",
+    "timestamp_digest": "SHA256",
+    "required_roles": [
+      "desktop-executable",
+      "native-host",
+      "msi"
+    ]
+  }
+}

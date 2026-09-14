@@ -1,0 +1,317 @@
+name: PT Windows desktop release candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pt-windows-desktop-release-candidate
+  cancel-in-progress: false
+
+jobs:
+  release-candidate:
+    name: Windows x64 signed desktop RC
+    runs-on: windows-2022
+    timeout-minutes: 30
+    environment: windows-desktop-release
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+      PROFILE: windows-x86_64-release
+      WINDOWS_AUTHENTICODE_PFX_BASE64: ${{ secrets.WINDOWS_AUTHENTICODE_PFX_BASE64 }}
+      MPMC_WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_AUTHENTICODE_PFX_PASSWORD }}
+      MPMC_WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_AUTHENTICODE_TIMESTAMP_URL }}
+      MPMC_WINDOWS_CODESIGN_EXPECTED_SUBJECT: ${{ secrets.WINDOWS_AUTHENTICODE_EXPECTED_SUBJECT }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Fail closed unless main and production signing inputs are complete
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            throw "Windows desktop RC must run from main; got $env:GITHUB_REF"
+          }
+          $required = @{
+            WINDOWS_AUTHENTICODE_PFX_BASE64 = $env:WINDOWS_AUTHENTICODE_PFX_BASE64
+            WINDOWS_AUTHENTICODE_PFX_PASSWORD = $env:MPMC_WINDOWS_CODESIGN_PFX_PASSWORD
+            WINDOWS_AUTHENTICODE_TIMESTAMP_URL = $env:MPMC_WINDOWS_CODESIGN_TIMESTAMP_URL
+            WINDOWS_AUTHENTICODE_EXPECTED_SUBJECT = $env:MPMC_WINDOWS_CODESIGN_EXPECTED_SUBJECT
+          }
+          $missing = @($required.GetEnumerator() | Where-Object {
+            [string]::IsNullOrWhiteSpace([string] $_.Value)
+          } | ForEach-Object { $_.Key })
+          if ($missing.Count -ne 0) {
+            throw "Protected Windows RC signing inputs are incomplete: $($missing -join ', ')"
+          }
+          $identity = Get-Content 'products/pt/desktop_installer/release-identity.json' -Raw | ConvertFrom-Json
+          if ($identity.convention -ne 'MPMC/PT/windows-desktop-release-identity/v1' -or
+              $identity.release.display_version -ne '0.1.0-rc.1' -or
+              $identity.upgrade_guid -ne '40656E02-E6EE-59D5-A5A6-73F3C3C452D6' -or
+              $identity.release.product_guid -ne '68080E81-97BF-5EDE-A618-FE9DE579A101') {
+            throw 'Fixed Windows desktop RC identity changed unexpectedly'
+          }
+
+      - name: Materialize ephemeral signing PFX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'mpmc-windows-authenticode.pfx'
+          try {
+            $bytes = [Convert]::FromBase64String($env:WINDOWS_AUTHENTICODE_PFX_BASE64)
+          } catch {
+            throw 'WINDOWS_AUTHENTICODE_PFX_BASE64 is not valid base64'
+          }
+          if ($bytes.Length -lt 256) {
+            throw 'Decoded Authenticode PFX is unexpectedly small'
+          }
+          [IO.File]::WriteAllBytes($pfx, $bytes)
+          Add-Content -Path $env:GITHUB_ENV -Value "MPMC_WINDOWS_CODESIGN_PFX_PATH=$pfx"
+
+      - name: Install pinned Conan client
+        run: python -m pip install --disable-pip-version-check conan==2.32.0
+
+      - name: Restore staging-proven Windows dependency cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ env.CONAN_HOME }}
+          key: pt-product-conan-v1-${{ env.PROFILE }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+          fail-on-cache-miss: true
+
+      - name: Resolve locked Windows graph offline
+        run: >-
+          conan install products/pt
+          --lockfile=products/pt/conan.lock
+          --profile:all=products/pt/conan/profiles/${{ env.PROFILE }}
+          --no-remote
+          --build=never
+          --output-folder=build/conan-generators
+          --format=json
+          > build/conan-graph.json
+
+      - name: Validate restore-only dependency evidence
+        run: >-
+          python products/pt/scripts/prepare_conan_metadata.py
+          --graph=build/conan-graph.json
+          --lockfile=products/pt/conan.lock
+          --output=build/conan-metadata
+          --profile-id=${{ env.PROFILE }}
+          --conan-version=2.32.0
+
+      - name: Configure exact Windows PT runtime
+        run: >-
+          cmake
+          -C build/conan-metadata/dependency-metadata.cmake
+          -S products/pt
+          -B build/pt-product
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
+          -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }}
+          -DBUILD_TESTING=ON
+
+      - name: Build and regress Windows PT runtime
+        shell: pwsh
+        run: |
+          cmake --build build/pt-product --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build/pt-product -C Release --output-on-failure --no-tests=error
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --install build/pt-product --config Release --prefix "${{ github.workspace }}/build/pt-product/stage"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build fixed-identity Electron RC payload
+        shell: pwsh
+        run: |
+          npm --prefix frontend ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix frontend test -- --reporter=dot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix frontend run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix frontend run desktop:package -- `
+            --native-stage "${{ github.workspace }}/build/pt-product/stage" `
+            --out "${{ github.workspace }}/build/pt-desktop-rc" `
+            --platform win32 `
+            --arch x64 `
+            --source-revision "${{ github.sha }}" `
+            --release-identity "${{ github.workspace }}/products/pt/desktop_installer/release-identity.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Authenticode-sign and timestamp RC payload
+        shell: pwsh
+        run: >-
+          pwsh -NoProfile -File products/pt/desktop_installer/scripts/sign_release_candidate.ps1
+          -Mode payload
+          -PackageDir "${{ github.workspace }}/build/pt-desktop-rc/MPMC-PT-Desktop-win32-x64"
+          -EvidencePath "${{ github.workspace }}/build/windows-authenticode-evidence.json"
+
+      - name: Configure fixed Windows RC MSI identity
+        run: >-
+          cmake
+          -S products/pt/desktop_installer
+          -B build/pt-desktop-rc-installer
+          -DMPMC_PT_DESKTOP_PACKAGE_DIR=${{ github.workspace }}/build/pt-desktop-rc/MPMC-PT-Desktop-win32-x64
+          -DMPMC_PT_DESKTOP_EXPECTED_REVISION=${{ github.sha }}
+          -DMPMC_PT_DESKTOP_RELEASE_IDENTITY=${{ github.workspace }}/products/pt/desktop_installer/release-identity.json
+          -DMPMC_PT_DESKTOP_RELEASE_CANDIDATE=ON
+
+      - name: Build fixed Windows RC MSI
+        run: >-
+          cpack
+          --config build/pt-desktop-rc-installer/CPackConfig.cmake
+          -B build/pt-desktop-rc-msi
+          --verbose
+
+      - name: Authenticode-sign and timestamp RC MSI
+        shell: pwsh
+        run: >-
+          pwsh -NoProfile -File products/pt/desktop_installer/scripts/sign_release_candidate.ps1
+          -Mode msi
+          -MsiPath "${{ github.workspace }}/build/pt-desktop-rc-msi/mpmc-pt-desktop-0.1.0-rc.1-windows-x86_64.msi"
+          -EvidencePath "${{ github.workspace }}/build/windows-authenticode-evidence.json"
+
+      - name: Write signed RC provenance
+        run: >-
+          python products/pt/desktop_installer/scripts/write_release_candidate_manifest.py
+          --identity products/pt/desktop_installer/release-identity.json
+          --package-dir build/pt-desktop-rc/MPMC-PT-Desktop-win32-x64
+          --artifact build/pt-desktop-rc-msi/mpmc-pt-desktop-0.1.0-rc.1-windows-x86_64.msi
+          --signing-evidence build/windows-authenticode-evidence.json
+          --expected-revision ${{ github.sha }}
+          --workflow-run-id ${{ github.run_id }}
+          --workflow-run-attempt ${{ github.run_attempt }}
+          --output build/pt-desktop-rc-msi/windows-desktop-release-candidate-provenance.json
+
+      - name: Real install, verify signed payload, solve three backends, and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = (Resolve-Path 'build/pt-desktop-rc-msi/mpmc-pt-desktop-0.1.0-rc.1-windows-x86_64.msi').Path
+
+          function Invoke-Msi([string[]] $Arguments) {
+            $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $Arguments -Wait -PassThru
+            if ($process.ExitCode -notin @(0, 3010)) {
+              throw "msiexec failed with exit code $($process.ExitCode): $($Arguments -join ' ')"
+            }
+          }
+
+          Invoke-Msi @('/i', $package, '/qn', '/norestart')
+          $installedExe = Join-Path $env:ProgramFiles 'MPMC PT Desktop\MPMC-PT-Desktop.exe'
+          $installedHost = Join-Path $env:ProgramFiles 'MPMC PT Desktop\resources\desktop-native\bin\mpmc_pt_service_host.exe'
+          foreach ($file in @($installedExe, $installedHost)) {
+            if (-not (Test-Path $file -PathType Leaf)) {
+              throw "Installed signed payload is missing: $file"
+            }
+            $signature = Get-AuthenticodeSignature -FilePath $file
+            if ($signature.Status -ne 'Valid' -or
+                $null -eq $signature.SignerCertificate -or
+                $signature.SignerCertificate.Subject -ne $env:MPMC_WINDOWS_CODESIGN_EXPECTED_SUBJECT -or
+                $null -eq $signature.TimeStamperCertificate) {
+              throw "Installed payload failed Authenticode verification: $file"
+            }
+          }
+
+          $shell = New-Object -ComObject WScript.Shell
+          $shortcut = Get-ChildItem (
+            Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'
+          ) -Recurse -Filter '*.lnk' | Where-Object {
+            $shell.CreateShortcut($_.FullName).TargetPath -eq $installedExe
+          } | Select-Object -First 1
+          if ($null -eq $shortcut) {
+            throw 'Start Menu shortcut does not target the signed RC executable'
+          }
+
+          $plan = Join-Path $env:RUNNER_TEMP 'mpmc-pt-desktop-rc-smoke-plan.json'
+          $result = Join-Path $env:RUNNER_TEMP 'mpmc-pt-desktop-rc-smoke-result.json'
+          @'
+          {
+            "convention": "MPMC/PT/windows-desktop-install-smoke-plan/v1",
+            "expectedBackendCount": 3,
+            "requests": [
+              {
+                "configuredBackendId": "pr76.methane-ethane-propane.literature-r1",
+                "pressurePa": 1000000,
+                "temperatureK": 350,
+                "feed": [
+                  {"componentId": "methane", "moleFraction": 0.8},
+                  {"componentId": "ethane", "moleFraction": 0.1},
+                  {"componentId": "propane", "moleFraction": 0.1}
+                ]
+              },
+              {
+                "configuredBackendId": "sw92.carbon-dioxide-water.freshwater.literature-r1",
+                "pressurePa": 3000000,
+                "temperatureK": 340,
+                "feed": [
+                  {"componentId": "carbon-dioxide", "moleFraction": 0.7},
+                  {"componentId": "water", "moleFraction": 0.3}
+                ]
+              },
+              {
+                "configuredBackendId": "cpa.methanol-water-333.15k.cr1.literature-r1",
+                "pressurePa": 48852,
+                "temperatureK": 333.15,
+                "feed": [
+                  {"componentId": "METHANOL", "moleFraction": 0.5},
+                  {"componentId": "WATER", "moleFraction": 0.5}
+                ]
+              }
+            ]
+          }
+          '@ | Set-Content -Path $plan -Encoding utf8
+
+          $env:MPMC_PT_DESKTOP_INSTALL_SMOKE_PLAN = $plan
+          $env:MPMC_PT_DESKTOP_INSTALL_SMOKE_RESULT = $result
+          $desktop = Start-Process -FilePath $installedExe -ArgumentList '--mpmc-install-smoke' -PassThru
+          if (-not $desktop.WaitForExit(120000)) {
+            Stop-Process -Id $desktop.Id -Force
+            throw 'Signed installed Electron RC smoke timed out'
+          }
+          if ($desktop.ExitCode -ne 0) {
+            throw "Signed installed Electron RC smoke failed with exit code $($desktop.ExitCode)"
+          }
+          $smoke = Get-Content $result -Raw | ConvertFrom-Json
+          if ($smoke.convention -ne 'MPMC/PT/windows-desktop-install-smoke-result/v1' -or
+              $smoke.discoveredBackendCount -ne 3 -or
+              @($smoke.solves).Count -ne 3) {
+            throw 'Signed installed Electron RC did not complete three-backend smoke'
+          }
+
+          Invoke-Msi @('/x', $package, '/qn', '/norestart')
+          if ((Test-Path $installedExe) -or (Test-Path $installedHost)) {
+            throw 'Signed RC payload remains after MSI uninstall'
+          }
+          if (Test-Path $shortcut.FullName) {
+            throw 'Signed RC Start Menu shortcut remains after MSI uninstall'
+          }
+          Write-Host 'WINDOWS_DESKTOP_SIGNED_RC_INSTALL_SOLVE_UNINSTALL_OK'
+
+      - name: Upload signed Windows desktop release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mpmc-pt-windows-x64-signed-release-candidate-0.1.0-rc.1
+          path: |
+            build/pt-desktop-rc-msi/mpmc-pt-desktop-0.1.0-rc.1-windows-x86_64.msi
+            build/pt-desktop-rc-msi/windows-desktop-release-candidate-provenance.json
+            build/windows-authenticode-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove ephemeral signing material
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not [string]::IsNullOrWhiteSpace($env:MPMC_WINDOWS_CODESIGN_PFX_PATH) -and
+              (Test-Path $env:MPMC_WINDOWS_CODESIGN_PFX_PATH)) {
+            Remove-Item $env:MPMC_WINDOWS_CODESIGN_PFX_PATH -Force
+          }
