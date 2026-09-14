@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fromJson, toJson, type JsonObject, type JsonValue } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
+import { MODEL_VALIDATION_DETAIL_VERSION } from '../../src/api/modelValidationDetail';
 import { modelCleanupComplete } from './modelCleanupProbe';
 import { app, session, type BrowserWindow } from 'electron';
 import { MODEL_DESKTOP_CONVENTION, type ModelDesktopReply } from '../../src/api/modelDesktopContract';
@@ -209,6 +210,9 @@ async function run() {
     const invalid = await renderer(typedA, 'invalidSolve');
     requireThat(invalid.code === Code.InvalidArgument && invalid.category === 'invalid_argument' && invalid.source === 'ipc',
       'Native validation error lost its typed renderer status.');
+    requireThat((invalid.validation as JsonObject)?.version === MODEL_VALIDATION_DETAIL_VERSION &&
+      (invalid.validation as JsonObject)?.code === 'request.rejected' && (invalid.validation as JsonObject)?.field === 'request',
+      'Native coarse solve validation location changed.');
     equal((await renderer(typedA, 'solve')).result!, expectedResult);
     const releasedTyped = await renderer(typedA, 'releaseAndRecreate');
     requireThat((releasedTyped.released as JsonObject).reason === 'renderer.stale_reference', 'Released renderer reference was reused.');
@@ -220,6 +224,18 @@ async function run() {
       (recovery.blocked as JsonObject).reason === 'renderer.reconnect_required' &&
       (recovery.stale as JsonObject).reason === 'renderer.stale_reference', 'Renderer mutation recovery/status mapping changed.');
     equal(recovery.result!, expectedResult);
+    requireThat(((recovery.failure as JsonObject).validation as JsonObject)?.code === 'configuration.unsupported_preset' &&
+      ((recovery.failure as JsonObject).validation as JsonObject)?.field === 'preset_id', 'Native preset detail changed.');
+    const fields = await renderer(typedA, 'invalidFieldsAndRecover');
+    for (const [name, code, field] of [['parameter', 'configuration.missing_parameter', fields.expectedField],
+      ['setting', 'configuration.missing_field', 'eos_root.max_iterations']]) {
+      const error = fields[name as string] as JsonObject; const detail = error?.validation as JsonObject;
+      requireThat(error?.code === Code.InvalidArgument && detail?.version === MODEL_VALIDATION_DETAIL_VERSION &&
+        detail?.code === code && detail?.field === field, 'Native field-level detail failed renderer roundtrip.');
+    }
+    equal(fields.result!, expectedResult);
+    console.info('MODEL_VALIDATION_DETAIL_OK v1/v2 coexistence, native parameter/settings/preset fields and recovered full result');
+
     const typedEntryA = { ...observed.at(-1)! }; typedA.destroy(); await gone(typedEntryA);
     equal((await renderer(typedB, 'solve')).result!, expectedResult);
     typedB.destroy(); await gone(typedEntryB);
@@ -227,7 +243,7 @@ async function run() {
     const last = [...observed].reverse().find(entry => !entry.closed)!;
     await ipc.dispose(); await ipc.dispose(); await gone(last);
     requireThat(observed.every(entry => entry.closed), 'An IPC transport survived disposal.');
-    const output = JSON.stringify(replies) + logs.join('\n');
+    const output = JSON.stringify(replies) + JSON.stringify({ invalid, recovery, fields }) + logs.join('\n');
     requireThat(!output.includes(connection.bearerToken), 'Private host credential leaked.');
     for (const entry of observed) {
       requireThat(!output.includes(entry.id) && !output.includes(entry.handle), 'Private native routing data leaked.');

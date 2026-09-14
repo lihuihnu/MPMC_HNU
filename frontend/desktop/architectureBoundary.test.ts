@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 
 import { describe, expect, it, vi } from 'vitest';
-import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CANCEL_CHANNEL, type ModelDesktopBridge } from '../src/api/modelDesktopContract';
+import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CANCEL_CHANNEL, MODEL_DESKTOP_V2_CONVENTION, MODEL_DESKTOP_V2_CHANNEL, MODEL_DESKTOP_V2_CANCEL_CHANNEL, type ModelDesktopBridge } from '../src/api/modelDesktopContract';
 import type { PtDesktopBridge } from '../src/api/desktopBridgeContract';
 
 function source(relativePath: string): string {
@@ -48,7 +48,7 @@ describe('PT desktop architecture boundary', () => {
     expect(preload).toContain("convention: 'MPMC/PT/desktop-bridge/v1'");
     expect([...preload.matchAll(/ipcRenderer\.(?:invoke|send)\(\s*'([^']+)'/gu)].map(match => match[1]))
       .toEqual(['mpmc:pt:discover:v1', 'mpmc:pt:solve:v1', 'mpmc:pt:cancel:v1',
-        MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CANCEL_CHANNEL]);
+        MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CANCEL_CHANNEL, MODEL_DESKTOP_V2_CHANNEL, MODEL_DESKTOP_V2_CANCEL_CHANNEL]);
     const exposed: Record<string, unknown> = {};
     const invoke = vi.fn(async () => null); const send = vi.fn();
     runInNewContext(preload, { require(name: string) {
@@ -56,7 +56,7 @@ describe('PT desktop architecture boundary', () => {
       return { contextBridge: { exposeInMainWorld(key: string, value: unknown) { exposed[key] = value; } },
         ipcRenderer: { invoke, send } };
     } });
-    expect(Object.keys(exposed)).toEqual(['mpmcPtDesktop', 'mpmcModelDesktop']);
+    expect(Object.keys(exposed)).toEqual(['mpmcPtDesktop', 'mpmcModelDesktop', 'mpmcModelDesktopV2']);
     const legacy = exposed.mpmcPtDesktop as PtDesktopBridge;
     expect(Object.keys(legacy)).toEqual(['convention', 'discoverPtCapabilities', 'solvePtFlash', 'cancel']);
     expect(Object.isFrozen(legacy)).toBe(true);
@@ -77,6 +77,21 @@ describe('PT desktop architecture boundary', () => {
       [MODEL_DESKTOP_CHANNEL, { version: MODEL_DESKTOP_CONVENTION, operation: 'release', requestId: 'release', model: 'local' }],
     ]);
     expect(send.mock.calls).toEqual([[MODEL_DESKTOP_CANCEL_CHANNEL, 'cancel']]);
+    invoke.mockClear(); send.mockClear();
+    const v2 = exposed.mpmcModelDesktopV2 as ModelDesktopBridge;
+    expect(Object.isFrozen(v2)).toBe(true); expect(Object.keys(v2)).toEqual(Object.keys(model));
+    expect(v2.convention).toBe(MODEL_DESKTOP_V2_CONVENTION);
+    void v2.connect('open'); void v2.reconnect('again'); void v2.create('c', { presetId: 'explicit-test' });
+    void v2.describe('d', 'local'); void v2.solve('s', 'local', { feed: [1] }); void v2.release('r', 'local'); v2.cancel('x');
+    expect(invoke.mock.calls).toEqual([
+      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'connect', requestId: 'open' }],
+      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'reconnect', requestId: 'again' }],
+      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'create', requestId: 'c', input: { presetId: 'explicit-test' } }],
+      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'describe', requestId: 'd', model: 'local' }],
+      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'solve', requestId: 's', model: 'local', input: { feed: [1] } }],
+      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'release', requestId: 'r', model: 'local' }],
+    ]);
+    expect(send.mock.calls).toEqual([[MODEL_DESKTOP_V2_CANCEL_CHANNEL, 'x']]);
     expect(preload).not.toContain('sendSync');
   });
 

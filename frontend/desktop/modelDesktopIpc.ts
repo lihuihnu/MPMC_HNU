@@ -1,6 +1,6 @@
 import { Code } from '@connectrpc/connect';
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
-import { MODEL_DESKTOP_CANCEL_CHANNEL, MODEL_DESKTOP_CHANNEL } from '../src/api/modelDesktopContract';
+import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_V2_CONVENTION, MODEL_DESKTOP_CANCEL_CHANNEL, MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_V2_CHANNEL, MODEL_DESKTOP_V2_CANCEL_CHANNEL } from '../src/api/modelDesktopContract';
 import type { ModelSessionClient } from '../src/api/modelSessionClient';
 import { ModelDesktopSession, modelDesktopFailure } from './modelDesktopSession';
 
@@ -26,13 +26,17 @@ export function registerModelDesktopIpc(createClient: () => ModelSessionClient, 
     drains.add(work);
     void work.finally(() => drains.delete(work)).catch(() => {});
   }
-  ipcMain.handle(MODEL_DESKTOP_CHANNEL, (event, request: unknown) => {
-    const binding = authorized(event);
-    return binding ? binding.owner.invoke(request)
-      : modelDesktopFailure(Code.PermissionDenied, 'ipc.sender_rejected');
-  });
+  for (const [channel, version] of [[MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CONVENTION],
+    [MODEL_DESKTOP_V2_CHANNEL, MODEL_DESKTOP_V2_CONVENTION]] as const) {
+    ipcMain.handle(channel, (event, request: unknown) => {
+      const binding = authorized(event);
+      return binding ? binding.owner.invoke(request, version)
+        : modelDesktopFailure(Code.PermissionDenied, 'ipc.sender_rejected', version);
+    });
+  }
   const cancel = (event: IpcMainEvent, id: unknown) => authorized(event)?.owner.cancel(id);
   ipcMain.on(MODEL_DESKTOP_CANCEL_CHANNEL, cancel);
+  ipcMain.on(MODEL_DESKTOP_V2_CANCEL_CHANNEL, cancel);
   return {
     attach(contents: WebContents): void {
       if (disposed || contents.isDestroyed() || windows.has(contents)) throw new Error('Model IPC attachment rejected.');
@@ -68,7 +72,9 @@ export function registerModelDesktopIpc(createClient: () => ModelSessionClient, 
       if (!disposed) {
         disposed = true;
         ipcMain.removeHandler(MODEL_DESKTOP_CHANNEL);
+        ipcMain.removeHandler(MODEL_DESKTOP_V2_CHANNEL);
         ipcMain.removeListener(MODEL_DESKTOP_CANCEL_CHANNEL, cancel);
+        ipcMain.removeListener(MODEL_DESKTOP_V2_CANCEL_CHANNEL, cancel);
         for (const binding of windows.values()) binding.detach();
       }
       await Promise.all([...drains]);

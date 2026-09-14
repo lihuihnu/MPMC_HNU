@@ -1,8 +1,8 @@
-import { create } from '@bufbuild/protobuf';
+import { create, toBinary } from '@bufbuild/protobuf';
 import { Code, ConnectError, type CallOptions } from '@connectrpc/connect';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CreateModelResponseSchema, DescribeModelResponseSchema, FullPtResultSchema,
+  CreateModelResponseSchema, DescribeModelResponseSchema, FullPtResultSchema, ModelServiceErrorSchema,
   ModelSessionOpenedSchema, ModelSnapshotSchema, ReleaseModelResponseSchema, SolveModelResponseSchema,
   type CreateModelResponse, type SolveModelResponse,
 } from '../gen/mpmc/model_configuration/v1/model_service_pb';
@@ -212,4 +212,52 @@ describe('shared model session ownership', () => {
     await Promise.all(Array.from({ length: 4 }, () => client.create({})));
     await client.dispose();
   });
+});
+
+function nativeValidation(field = 'parameters.pure[nitrogen].critical_temperature_k', code = 'configuration.invalid_value', status = Code.InvalidArgument) {
+  const error = new ConnectError('private exception and Bearer private-test-token', status);
+  error.details.push({ type: ModelServiceErrorSchema.typeName, value: toBinary(ModelServiceErrorSchema,
+    create(ModelServiceErrorSchema, { wireContract: MODEL_WIRE_CONTRACT, code, field })) });
+  return error;
+}
+it('retains only bounded native validation details and sanitizes current private routing values', async () => {
+  const { client, connections } = setup();
+  try {
+    await client.connect(); const made = await client.create({}); const connection = connections[0]!;
+    connection.models.solveModel.mockRejectedValueOnce(nativeValidation());
+    await expect(client.solve(made.model, { feed: [1] })).rejects.toMatchObject({ code: Code.InvalidArgument,
+      reason: 'rpc.failed', validation: { code: 'configuration.invalid_value', field: 'parameters.pure[nitrogen].critical_temperature_k' } });
+    expect(client.connected).toBe(true);
+    connection.headers.authorization = 'Bearer opaque-credential';
+    for (const secret of ['opaque-credential', connection.id, `${connection.id}-handle-1`]) {
+      connection.models.solveModel.mockRejectedValueOnce(nativeValidation(`parameters.pure[${secret}].critical_temperature_k`));
+      const error = await client.solve(made.model, { feed: [1] }).catch(cause => cause);
+      expect(error.validation.code).toBe('configuration.invalid_value'); expect(error.validation.field).toBeUndefined();
+      expect(JSON.stringify(error)).not.toContain(secret); expect(error.message).not.toContain('private');
+    }
+    connection.models.createModel.mockRejectedValueOnce(nativeValidation('preset_id', 'configuration.unsupported_preset', Code.Unimplemented));
+    await expect(client.create({})).rejects.toMatchObject({ code: Code.Unimplemented, validation: { field: 'preset_id' } });
+    expect(client.connected).toBe(false); // Existing conservative mutation policy remains.
+  } finally { await client.dispose(); }
+});
+it('falls back to status-only for missing, duplicate, unknown-version and oversized wire details', async () => {
+  const { client, connections } = setup();
+  try {
+    await client.connect(); const made = await client.create({}); const connection = connections[0]!;
+    const duplicate = nativeValidation(); duplicate.details.push(duplicate.details[0]!);
+    const future = nativeValidation(); future.details = [{ type: ModelServiceErrorSchema.typeName,
+      value: toBinary(ModelServiceErrorSchema, create(ModelServiceErrorSchema, { wireContract: 'future/v2', code: 'configuration.invalid_value' })) }];
+    const oversized = nativeValidation(); oversized.details = [{ type: ModelServiceErrorSchema.typeName, value: new Uint8Array(4097) }];
+    const aggregate = nativeValidation();
+    aggregate.details.push(...Array.from({ length: 3 }, () => ({ type: 'unrelated.Detail', value: new Uint8Array(3000) })));
+    const malformed = nativeValidation(); malformed.details = [{ type: ModelServiceErrorSchema.typeName, value: new Uint8Array([255]) }];
+    const many = nativeValidation(); many.details = Array.from({ length: 9 }, () => many.details[0]!);
+    for (const error of [new ConnectError('private', Code.InvalidArgument), duplicate, future, oversized, aggregate, malformed, many,
+      nativeValidation('request', 'configuration.unsupported_preset'), nativeValidation('request', 'configuration.invented')]) {
+      connection.models.solveModel.mockRejectedValueOnce(error);
+      const mapped = await client.solve(made.model, { feed: [1] }).catch(cause => cause);
+      expect(mapped.code).toBe(Code.InvalidArgument); expect(mapped.validation).toBeUndefined();
+      expect(mapped.message).toBe('Model client: rpc.failed');
+    }
+  } finally { await client.dispose(); }
 });

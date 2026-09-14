@@ -1,6 +1,7 @@
 import { equals, fromJson, type DescMessage, type JsonValue, type Message } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
-import { MODEL_DESKTOP_CONVENTION } from './modelDesktopContract';
+import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_V2_CONVENTION, type ModelDesktopVersion } from './modelDesktopContract';
+import { readModelValidationDetail, type ModelValidationDetail } from './modelValidationDetail';
 import {
   FullPtResultSchema, ModelSnapshotSchema, SolverSettingsKind,
   PtEosRootSettingsSchema, PtStabilitySettingsSchema, PtTwoPhaseSettingsSchema,
@@ -24,7 +25,7 @@ export type RendererModelErrorCategory = typeof categories[Code];
 export class RendererModelError extends Error {
   readonly category: RendererModelErrorCategory;
   constructor(readonly code: Code, readonly reason: string,
-    readonly source: 'client' | 'ipc' | 'transport' | 'contract' = 'client') {
+    readonly source: 'client' | 'ipc' | 'transport' | 'contract' = 'client', readonly validation?: ModelValidationDetail) {
     super(`Model request: ${reason}`); this.name = 'RendererModelError'; this.category = categories[code];
   }
 }
@@ -49,18 +50,19 @@ const reasons = new Set([
 ]);
 
 /** Treat even a typed preload promise as untrusted data at runtime. */
-export function readModelReply(raw: unknown): JsonValue {
+export function readModelReply(raw: unknown, version: ModelDesktopVersion = MODEL_DESKTOP_CONVENTION): JsonValue {
   try {
     const text = JSON.stringify(raw);
     if (!text || new TextEncoder().encode(text).length > 4 * 1024 * 1024) invalidReply();
   } catch { invalidReply(); }
-  if (!record(raw) || raw.version !== MODEL_DESKTOP_CONVENTION) invalidReply();
+  if (!record(raw) || raw.version !== version) invalidReply();
   if (raw.ok === false && fields(raw, ['version', 'ok', 'error']) && record(raw.error) &&
-      fields(raw.error, ['code', 'reason'])) {
+      (fields(raw.error, ['code', 'reason']) || (version === MODEL_DESKTOP_V2_CONVENTION && fields(raw.error, ['code', 'reason', 'validation'])))) {
     const { code, reason } = raw.error;
     if (typeof code !== 'number' || !Number.isInteger(code) || code < 1 || code > 16 ||
         typeof reason !== 'string' || !reason || reason.length > 128) invalidReply();
-    throw new RendererModelError(code as Code, reasons.has(reason) ? reason : 'ipc.failed', 'ipc');
+    const validation = version === MODEL_DESKTOP_V2_CONVENTION ? readModelValidationDetail(raw.error.validation, code as Code) : undefined;
+    throw new RendererModelError(code as Code, reasons.has(reason) ? reason : 'ipc.failed', 'ipc', validation);
   }
   if (raw.ok !== true || !fields(raw, ['version', 'ok', 'value']) || raw.value === undefined) invalidReply();
   return raw.value as JsonValue;

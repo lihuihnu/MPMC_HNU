@@ -70,3 +70,9 @@ The [typed renderer client](../src/api/rendererModelClient.md) now consumes this
 bridge and preserves complete snapshots/results with explicit error states.
 UI forms, Web routes and Android sessions remain future work. Sources: [Electron security](https://www.electronjs.org/docs/latest/tutorial/security)
 and [WebContents lifecycle](https://www.electronjs.org/docs/latest/api/web-contents).
+
+
+Desktop v2 adds optional versioned validation details while retaining the exact v1
+preload/reply contract. Both fixed channel pairs share one window owner and its
+resource/lifecycle policy. See [validation detail contract](../src/api/modelValidationDetail.md)
+for negotiation, field path semantics and privacy checks.

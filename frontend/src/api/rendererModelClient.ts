@@ -1,11 +1,12 @@
 import { clone, create, equals, toJson, type JsonValue, type JsonObject } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
-import { MODEL_DESKTOP_CONVENTION, type ModelDesktopBridge } from './modelDesktopContract';
+import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_V2_CONVENTION, type ModelDesktopBridge } from './modelDesktopContract';
 import type { ModelCreateInput, ModelSolveInput } from './modelSessionClient';
 import { CreateModelRequestSchema, ModelSnapshotSchema, SolveModelRequestSchema, type ModelSnapshot } from '../gen/mpmc/model_configuration/v1/model_service_pb';
 import { RendererModelError, invalidReply, readModelReply, readModelResult, readModelSnapshot, record, type RendererModelResult } from './rendererModelWire';
 
 export { RendererModelError, type RendererModelErrorCategory, type RendererModelResult } from './rendererModelWire';
+export type { ModelValidationDetail } from './modelValidationDetail';
 export type { ModelCreateInput, ModelSolveInput } from './modelSessionClient';
 declare const brand: unique symbol;
 export interface RendererModelReference { readonly [brand]: true }
@@ -36,7 +37,7 @@ export class RendererModelClient {
   private constructor(private readonly bridge: ModelDesktopBridge) {}
 
   static fromBridge(bridge: ModelDesktopBridge): RendererModelClient {
-    if (bridge.convention !== MODEL_DESKTOP_CONVENTION ||
+    if ((bridge.convention !== MODEL_DESKTOP_CONVENTION && bridge.convention !== MODEL_DESKTOP_V2_CONVENTION) ||
         !['connect', 'reconnect', 'create', 'describe', 'solve', 'release', 'cancel'].every(key =>
           typeof (bridge as unknown as Record<string, unknown>)[key] === 'function')) {
       throw new RendererModelError(Code.DataLoss, 'renderer.unsupported_bridge', 'contract');
@@ -102,7 +103,7 @@ export class RendererModelClient {
     catch { wire = Promise.reject(new RendererModelError(Code.Unavailable, 'renderer.invoke_failed', 'transport')); }
     void wire.then(raw => {
       if (settled || pending.generation !== this.#generation) return;
-      try { resolve(decode(readModelReply(raw))); }
+      try { resolve(decode(readModelReply(raw, this.bridge.convention))); }
       catch (cause) {
         const error = cause instanceof RendererModelError ? cause
           : new RendererModelError(Code.DataLoss, 'renderer.invalid_reply', 'contract');
@@ -195,6 +196,6 @@ export class RendererModelClient {
     this.#models.delete(model); await releasing;
   }
 }
-export function rendererModelClient(bridge = typeof window === 'undefined' ? undefined : window.mpmcModelDesktop): RendererModelClient | null {
+export function rendererModelClient(bridge = typeof window === 'undefined' ? undefined : window.mpmcModelDesktopV2 ?? window.mpmcModelDesktop): RendererModelClient | null {
   return bridge ? RendererModelClient.fromBridge(bridge) : null;
 }

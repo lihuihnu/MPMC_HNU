@@ -33,3 +33,19 @@ contextBridge.exposeInMainWorld('mpmcModelDesktop', Object.freeze({
   release: (requestId, model) => modelInvoke(requestId, 'release', { model }),
   cancel: (requestId) => ipcRenderer.send('mpmc:model:cancel:v1', requestId),
 }));
+
+// Additive v2 carries sanitized validation details; v1 remains byte-shape compatible.
+const modelVersionV2 = 'MPMC/model/desktop-bridge/v2';
+const modelInvokeV2 = (requestId, operation, fields = {}) => ipcRenderer.invoke(
+  'mpmc:model:invoke:v2', { version: modelVersionV2, requestId, operation, ...fields },
+);
+contextBridge.exposeInMainWorld('mpmcModelDesktopV2', Object.freeze({
+  convention: modelVersionV2,
+  connect: (requestId) => modelInvokeV2(requestId, 'connect'),
+  reconnect: (requestId) => modelInvokeV2(requestId, 'reconnect'),
+  create: (requestId, input) => modelInvokeV2(requestId, 'create', { input }),
+  describe: (requestId, model) => modelInvokeV2(requestId, 'describe', { model }),
+  solve: (requestId, model, input) => modelInvokeV2(requestId, 'solve', { model, input }),
+  release: (requestId, model) => modelInvokeV2(requestId, 'release', { model }),
+  cancel: (requestId) => ipcRenderer.send('mpmc:model:cancel:v2', requestId),
+}));

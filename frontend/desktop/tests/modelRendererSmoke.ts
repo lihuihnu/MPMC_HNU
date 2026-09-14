@@ -1,19 +1,22 @@
 // Browser-only test entry: executed inside the same sandboxed renderer as production.
-import { fromJson, toJson, type JsonObject } from '@bufbuild/protobuf';
+import { clone, fromJson, toJson, type JsonObject } from '@bufbuild/protobuf';
 import { rendererModelClient, RendererModelError, type RendererModelReference } from '../../src/api/rendererModelClient';
-import { CreateModelRequestSchema, FullPtResultSchema, ModelSnapshotSchema, SolveModelRequestSchema, type CreateModelRequest, type SolveModelRequest } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
+import { CreateModelRequestSchema, FullPtResultSchema, ModelSnapshotSchema, SolveModelRequestSchema, PtSolverSettingsSchema, SolverSettingsKind, type PtSolverSettings, type CreateModelRequest, type SolveModelRequest } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
+import { MODEL_DESKTOP_V2_CONVENTION } from '../../src/api/modelDesktopContract';
 const client = rendererModelClient();
 let current: RendererModelReference | undefined;
 let definition: CreateModelRequest;
 let state: SolveModelRequest;
+let settings: PtSolverSettings;
 function error(cause: unknown) {
   if (!(cause instanceof RendererModelError)) throw new Error('Untyped renderer model error.');
-  return { code: cause.code, category: cause.category, reason: cause.reason, source: cause.source };
+  return { code: cause.code, category: cause.category, reason: cause.reason, source: cause.source, ...(cause.validation ? { validation: cause.validation } : {}) };
 }
 export async function initialize(createInput: JsonObject, solveInput: JsonObject) {
-  if (!client) throw new Error('Model preload unavailable in renderer.');
+  if (!client || window.mpmcModelDesktopV2?.convention !== MODEL_DESKTOP_V2_CONVENTION) throw new Error('Model v2 preload unavailable in renderer.');
   definition = fromJson(CreateModelRequestSchema, createInput); state = fromJson(SolveModelRequestSchema, solveInput);
   const made = await client.create(definition); current = made.model;
+  settings = clone(PtSolverSettingsSchema, made.snapshot.settings!);
   const described = await client.describe(current);
   const solved = await client.solve(current, state);
   return { snapshot: toJson(ModelSnapshotSchema, made.snapshot), described: toJson(ModelSnapshotSchema, described),
@@ -50,4 +53,23 @@ export async function invalidCreateAndReconnect() {
   try { await client.describe(old); } catch (cause) { stale = error(cause); }
   current = (await client.create(definition)).model;
   return { failure, blocked, stale, ...(await solve()) };
+}
+
+export async function invalidFieldsAndRecover() {
+  if (!client || !current) throw new Error('Renderer model missing.');
+  const bad = clone(CreateModelRequestSchema, definition);
+  if (bad.definition?.parameters.case !== 'pr76') throw new Error('Expected attributed PR76 fixture.');
+  const pure = bad.definition.parameters.value.pure[0]!;
+  const expectedField = `parameters.pure[${pure.componentId}].critical_temperature_k`;
+  pure.criticalTemperatureK = undefined;
+  let parameter;
+  try { await client.create(bad); } catch (cause) { parameter = error(cause); }
+  await client.reconnect(); current = (await client.create(definition)).model;
+  const custom = clone(PtSolverSettingsSchema, settings);
+  custom.kind = SolverSettingsKind.CUSTOM; custom.presetId = ''; custom.eosRoot!.maxIterations = undefined;
+  let setting;
+  try { await client.create({ ...definition, solverSelection: { case: 'settings', value: custom } }); }
+  catch (cause) { setting = error(cause); }
+  await client.reconnect(); current = (await client.create(definition)).model;
+  return { parameter, setting, expectedField, ...(await solve()) };
 }

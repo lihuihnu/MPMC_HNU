@@ -1,5 +1,7 @@
 import type { MessageInitShape } from '@bufbuild/protobuf';
 import { Code, ConnectError, type CallOptions, type Client } from '@connectrpc/connect';
+import { ModelServiceErrorSchema } from '../gen/mpmc/model_configuration/v1/model_service_pb';
+import { MODEL_VALIDATION_DETAIL_VERSION, readModelValidationDetail, type ModelValidationDetail } from './modelValidationDetail';
 import type {
   CreateModelRequestSchema,
   FullPtResult,
@@ -32,13 +34,29 @@ export interface ModelSessionConnection {
 export type ModelSessionConnector = (signal: AbortSignal) => Promise<ModelSessionConnection>;
 
 export class ModelClientError extends Error {
-  constructor(readonly code: Code, readonly reason: string) {
+  constructor(readonly code: Code, readonly reason: string, readonly validation?: ModelValidationDetail) {
     super(`Model client: ${reason}`);
     this.name = 'ModelClientError';
   }
 }
-function failure(code: Code, reason: string): ModelClientError {
-  return new ModelClientError(code, reason);
+function failure(code: Code, reason: string, validation?: ModelValidationDetail): ModelClientError {
+  return new ModelClientError(code, reason, validation);
+}
+function validationDetail(error: ConnectError, privateValues: readonly string[]): ModelValidationDetail | undefined {
+  // Only incoming binary details are accepted here; bound work before decoding metadata.
+  if (error.details.length > 8) return undefined;
+  let bytes = 0;
+  for (const detail of error.details) {
+    if (!('type' in detail) || !(detail.value instanceof Uint8Array)) return undefined;
+    bytes += detail.value.byteLength;
+    if (detail.value.byteLength > 4096 || bytes > 8192) return undefined;
+  }
+  const matching = error.details.filter(detail => 'type' in detail && detail.type === ModelServiceErrorSchema.typeName);
+  if (matching.length !== 1) return undefined;
+  const detail = error.findDetails(ModelServiceErrorSchema)[0];
+  if (!detail || detail.wireContract !== MODEL_WIRE_CONTRACT) return undefined;
+  return readModelValidationDetail({ version: MODEL_VALIDATION_DETAIL_VERSION, code: detail.code,
+    ...(detail.field === undefined ? {} : { field: detail.field }) }, error.code, privateValues);
 }
 function deferred() {
   let resolve!: () => void;
@@ -192,9 +210,15 @@ export class ModelSessionClient {
         if (!epoch.valid || this.#epoch !== epoch) throw failure(Code.Canceled, 'session.changed');
         return result;
       } catch (cause) {
-        const code = cause instanceof ModelClientError ? cause.code : ConnectError.from(cause).code;
+        const error = ConnectError.from(cause);
+        const code = cause instanceof ModelClientError ? cause.code : error.code;
+        // Capture private routing values before mutation failure clears the epoch's model map.
+        const privateValues = [epoch.id ?? '', ...epoch.models.values(), ...headers.values()];
+        const authorization = headers.get('authorization');
+        if (authorization?.startsWith('Bearer ')) privateValues.push(authorization.slice(7));
+        const validation = cause instanceof ModelClientError ? undefined : validationDetail(error, privateValues);
         if (mutation || ambiguous.has(code)) this.#invalidate(epoch);
-        throw failure(code, 'rpc.failed');
+        throw failure(code, 'rpc.failed', validation);
       }
     })();
     epoch.calls.add(pending);

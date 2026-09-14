@@ -3,13 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { fromJson, toJson, type JsonValue } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
 import { ModelClientError, type ModelReference, type ModelSessionClient } from '../src/api/modelSessionClient';
-import { MODEL_DESKTOP_CONVENTION, type ModelDesktopReply, type ModelDesktopRequest } from '../src/api/modelDesktopContract';
+import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_V2_CONVENTION, type ModelDesktopVersion, type ModelDesktopReply, type ModelDesktopRequest } from '../src/api/modelDesktopContract';
 import { CreateModelRequestSchema, FullPtResultSchema, ModelSnapshotSchema, SolveModelRequestSchema } from '../src/gen/mpmc/model_configuration/v1/model_service_pb';
+import { readModelValidationDetail, type ModelValidationDetail } from '../src/api/modelValidationDetail';
 import { validDesktopRequestId } from './desktopIpcPolicy';
 
 type Client = Pick<ModelSessionClient, 'connected' | 'connect' | 'disconnect' | 'dispose' | 'create' | 'describe' | 'solve' | 'release'>;
 function fail(code: Code, reason: string): never { throw new ModelClientError(code, reason); }
-export function modelDesktopFailure(code: Code, reason: string): ModelDesktopReply {
+export function modelDesktopFailure(code: Code, reason: string, version: ModelDesktopVersion = MODEL_DESKTOP_CONVENTION,
+  detail?: ModelValidationDetail): ModelDesktopReply {
+  const validation = readModelValidationDetail(detail, code);
+  if (version === MODEL_DESKTOP_V2_CONVENTION) return { version, ok: false, error: { code, reason, ...(validation ? { validation } : {}) } };
   return { version: MODEL_DESKTOP_CONVENTION, ok: false, error: { code, reason } };
 }
 function record(value: unknown): value is Record<string, unknown> {
@@ -18,7 +22,7 @@ function record(value: unknown): value is Record<string, unknown> {
 function only(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.keys(value).every(key => keys.includes(key));
 }
-function parse(raw: unknown): ModelDesktopRequest {
+function parse(raw: unknown, version: ModelDesktopVersion): ModelDesktopRequest {
   let value: unknown;
   try {
     const json = JSON.stringify(raw);
@@ -31,7 +35,7 @@ function parse(raw: unknown): ModelDesktopRequest {
   }
   if (!record(value) || !only(value, ['version', 'requestId', 'operation', 'model', 'input']) ||
       !validDesktopRequestId(value.requestId)) fail(Code.InvalidArgument, 'ipc.invalid_request');
-  if (value.version !== MODEL_DESKTOP_CONVENTION) fail(Code.InvalidArgument, 'ipc.unsupported_version');
+  if (value.version !== version) fail(Code.InvalidArgument, 'ipc.unsupported_version');
   const op = value.operation;
   if (typeof op !== 'string' || !['connect', 'reconnect', 'create', 'describe', 'solve', 'release'].includes(op)) {
     fail(Code.InvalidArgument, 'ipc.unknown_operation');
@@ -79,12 +83,12 @@ export class ModelDesktopSession {
   cancel(id: unknown): void {
     if (validDesktopRequestId(id) && this.#calls.has(id)) void this.reset();
   }
-  async invoke(raw: unknown): Promise<ModelDesktopReply> {
+  async invoke(raw: unknown, version: ModelDesktopVersion = MODEL_DESKTOP_CONVENTION): Promise<ModelDesktopReply> {
     let id: string | undefined;
     let controller: AbortController | undefined;
     try {
       if (this.#disposed) fail(Code.FailedPrecondition, 'ipc.window_closed');
-      const request = parse(raw);
+      const request = parse(raw, version);
       if (this.#calls.has(request.requestId)) fail(Code.AlreadyExists, 'ipc.duplicate_request');
       if (this.#calls.size >= 4) fail(Code.ResourceExhausted, 'ipc.request_limit');
       // A reconnect cancels other work; it never recreates existing models.
@@ -142,16 +146,16 @@ export class ModelDesktopSession {
         }
       }
       current();
-      const reply = { version: MODEL_DESKTOP_CONVENTION, ok: true as const, value };
+      const reply = { version, ok: true as const, value };
       if (Buffer.byteLength(JSON.stringify(reply), 'utf8') > 4 * 1024 * 1024) {
         void this.reset(); fail(Code.ResourceExhausted, 'ipc.reply_size');
       }
       return reply;
     } catch (cause) {
-      if (cause instanceof ModelClientError) return modelDesktopFailure(cause.code, cause.reason);
+      if (cause instanceof ModelClientError) return modelDesktopFailure(cause.code, cause.reason, version, cause.validation);
       // Includes serialization/entropy failures after an ambiguous Create.
       void this.reset();
-      return modelDesktopFailure(Code.Internal, 'ipc.failed');
+      return modelDesktopFailure(Code.Internal, 'ipc.failed', version);
     } finally {
       if (id !== undefined && this.#calls.get(id) === controller) this.#calls.delete(id);
       if (!this.client.connected) this.#references.clear();

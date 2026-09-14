@@ -1,22 +1,28 @@
 import type { JsonObject, JsonValue } from '@bufbuild/protobuf';
+import type { ModelValidationDetail } from './modelValidationDetail';
 
 /** Additive to the frozen PT bridge. Payloads use canonical Protobuf JSON. */
 export const MODEL_DESKTOP_CONVENTION = 'MPMC/model/desktop-bridge/v1' as const;
+export const MODEL_DESKTOP_V2_CONVENTION = 'MPMC/model/desktop-bridge/v2' as const;
+export const MODEL_DESKTOP_V2_CHANNEL = 'mpmc:model:invoke:v2';
+export const MODEL_DESKTOP_V2_CANCEL_CHANNEL = 'mpmc:model:cancel:v2';
+export type ModelDesktopVersion = typeof MODEL_DESKTOP_CONVENTION | typeof MODEL_DESKTOP_V2_CONVENTION;
 export const MODEL_DESKTOP_CHANNEL = 'mpmc:model:invoke:v1';
 export const MODEL_DESKTOP_CANCEL_CHANNEL = 'mpmc:model:cancel:v1';
 export type ModelDesktopOperation = 'connect' | 'reconnect' | 'create' | 'describe' | 'solve' | 'release';
 export interface ModelDesktopRequest {
-  version: typeof MODEL_DESKTOP_CONVENTION;
+  version: ModelDesktopVersion;
   requestId: string;
   operation: ModelDesktopOperation;
   model?: string;
   input?: JsonObject;
 }
 export type ModelDesktopReply =
-  | { version: typeof MODEL_DESKTOP_CONVENTION; ok: true; value: JsonValue }
-  | { version: typeof MODEL_DESKTOP_CONVENTION; ok: false; error: { code: number; reason: string } };
+  | { version: ModelDesktopVersion; ok: true; value: JsonValue }
+  | { version: typeof MODEL_DESKTOP_CONVENTION; ok: false; error: { code: number; reason: string } }
+  | { version: typeof MODEL_DESKTOP_V2_CONVENTION; ok: false; error: { code: number; reason: string; validation?: ModelValidationDetail } };
 export interface ModelDesktopBridge {
-  readonly convention: typeof MODEL_DESKTOP_CONVENTION;
+  readonly convention: ModelDesktopVersion;
   connect(requestId: string): Promise<ModelDesktopReply>;
   reconnect(requestId: string): Promise<ModelDesktopReply>;
   /** definition + exactly one explicit presetId/settings; no wireContract. */
@@ -29,5 +35,5 @@ export interface ModelDesktopBridge {
   cancel(requestId: string): void;
 }
 declare global {
-  interface Window { mpmcModelDesktop?: ModelDesktopBridge }
+  interface Window { mpmcModelDesktop?: ModelDesktopBridge; mpmcModelDesktopV2?: ModelDesktopBridge }
 }

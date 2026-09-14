@@ -1,7 +1,7 @@
 # Typed renderer model client
 
 `rendererModelClient()` returns the single cached client for this window's
-`mpmcModelDesktop` preload bridge, or null when no bridge exists. The adapter is
+v2 `mpmcModelDesktopV2` preload bridge (v1 `mpmcModelDesktop` when v2 is absent), or null when no bridge exists. The adapter is
 browser-only: it imports no Electron, Node HTTP/2, child-process or host credential
 code. UI forms remain separate. Existing PT v1 clients/results are unchanged.
 
@@ -52,8 +52,9 @@ separate categories; malformed error envelopes/codes become data_loss. Invoke
 rejections become unavailable, local AbortSignal cancellation becomes cancelled,
 and local deadlines become deadline_exceeded. Recognized fixed IPC/client reason
 identifiers are retained; unknown reasons become `ipc.failed`. Exception text is
-never forwarded. Current IPC does not carry field-level native rich-error details;
-this adapter does not manufacture missing business codes or field paths.
+never forwarded. Desktop v2 additionally carries optional versioned `validation` details; v1 remains
+status-only. See [validation errors](modelValidationDetail.md) for safe field paths,
+version compatibility and fallback behavior. Missing field precision is never invented.
 
 Returned model references are frozen opaque objects, not transferable strings.
 A private map retains the main-process local token and an independent snapshot

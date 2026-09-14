@@ -1,8 +1,9 @@
 import { clone, fromJson, toJson, type DescMessage, type JsonObject, type JsonValue } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
 import { expect, it, vi } from 'vitest';
-import { MODEL_DESKTOP_CONVENTION, type ModelDesktopBridge, type ModelDesktopReply } from './modelDesktopContract';
+import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_V2_CONVENTION, type ModelDesktopBridge, type ModelDesktopReply } from './modelDesktopContract';
 import { rendererModelClient, RendererModelError, type RendererModelReference } from './rendererModelClient';
+import { MODEL_VALIDATION_DETAIL_VERSION } from './modelValidationDetail';
 import { readModelReply, readModelResult, readModelSnapshot } from './rendererModelWire';
 import {
   FullPtResultSchema, ModelSnapshotSchema, PtEosRootSettingsSchema, PtStabilitySettingsSchema,
@@ -226,4 +227,34 @@ it('handles pre-aborted calls and local deadlines without listener or reconnect 
     late.resolve(success(null)); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     await client.reconnect(); expect(client.requiresReconnect).toBe(false);
   } finally { vi.useRealTimers(); }
+});
+
+it('prefers v2, preserves immutable validation details and never downgrades failed calls', async () => {
+  const { bridge } = setup();
+  const validation = { version: MODEL_VALIDATION_DETAIL_VERSION, code: 'configuration.invalid_value', field: 'parameters.pure[nitrogen].critical_temperature_k' };
+  const reply: ModelDesktopReply = { version: MODEL_DESKTOP_V2_CONVENTION, ok: false, error: { code: Code.InvalidArgument, reason: 'rpc.failed', validation } };
+  const v2 = { ...bridge, convention: MODEL_DESKTOP_V2_CONVENTION, connect: vi.fn(async () => reply) };
+  vi.stubGlobal('window', { mpmcModelDesktop: bridge, mpmcModelDesktopV2: v2 });
+  try {
+    const client = rendererModelClient()!;
+    expect(client).toBe(rendererModelClient(v2));
+    const error = await client.connect().catch(cause => cause);
+    expect(error).toBeInstanceOf(RendererModelError); expect(error.validation).toEqual(validation);
+    expect(Object.isFrozen(error.validation)).toBe(true); validation.field = 'changed';
+    expect(error.validation.field).toBe('parameters.pure[nitrogen].critical_temperature_k');
+    expect(bridge.connect).not.toHaveBeenCalled(); expect(v2.connect).toHaveBeenCalledTimes(1);
+    vi.stubGlobal('window', { mpmcModelDesktop: bridge });
+    expect(rendererModelClient()).toBe(rendererModelClient(bridge));
+  } finally { vi.unstubAllGlobals(); }
+});
+it('enforces v1/v2 envelopes and safely ignores incompatible optional validation details', () => {
+  const detail = { version: MODEL_VALIDATION_DETAIL_VERSION, code: 'configuration.invalid_value', field: 'eos_root.max_iterations' };
+  const reply = { version: MODEL_DESKTOP_V2_CONVENTION, ok: false, error: { code: Code.InvalidArgument, reason: 'rpc.failed', validation: detail } };
+  expect(() => readModelReply(reply)).toThrow('renderer.invalid_reply');
+  expect(() => readModelReply({ ...reply, version: MODEL_DESKTOP_CONVENTION })).toThrow('renderer.invalid_reply');
+  expect(() => readModelReply(failed(Code.InvalidArgument), MODEL_DESKTOP_V2_CONVENTION)).toThrow('renderer.invalid_reply');
+  for (const validation of [{ ...detail, version: 'future/v2' }, { ...detail, code: 'rpc.internal_failure' }, { ...detail, message: 'private' }, null]) {
+    try { readModelReply({ ...reply, error: { ...reply.error, validation } }, MODEL_DESKTOP_V2_CONVENTION); throw new Error('Expected error'); }
+    catch (error) { expect(error).toMatchObject({ code: Code.InvalidArgument, reason: 'rpc.failed', validation: undefined }); }
+  }
 });

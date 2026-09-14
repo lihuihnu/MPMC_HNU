@@ -22,6 +22,7 @@ on:
       - 'frontend/src/api/modelSessionClient*'
       - 'frontend/src/api/modelDesktopContract.ts'
       - 'frontend/src/api/rendererModel*'
+      - 'frontend/src/api/modelValidationDetail*'
       - 'frontend/buf.model.gen.yaml'
       - 'buf.model.yaml'
       - 'frontend/src/api/ptWire.ts'

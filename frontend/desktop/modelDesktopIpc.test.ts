@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { Code } from '@connectrpc/connect';
 import type { WebContents } from 'electron';
 import { expect, it, vi } from 'vitest';
-import { MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CANCEL_CHANNEL, MODEL_DESKTOP_CONVENTION, type ModelDesktopReply } from '../src/api/modelDesktopContract';
+import { MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CANCEL_CHANNEL, MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_V2_CHANNEL, MODEL_DESKTOP_V2_CANCEL_CHANNEL, MODEL_DESKTOP_V2_CONVENTION, type ModelDesktopReply } from '../src/api/modelDesktopContract';
 import { ModelSessionClient } from '../src/api/modelSessionClient';
 
 const main = vi.hoisted(() => ({
@@ -80,6 +80,8 @@ it('revokes on main-document navigation, renderer loss and destruction; keeps an
     expect(a.listenerCount('render-process-gone')).toBe(0);
   } finally { await ipc.dispose(); await ipc.dispose(); }
   expect(main.handlers.has(MODEL_DESKTOP_CHANNEL)).toBe(false);
+  expect(main.handlers.has(MODEL_DESKTOP_V2_CHANNEL)).toBe(false);
+  expect(main.listeners.has(MODEL_DESKTOP_V2_CANCEL_CHANNEL)).toBe(false);
   expect(main.listeners.has(MODEL_DESKTOP_CANCEL_CHANNEL)).toBe(false);
   expect(clients.every(client => !client.connected)).toBe(true);
 });
@@ -106,6 +108,25 @@ it('rejects malformed calls from a trusted sender without exposing a generic Ele
       version: MODEL_DESKTOP_CONVENTION, operation: 'arbitrary-channel', requestId: 'probe',
     });
     expect(reply).toMatchObject({ error: { code: Code.InvalidArgument, reason: 'ipc.unknown_operation' } });
-    expect([...main.handlers.keys()]).toEqual([MODEL_DESKTOP_CHANNEL]);
+    expect([...main.handlers.keys()]).toEqual([MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_V2_CHANNEL]);
+  } finally { await ipc.dispose(); }
+});
+
+it('applies the same sender and lifecycle authorization to both protocol channels', async () => {
+  const { ipc, clients } = setup(); const a = new Contents(); const rogue = new Contents(); ipc.attach(a.native);
+  try {
+    for (const [channel, version] of [[MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CONVENTION], [MODEL_DESKTOP_V2_CHANNEL, MODEL_DESKTOP_V2_CONVENTION]]) {
+      const invoke = main.handlers.get(channel!)!;
+      const request = { version, operation: 'connect', requestId: 'x' };
+      for (const event of [rogue.event(), a.event(null), a.event({ url })]) {
+        expect(await invoke(event, request)).toEqual({ version, ok: false, error: { code: Code.PermissionDenied, reason: 'ipc.sender_rejected' } });
+      }
+    }
+    expect(clients).toHaveLength(1);
+    a.emit('render-process-gone');
+    expect(await main.handlers.get(MODEL_DESKTOP_V2_CHANNEL)!(a.event(), { version: MODEL_DESKTOP_V2_CONVENTION }))
+      .toMatchObject({ error: { code: Code.PermissionDenied } });
+    main.listeners.get(MODEL_DESKTOP_V2_CANCEL_CHANNEL)!(rogue.event(), 'x');
+    expect(clients[0]!.disconnect).toHaveBeenCalledTimes(1);
   } finally { await ipc.dispose(); }
 });

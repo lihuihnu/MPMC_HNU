@@ -1,9 +1,10 @@
 import { create, type JsonObject } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
 import { expect, it, vi } from 'vitest';
-import { MODEL_DESKTOP_CONVENTION, type ModelDesktopOperation, type ModelDesktopReply } from '../src/api/modelDesktopContract';
-import type { ModelReference } from '../src/api/modelSessionClient';
+import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_V2_CONVENTION, type ModelDesktopOperation, type ModelDesktopReply } from '../src/api/modelDesktopContract';
+import { ModelClientError, type ModelReference } from '../src/api/modelSessionClient';
 import { FullPtResultSchema, ModelSnapshotSchema } from '../src/gen/mpmc/model_configuration/v1/model_service_pb';
+import { MODEL_VALIDATION_DETAIL_VERSION } from '../src/api/modelValidationDetail';
 import { ModelDesktopSession } from './modelDesktopSession';
 
 function deferred<T>() {
@@ -158,4 +159,44 @@ it('closes the window session when a full reply exceeds its boundary', async () 
     .toMatchObject({ ok: false, error: { reason: 'ipc.reply_size' } });
   expect(client.disconnect).toHaveBeenCalledTimes(1);
   await owner.dispose();
+});
+
+it('shares v1/v2 ownership and emits validation details exclusively on v2', async () => {
+  const { owner, client } = setup(); const model = await make(owner);
+  const validation = { version: MODEL_VALIDATION_DETAIL_VERSION, code: 'configuration.invalid_value', field: 'parameters.pure[nitrogen].critical_temperature_k' };
+  try {
+    const raw = request('solve', 'v1', { model, input: {} });
+    client.solve.mockRejectedValueOnce(new ModelClientError(Code.InvalidArgument, 'rpc.failed', validation));
+    expect(await owner.invoke(raw)).toEqual({ version: MODEL_DESKTOP_CONVENTION, ok: false,
+      error: { code: Code.InvalidArgument, reason: 'rpc.failed' } });
+    client.solve.mockRejectedValueOnce(new ModelClientError(Code.InvalidArgument, 'rpc.failed', validation));
+    expect(await owner.invoke({ ...raw, version: MODEL_DESKTOP_V2_CONVENTION }, MODEL_DESKTOP_V2_CONVENTION))
+      .toEqual({ version: MODEL_DESKTOP_V2_CONVENTION, ok: false, error: { code: Code.InvalidArgument, reason: 'rpc.failed', validation } });
+    expect(await owner.invoke({ ...raw, version: MODEL_DESKTOP_V2_CONVENTION })).toMatchObject({ version: MODEL_DESKTOP_CONVENTION, error: { reason: 'ipc.unsupported_version' } });
+    expect(await owner.invoke(raw, MODEL_DESKTOP_V2_CONVENTION)).toMatchObject({ version: MODEL_DESKTOP_V2_CONVENTION, error: { reason: 'ipc.unsupported_version' } });
+    expect(client.connect).toHaveBeenCalledTimes(1);
+    const v2 = { ...request('release', 'release', { model }), version: MODEL_DESKTOP_V2_CONVENTION };
+    expect(await owner.invoke(v2, MODEL_DESKTOP_V2_CONVENTION)).toMatchObject({ ok: true });
+    expect(await owner.invoke(request('describe', 'old', { model }))).toMatchObject({ error: { reason: 'ipc.stale_reference' } });
+  } finally { await owner.dispose(); }
+});
+it('rechecks optional detail shape at main and shares pending admission across versions', async () => {
+  const { owner, client } = setup(); const model = await make(owner);
+  try {
+    client.solve.mockRejectedValueOnce(new ModelClientError(Code.InvalidArgument, 'rpc.failed', {
+      version: MODEL_VALIDATION_DETAIL_VERSION, code: 'configuration.invalid_value', field: 'components[mh1_private]',
+    }));
+    expect(await owner.invoke({ ...request('solve', 'bad', { model, input: {} }), version: MODEL_DESKTOP_V2_CONVENTION }, MODEL_DESKTOP_V2_CONVENTION))
+      .toMatchObject({ error: { validation: { version: MODEL_VALIDATION_DETAIL_VERSION, code: 'configuration.invalid_value' } } });
+    const pending = deferred<Awaited<ReturnType<typeof client.solve>>>(); client.solve.mockImplementation(() => pending.promise);
+    const calls = Array.from({ length: 4 }, (_, i) => {
+      const version = i % 2 ? MODEL_DESKTOP_V2_CONVENTION : MODEL_DESKTOP_CONVENTION;
+      return owner.invoke({ ...request('solve', `held-${i}`, { model, input: {} }), version }, version);
+    });
+    await vi.waitFor(() => expect(client.solve).toHaveBeenCalledTimes(5));
+    expect(await owner.invoke({ ...request('connect', 'fifth'), version: MODEL_DESKTOP_V2_CONVENTION }, MODEL_DESKTOP_V2_CONVENTION))
+      .toMatchObject({ error: { reason: 'ipc.request_limit' } });
+    owner.cancel('held-0'); pending.resolve(create(FullPtResultSchema));
+    for (const reply of await Promise.all(calls)) expect(reply).toMatchObject({ error: { code: Code.Canceled } });
+  } finally { await owner.dispose(); }
 });
