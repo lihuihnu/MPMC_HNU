@@ -1,0 +1,9 @@
+MPMC PT Desktop installer candidate -- NOT FOR PUBLIC DISTRIBUTION
+
+This MSI is unsigned engineering evidence. It installs the Electron desktop
+application together with the exact repository-staged native PT runtime and is
+intended only for controlled installation testing.
+
+A production release remains blocked until the project license, Windows
+Authenticode identity, RFC 3161 timestamp service, final redistribution review,
+desktop per-install identity policy, and update policy are approved.

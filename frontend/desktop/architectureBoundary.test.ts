@@ -55,4 +55,16 @@ describe('PT desktop architecture boundary', () => {
     expect(session).toContain("child.stdin.write(`${token}\\n`)");
     expect(session).not.toContain("bearerToken: process.env");
   });
+
+  it('keeps installed smoke generic and unreachable from the renderer API', () => {
+    const smoke = source('desktop/installSmoke.ts').toLowerCase();
+    expect(smoke).not.toMatch(/pr76|sw92|cpa/u);
+    expect(smoke).not.toMatch(/modules\/(flash|thermodynamics)/u);
+    expect(smoke).toContain('globalthis.mpmcptdesktop.solveptflash');
+    expect(smoke).toContain('validateptflashrequest');
+
+    const preload = source('desktop/preload.cjs');
+    expect(preload).not.toContain('install-smoke');
+    expect(preload).not.toContain('INSTALL_SMOKE');
+  });
 });
