@@ -4,6 +4,23 @@ This directory defines the relocatable native PT product staging gate. It is
 not an end-user installer and contains no desktop shell; a downstream Electron
 job consumes its exact staged tree without rebuilding the native product.
 
+## Product documentation
+
+| Path | Scope and authoritative documentation |
+| --- | --- |
+| Native staging | This page: dependency restore, relocatable host and installed mTLS smoke |
+| Web / Electron UI | [Frontend](../../frontend/README.md): shared renderer, desktop bridge and engineering preview |
+| Native host installers | [Installer gate](installer/README.md): DEB / MSI / PKG candidates containing the staged host |
+| Windows desktop installer | [Desktop installer gates](desktop_installer/README.md): full Electron MSI install/uninstall and protected signed RC path |
+| Android | [Product Shell](../pt_android/README.md): shared React UI with Capacitor/JNI and a universal engineering APK |
+
+The host-only installer and Electron desktop installer have different payloads
+and lifecycle contracts. Signing, release identity and RC acceptance are
+maintained in their linked product documents; staging success alone does not
+establish release eligibility.
+
+## Staging overview
+
 Hosted product CI consumes the checked-in Conan lock and one fixed Release
 profile. All packages must already be published: both dependency seeding and
 product staging pass `--build=never`, and staging additionally passes
@@ -120,5 +137,5 @@ the accepted/indeterminate/service-error and deadline/cancel mappings.
 - Test CA private keys are generated only in a temporary test directory and
   are deleted after the smoke test.
 - GitHub artifacts from this gate are unsigned engineering evidence. They are
-  not public releases; project licensing, platform signing, notarization,
-  desktop per-install identity and update policy remain later gates.
+  not public releases. Licensing, signing/notarization, identity and update
+  requirements are tracked by the downstream product gates linked above.
