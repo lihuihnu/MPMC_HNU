@@ -1,0 +1,10 @@
+MPMC_HNU PT Desktop Release Candidate
+
+WINDOWS RELEASE CANDIDATE — NOT A FINAL PUBLIC RELEASE
+
+This payload is built from the fixed repository Windows desktop RC identity.
+The protected RC gate must Authenticode-sign the application executable, the
+embedded native PT host, and the MSI with SHA-256 and an RFC 3161 timestamp.
+The gate fails closed when production signing material or timestamp settings
+are unavailable. Automatic updates and final public-release policy remain
+separate gates.
