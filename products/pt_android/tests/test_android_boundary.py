@@ -152,10 +152,13 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("registerPlugin(MpmcPtPlugin.class)", main_activity)
+        self.assertIn("ApplicationInfo.FLAG_DEBUGGABLE", main_activity)
+        self.assertIn("WebView.setWebContentsDebuggingEnabled(true)", main_activity)
         self.assertIn('@CapacitorPlugin(name = "MpmcPt")', plugin)
         self.assertIn("Executors.newSingleThreadExecutor", plugin)
         self.assertIn("NativeBridge.discoverJson", plugin)
         self.assertIn("NativeBridge.solveJson", plugin)
+        self.assertNotIn("BuildConfig", plugin)
         self.assertIn('System.loadLibrary("mpmc_pt_android_core")', bridge)
         self.assertNotIn("Peng", plugin)
         self.assertNotIn("Soreide", plugin)
@@ -221,8 +224,13 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertIn("assembleDebug", build_script)
         self.assertIn("ANDROID_PRODUCT_SHELL_DISCOVERY_OK backends=3", run_script)
         self.assertIn("ANDROID_PRODUCT_SHELL_SOLVE_OK", run_script)
+        self.assertIn("webview_devtools_remote", run_script)
+        self.assertIn("Runtime.evaluate", run_script)
+        self.assertIn("ANDROID_PRODUCT_SHELL_DOM_OK", run_script)
+        self.assertNotIn("uiautomator", run_script)
         self.assertIn("Model-neutral PT Flash", run_script)
         self.assertIn("ANDROID_PRODUCT_SHELL_V1_OK", run_script)
+        self.assertIn("dom.json", workflow)
 
 
 if __name__ == "__main__":
