@@ -288,10 +288,17 @@ void solve_exception() {
     const fl::PtFlashRequest invalid{0.0, single.temperature_k, single.feed};
     const auto exception = [](auto&& call) {
         try { call(); }
-        catch (const std::exception& e) { return std::pair{std::string(typeid(e).name()), std::string(e.what())}; }
+        catch (const std::domain_error& e) {
+            const auto* located = dynamic_cast<const mc::Pr76SolveRequestError*>(&e);
+            require(located != nullptr && located->field() == "pressure_pa", "lease lost request location/category");
+            return std::pair{std::string(typeid(e).name()), std::string(e.what())};
+        }
         throw std::runtime_error("invalid request did not throw");
     };
-    const auto expected = exception([&] { (void)direct(pr76_max3_test::model(), invalid); });
+    // The registry must preserve the exact exception emitted by its owned model.
+    // Bare-backend standard-category/message parity is checked by executable tests.
+    auto standalone = model_test::create(draft(), preset());
+    const auto expected = exception([&] { (void)standalone->solve(invalid); });
     const auto actual = exception([&] { (void)std::move(lease).solve(invalid); });
     require(actual == expected, "registry changed native solve exception");
     status(registry, 0, 0);

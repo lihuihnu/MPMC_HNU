@@ -171,7 +171,7 @@ void resource_limits() {
             model->solver_configuration().safety_limits() == s, "host limits not retained");
     compare(model->solve(single), direct(pr76_max3_test::model(), single));
 }
-// Preserve native exception type/message for input and declared-domain errors.
+// Preserve native standard exception category/message for input and declared-domain errors.
 template <class F>
 std::pair<std::string, std::string> error(F&& f) {
     try { f(); }
