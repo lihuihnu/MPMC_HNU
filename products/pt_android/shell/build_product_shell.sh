@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-core_library=""
+core_library_x86_64=""
+core_library_arm64_v8a=""
 out_dir=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --core-library)
-      core_library="$2"
+    --core-library-x86_64)
+      core_library_x86_64="$2"
+      shift 2
+      ;;
+    --core-library-arm64-v8a)
+      core_library_arm64_v8a="$2"
       shift 2
       ;;
     --out)
@@ -20,20 +25,27 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$core_library" || -z "$out_dir" ]]; then
-  echo 'Usage: build_product_shell.sh --core-library <so> --out <dir>' >&2
+if [[ -z "$core_library_x86_64" || -z "$core_library_arm64_v8a" || -z "$out_dir" ]]; then
+  echo 'Usage: build_product_shell.sh --core-library-x86_64 <so> --core-library-arm64-v8a <so> --out <dir>' >&2
   exit 2
 fi
 
 shell_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-core_library="$(realpath "$core_library")"
+core_library_x86_64="$(realpath "$core_library_x86_64")"
+core_library_arm64_v8a="$(realpath "$core_library_arm64_v8a")"
 out_dir="$(mkdir -p "$out_dir" && cd "$out_dir" && pwd)"
 android_root="$shell_root/android"
 
-if [[ ! -f "$core_library" ]]; then
-  echo "Android native core is missing: $core_library" >&2
-  exit 1
-fi
+for entry in \
+  "x86_64:$core_library_x86_64" \
+  "arm64-v8a:$core_library_arm64_v8a"; do
+  abi="${entry%%:*}"
+  library="${entry#*:}"
+  if [[ ! -f "$library" ]]; then
+    echo "Android native core is missing for $abi: $library" >&2
+    exit 1
+  fi
+done
 if [[ ! -f "$shell_root/dist/index.html" ]]; then
   echo 'Android React shell dist is missing; build the shell web bundle first.' >&2
   exit 1
@@ -73,9 +85,11 @@ cp "$shell_root/android-src/org/mpmc/ptandroid/MainActivity.java" "$generated_pa
 cp "$shell_root/android-src/org/mpmc/ptandroid/MpmcPtPlugin.java" "$generated_package/MpmcPtPlugin.java"
 cp "$shell_root/android-src/org/mpmc/ptandroid/NativeBridge.java" "$generated_package/NativeBridge.java"
 
-jni_dir="$android_root/app/src/main/jniLibs/x86_64"
-mkdir -p "$jni_dir"
-cp "$core_library" "$jni_dir/libmpmc_pt_android_core.so"
+jni_x86_64_dir="$android_root/app/src/main/jniLibs/x86_64"
+jni_arm64_v8a_dir="$android_root/app/src/main/jniLibs/arm64-v8a"
+mkdir -p "$jni_x86_64_dir" "$jni_arm64_v8a_dir"
+cp "$core_library_x86_64" "$jni_x86_64_dir/libmpmc_pt_android_core.so"
+cp "$core_library_arm64_v8a" "$jni_arm64_v8a_dir/libmpmc_pt_android_core.so"
 
 (
   cd "$android_root"
@@ -87,6 +101,26 @@ if [[ ! -f "$apk" ]]; then
   echo "Capacitor debug APK is missing: $apk" >&2
   exit 1
 fi
-cp "$apk" "$out_dir/mpmc-pt-android-product-shell-v1-debug.apk"
 
-echo "ANDROID_PRODUCT_SHELL_APK_OK path=$out_dir/mpmc-pt-android-product-shell-v1-debug.apk"
+python3 - "$apk" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+apk = Path(sys.argv[1])
+required = {
+    "lib/x86_64/libmpmc_pt_android_core.so",
+    "lib/arm64-v8a/libmpmc_pt_android_core.so",
+}
+with zipfile.ZipFile(apk) as archive:
+    names = set(archive.namelist())
+missing = sorted(required - names)
+if missing:
+    raise SystemExit(f"Universal Product Shell APK is missing native ABI payloads: {missing}")
+print("ANDROID_PRODUCT_SHELL_ABI_OK abis=arm64-v8a,x86_64")
+PY
+
+output_apk="$out_dir/mpmc-pt-android-product-shell-v1-universal-debug.apk"
+cp "$apk" "$output_apk"
+
+echo "ANDROID_PRODUCT_SHELL_APK_OK path=$output_apk"

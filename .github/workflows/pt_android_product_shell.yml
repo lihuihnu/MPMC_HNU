@@ -40,7 +40,7 @@ concurrency:
 
 jobs:
   product-shell:
-    name: Android x86_64 React + Capacitor + JNI product shell
+    name: Android universal React + Capacitor + JNI product shell
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -140,54 +140,71 @@ jobs:
           set -euo pipefail
           cmake \
             -S products/pt_android \
-            -B build/pt-android-product-shell-native \
+            -B build/pt-android-product-shell-native-x86_64 \
             -DCMAKE_TOOLCHAIN_FILE="$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=x86_64 \
             -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \
             -DANDROID_STL=c++_static \
             -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build and audit product JNI core
+      - name: Configure Android arm64-v8a native PT runtime
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build/pt-android-product-shell-native --config Release --parallel 2
-          mapfile -t libraries < <(
-            find build/pt-android-product-shell-native \
-              -type f -name 'libmpmc_pt_android_core.so' -print
-          )
-          if [[ ${#libraries[@]} -ne 1 ]]; then
-            echo "Expected one product JNI core, found ${#libraries[@]}" >&2
-            exit 1
-          fi
-          core="$(realpath "${libraries[0]}")"
-          toolchain="$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          "$toolchain/llvm-readelf" -h "$core" | grep -F 'Advanced Micro Devices X86-64'
-          "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_discoverJson'
-          "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_solveJson'
-          echo "MPMC_ANDROID_CORE_LIBRARY=$core" >> "$GITHUB_ENV"
+          cmake \
+            -S products/pt_android \
+            -B build/pt-android-product-shell-native-arm64-v8a \
+            -DCMAKE_TOOLCHAIN_FILE="$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release
 
-      - name: Generate Capacitor Android project and build debug APK
+      - name: Build and audit universal product JNI cores
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/pt-android-product-shell-native-x86_64 --config Release --parallel 2
+          cmake --build build/pt-android-product-shell-native-arm64-v8a --config Release --parallel 2
+
+          x86_core="$(realpath build/pt-android-product-shell-native-x86_64/libmpmc_pt_android_core.so)"
+          arm64_core="$(realpath build/pt-android-product-shell-native-arm64-v8a/libmpmc_pt_android_core.so)"
+          test -f "$x86_core"
+          test -f "$arm64_core"
+
+          toolchain="$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$toolchain/llvm-readelf" -h "$x86_core" | grep -F 'Advanced Micro Devices X86-64'
+          "$toolchain/llvm-readelf" -h "$arm64_core" | grep -F 'AArch64'
+          for core in "$x86_core" "$arm64_core"; do
+            "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_discoverJson'
+            "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_solveJson'
+          done
+
+          echo "MPMC_ANDROID_CORE_X86_64=$x86_core" >> "$GITHUB_ENV"
+          echo "MPMC_ANDROID_CORE_ARM64_V8A=$arm64_core" >> "$GITHUB_ENV"
+
+      - name: Generate Capacitor Android project and build universal debug APK
         shell: bash
         run: >-
           bash products/pt_android/shell/build_product_shell.sh
-          --core-library "$MPMC_ANDROID_CORE_LIBRARY"
+          --core-library-x86_64 "$MPMC_ANDROID_CORE_X86_64"
+          --core-library-arm64-v8a "$MPMC_ANDROID_CORE_ARM64_V8A"
           --out build/pt-android-product-shell
 
-      - name: Boot emulator and exercise React to JNI PT path
+      - name: Boot x86_64 emulator and exercise universal React to JNI PT path
         shell: bash
         run: >-
           bash products/pt_android/shell/run_product_shell_emulator.sh
-          --apk build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-debug.apk
+          --apk build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-universal-debug.apk
           --out build/pt-android-product-shell-evidence
 
       - name: Upload Android Product Shell evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mpmc-pt-android-product-shell-v1-debug
+          name: mpmc-pt-android-product-shell-v1-universal-debug
           path: |
-            build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-debug.apk
+            build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-universal-debug.apk
             build/pt-android-product-shell-evidence/emulator.txt
             build/pt-android-product-shell-evidence/logcat.txt
             build/pt-android-product-shell-evidence/dom.json
