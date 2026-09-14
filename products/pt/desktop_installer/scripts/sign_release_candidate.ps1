@@ -58,11 +58,7 @@ if ($null -eq $signTool) {
 
 $securePassword = ConvertTo-SecureString $pfxPassword -AsPlainText -Force
 $imported = @(
-    Import-PfxCertificate \
-        -FilePath $pfxPath \
-        -CertStoreLocation 'Cert:\CurrentUser\My' \
-        -Password $securePassword \
-        -Exportable:$false
+    Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $securePassword -Exportable:$false
 )
 
 try {
@@ -123,13 +119,16 @@ try {
 
     $newEntries = @()
     foreach ($target in $targets) {
-        & $signTool.FullName sign \
-            /sha1 $certificate.Thumbprint \
-            /fd SHA256 \
-            /tr $timestampUrl \
-            /td SHA256 \
-            /v \
+        $signArguments = @(
+            'sign',
+            '/sha1', $certificate.Thumbprint,
+            '/fd', 'SHA256',
+            '/tr', $timestampUrl,
+            '/td', 'SHA256',
+            '/v',
             $target.Path
+        )
+        & $signTool.FullName @signArguments
         if ($LASTEXITCODE -ne 0) {
             throw "SignTool failed to sign $($target.Role) with exit code $LASTEXITCODE"
         }
@@ -195,7 +194,7 @@ try {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
     $evidence | ConvertTo-Json -Depth 8 | Set-Content -Path $evidenceFile -Encoding utf8
-    Write-Host "WINDOWS_AUTHENTICODE_${($Mode.ToUpperInvariant())}_OK"
+    Write-Host "WINDOWS_AUTHENTICODE_$($Mode.ToUpperInvariant())_OK"
 } finally {
     foreach ($item in $imported) {
         if ($null -ne $item.Thumbprint) {
