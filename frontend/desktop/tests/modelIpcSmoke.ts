@@ -214,7 +214,9 @@ async function run() {
     requireThat((releasedTyped.released as JsonObject).reason === 'renderer.stale_reference', 'Released renderer reference was reused.');
     equal(releasedTyped.result!, expectedResult);
     const recovery = await renderer(typedA, 'invalidCreateAndReconnect');
-    requireThat((recovery.failure as JsonObject).code === Code.InvalidArgument &&
+    requireThat((recovery.failure as JsonObject).code === Code.Unimplemented &&
+      (recovery.failure as JsonObject).category === 'unimplemented' &&
+      (recovery.failure as JsonObject).source === 'ipc' &&
       (recovery.blocked as JsonObject).reason === 'renderer.reconnect_required' &&
       (recovery.stale as JsonObject).reason === 'renderer.stale_reference', 'Renderer mutation recovery/status mapping changed.');
     equal(recovery.result!, expectedResult);
