@@ -1,9 +1,9 @@
-# PT Android native runtime v2
+# PT Android Product Shell v1
 
-This directory remains an isolated Android product path for the existing C++ PT
-core. It does **not** change the Windows/Linux/macOS products, Electron process,
-gRPC transport, EOS/flash equations, parameter values, solver thresholds, or
-publication rules.
+This directory is an isolated Android product path for the existing C++ PT
+runtime. It does **not** change the Windows/Linux/macOS products, Electron
+process, gRPC transport, EOS/flash equations, parameter values, solver
+thresholds, or publication rules.
 
 ## Native boundary
 
@@ -16,45 +16,76 @@ the existing repository-curated PT snapshot/backend assembly translation units:
 
 Android does **not** link `runtime_grpc` or the process host. A product-private
 `composition_root.hpp` shim mirrors only `OwnedConfiguredPtBackend` and its
-aliasing-owner helper, which are the two canonical translation units' ownership
-requirements. This keeps the scientific parameter source singular while leaving
-the desktop/process composition root untouched.
+aliasing-owner helper. This keeps the scientific parameter source singular while
+leaving the desktop/process composition root untouched.
 
-The original C portability probes remain exported. v2 additionally exports the
-JNI entry point used by the emulator smoke application.
+The native library now exposes three JNI surfaces:
 
-## Emulator acceptance path
+1. the existing repository-curated emulator smoke entry point;
+2. model-neutral capability discovery as versioned JSON; and
+3. model-neutral PT solve as versioned JSON.
 
-The separate `PT Android JNI emulator` gate builds an x86_64 native library and
-a deliberately minimal, offline APK without introducing Gradle/AndroidX/UI
-framework dependencies. The APK contains two Java classes only:
+The product bridge convention is `MPMC/PT/android-product-bridge/v1`. The JNI
+bridge owns no PR76, SW92, or CPA special cases: it constructs the existing
+`PtService`, transports the service contracts, and preserves service-side
+validation and scientific outcomes.
 
-1. `NativeBridge`, which loads `libmpmc_pt_android_core.so` and calls JNI;
-2. `SmokeActivity`, which runs the native smoke off the Android UI thread and
-   reports the result through logcat.
+## Product Shell v1
 
-Inside the Android app process, JNI performs the real runtime sequence:
+`products/pt_android/shell/` wraps the proven JNI runtime with an isolated
+Capacitor shell while reusing the existing React/Vite PT UI directly:
 
-1. load the canonical repository-curated PR76, SW92 Profile-C, and CPA snapshot
-   bundle;
-2. construct the existing `PtService` over the three owned configured backends;
-3. call `discover_capabilities()` and require all three configured backend IDs;
-4. solve the established PR76 methane/ethane/propane state;
-5. solve the established SW92 CO2/water fresh-water state;
-6. solve the established CPA methanol/water 333.15 K state; and
-7. require a structurally valid accepted service result from every solve.
+```text
+existing frontend/src/App + styles
+        ↓
+AndroidFlashClient (FlashClient)
+        ↓
+Capacitor app-local MpmcPt plugin
+        ↓
+JNI discoverJson / solveJson
+        ↓
+libmpmc_pt_android_core.so
+        ↓
+PtService
+        ↓
+PR76 / SW92 / CPA
+```
 
-The hosted-runner gate then boots an Android x86_64 emulator, installs the APK,
-launches the activity, waits for:
+The shell pins Capacitor `8.5.2` and React `19.2.3`. The generated Android Studio
+project is deliberately **not** committed: CI generates it from the pinned
+Capacitor input, sets the native compatibility floor to API 26, overlays the
+small Java plugin, embeds the validated x86_64 native core, and builds a debug
+engineering APK. This keeps generated Gradle/template churn out of the main
+repository.
 
-`ANDROID_JNI_PT_SERVICE_OK backends=3`
+The app-local Java plugin is transport only. It runs native work on one dedicated
+executor thread and contains no EOS equations, parameter data, phase-selection
+logic, retry policy, or publication thresholds. The React client implements the
+same `FlashClient` interface already consumed by `App`.
 
-and finally uninstalls the smoke application.
+## Gates
+
+Three independent Android gates protect the path:
+
+- `PT Android NDK portability`: compile/audit the native runtime for
+  `arm64-v8a` and `x86_64`, including the product JNI exports;
+- `PT Android JNI emulator`: retain the minimal no-UI JNI/PtService
+  discovery/solve regression;
+- `PT Android Product Shell`: build the shared React UI, generate the Capacitor
+  project, build the debug APK, boot an API 35 x86_64 emulator, render the real
+  React UI, and exercise JavaScript -> Capacitor -> JNI -> `PtService` discovery
+  plus one accepted PR76, SW92, and CPA solve.
+
+The Product Shell gate requires the visible UI text `MPMC_HNU` and
+`Model-neutral PT Flash` in the emulator accessibility tree and removes the app
+at the end of the run.
 
 ## Deliberate exclusions
 
-This is still not an Android end-user product. There is no Capacitor/React shell,
-no production Android package identity, no release signing, no persistent data,
-no network transport, and no public JNI solve API. The next product increment
-should wrap this proven in-process JNI path with the Android application shell
-without changing the native scientific boundary.
+Product Shell v1 is an **engineering/debug APK**, not a public Android release.
+It intentionally has no Play/App signing identity, release keystore, AAB/Play
+track, updater, persistent project storage, telemetry, account system, or cloud
+transport. JavaScript cancellation/deadline prevents stale UI publication, but
+v1 does not yet hard-cancel an already-running C++ solve. Those are later,
+separate product/release increments and must not be used to change the scientific
+solver boundary.
