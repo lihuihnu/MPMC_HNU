@@ -100,6 +100,8 @@ void roundtrip() {
     // Existing v1 discovery continues to use its original bearer and wire contract.
     auto old_stub = old::PtFlashService::NewStub(channel);
     grpc::ClientContext old_context; metadata(old_context, "");
+    // Leave room for gRPC timeout encoding/clock rounding below v1's 10-s cap.
+    old_context.set_deadline(std::chrono::system_clock::now() + 5s);
     old::DiscoverPtCapabilitiesRequest discovery;
     old::DiscoverPtCapabilitiesResponse discovered;
     ok(old_stub->DiscoverPtCapabilities(&old_context, discovery, &discovered));
