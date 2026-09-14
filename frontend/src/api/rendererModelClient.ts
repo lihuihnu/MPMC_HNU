@@ -1,4 +1,4 @@
-import { clone, create, equals, toJson, type JsonValue } from '@bufbuild/protobuf';
+import { clone, create, equals, toJson, type JsonValue, type JsonObject } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
 import { MODEL_DESKTOP_CONVENTION, type ModelDesktopBridge } from './modelDesktopContract';
 import type { ModelCreateInput, ModelSolveInput } from './modelSessionClient';
@@ -16,6 +16,12 @@ const instances = new WeakMap<ModelDesktopBridge, RendererModelClient>();
 const sessionErrors = new Set([Code.Canceled, Code.Unknown, Code.DeadlineExceeded, Code.NotFound,
   Code.PermissionDenied, Code.FailedPrecondition, Code.Aborted, Code.Internal, Code.Unavailable,
   Code.DataLoss, Code.Unauthenticated]);
+function inputObject(value: JsonValue): JsonObject {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new RendererModelError(Code.InvalidArgument, 'renderer.invalid_input');
+  }
+  return value;
+}
 const limitMs = 125_000; // Existing main handshake (10 s) + unary (110 s), with transport headroom.
 
 /** Window-scoped adapter; main owns the native lease and reclaims it on window teardown. */
@@ -150,8 +156,8 @@ export class RendererModelClient {
   async create(input: ModelCreateInput, options: RendererModelCallOptions = {}): Promise<{ model: RendererModelReference; snapshot: ModelSnapshot }> {
     this.#ready(); this.#timeout(options);
     if (this.#models.size + this.#reservations >= 4) throw new RendererModelError(Code.ResourceExhausted, 'renderer.model_limit');
-    let json;
-    try { json = toJson(CreateModelRequestSchema, create(CreateModelRequestSchema, input)); delete json.wireContract; }
+    let json: JsonObject;
+    try { json = inputObject(toJson(CreateModelRequestSchema, create(CreateModelRequestSchema, input))); delete json.wireContract; }
     catch { throw new RendererModelError(Code.InvalidArgument, 'renderer.invalid_input'); }
     ++this.#reservations;
     try {
@@ -175,9 +181,9 @@ export class RendererModelClient {
   }
   async solve(model: RendererModelReference, input: ModelSolveInput, options: RendererModelCallOptions = {}): Promise<RendererModelResult> {
     this.#ready(); const owned = this.#owned(model);
-    let state; let json;
+    let state; let json: JsonObject;
     try {
-      state = clone(SolveModelRequestSchema, create(SolveModelRequestSchema, input)); json = toJson(SolveModelRequestSchema, state);
+      state = clone(SolveModelRequestSchema, create(SolveModelRequestSchema, input)); json = inputObject(toJson(SolveModelRequestSchema, state));
       delete json.wireContract; delete json.modelHandle;
     } catch { throw new RendererModelError(Code.InvalidArgument, 'renderer.invalid_input'); }
     return this.#invoke(id => this.bridge.solve(id, owned.token, json), value => readModelResult(value, owned.snapshot, state), options);

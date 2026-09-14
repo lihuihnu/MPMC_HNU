@@ -100,7 +100,7 @@ export interface RendererModelResult {
   /** Complete native message, including diagnostic candidates for non-accepted outcomes. */
   readonly result: FullPtResult;
 }
-export interface EvaluatedModelState { pressurePa?: number; temperatureK?: number; feed: readonly number[] }
+export interface EvaluatedModelState { pressurePa?: number | undefined; temperatureK?: number | undefined; feed: readonly number[] }
 export function readModelResult(value: JsonValue, snapshot: ModelSnapshot, state: EvaluatedModelState): RendererModelResult {
   let result: FullPtResult;
   try { result = fromJson(FullPtResultSchema, value); } catch { invalidReply(); }
