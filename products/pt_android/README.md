@@ -76,9 +76,15 @@ Three independent Android gates protect the path:
   React UI, and exercise JavaScript -> Capacitor -> JNI -> `PtService` discovery
   plus one accepted PR76, SW92, and CPA solve.
 
-The Product Shell gate requires the visible UI text `MPMC_HNU` and
-`Model-neutral PT Flash` in the emulator accessibility tree and removes the app
-at the end of the run.
+Android's native accessibility hierarchy exposes a WebView as one opaque node,
+so it cannot by itself prove which React DOM content rendered. For the debug
+engineering APK only, `MainActivity` enables WebView DevTools when Android marks
+the app debuggable. The Product Shell gate uses an ADB-forwarded local DevTools
+socket and Chrome DevTools Protocol to inspect the live DOM without OCR. It
+requires a populated React root, the CI smoke marker, and the rendered shared UI
+text `MPMC_HNU` plus `Model-neutral PT Flash`, then removes the app at the end of
+the run. This debugging surface is not enabled by this code for non-debuggable
+builds.
 
 ## Deliberate exclusions
 
