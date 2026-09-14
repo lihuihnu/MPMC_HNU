@@ -4,6 +4,10 @@ import { app, session, type BrowserWindow } from 'electron';
 
 import { registerPtDesktopIpc } from './desktopIpc';
 import { PtHostSession } from './hostSession';
+import {
+  installedSmokeRequested,
+  runInstalledDesktopSmoke,
+} from './installSmoke';
 import { PtDesktopGateway } from './ptGateway';
 import { createPtDesktopWindow, restrictPtDesktopSession } from './window';
 
@@ -26,21 +30,51 @@ if (!gotSingleInstanceLock) {
     console.info(`[pt-host] ${line}`);
   });
   const gateway = new PtDesktopGateway(host);
+  const installSmoke = installedSmokeRequested(process.argv);
   let mainWindow: BrowserWindow | null = null;
   let removeIpc: (() => void) | null = null;
   let quitAfterStop = false;
 
-  function createWindow(): void {
+  async function stopAndExit(exitCode: number): Promise<void> {
+    quitAfterStop = true;
+    removeIpc?.();
+    removeIpc = null;
+    if (mainWindow !== null && !mainWindow.isDestroyed()) {
+      mainWindow.destroy();
+    }
+    mainWindow = null;
+    try {
+      await gateway.stop();
+    } finally {
+      app.exit(exitCode);
+    }
+  }
+
+  async function createWindow(): Promise<void> {
     const preload = join(app.getAppPath(), 'preload.cjs');
     mainWindow = createPtDesktopWindow({
       preloadPath: preload,
-      showWhenReady: true,
+      showWhenReady: !installSmoke,
     });
     removeIpc = registerPtDesktopIpc(gateway, () => mainWindow?.webContents ?? null);
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
-    void mainWindow.loadFile(join(app.getAppPath(), 'renderer', 'index.html'));
+    await mainWindow.loadFile(join(app.getAppPath(), 'renderer', 'index.html'));
+
+    if (!installSmoke) {
+      return;
+    }
+
+    const planPath = process.env.MPMC_PT_DESKTOP_INSTALL_SMOKE_PLAN;
+    const resultPath = process.env.MPMC_PT_DESKTOP_INSTALL_SMOKE_RESULT;
+    if (planPath === undefined || resultPath === undefined) {
+      throw new Error(
+        'Installed desktop smoke requires absolute plan and result paths.',
+      );
+    }
+    await runInstalledDesktopSmoke(mainWindow, planPath, resultPath);
+    await stopAndExit(0);
   }
 
   app.on('second-instance', () => {
@@ -64,8 +98,13 @@ if (!gotSingleInstanceLock) {
 
   app.on('window-all-closed', () => app.quit());
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     restrictPtDesktopSession(session.defaultSession);
-    createWindow();
+    try {
+      await createWindow();
+    } catch (cause) {
+      console.error(cause instanceof Error ? cause.stack ?? cause.message : String(cause));
+      await stopAndExit(1);
+    }
   });
 }
