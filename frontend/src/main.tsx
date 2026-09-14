@@ -6,6 +6,7 @@ import {
   createGrpcWebFlashClient,
   unconfiguredFlashClient,
 } from './api/flashClient';
+import { desktopFlashClient } from './api/desktopBridge';
 import './styles.css';
 
 const rootElement = document.getElementById('root');
@@ -14,10 +15,12 @@ if (rootElement === null) {
 }
 
 const configuredBaseUrl = import.meta.env.VITE_MPMC_GRPC_WEB_BASE_URL;
-const flashClient =
+const localDesktopClient = desktopFlashClient();
+const flashClient = localDesktopClient ?? (
   typeof configuredBaseUrl === 'string'
     ? createGrpcWebFlashClient(configuredBaseUrl)
-    : unconfiguredFlashClient;
+    : unconfiguredFlashClient
+);
 
 createRoot(rootElement).render(
   <StrictMode>

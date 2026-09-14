@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <string>
 
 namespace mpmc::runtime_grpc {
 
@@ -27,6 +28,19 @@ struct PtGrpcAdapterLimits {
     [[nodiscard]] bool structurally_valid() const noexcept;
 };
 
+// Optional process-edge authentication applied before PtService dispatch.
+// An empty token leaves authentication to the transport (the production host
+// uses mandatory mTLS). A nonempty token is reserved for the loopback-only
+// desktop child-process session and is never placed in logs or responses.
+struct PtGrpcAuthenticationOptions {
+    std::string bearer_token;
+
+    [[nodiscard]] bool structurally_valid() const noexcept;
+    [[nodiscard]] bool requires_bearer_token() const noexcept {
+        return !bearer_token.empty();
+    }
+};
+
 // Thin process adapter for the versioned wire contract. It validates only wire
 // presence/version and process resource policy, converts the request without
 // normalization, and calls PtService::solve exactly once. It never calls a
@@ -37,7 +51,8 @@ public:
     explicit PtGrpcServiceAdapter(
         ::mpmc::runtime::PtService& service,
         PtGrpcAdapterLimits limits = {},
-        std::shared_ptr<PtGrpcObserver> observer = {});
+        std::shared_ptr<PtGrpcObserver> observer = {},
+        PtGrpcAuthenticationOptions authentication = {});
 
     PtGrpcServiceAdapter(const PtGrpcServiceAdapter&) = delete;
     PtGrpcServiceAdapter& operator=(const PtGrpcServiceAdapter&) = delete;
@@ -48,6 +63,9 @@ public:
 
     [[nodiscard]] std::size_t in_flight_solves() const noexcept {
         return in_flight_solves_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool requires_bearer_token() const noexcept {
+        return authentication_.requires_bearer_token();
     }
 
     grpc::Status DiscoverPtCapabilities(
@@ -68,6 +86,7 @@ private:
     ::mpmc::runtime::PtService& service_;
     PtGrpcAdapterLimits limits_;
     std::shared_ptr<PtGrpcObserver> observer_;
+    PtGrpcAuthenticationOptions authentication_;
     std::atomic<std::size_t> in_flight_solves_{0U};
 };
 

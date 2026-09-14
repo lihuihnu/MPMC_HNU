@@ -1,0 +1,7 @@
+MPMC_HNU PT Desktop Vertical Slice v1
+
+UNSIGNED ENGINEERING PREVIEW — NOT FOR END-USER DISTRIBUTION
+
+This package demonstrates the model-neutral desktop process boundary with the
+repository-curated PR76, SW92, and CPA snapshots. It has no production signing,
+notarization, update, support, or broad physical-validity claim.

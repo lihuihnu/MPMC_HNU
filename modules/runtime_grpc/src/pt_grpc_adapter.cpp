@@ -5,6 +5,7 @@
 #include <mpmc/flash/pt_phase_transition.hpp>
 #include <mpmc/runtime/pt_service_contract.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <exception>
@@ -35,6 +36,49 @@ inline constexpr std::string_view pt_wire_contract =
 
 [[nodiscard]] grpc::Status internal_error() {
     return {grpc::StatusCode::INTERNAL, "PT process adapter internal failure"};
+}
+
+[[nodiscard]] bool valid_bearer_character(unsigned char value) noexcept {
+    return (value >= 'a' && value <= 'z') ||
+           (value >= 'A' && value <= 'Z') ||
+           (value >= '0' && value <= '9') || value == '-' || value == '_';
+}
+
+[[nodiscard]] bool constant_time_equal(std::string_view left,
+                                       std::string_view right) noexcept {
+    if (left.size() != right.size()) { return false; }
+    unsigned char difference = 0U;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        difference = static_cast<unsigned char>(
+            difference | static_cast<unsigned char>(left[index] ^ right[index]));
+    }
+    return difference == 0U;
+}
+
+[[nodiscard]] grpc::Status authorization_status(
+    const grpc::ServerContext& context,
+    const PtGrpcAuthenticationOptions& authentication) {
+    if (!authentication.requires_bearer_token()) { return grpc::Status::OK; }
+
+    const auto range = context.client_metadata().equal_range("authorization");
+    if (range.first == range.second) {
+        return {grpc::StatusCode::UNAUTHENTICATED,
+                "PT desktop session authentication failed"};
+    }
+    auto next = range.first;
+    ++next;
+    if (next != range.second) {
+        return {grpc::StatusCode::UNAUTHENTICATED,
+                "PT desktop session authentication failed"};
+    }
+    const auto& raw = range.first->second;
+    const std::string_view supplied(raw.data(), raw.size());
+    const std::string expected = "Bearer " + authentication.bearer_token;
+    if (!constant_time_equal(supplied, expected)) {
+        return {grpc::StatusCode::UNAUTHENTICATED,
+                "PT desktop session authentication failed"};
+    }
+    return grpc::Status::OK;
 }
 
 [[nodiscard]] std::uint32_t checked_uint32(std::size_t value) {
@@ -373,12 +417,25 @@ bool PtGrpcAdapterLimits::structurally_valid() const noexcept {
            max_solve_deadline.count() > 0;
 }
 
+bool PtGrpcAuthenticationOptions::structurally_valid() const noexcept {
+    if (bearer_token.empty()) { return true; }
+    return bearer_token.size() >= 43U && bearer_token.size() <= 128U &&
+           std::all_of(bearer_token.begin(), bearer_token.end(),
+                       [](unsigned char value) {
+                           return valid_bearer_character(value);
+                       });
+}
+
 PtGrpcServiceAdapter::PtGrpcServiceAdapter(core::PtService& service,
                                            PtGrpcAdapterLimits limits,
-                                           std::shared_ptr<PtGrpcObserver> observer)
-    : service_(service), limits_(limits), observer_(std::move(observer)) {
-    if (!limits_.structurally_valid()) {
-        throw std::invalid_argument("invalid PT gRPC process adapter limits");
+                                           std::shared_ptr<PtGrpcObserver> observer,
+                                           PtGrpcAuthenticationOptions authentication)
+    : service_(service), limits_(limits), observer_(std::move(observer)),
+      authentication_(std::move(authentication)) {
+    if (!limits_.structurally_valid() ||
+        !authentication_.structurally_valid()) {
+        throw std::invalid_argument(
+            "invalid PT gRPC process adapter configuration");
     }
 }
 
@@ -415,7 +472,11 @@ grpc::Status PtGrpcServiceAdapter::DiscoverPtCapabilities(
         return finish(internal_error(), PtGrpcCompletion::internal_failure);
     }
     response->Clear();
-    auto status = lifecycle_status(*context, limits_.max_discovery_deadline);
+    auto status = authorization_status(*context, authentication_);
+    if (!status.ok()) {
+        return finish(status, PtGrpcCompletion::authentication_failure);
+    }
+    status = lifecycle_status(*context, limits_.max_discovery_deadline);
     if (!status.ok()) {
         return finish(status, status.error_code() == grpc::StatusCode::CANCELLED
                                   ? PtGrpcCompletion::cancelled
@@ -525,7 +586,11 @@ grpc::Status PtGrpcServiceAdapter::SolvePtFlash(
         return finish(internal_error(), PtGrpcCompletion::internal_failure);
     }
     response->Clear();
-    auto status = lifecycle_status(*context, limits_.max_solve_deadline);
+    auto status = authorization_status(*context, authentication_);
+    if (!status.ok()) {
+        return finish(status, PtGrpcCompletion::authentication_failure);
+    }
+    status = lifecycle_status(*context, limits_.max_solve_deadline);
     if (!status.ok()) {
         return finish(status, status.error_code() == grpc::StatusCode::CANCELLED
                                   ? PtGrpcCompletion::cancelled

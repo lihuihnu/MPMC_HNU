@@ -31,6 +31,7 @@ namespace {
 
 namespace process = mpmc::pt_process;
 namespace runtime = mpmc::runtime;
+namespace runtime_grpc = mpmc::runtime_grpc;
 namespace wire = mpmc::runtime::v1;
 using namespace std::chrono_literals;
 
@@ -80,11 +81,97 @@ std::unique_ptr<wire::PtFlashService::Stub> make_stub(
 }
 
 grpc::Status discover(wire::PtFlashService::Stub& stub,
-                      wire::DiscoverPtCapabilitiesResponse& response) {
+                      wire::DiscoverPtCapabilitiesResponse& response,
+                      std::string_view bearer_token = {}) {
     grpc::ClientContext context;
     context.set_deadline(std::chrono::system_clock::now() + 5s);
+    if (!bearer_token.empty()) {
+        context.AddMetadata(
+            "authorization", "Bearer " + std::string(bearer_token));
+    }
     wire::DiscoverPtCapabilitiesRequest request;
     return stub.DiscoverPtCapabilities(&context, request, &response);
+}
+
+void desktop_host() {
+    constexpr std::string_view token =
+        "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
+    auto backend = std::make_shared<pt_grpc_test::Backend>();
+    std::vector<process::OwnedConfiguredPtBackend> configured{{
+        "desktop.fixture", backend}};
+    runtime_grpc::PtGrpcAuthenticationOptions authentication;
+    authentication.bearer_token = token;
+    process::PtCompositionRoot root(
+        std::move(configured), {}, {}, {}, std::move(authentication));
+
+    process::PtProcessHostOptions options;
+    options.listen_address = "127.0.0.1:0";
+    options.shutdown_grace = 2s;
+    options.desktop_loopback_session = true;
+    process::PtProcessHost host(root, std::move(options));
+    host.start();
+    require(host.running() && host.selected_port() > 0,
+            "desktop loopback host did not start");
+
+    auto channel = grpc::CreateChannel(
+        "127.0.0.1:" + std::to_string(host.selected_port()),
+        grpc::InsecureChannelCredentials());
+    auto stub = wire::PtFlashService::NewStub(channel);
+    wire::DiscoverPtCapabilitiesResponse rejected_response;
+    const auto rejected = discover(*stub, rejected_response);
+    require(rejected.error_code() == grpc::StatusCode::UNAUTHENTICATED &&
+                rejected_response.backends_size() == 0,
+            "desktop loopback host accepted a missing bearer");
+
+    wire::DiscoverPtCapabilitiesResponse accepted_response;
+    const auto accepted = discover(*stub, accepted_response, token);
+    require(accepted.ok() && accepted_response.backends_size() == 1 &&
+                accepted_response.backends(0).configured_backend_id() ==
+                    "desktop.fixture",
+            "desktop loopback bearer did not reach capability discovery");
+
+    host.shutdown();
+    host.wait();
+    require(!host.running(), "desktop loopback host remained serving");
+
+    process::PtProcessHostOptions non_loopback;
+    non_loopback.listen_address = "0.0.0.0:0";
+    non_loopback.desktop_loopback_session = true;
+    expect_error<std::invalid_argument>([&] {
+        process::PtProcessHost rejected_host(root, std::move(non_loopback));
+        (void)rejected_host;
+    });
+
+    std::vector<process::OwnedConfiguredPtBackend> unauthenticated_backends{{
+        "desktop.unauthenticated", backend}};
+    process::PtCompositionRoot unauthenticated_root(
+        std::move(unauthenticated_backends));
+    process::PtProcessHostOptions unauthenticated_options;
+    unauthenticated_options.listen_address = "127.0.0.1:0";
+    unauthenticated_options.desktop_loopback_session = true;
+    expect_error<std::invalid_argument>([&] {
+        process::PtProcessHost rejected_host(
+            unauthenticated_root, std::move(unauthenticated_options));
+        (void)rejected_host;
+    });
+
+    process::PtProcessHostOptions desktop_with_tls;
+    desktop_with_tls.listen_address = "127.0.0.1:0";
+    desktop_with_tls.desktop_loopback_session = true;
+    desktop_with_tls.tls.certificate_chain_pem = "unexpected";
+    expect_error<std::invalid_argument>([&] {
+        process::PtProcessHost rejected_host(
+            root, std::move(desktop_with_tls));
+        (void)rejected_host;
+    });
+
+    process::PtProcessHostOptions production_with_bearer;
+    production_with_bearer.tls = {"certificate", "private-key", "client-ca"};
+    expect_error<std::invalid_argument>([&] {
+        process::PtProcessHost rejected_host(
+            root, std::move(production_with_bearer));
+        (void)rejected_host;
+    });
 }
 
 void composition_root() {
@@ -469,6 +556,8 @@ int main(int argc, char** argv) {
             require(pt_process_headers(), "public headers failed containment test");
         } else if (test_case == "mtls_host") {
             mtls_host(argc, argv);
+        } else if (test_case == "desktop_host") {
+            desktop_host();
         } else {
             std::cerr << "unknown PT process test case\n";
             return 2;

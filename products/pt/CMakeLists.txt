@@ -5,9 +5,9 @@ include(CTest)
 include(GNUInstallDirs)
 
 if(MSVC)
-    # Install compiler-provided app-local redistributables.  Runtime dependency
-    # discovery below excludes the Windows operating-system directory, which
-    # is not a valid source for redistributable application payloads.
+    # A desktop preview must carry compiler-provided app-local runtimes. Runtime
+    # dependency discovery below excludes the Windows operating-system tree,
+    # which is not a redistributable application payload source.
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${CMAKE_INSTALL_BINDIR}")
     include(InstallRequiredSystemLibraries)
 endif()
@@ -142,10 +142,6 @@ set(mpmc_runtime_dependency_filters
 if(WIN32)
     list(APPEND mpmc_runtime_dependency_filters
         POST_EXCLUDE_REGEXES
-            # Windows dependency names are matched case-insensitively, but the
-            # directory portion of a resolved path can retain runner-specific
-            # casing.  Match the Windows directory segment explicitly so no
-            # operating-system DLL is copied into the staging tree.
             ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*")
 elseif(APPLE)
     list(APPEND mpmc_runtime_dependency_filters
@@ -235,6 +231,7 @@ if(BUILD_TESTING)
     foreach(case IN ITEMS
             mapping_and_outcomes
             wire_and_size_limits
+            bearer_authentication
             concurrency_gate
             deadline_and_cancel
             headers)

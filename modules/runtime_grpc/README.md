@@ -42,11 +42,14 @@ adapter queues no rejected solve and performs no automatic retry.
 Request size is bounded by `ServerBuilder::SetMaxReceiveMessageSize()` before a
 Protobuf message reaches the handler. `ByteSizeLong()` is checked again so direct
 handler use cannot bypass policy. `configure_pt_grpc_server()` also applies the
-response limit and a `grpc::ResourceQuota` memory bound; it intentionally leaves
-address, credentials, TLS, authentication, and process lifetime to the host. The
+response limit and a `grpc::ResourceQuota` memory bound. An optional exact bearer
+check is available only for an explicitly configured local child-process session;
+it runs before lifecycle validation or `PtService`, compares one authorization
+header without logging the token, and reports `UNAUTHENTICATED` separately. It
+intentionally leaves address, TLS credentials, and process lifetime to the host. The
 [`pt_process`](../pt_process/README.md) module supplies the production
-composition root and mandatory-mTLS host without moving those concerns into the
-adapter.
+composition root and mandatory-mTLS host, plus the narrowly constrained desktop
+loopback alternative, without moving model behavior into the adapter.
 
 ## Deadline and cancellation semantics
 
@@ -106,8 +109,9 @@ framing stay at that edge rather than being reimplemented in C++.
 
 Native regressions cover exact discovery/result mapping, service-error and
 scientific-indeterminate separation, request/message limits, concurrency
-admission, required/capped deadlines, explicit cancellation, permit draining,
-and public-header containment. The cross-language golden starts a synthetic C++
+admission, desktop bearer admission, required/capped deadlines, explicit
+cancellation, permit draining, and public-header containment. The cross-language
+golden starts a synthetic C++
 backend behind the real adapter and Envoy, then exercises it with the generated
 TypeScript gRPC-Web client, including CORS preflight. The fixture is explicitly
 model-neutral and contains no EOS or physical reference data; existing backend

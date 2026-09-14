@@ -1,9 +1,11 @@
 # MPMC_HNU model-neutral PT frontend
 
 This React + TypeScript + Vite application consumes the versioned
-[`mpmc.runtime.v1.PtFlashService`](../api/README.md) gRPC-Web contract. It first
-discovers configured PT backends and their exact component inventories, then
-builds the solve form from the selected immutable capability snapshot.
+[`mpmc.runtime.v1.PtFlashService`](../api/README.md) contract. A hosted browser
+uses gRPC-Web; the Electron desktop shell reuses the same React renderer through
+a versioned context-isolated preload bridge and native gRPC. Both first discover
+configured PT backends and their exact component inventories, then build the
+solve form from the selected immutable capability snapshot.
 
 ## Scientific and service boundary
 
@@ -39,10 +41,11 @@ The client sends binary gRPC-Web requests to:
 ```
 
 The endpoint or proxy must provide the required browser CORS response. The
-repository includes an audited [development/CI Envoy edge](../deploy/pt-grpc-web/README.md)
-and a thin [native C++ adapter](../modules/runtime_grpc/README.md), but no
-model-configured production worker or deployed endpoint. If the variable is
-absent, the frontend remains explicitly unconfigured and sends no request.
+repository includes an audited [development/CI Envoy edge](../deploy/pt-grpc-web/README.md),
+a thin [native C++ adapter](../modules/runtime_grpc/README.md), and a
+repository-curated three-backend process host, but no deployed endpoint. If the
+variable is absent outside Electron, the frontend remains explicitly
+unconfigured and sends no request.
 
 Startup discovery must complete before solve is enabled. Switching the configured
 backend switches the inventory; component IDs cannot be added, removed or edited
@@ -67,6 +70,36 @@ and an RPC/service error is never presented as a thermodynamic decision.
 The form allows one in-flight solve. Discovery has a 10-second client deadline,
 solve has a 120-second deadline, both accept cancellation, and neither is retried
 automatically.
+
+## Electron desktop vertical slice v1
+
+Electron embeds the built React files without giving the renderer Node access.
+The sandboxed preload exposes only discovery, solve, and cancel under
+`MPMC/PT/desktop-bridge/v1`. Main-process IPC enforces sender identity, 64 KiB
+request shape, at most four active bridge calls, exact request IDs, deadlines,
+and cancellation. The main process alone starts the staged
+`mpmc_pt_service_host`, connects using native HTTP/2 gRPC, and maps the existing
+Protobuf contract. It contains no EOS, flash, parameter, retry, fallback, or
+scientific acceptance logic.
+
+Each launch creates a 256-bit random bearer, sends it to the child only through
+stdin, and accepts readiness only from an ephemeral `127.0.0.1` port reporting
+exactly three configured backends. Parent shutdown or stdin EOF gracefully stops
+the child. Production mTLS and deployed gRPC-Web remain separate modes; desktop
+does not need Envoy, CORS, a deployment domain, or production certificates for
+its same-device child session.
+
+The hosted product gate loads the actual React page in Electron, waits for its
+three-backend discovery state, and then traverses preload/IPC/native gRPC to ask
+the real repository-curated PR76, SW92, and CPA backends for one solve each. The
+smoke requires a scientific result arm and exact backend provenance but does not
+require `accepted`; it is integration evidence, not a replacement for physical
+regression or a license to reinterpret `indeterminate`.
+
+The resulting Linux x64, Windows x64, and macOS arm64 directories are unsigned
+engineering previews with `release_eligible=false`. They are not one-click public
+installers yet: code signing, notarization, licensing, update policy, and
+publisher identity remain fail-closed release gates.
 
 ## Development
 
