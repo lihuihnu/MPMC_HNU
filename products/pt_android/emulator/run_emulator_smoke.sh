@@ -41,6 +41,8 @@ apk="$(realpath "$apk")"
 out_dir="$(mkdir -p "$out_dir" && cd "$out_dir" && pwd)"
 emulator_log="$out_dir/emulator.txt"
 logcat_file="$out_dir/logcat.txt"
+export ANDROID_AVD_HOME="$out_dir/avd"
+mkdir -p "$ANDROID_AVD_HOME"
 
 for tool in "$adb" "$emulator" "$avdmanager"; do
   if [[ ! -x "$tool" ]]; then
@@ -53,12 +55,18 @@ if [[ ! -f "$apk" ]]; then
   exit 1
 fi
 
-rm -rf "$HOME/.android/avd/$avd_name.avd" "$HOME/.android/avd/$avd_name.ini"
+rm -rf "$ANDROID_AVD_HOME/$avd_name.avd" "$ANDROID_AVD_HOME/$avd_name.ini"
 echo no | "$avdmanager" create avd \
   --force \
   --name "$avd_name" \
   --package "$system_image" \
   --device pixel_2 >/dev/null
+
+if ! "$emulator" -list-avds | grep -Fx "$avd_name" >/dev/null; then
+  echo "Created AVD is not discoverable: $avd_name" >&2
+  find "$ANDROID_AVD_HOME" -maxdepth 2 -print >&2 || true
+  exit 1
+fi
 
 acceleration=(-accel off)
 if [[ -e /dev/kvm ]]; then
@@ -89,6 +97,8 @@ trap cleanup EXIT
 
 show_emulator_diagnostics() {
   echo '--- emulator diagnostics ---' >&2
+  echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >&2
+  "$emulator" -list-avds >&2 || true
   "$adb" devices -l >&2 || true
   tail -n 200 "$emulator_log" >&2 || true
 }
