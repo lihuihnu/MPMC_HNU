@@ -195,8 +195,8 @@ fi
 "$adb" forward --remove tcp:9222 >/dev/null 2>&1 || true
 "$adb" forward tcp:9222 "localabstract:$webview_socket" >/dev/null
 
-node - "$dom_file" <<'NODE'
-const fs = require('node:fs');
+node --input-type=module - "$dom_file" <<'NODE'
+import fs from 'node:fs';
 const output = process.argv[2];
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
