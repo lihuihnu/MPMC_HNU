@@ -1,12 +1,12 @@
-# Public thermodynamic model configuration — parameters and solver settings
+# Public thermodynamic model configuration — executable PR76 models
 
-The first two increments of the **unified model configuration + PR76 Expert
+The first three increments of the **unified model configuration + PR76 Expert
 parameter interface Gate** prepare immutable parameter and numerical-settings
-snapshots. The [versioned solver contract](solver_settings.md) resolves an explicit
-preset and maps complete public settings to the existing PR76 solver options.
-These are separate preparation APIs: no executable model factory, model handle,
-or Web/Electron/Android creation endpoint is implemented yet. Parameter preparation
-does not silently select solver settings.
+snapshots and combine them in an [executable PR76 model](executable_model.md).
+The [versioned solver contract](solver_settings.md) resolves an explicit preset
+and maps complete public settings to the existing PR76 solver options.
+Model handles and Web/Electron/Android creation endpoints remain later work.
+Parameter preparation and executable creation never silently select settings.
 
 ## Current boundary
 
@@ -109,11 +109,14 @@ independent initial/final stability controls, host ceilings and direct-C++ optio
 and solve parity. Its optional `mpmc::pr76_solver_configuration` target imports
 flash; the original parameter target still does not.
 
-Next add a prepared backend factory that owns both snapshots and the full
-evaluator/backend lifetime, then bounded immutable registry/opaque handles and
-release, followed by the
+The executable increment adds `make_pr76_executable_model`: one stable-address
+owner retains both snapshots and an evaluator/backend, rejects overlapping solves
+on that model, and returns the complete native result by value. Independent
+models have independent workspaces. It uses the same optional solver target.
+
+Next add a bounded immutable registry with opaque handles and release, followed by the
 new service mapping, shared Expert UI, Electron/Android integration and final
-regression. The full Gate additionally requires dynamic-vs-direct flash parity,
+regression. The full Gate additionally requires end-to-end dynamic-vs-direct flash parity,
 session lifecycle and all three existing configured-backend product regressions.
 
 SW/CPA custom editing, PR morphology classification, wide-range PR validation,
@@ -130,7 +133,9 @@ Values are explicitly synthetic software fixtures, not physical validation.
 
 The focused GitHub-hosted workflow runs GCC Debug + ASan/UBSan, Clang Release and
 MSVC Release; the GCC job also runs the unchanged thermodynamics contract suite.
-The separate solver test project adds 14 cases, including exhaustive field
+The separate executable test project adds 13 cases for full-envelope parity,
+ownership, parameter/settings A/B isolation, budgets, admission and failures.
+The solver test project adds 14 cases, including exhaustive field
 presence, distinct custom option mapping, preset identity, quotas, immutable
 settings and actual one-/three-phase and exhausted-budget PR76 parity.
 Its commands include:

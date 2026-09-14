@@ -21,6 +21,7 @@ on:
       - 'modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp'
       - 'tests/model_configuration/parameters/**'
       - 'tests/model_configuration/solver_settings/**'
+      - 'tests/model_configuration/executable_model/**'
       - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
       - 'tests/thermodynamics/contracts/**'
       - '.github/workflows/model_configuration.yml'
@@ -90,6 +91,19 @@ jobs:
         run: cmake --build build/solver-settings --config ${{ matrix.config }} --parallel 2
       - name: Run solver settings and PR76 parity
         run: ctest --test-dir build/solver-settings -C ${{ matrix.config }} -R '^model[.]solver_settings[.]' --verbose --no-tests=error
+      - name: Configure executable model and isolation
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/model_configuration/executable_model -B build/executable-model \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_EXECUTABLE_MODEL_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Build executable model and isolation
+        run: cmake --build build/executable-model --config ${{ matrix.config }} --parallel 2
+      - name: Run executable model and isolation
+        run: ctest --test-dir build/executable-model -C ${{ matrix.config }} -R '^model[.]executable[.]' --verbose --no-tests=error
       - name: Verify reused thermodynamics parameter authority
         if: matrix.sanitizers == 'ON'
         run: |
