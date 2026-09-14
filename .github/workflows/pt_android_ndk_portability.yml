@@ -132,13 +132,15 @@ jobs:
           "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'mpmc_pt_android_core_abi_version'
           "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'mpmc_pt_android_core_convention'
           "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_runSmoke'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_discoverJson'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_solveJson'
           cp "$library" "build/libmpmc_pt_android_core-${{ matrix.abi }}.so"
           echo 'ANDROID_NDK_PT_CORE_PORTABILITY_OK abi=${{ matrix.abi }}'
 
       - name: Upload Android portability library
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mpmc-pt-android-${{ matrix.abi }}-native-v2
+          name: mpmc-pt-android-${{ matrix.abi }}-native-v3
           path: |
             build/libmpmc_pt_android_core-${{ matrix.abi }}.so
             build/android-${{ matrix.abi }}-elf.txt

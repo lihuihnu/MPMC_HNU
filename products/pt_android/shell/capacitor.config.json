@@ -1,0 +1,8 @@
+{
+  "appId": "org.mpmc.ptandroid",
+  "appName": "MPMC PT",
+  "webDir": "dist",
+  "android": {
+    "backgroundColor": "#0b0f14"
+  }
+}

@@ -25,6 +25,7 @@ set(mpmc_android_canonical_pt_sources
 add_library(mpmc_pt_android_core SHARED
     src/portability.cpp
     src/jni_smoke.cpp
+    src/jni_product.cpp
     ${mpmc_android_canonical_pt_sources})
 
 target_compile_features(mpmc_pt_android_core PRIVATE cxx_std_20)
