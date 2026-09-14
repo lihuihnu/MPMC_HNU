@@ -143,6 +143,8 @@ jobs:
         run: cmake --build build/model-grpc --parallel 2
       - name: Run real gRPC creation, isolation and process disconnect regressions
         run: ctest --test-dir build/model-grpc -R '^model[.]grpc' --verbose --no-tests=error
+      - name: Repeat the observed cancellation synchronization regression
+        run: ctest --test-dir build/model-grpc -R '^model[.]grpc[.]cancellation_and_admission$' --repeat until-fail:20 --verbose --no-tests=error
       - name: Configure and build standalone registry regressions
         run: |
           cmake -S tests/model_configuration/registry -B build/model-registry -DCMAKE_BUILD_TYPE=Release

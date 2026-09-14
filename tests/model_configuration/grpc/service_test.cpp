@@ -1,8 +1,10 @@
 #include "test_support.hpp"
 
 #include <google/protobuf/unknown_field_set.h>
+#include <atomic>
 #include <iostream>
 #include <limits>
+#include <thread>
 
 // Match the adapter's local Win32/Protobuf reflection macro isolation.
 #if defined(GetMessage)
@@ -249,7 +251,12 @@ void cancellation_and_admission() {
     Gate gate;
     mc::Pr76ModelRegistry registry({}, synthetic, [&] { gate.pause(); return mc::system_model_handle_entropy(); });
     api::ModelGrpcLimits limits; limits.max_concurrent_requests = 1;
-    Server server(registry, limits);
+    std::atomic<const grpc::ServerContext*> admitted_context{nullptr};
+    Server server(registry, limits, [&](const grpc::ServerContext& c) {
+        const grpc::ServerContext* empty = nullptr;
+        admitted_context.compare_exchange_strong(empty, &c);
+        return true;
+    });
     grpc::ClientContext context; deadline(context);
     auto task = std::async(std::launch::async, [&] {
         wire::CreateModelResponse response; return server.stub().CreateModel(&context, request(), &response);
@@ -259,6 +266,16 @@ void cancellation_and_admission() {
     error(create(server, request(), second), SC::RESOURCE_EXHAUSTED, "rpc.concurrency_limit");
     context.TryCancel();
     require(task.get().error_code() == SC::CANCELLED, "client cancellation was lost");
+    // Client return does not acknowledge server-side cancellation. The closed
+    // entropy gate keeps this synchronous handler and its context alive until
+    // the server observes cancellation, so rollback has a deterministic trigger.
+    const auto* pending = admitted_context.load();
+    require(pending != nullptr, "missing admitted server context");
+    const auto end = std::chrono::steady_clock::now() + 5s;
+    while (!pending->IsCancelled()) {
+        require(std::chrono::steady_clock::now() < end, "server did not observe cancellation");
+        std::this_thread::sleep_for(1ms);
+    }
     gate.open(); server.stop(); // Wait for the server's rollback, not merely the client return.
     require(registry.status().resident_models == 0 && server.adapter().in_flight_requests() == 0,
             "cancelled creation leaked capacity/admission");
