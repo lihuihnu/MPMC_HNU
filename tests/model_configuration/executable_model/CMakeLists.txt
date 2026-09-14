@@ -25,7 +25,8 @@ if(MPMC_EXECUTABLE_MODEL_ENABLE_SANITIZERS)
 endif()
 foreach(case IN ITEMS single_phase two_phase ternary_cold_start parameter_isolation
         root_budget settings_isolation lifetime creation_errors resource_limits
-        request_errors request_locations applicability admission parallel_models)
+        request_errors request_locations applicability public_hint_parity
+        continuation_hint_parity hint_validation admission parallel_models)
     add_test(NAME model.executable.${case} COMMAND mpmc_executable_model_tests ${case})
     set_tests_properties(model.executable.${case} PROPERTIES TIMEOUT 300 LABELS "model;executable;parity")
 endforeach()

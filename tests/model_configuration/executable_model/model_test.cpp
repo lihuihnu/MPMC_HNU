@@ -23,8 +23,8 @@ void phase_parity(std::string_view name) {
     if (name != "ternary_cold_start") {
         require(actual.solution.accepted_phase_count() == (two ? 2U : 1U), "expected topology did not close");
     }
-    // No public hints exist yet: cold ternary search must preserve its native
-    // outcome, including indeterminacy, rather than inject the known 3-phase seed.
+    // The coarse interface remains a cold solve even though a separate public
+    // per-solve hint overload now exists.
     std::cout << "accepted phases=" << actual.solution.accepted_phase_count()
               << "; status=" << static_cast<int>(actual.solution.status)
               << "; evidence=" << actual.transition_report.evidence.size()
@@ -256,6 +256,147 @@ void request_locations() {
     }
     require(coarse, "expected native search resource failure");
 }
+
+mc::PtSolveHints structural_hints() {
+    auto hints = mc::make_pt_solve_hints_v1();
+    hints.initial_stability_starts = pr76_max3_test::starts();
+    hints.final_two_phase_stability_starts = pr76_max3_test::starts();
+    mc::PtThreePhaseContinuationHint three;
+    three.compositions = pr76_max3_test::reference_phases();
+    three.phase_fraction_seed = {1.0 / 3.0, 1.0 / 3.0};
+    hints.three_phase_continuation_starts.push_back(std::move(three));
+    return hints;
+}
+
+fl::Pr76PtFlashBackendOptions native_options(const mc::PtSolveHints& hints) {
+    fl::Pr76PtFlashBackendOptions options;
+    options.initial_starts = hints.initial_stability_starts;
+    options.final_starts = hints.final_two_phase_stability_starts;
+    for (const auto& public_hint : hints.three_phase_continuation_starts) {
+        fl::Pr76PtThreePhaseStart native;
+        native.compositions = public_hint.compositions;
+        native.phase_fraction_seed = public_hint.phase_fraction_seed;
+        options.three_phase_starts.push_back(std::move(native));
+    }
+    return options;
+}
+
+void public_hint_parity() {
+    const auto native = pr76_max3_test::model();
+    auto model = create(definition(native), preset());
+    const auto hints = structural_hints();
+    const auto actual = model->solve(ternary, hints);
+    compare(actual, direct(native, ternary, {}, native_options(hints)));
+    require(actual.solution.status == fl::PtPhaseSetStatus::accepted &&
+            actual.solution.accepted_phase_count() == 3U,
+            "public three-phase hints did not preserve the established seeded solve");
+    // The model snapshot and coarse interface remain cold and unmodified.
+    compare(model->solve(ternary), direct(native, ternary));
+
+    auto settings = custom();
+    settings.initial_stability.automatic_multistart = false;
+    settings.initial_stability.max_starts = 1;
+    auto initial_only = create(definition(native), settings);
+    auto start = mc::make_pt_solve_hints_v1();
+    start.initial_stability_starts = {single.feed};
+    auto direct_options = fl::Pr76PtFlashBackendOptions{};
+    direct_options.split.initial_stability.automatic_starts = false;
+    direct_options.split.initial_stability.max_starts = 1;
+    direct_options.initial_starts = start.initial_stability_starts;
+    compare(initial_only->solve(single, start), direct(native, single, {}, direct_options));
+}
+
+void continuation_hint_parity() {
+    const auto native = pr76_max3_test::model();
+    auto model = create(definition(native), preset());
+    const auto first = model->solve(ternary, structural_hints());
+    require(first.solution.accepted_phase_count() == 3U, "continuation source did not close");
+    const auto continuation = mc::make_pr76_continuation_hints(first);
+    require(continuation.initial_stability_starts.size() == 3U &&
+            continuation.final_two_phase_stability_starts.size() == 3U &&
+            continuation.three_phase_continuation_starts.size() == 1U,
+            "accepted three-phase publication did not produce complete continuation hints");
+    const auto next = model->solve(ternary, continuation);
+    compare(next, direct(native, ternary, {}, native_options(continuation)));
+    require(next.solution.accepted_phase_count() == 3U,
+            "fresh continuation solve lost the accepted three-phase topology");
+
+    const auto cold = model->solve(ternary);
+    require(cold.solution.status != fl::PtPhaseSetStatus::accepted,
+            "cold structural audit point unexpectedly became accepted");
+    const auto reset = mc::make_pr76_continuation_hints(cold);
+    require(reset.initial_stability_starts.empty() &&
+            reset.final_two_phase_stability_starts.empty() &&
+            reset.three_phase_continuation_starts.empty(),
+            "unresolved point retained stale continuation state");
+    compare(model->solve(ternary, reset), direct(native, ternary));
+}
+
+void hint_validation() {
+    const auto native = pr76_max3_test::model();
+    auto model = create(definition(native), preset());
+
+    auto bad_version = structural_hints();
+    bad_version.version = "pt-solve-hints/v0";
+    bool version_located = false;
+    try { (void)model->solve(ternary, bad_version); }
+    catch (const mc::ModelConfigurationError& e) {
+        version_located = e.code() == mc::ModelConfigurationErrorCode::unsupported_version &&
+                          e.field() == "hints.version";
+    }
+    require(version_located, "unsupported hint version was not rejected at the public boundary");
+
+    const auto check_native = [&](const mc::PtSolveHints& hints, std::string_view field) {
+        const auto expected = error([&] { (void)direct(native, ternary, {}, native_options(hints)); });
+        bool located = false;
+        try { (void)model->solve(ternary, hints); }
+        catch (const mc::Pr76SolveRequestError& e) {
+            require(e.field() == field, "wrong public hint field location");
+            located = true;
+        }
+        require(located, "invalid public hint was not field-located");
+        require(error([&] { (void)model->solve(ternary, hints); }) == expected,
+                "public hint validation changed native exception category/message");
+        compare(model->solve(single), direct(native, single));
+    };
+
+    auto bad_initial_dimension = mc::make_pt_solve_hints_v1();
+    bad_initial_dimension.initial_stability_starts = {{0.5, 0.5}};
+    check_native(bad_initial_dimension, "hints.initial_stability_starts[0]");
+
+    auto bad_initial_support = mc::make_pt_solve_hints_v1();
+    bad_initial_support.initial_stability_starts = {{0.5, 0.5, 0.0}};
+    check_native(bad_initial_support, "hints.initial_stability_starts[0][2]");
+
+    auto bad_final_dimension = mc::make_pt_solve_hints_v1();
+    bad_final_dimension.final_two_phase_stability_starts = {{0.5, 0.5}};
+    check_native(bad_final_dimension, "hints.final_two_phase_stability_starts[0]");
+
+    auto bad_fraction = structural_hints();
+    bad_fraction.three_phase_continuation_starts[0].phase_fraction_seed = {0.8, 0.8};
+    check_native(bad_fraction, "hints.three_phase_continuation_starts[0].phase_fraction_seed");
+
+    auto bad_three_support = structural_hints();
+    bad_three_support.three_phase_continuation_starts[0].compositions[1] = {0.5, 0.5, 0.0};
+    check_native(bad_three_support, "hints.three_phase_continuation_starts[0].compositions[1][2]");
+
+    mc::PtSolverSafetyLimits limits;
+    limits.max_three_phase_starts = 1U;
+    auto bounded = mc::make_pr76_executable_model(
+        definition(native), preset(), {}, limits, mc::ModelDataPolicy::allow_synthetic_tests);
+    auto too_many = structural_hints();
+    too_many.three_phase_continuation_starts.push_back(
+        too_many.three_phase_continuation_starts.front());
+    bool resource_located = false;
+    try { (void)bounded->solve(ternary, too_many); }
+    catch (const mc::ModelConfigurationError& e) {
+        resource_located = e.code() == mc::ModelConfigurationErrorCode::resource_limit &&
+                           e.field() == "hints.three_phase_continuation_starts";
+    }
+    require(resource_located, "public continuation storage ceiling was not enforced before copy");
+    compare(bounded->solve(single), direct(native, single));
+}
+
 void admission() {
     // Deterministic overlap/exception checks on the exact production guard; no
     // timing assumptions, public test hooks or long-running blocking evaluator.
@@ -309,6 +450,9 @@ int main(int argc, char** argv) {
         else if (name == "request_errors") { request_errors(); }
         else if (name == "request_locations") { request_locations(); }
         else if (name == "applicability") { applicability(); }
+        else if (name == "public_hint_parity") { public_hint_parity(); }
+        else if (name == "continuation_hint_parity") { continuation_hint_parity(); }
+        else if (name == "hint_validation") { hint_validation(); }
         else if (name == "admission") { admission(); }
         else if (name == "parallel_models") { parallel_models(); }
         else { throw std::runtime_error("unknown test case"); }
