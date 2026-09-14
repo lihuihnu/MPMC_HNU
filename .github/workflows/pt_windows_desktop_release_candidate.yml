@@ -288,7 +288,7 @@ jobs:
           }
 
           Invoke-Msi @('/x', $package, '/qn', '/norestart')
-          if (Test-Path $installedExe -or Test-Path $installedHost) {
+          if ((Test-Path $installedExe) -or (Test-Path $installedHost)) {
             throw 'Signed RC payload remains after MSI uninstall'
           }
           if (Test-Path $shortcut.FullName) {
