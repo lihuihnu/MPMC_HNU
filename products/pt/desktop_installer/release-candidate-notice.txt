@@ -1,0 +1,9 @@
+MPMC PT Desktop 0.1.0-rc.1
+
+WINDOWS RELEASE CANDIDATE — NOT A FINAL PUBLIC RELEASE
+
+This installer is eligible to leave the protected RC gate only when the desktop
+executable, embedded native PT host, and MSI all pass Authenticode verification
+with SHA-256 and RFC 3161 timestamps under the configured production signing
+identity. Automatic updates, final public-release approval, support policy, and
+distribution policy remain separate release gates.
