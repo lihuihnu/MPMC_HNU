@@ -5,6 +5,10 @@ endif()
 if(NOT TARGET mpmc::pr76_model_registry)
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../model_configuration/pr76_registry" registry-library)
 endif()
+# Discover imported generator targets in this directory before adding children.
+# Conan's protoc/plugin targets need not be GLOBAL or available on PATH.
+find_package(Protobuf REQUIRED)
+find_package(gRPC CONFIG REQUIRED)
 # Reuse the frozen v1 wire data types, generation recipe and scoped gRPC header
 # wrapper. The new service does not invoke or reinterpret the old PtService.
 if(NOT TARGET mpmc::runtime_grpc)
@@ -19,6 +23,8 @@ set(model_sources "${model_generated_dir}/model_service.pb.cc" "${model_generate
 set(model_headers "${model_generated_dir}/model_service.pb.h" "${model_generated_dir}/model_service.grpc.pb.h")
 if(TARGET protobuf::protoc)
     set(model_protoc "$<TARGET_FILE:protobuf::protoc>")
+elseif(Protobuf_PROTOC_EXECUTABLE)
+    set(model_protoc "${Protobuf_PROTOC_EXECUTABLE}")
 else()
     find_program(model_protoc protoc REQUIRED)
 endif()
