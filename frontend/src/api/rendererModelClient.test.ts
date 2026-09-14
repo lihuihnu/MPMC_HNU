@@ -94,6 +94,7 @@ it('maps all computation outcomes without promoting or dropping diagnostic candi
     const json = structuredClone(result); json.outcome = wire!;
     if (outcome !== 'accepted') {
       ((json.candidatePhaseSet as JsonObject).phases as JsonObject[])[0]!.lnFugacityCoefficient = ['NaN'];
+      ((json.candidatePhaseSet as JsonObject).phases as JsonObject[])[0]!.compressibilityFactor = 'Infinity';
     }
     const mapped = readModelResult(json, expected, state);
     expect(mapped.outcome).toBe(outcome); expect(mapped.result).toEqual(fromJson(FullPtResultSchema, json));
@@ -137,6 +138,13 @@ it('rejects incomplete/version-mismatched snapshots and misaligned result identi
     expect(() => readModelSnapshot(json)).toThrow(RendererModelError);
   }
   const expected = readModelSnapshot(snapshot);
+  for (const compressibilityFactor of [0, -1, 'Infinity', 'NaN']) {
+    const malformed = structuredClone(result);
+    ((malformed.candidatePhaseSet as JsonObject).phases as JsonObject[])[0]!.compressibilityFactor = compressibilityFactor;
+    expect(() => readModelResult(malformed, expected, state)).toThrow(RendererModelError);
+  }
+  expect(() => readModelResult({ ...result, pressurePa: -1 }, expected, { ...state, pressurePa: -1 })).toThrow(RendererModelError);
+  expect(() => readModelResult({ ...result, feed: [-1] }, expected, { ...state, feed: [-1] })).toThrow(RendererModelError);
   for (const json of [{}, { ...result, outcome: 999 }, { ...result, outcome: 'PT_COMPUTATION_OUTCOME_UNSPECIFIED' },
     { ...result, backendResultConvention: 'v2' }, { ...result, pressurePa: 101000 }, { ...result, feed: [0.5] },
     { ...result, capability: { ...(result.capability as JsonObject), revision: 'r2' } },

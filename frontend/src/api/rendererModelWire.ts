@@ -118,6 +118,7 @@ export function readModelResult(value: JsonValue, snapshot: ModelSnapshot, state
       result.maximumPhaseCount !== Math.max(...snapshot.capability.supportedPhaseCounts) ||
       result.pressurePa !== state.pressurePa || result.temperatureK !== state.temperatureK ||
       !Number.isFinite(result.pressurePa) || !Number.isFinite(result.temperatureK) ||
+      result.pressurePa! <= 0 || result.temperatureK! <= 0 ||
       typeof result.globalStabilityProven !== 'boolean' || typeof result.morphologyResolved !== 'boolean' ||
       typeof result.diagnostic !== 'string' || result.feed.length !== state.feed.length ||
       result.feed.length !== snapshot.capability.componentIds.length ||
@@ -126,7 +127,7 @@ export function readModelResult(value: JsonValue, snapshot: ModelSnapshot, state
   for (const [i, actual] of result.feed.entries()) {
     const requested = state.feed[i]!;
     // Same transport identity allowance as ptWire.ts; no normalization or solver tolerance change.
-    if (!Number.isFinite(actual) || !Number.isFinite(requested) ||
+    if (!Number.isFinite(actual) || !Number.isFinite(requested) || actual < 0 || actual > 1 ||
         Math.abs(actual - requested) > 2 * 64 * Number.EPSILON * Math.max(1, Math.abs(actual), Math.abs(requested))) invalidReply();
   }
   const phases = result.candidatePhaseSet?.phases ?? [];
@@ -137,7 +138,8 @@ export function readModelResult(value: JsonValue, snapshot: ModelSnapshot, state
         phase.molePhaseFraction === undefined || phase.providerBranch === undefined || phase.providerBranchSmooth === undefined) invalidReply();
     // Diagnostic candidates may contain non-finite data. Preserve them without promoting acceptance.
     if (outcome === 'accepted' && (![phase.molePhaseFraction, ...phase.composition, ...phase.lnFugacityCoefficient].every(Number.isFinite) ||
-        phase.molePhaseFraction < 0 || phase.molePhaseFraction > 1 || phase.composition.some(x => x < 0 || x > 1))) invalidReply();
+        phase.molePhaseFraction < 0 || phase.molePhaseFraction > 1 || phase.composition.some(x => x < 0 || x > 1) ||
+        (phase.compressibilityFactor !== undefined && (!Number.isFinite(phase.compressibilityFactor) || phase.compressibilityFactor <= 0)))) invalidReply();
   }
   return { outcome, result };
 }
