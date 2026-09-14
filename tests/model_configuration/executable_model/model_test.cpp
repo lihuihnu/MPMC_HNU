@@ -171,8 +171,7 @@ void resource_limits() {
             model->solver_configuration().safety_limits() == s, "host limits not retained");
     compare(model->solve(single), direct(pr76_max3_test::model(), single));
 }
-// Preserve native exception type/message OR its returned failure envelope. The
-// underlying solver determines which bad-domain cases throw and which diagnose.
+// Preserve native exception type/message for input and declared-domain errors.
 template <class F>
 std::pair<std::string, std::string> error(F&& f) {
     try { f(); }
@@ -200,11 +199,10 @@ void applicability() {
     compare(model->solve(single), direct(native, single));
     for (const auto& r : std::vector<fl::PtFlashRequest>{{2e6, 250.0, single.feed},
                                                        {1e6, 300.0, single.feed}}) {
-        // Property-domain failures become diagnostic results in the native search.
-        const auto expected = direct(native, r);
-        const auto actual = model->solve(r);
-        compare(actual, expected);
-        require(actual.solution.accepted_phase_count() == 0, "declared bounds bypassed");
+        // Declared-range failures propagate from the native PR property layer.
+        const auto expected = error([&] { (void)direct(native, r); });
+        const auto actual = error([&] { (void)model->solve(r); });
+        require(actual == expected, "declared-domain exception changed");
     }
     compare(model->solve(single), direct(native, single));
 }
