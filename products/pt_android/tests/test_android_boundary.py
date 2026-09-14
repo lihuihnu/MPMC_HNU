@@ -132,6 +132,8 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertIn("ANDROID_STL=c++_static", workflow)
         for token in ("aapt2", "d8", "zipalign", "apksigner"):
             self.assertIn(token, build_script)
+        self.assertIn('timeout 180 "$adb" wait-for-device', run_script)
+        self.assertIn("show_emulator_diagnostics", run_script)
         self.assertIn('install -r "$apk"', run_script)
         self.assertIn("am start -W", run_script)
         self.assertIn("ANDROID_JNI_PT_SERVICE_OK backends=3", run_script)
