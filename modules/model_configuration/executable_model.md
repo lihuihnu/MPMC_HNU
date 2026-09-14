@@ -45,17 +45,19 @@ There is no waiting queue, cancellation or asynchronous lifetime management.
 Callers must keep the model alive until all calls, including rejected calls, end.
 Independent models can solve concurrently because they share no mutable workspace.
 
-## Result contract
+## Result and request-error contract
 
-`solve` passes P [Pa], T [K] and mole feed in snapshot component order to the
-existing backend once. It does not rebuild parameters, change settings, inject
-hints, repair input or cache a previous result. Native acceptance/rejection and
-numerical outcomes remain authoritative. After a native input exception, the
-model can attach the `Pr76SolveRequestError` location interface while preserving
-the original `std::invalid_argument`, `std::domain_error` or `std::length_error`
-base and `what()` text. Catch those standard categories as before, or catch the
-location interface first to read `field()`. Located errors have a derived dynamic
-type; code must not require exact `typeid` equality with the standard base.
+The coarse `solve(request)` passes P [Pa], T [K] and mole feed in snapshot
+component order to the existing backend once. It does not rebuild parameters,
+change settings, inject hints, repair input or cache a previous result. Native
+acceptance/rejection and numerical outcomes remain authoritative.
+
+After a native input exception, the model can attach the `Pr76SolveRequestError`
+location interface while preserving the original `std::invalid_argument`,
+`std::domain_error` or `std::length_error` base and `what()` text. Catch those
+standard categories as before, or catch the location interface first to read
+`field()`. Located errors have a derived dynamic type; code must not require exact
+`typeid` equality with the standard base.
 
 Diagnosis executes only on a rejected call and reuses native PT/composition
 validation, including its compensated sum and normalization tolerance. It emits
@@ -81,27 +83,85 @@ new residual/iteration arrays or serialize the settings into the result: the ful
 resolved settings and their version/preset identity are queried on the model.
 No global stability or PR phase morphology claim is added.
 
-Public hints are still unsupported. The existing max3 backend may fail to close a
-three-phase topology without starts; the factory must preserve that outcome.
-Seeded accepted-three-phase option parity remains covered in the previous settings
-suite, where identical native hints are explicitly supplied to both paths.
+## Public per-solve initialization and continuation hints
+
+`pt_solve_hints.hpp` adds the transport-neutral, stdlib-only
+`pt-solve-hints/v1` DTO. Hints belong to **one solve call**; they are not stored
+in the immutable model/settings snapshot and never constitute phase-count
+or stability evidence.
+
+```cpp
+auto hints = mc::make_pt_solve_hints_v1();
+hints.initial_stability_starts = initial_compositions;
+hints.final_two_phase_stability_starts = final_review_compositions;
+
+mc::PtThreePhaseContinuationHint three;
+three.compositions = {phase0, phase1, phase2};
+three.phase_fraction_seed = {beta1, beta2};
+hints.three_phase_continuation_starts.push_back(three);
+
+auto result = model->solve({pressure_pa, temperature_k, mole_feed}, hints);
+```
+
+`solve(request, hints)` copies the validated model's prepared native options into
+a temporary backend-options snapshot and maps only the supplied starts into the
+existing `initial_starts`, `final_starts` and `three_phase_starts` fields. The
+model's persistent coarse backend and settings snapshot remain unchanged, so a
+later `solve(request)` is still a cold/native-default solve.
+
+Version and host storage ceilings are checked before copying untrusted hint
+storage. State-dependent scientific validation remains in the existing solver:
+all stability starts must match the current feed dimension, be normalized under
+the native tolerance and have exactly the current feed's active support. Final
+two-phase review still reserves its two freshly solved phase starts. Three-phase
+continuation seeds additionally require three valid compositions and a feasible
+phase-fraction simplex seed, while native count/entry/attempt budgets remain
+independent. A hint can initialize a search; it cannot force an accepted phase
+set or bypass final stability/equilibrium gates.
+
+When the native solver rejects a hint, the executable model can attach a precise
+state-related location such as
+`hints.initial_stability_starts[0][2]`,
+`hints.final_two_phase_stability_starts[0]`,
+`hints.three_phase_continuation_starts[0].compositions[1][2]`, or
+`hints.three_phase_continuation_starts[0].phase_fraction_seed`, while preserving
+the native standard exception category and message. Unsupported DTO versions and
+pre-copy host ceilings use `ModelConfigurationError` with their public field.
+
+`make_pr76_continuation_hints(previous_result)` converts only an **accepted** PR76
+publication into numerical starts. It copies accepted phase compositions into
+initial/final stability starts and, for an accepted three-phase result, also
+copies the three compositions plus independent phase fractions into one
+three-phase continuation seed. An unresolved/non-accepted result deliberately
+produces an empty v1 hint set so stale state is not carried across a failed point.
+The next solve is always fresh and must re-establish the phase set.
+
+This increment is direct-C++ only. The model-neutral `PtFlashBackend` virtual
+interface, bounded registry/service wire request and desktop/UI request types do
+not yet serialize these optional hints. Their current coarse solve behavior is
+unchanged; UI configuration remains deferred.
 
 ## Audit and verification scope
 
-Baseline: PR #82 at `174e004e366c4b31f2dc476fb43feeaafabd365f`.
+Baseline: PR #82 through `6db1ae25e4922f38fbac707bd6b2046a6748e309`.
 Read the root `AGENTS.md`, parameter/settings adapters, phase/evaluator ownership,
 backend result/publication/transition contracts, existing process ownership graph
 and focused workflow before editing. Leaving separate preparation APIs alone
-would not provide safe execution lifetime; extending the process host would couple
-native callers to transport composition. A small optional owner reuses all existing
-scientific algorithms and avoids a premature registry or workspace refactor.
+would not provide safe execution lifetime; extending the process host in the same
+increment would couple native semantics to transport composition. A small optional
+owner plus per-call DTO reuses all existing scientific algorithms without a
+premature UI or workspace refactor.
 
-The independent `tests/model_configuration/executable_model` project has 14 cases:
+The independent `tests/model_configuration/executable_model` project has 17 cases:
 full-envelope direct-C++ parity for single/binary/ternary cold search; changed-kij
 A/B isolation; independent settings/root-budget exhaustion; draft/owner/result
 lifetime; construction failure and host limits; input exceptions and declared
-bounds; precise request locations, normalization boundary and coarse internal-failure fallback; deterministic admission/unwind; parallel A/B solves. The public header
-is compiled separately with ownership/const-interface static assertions.
+bounds; precise request locations, normalization boundary and coarse internal-
+failure fallback; public seeded-hint direct-C++ parity; accepted-result
+continuation parity plus unresolved-state clearing; nested hint/state/quota
+validation; deterministic admission/unwind; and parallel A/B solves. The public
+hint header is compiled first in a separate translation unit to enforce stdlib-
+only/self-contained use, with ownership/const-interface static assertions.
 
 Expected results come from separately constructed native PR76 models/options,
 not the public mapper. Same-platform exact field equality is required. Data reuse
@@ -109,16 +169,16 @@ is limited to the already attributed Hua nitrogen/ethane numerical fixture and
 the explicitly synthetic max3 structural fixture; this is adapter/ownership
 regression, not independent physical validation or a new parameter dataset.
 
-The focused GitHub-hosted workflow adds these cases to GCC ASan/UBSan, Clang and
-MSVC, retaining parameter/settings and the existing GCC thermodynamic-contract
-checks. No local compilation is used as official verification. Existing algorithms,
-curated product backends and wire/UI call sites do not change, so unrelated
-product suites are not selected. Per-model admission uses standard acquire/release
-atomics; thread tests check actual independent execution, without claiming a TSan
-run or a general thread-local-workspace redesign.
+The focused GitHub-hosted workflow runs these cases on GCC Debug + ASan/UBSan,
+Clang Release and MSVC Release, retaining parameter/settings, registry and GCC
+thermodynamic-contract checks. Commit `6db1ae25` passed all three compiler jobs;
+the executable suite was 17/17 and the registry suite remained 17/17 under the
+GCC sanitizer job. No local compilation is used as official verification.
+Existing EOS/flash algorithms and UI call sites were not changed.
 
-The separate [bounded registry](registry.md) now owns these models, issues opaque
-handles and retains admitted solves through release/close. It accounts for model
-slots until destruction. Standalone factory users still own lifetime themselves.
-The versioned model service and desktop typed client now transport safe error
-locations; UI configuration forms remain deferred.
+The separate [bounded registry](registry.md) owns coarse-dispatch models, issues
+opaque handles and retains admitted solves through release/close. It accounts for
+model slots until destruction. Standalone factory users still own lifetime
+themselves. The versioned model service and desktop typed client continue their
+existing safe request/error transport; public hint transport and UI configuration
+remain deferred.
