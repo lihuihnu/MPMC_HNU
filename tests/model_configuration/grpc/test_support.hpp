@@ -2,6 +2,7 @@
 #define MPMC_MODEL_GRPC_TEST_SUPPORT_HPP
 #include <mpmc/model_configuration_grpc/model_grpc_adapter.hpp>
 #include <mpmc/runtime_grpc/pt_grpc_adapter.hpp>
+#include <google/rpc/status.pb.h>
 #include "../executable_model/test_support.hpp"
 
 #include <chrono>
@@ -75,7 +76,10 @@ inline void ok(const grpc::Status& status) {
 inline void error(const grpc::Status& status, grpc::StatusCode expected, std::string_view code) {
     require(status.error_code() == expected, "wrong gRPC status");
     wire::ModelServiceError details;
-    require(details.ParseFromString(status.error_details()) && details.has_code() &&
+    google::rpc::Status envelope;
+    require(envelope.ParseFromString(status.error_details()) && envelope.code() == static_cast<int>(expected) &&
+            envelope.message() == status.error_message() && envelope.details_size() == 1 &&
+            envelope.details(0).UnpackTo(&details) && details.has_code() &&
             details.wire_contract() == api::model_wire_contract && details.code() == code,
             "wrong structured service error");
     require(status.error_message().find("mh1_") == std::string::npos &&

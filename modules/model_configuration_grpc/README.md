@@ -85,11 +85,18 @@ Only the outcome establishes acceptance. The original v1 `PtComputationResult`
 continues to expose accepted phases only. An indeterminate numerical solve is a
 successful RPC with an indeterminate scientific outcome, not an INTERNAL error.
 
-Adapter-generated non-OK statuses contain a serialized `ModelServiceError` in
-`grpc::Status.error_details`: exact wire version, stable domain-qualified code and
+Adapter-generated non-OK statuses contain a standard `google.rpc.Status` in
+`grpc::Status.error_details`, with one `Any`-packed `ModelServiceError`: exact wire version, stable domain-qualified code and
 bounded field context. Internal `what()`, request bodies and bearer handles are
 not echoed. Transport failures before dispatch (including receive limits and
 client-observed cancellation/deadline) can lack these details.
+
+The shared-client increment corrects the unreleased draft's earlier raw detail
+encoding. C++ consumers now unpack `ModelServiceError` from `Status.details[0]`;
+Connect clients can use `findDetails(ModelServiceErrorSchema)`. The outer status
+code/message must match the gRPC status. Domain codes/fields and success messages
+are unchanged. The [vendored standard schema](proto/google/rpc/UPSTREAM.md) reuses
+the existing Protobuf `Any` implementation and adds no runtime dependency.
 
 | gRPC status | Representative detail codes |
 | --- | --- |

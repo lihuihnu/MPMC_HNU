@@ -8,5 +8,6 @@
 /frontend/.vite/
 /frontend/coverage/
 /frontend/src/gen/mpmc/model_configuration/
+/frontend/src/gen/google/rpc/
 __pycache__/
 *.py[cod]

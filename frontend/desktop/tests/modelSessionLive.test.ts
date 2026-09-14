@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fromJson, type JsonValue } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { expect, it } from 'vitest';
-import { CreateModelRequestSchema, SolveModelRequestSchema } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
+import { CreateModelRequestSchema, ModelServiceErrorSchema, SolveModelRequestSchema } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
 import { MODEL_SESSION_HEADER, MODEL_WIRE_CONTRACT, ModelSessionClient } from '../../src/api/modelSessionClient';
 import { PtHostSession } from '../hostSession';
 import { createDesktopModelConnection } from '../modelConnection';
@@ -57,7 +57,12 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
       try {
         await observer.models.describeModel({ wireContract: MODEL_WIRE_CONTRACT, modelHandle: entry.handle }, options(entry.id));
       } catch (cause) {
-        expect(ConnectError.from(cause).code).toBe(Code.NotFound); return;
+        const error = ConnectError.from(cause);
+        expect(error.code).toBe(Code.NotFound);
+        expect(error.findDetails(ModelServiceErrorSchema)).toMatchObject([
+          { wireContract: MODEL_WIRE_CONTRACT, code: 'session.not_found' },
+        ]);
+        return;
       }
       expect(Date.now(), 'server retained a disconnected model/session').toBeLessThan(end);
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -77,8 +82,14 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
     for (let i = 0; i < 3; ++i) others.push(await client.create(definition));
     const releasedHandle = observed.at(-1)!.handle;
     await client.release(others.at(-1)!.model);
-    await expect(observer.models.describeModel({ wireContract: MODEL_WIRE_CONTRACT, modelHandle: releasedHandle },
-      options(observed.at(-1)!.id))).rejects.toMatchObject({ code: Code.NotFound });
+    const rejected = observer.models.describeModel({ wireContract: MODEL_WIRE_CONTRACT, modelHandle: releasedHandle },
+      options(observed.at(-1)!.id));
+    await expect(rejected).rejects.toMatchObject({ code: Code.NotFound });
+    await rejected.catch(cause => {
+      expect(ConnectError.from(cause).findDetails(ModelServiceErrorSchema)).toMatchObject([
+        { wireContract: MODEL_WIRE_CONTRACT, code: 'registry.model_not_found' },
+      ]);
+    });
     await client.create(definition);
     let old = initial.model;
     // More reconnects than the host's 16-session cap expose unreclaimed slots.

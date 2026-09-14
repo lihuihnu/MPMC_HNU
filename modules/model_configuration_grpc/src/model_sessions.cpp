@@ -32,7 +32,7 @@ grpc::Status failure_status() noexcept {
         catch (...) {}
         wire::ModelServiceError detail;
         detail.set_wire_contract(std::string(model_wire_contract)); detail.set_code(code);
-        return {status, "model session request failed", detail.SerializeAsString()};
+        return model_error_status(status, "model session request failed", detail);
     } catch (...) { return {SC::INTERNAL, "model session error mapping failed"}; }
 }
 struct Count {

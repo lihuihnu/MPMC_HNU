@@ -53,6 +53,8 @@ also closes any late-acquired transport. The desktop adapter owns a dedicated
 read limits. Authentication headers never enter client errors, returned model
 objects, logs or renderer IPC. Errors carry a sanitized `Code` and local reason;
 rich field-level domain-error presentation remains deferred.
+The service uses standard `google.rpc.Status` rich errors with a typed
+`ModelServiceError` detail, so native Connect error codes remain interoperable.
 
 Client close completion means local work/transport drained, not a server cleanup
 acknowledgment. The server observes stream cancellation/transport failure and

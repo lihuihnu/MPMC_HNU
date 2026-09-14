@@ -7,6 +7,9 @@
 
 namespace mpmc::model_configuration_grpc {
 inline constexpr std::string_view model_wire_contract = "mpmc.model_configuration.v1/model-service/v1";
+// Standard gRPC rich-error envelope containing one typed ModelServiceError.
+[[nodiscard]] grpc::Status model_error_status(grpc::StatusCode code, std::string_view message,
+    const model_configuration::v1::ModelServiceError& detail);
 
 // Owning DTO codec; server calls occur only after bounded message admission.
 // Preserves optional numerical presence; domain rules stay in the factory.

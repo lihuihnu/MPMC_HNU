@@ -1,9 +1,20 @@
 #include <mpmc/model_configuration_grpc/model_wire.hpp>
+#include <google/rpc/status.pb.h>
 
 #include <limits>
 #include <utility>
 
 namespace mpmc::model_configuration_grpc {
+grpc::Status model_error_status(grpc::StatusCode code, std::string_view message,
+    const model_configuration::v1::ModelServiceError& detail) {
+    google::rpc::Status envelope;
+    envelope.set_code(static_cast<int>(code));
+    envelope.set_message(std::string(message));
+    if (!envelope.add_details()->PackFrom(detail)) {
+        return {code, std::string(message)};
+    }
+    return {code, std::string(message), envelope.SerializeAsString()};
+}
 namespace {
 namespace mc = ::mpmc::model_configuration;
 namespace wire = ::mpmc::model_configuration::v1;

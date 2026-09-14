@@ -17,10 +17,15 @@ endif()
 set(model_proto_root "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(legacy_proto_root "${CMAKE_CURRENT_SOURCE_DIR}/../../api/proto")
 set(model_proto "${model_proto_root}/mpmc/model_configuration/v1/model_service.proto")
+set(status_proto "${model_proto_root}/google/rpc/status.proto")
+find_path(MPMC_PROTOBUF_WKT_ROOT google/protobuf/any.proto
+    HINTS ${Protobuf_INCLUDE_DIRS} ${protobuf_INCLUDE_DIRS} REQUIRED)
 set(model_generated_root "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(model_generated_dir "${model_generated_root}/mpmc/model_configuration/v1")
-set(model_sources "${model_generated_dir}/model_service.pb.cc" "${model_generated_dir}/model_service.grpc.pb.cc")
-set(model_headers "${model_generated_dir}/model_service.pb.h" "${model_generated_dir}/model_service.grpc.pb.h")
+set(model_sources "${model_generated_dir}/model_service.pb.cc" "${model_generated_dir}/model_service.grpc.pb.cc"
+    "${model_generated_root}/google/rpc/status.pb.cc")
+set(model_headers "${model_generated_dir}/model_service.pb.h" "${model_generated_dir}/model_service.grpc.pb.h"
+    "${model_generated_root}/google/rpc/status.pb.h")
 if(TARGET protobuf::protoc)
     set(model_protoc "$<TARGET_FILE:protobuf::protoc>")
 elseif(Protobuf_PROTOC_EXECUTABLE)
@@ -38,7 +43,10 @@ add_custom_command(OUTPUT ${model_sources} ${model_headers}
     COMMAND ${model_protoc} "--proto_path=${model_proto_root}" "--proto_path=${legacy_proto_root}"
         "--cpp_out=${model_generated_root}" "--grpc_out=${model_generated_root}"
         "--plugin=protoc-gen-grpc=${model_grpc_plugin}" "${model_proto}"
-    DEPENDS "${model_proto}" "${legacy_proto_root}/mpmc/runtime/v1/pt_service.proto"
+    COMMAND ${model_protoc} "--proto_path=${model_proto_root}" "--proto_path=${MPMC_PROTOBUF_WKT_ROOT}"
+        "--cpp_out=${model_generated_root}" "${status_proto}"
+    DEPENDS "${model_proto}" "${status_proto}" "${MPMC_PROTOBUF_WKT_ROOT}/google/protobuf/any.proto"
+        "${legacy_proto_root}/mpmc/runtime/v1/pt_service.proto"
     VERBATIM)
 add_library(mpmc_model_wire_generated STATIC ${model_sources} ${model_headers})
 add_dependencies(mpmc_model_wire_generated mpmc_pt_wire_generated)

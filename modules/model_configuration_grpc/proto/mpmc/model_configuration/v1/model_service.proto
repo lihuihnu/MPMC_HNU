@@ -250,7 +250,7 @@ message SolveModelResponse {
   optional FullPtResult result = 2;
 }
 message ReleaseModelResponse { optional string wire_contract = 1; }
-// Serialized into grpc::Status.error_details for adapter-generated non-OK RPCs.
+// Any-packed in google.rpc.Status for adapter-generated non-OK RPCs.
 // Stable domain-qualified code; bounded field path. No handle/internal what().
 // Transport-level failures can occur before dispatch and have no such details.
 message ModelServiceError {

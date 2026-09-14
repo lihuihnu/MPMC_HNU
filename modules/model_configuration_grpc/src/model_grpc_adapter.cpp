@@ -38,7 +38,7 @@ grpc::Status error_status(StatusCode status, const char* code, std::string_view 
     // permits long identifiers. Allocation failure here uses an empty fallback.
     details.set_field(field.size() <= 256 && field.find("mh1_") == std::string_view::npos
                           ? std::string(field) : "configuration");
-    return {status, "model configuration request failed", details.SerializeAsString()};
+    return model_error_status(status, "model configuration request failed", details);
 }
 class Admission {
 public:
