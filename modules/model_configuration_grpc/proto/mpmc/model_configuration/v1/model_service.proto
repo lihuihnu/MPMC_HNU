@@ -258,3 +258,15 @@ message ModelServiceError {
   optional string code = 2;
   optional string field = 3;
 }
+// The stream is the lifetime lease. Cancel/transport failure/deadline closes
+// this session; a normal unary RPC ending does not. No client principal field.
+service ModelSessionService {
+  rpc OpenModelSession(OpenModelSessionRequest) returns (stream ModelSessionOpened);
+}
+message OpenModelSessionRequest {
+  optional string wire_contract = 1;
+}
+message ModelSessionOpened {
+  optional string wire_contract = 1;
+  optional string session_id = 2;
+}

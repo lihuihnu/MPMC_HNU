@@ -1,7 +1,14 @@
 cmake_minimum_required(VERSION 3.21)
 project(mpmc_model_grpc_tests LANGUAGES CXX)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/model_configuration_grpc" model-grpc-library)
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/pt_process" process-library)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(MPMC_MODEL_SESSION_CERT_DIR "" CACHE PATH "Generated session mTLS certificates")
 enable_testing()
+add_executable(mpmc_model_session_tests sessions_test.cpp)
+target_link_libraries(mpmc_model_session_tests PRIVATE mpmc::pt_process)
+add_executable(mpmc_model_session_process_client session_process_client.cpp)
+target_link_libraries(mpmc_model_session_process_client PRIVATE mpmc::model_configuration_grpc)
 add_executable(mpmc_model_grpc_tests service_test.cpp public_header.cpp)
 target_link_libraries(mpmc_model_grpc_tests PRIVATE mpmc::model_configuration_grpc mpmc::runtime_grpc)
 # Unchanged legacy tests provide the necessary dependency-compatibility gate.
@@ -9,7 +16,8 @@ add_executable(mpmc_legacy_grpc_tests ../../runtime/pt_grpc_adapter/pt_grpc_adap
                                     ../../runtime/pt_grpc_adapter/pt_grpc_adapter_headers.cpp)
 target_link_libraries(mpmc_legacy_grpc_tests PRIVATE mpmc::runtime_grpc)
 set(checked_targets mpmc_model_configuration_grpc mpmc_pr76_model_registry
-                    mpmc_runtime_grpc mpmc_model_grpc_tests mpmc_legacy_grpc_tests)
+                    mpmc_runtime_grpc mpmc_model_grpc_tests mpmc_legacy_grpc_tests
+                    mpmc_pt_process mpmc_pt_service_host mpmc_model_session_tests mpmc_model_session_process_client)
 option(MPMC_MODEL_GRPC_ENABLE_SANITIZERS "Instrument configuration RPC boundary and registry" OFF)
 foreach(target IN LISTS checked_targets)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
@@ -26,6 +34,18 @@ foreach(target IN LISTS checked_targets)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
     endif()
 endforeach()
+foreach(case IN ITEMS roundtrip authentication disconnect open_errors expiry_and_shutdown retained_capacity global_admission)
+    add_test(NAME model.grpc_sessions.${case} COMMAND mpmc_model_session_tests ${case})
+    set_tests_properties(model.grpc_sessions.${case} PROPERTIES TIMEOUT 60 LABELS "model;grpc;session;host")
+endforeach()
+if(MPMC_MODEL_SESSION_CERT_DIR)
+    add_test(NAME model.grpc_sessions.mtls COMMAND mpmc_model_session_tests mtls "${MPMC_MODEL_SESSION_CERT_DIR}")
+    set_tests_properties(model.grpc_sessions.mtls PROPERTIES TIMEOUT 60 LABELS "model;grpc;session;mtls")
+endif()
+add_test(NAME model.grpc_sessions.process_disconnect
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/process_lifecycle.py"
+        "$<TARGET_FILE:mpmc_pt_service_host>" "$<TARGET_FILE:mpmc_model_session_process_client>")
+set_tests_properties(model.grpc_sessions.process_disconnect PROPERTIES TIMEOUT 90 LABELS "model;grpc;session;process")
 foreach(case IN ITEMS roundtrip metadata_roundtrip full_result_parity custom_settings settings_presence
         wire_errors domain_errors registry_errors host_quota busy_and_release request_size
         response_rollback authorization_and_internal_errors deadline_policy cancellation_and_admission legacy_coexistence)

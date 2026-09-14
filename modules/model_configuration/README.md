@@ -8,7 +8,7 @@ and maps complete public settings to the existing PR76 solver options.
 A [bounded native registry](registry.md) adds opaque model handles and release.
 An [optional versioned gRPC service](../model_configuration_grpc/README.md) now
 provides native RPC creation/description/solve/release. Web/Electron/Android
-client and production-host integration remain later work.
+client/UI integration remains later work; native host sessions are now opt-in.
 Parameter preparation and executable creation never silently select settings.
 
 ## Current boundary
@@ -123,8 +123,8 @@ handles, release/close and one-shot solve leases. Releasing a handle prevents ne
 access while preserving admitted work and its capacity charge until destruction.
 
 The separately versioned configuration service adds bounded gRPC mapping and
-real native roundtrip tests. Next connect authorized production-session routing
-and the shared clients before Expert UI, Electron/Android integration and final
+real native roundtrip tests. The opt-in native host now connects authenticated
+session routing; shared clients precede Expert UI, Electron/Android integration and final
 regression. The full Gate additionally requires end-to-end dynamic-vs-direct flash parity,
 session lifecycle and all three existing configured-backend product regressions.
 

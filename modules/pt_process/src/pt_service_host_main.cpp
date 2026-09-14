@@ -43,6 +43,7 @@ struct CommandLine {
     std::chrono::seconds shutdown_grace{10};
     bool print_snapshot_manifest{};
     bool desktop_session_token_stdin{};
+    bool enable_model_sessions{};
     bool help{};
 };
 
@@ -89,6 +90,9 @@ CommandLine parse_command_line(int argc, char** argv) {
         const std::string_view option(argv[index]);
         if (option == "--help") {
             options.help = true;
+        } else if (option == "--enable-model-sessions") {
+            if (options.enable_model_sessions) { argument_error("duplicate --enable-model-sessions"); }
+            options.enable_model_sessions = true;
         } else if (option == "--print-snapshot-manifest") {
             options.print_snapshot_manifest = true;
         } else if (option == "--desktop-session-token-stdin") {
@@ -183,6 +187,7 @@ void print_help(std::ostream& output) {
         << "  --shutdown-grace-seconds 1..300\n"
         << "  --print-snapshot-manifest\n"
         << "  --desktop-session-token-stdin\n"
+        << "  --enable-model-sessions\n"
         << "\nDefaults use the documented /run/secrets/mpmc-pt/backend "
            "mount contract. Desktop mode is loopback-only, reads one bearer "
            "token line, and stops on the next line or stdin EOF.\n";
@@ -266,6 +271,7 @@ int main(int argc, char** argv) {
 
         process::PtProcessHostOptions host_options;
         host_options.listen_address = command_line.listen_address;
+        host_options.enable_model_sessions = command_line.enable_model_sessions;
         host_options.desktop_loopback_session =
             command_line.desktop_session_token_stdin;
         if (!host_options.desktop_loopback_session) {

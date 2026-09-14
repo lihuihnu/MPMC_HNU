@@ -8,6 +8,7 @@ on:
       - 'modules/model_configuration/**'
       - 'modules/runtime/**'
       - 'modules/runtime_grpc/**'
+      - 'modules/pt_process/**'
       - 'api/proto/mpmc/runtime/v1/pt_service.proto'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp'
@@ -62,9 +63,12 @@ jobs:
             libprotobuf-dev=3.21.12-8.2ubuntu0.3 \
             protobuf-compiler=3.21.12-8.2ubuntu0.3
       - name: Configure model RPC and unchanged v1 regressions
+        # Certificates are ephemeral test identities, never deployment secrets.
         run: |
+          python tests/model_configuration/grpc/generate_certificates.py build/model-session-certs
           cmake -S tests/model_configuration/grpc -B build/model-grpc \
             -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
+            -DMPMC_MODEL_SESSION_CERT_DIR=${{ github.workspace }}/build/model-session-certs \
             -DMPMC_MODEL_GRPC_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
       - name: Build model RPC and unchanged v1 regressions
         run: cmake --build build/model-grpc --parallel 2
@@ -96,10 +100,9 @@ jobs:
           --profile:all=products/pt/conan/profiles/${{ env.PROFILE }}
           --no-remote --build=never --output-folder=build/conan-generators
       - name: Configure model RPC and unchanged v1 regressions
-        run: >-
-          cmake -S tests/model_configuration/grpc -B build/model-grpc
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
+        run: |
+          python tests/model_configuration/grpc/generate_certificates.py build/model-session-certs
+          cmake -S tests/model_configuration/grpc -B build/model-grpc -DCMAKE_BUILD_TYPE=Release -DMPMC_MODEL_SESSION_CERT_DIR=${{ github.workspace }}/build/model-session-certs -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
       - name: Build model RPC and unchanged v1 regressions
         run: cmake --build build/model-grpc --config Release --parallel 2
       - name: Run real gRPC roundtrips and v1 compatibility

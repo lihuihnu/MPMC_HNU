@@ -8,6 +8,10 @@ if(NOT TARGET mpmc::runtime_grpc)
                      runtime-grpc-library)
 endif()
 
+if(NOT TARGET mpmc::model_configuration_grpc)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../model_configuration_grpc" model-configuration-library)
+endif()
+
 add_library(mpmc_pt_process STATIC
     src/composition_root.cpp
     src/configured_backends.cpp
@@ -18,7 +22,7 @@ add_library(mpmc::pt_process ALIAS mpmc_pt_process)
 target_compile_features(mpmc_pt_process PUBLIC cxx_std_20)
 target_include_directories(mpmc_pt_process PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(mpmc_pt_process PUBLIC mpmc::runtime_grpc)
+target_link_libraries(mpmc_pt_process PUBLIC mpmc::runtime_grpc mpmc::model_configuration_grpc)
 set_target_properties(mpmc_pt_process PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_pt_service_host src/pt_service_host_main.cpp)

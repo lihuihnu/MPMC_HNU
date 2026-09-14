@@ -3,6 +3,7 @@
 
 #include <mpmc/pt_process/composition_root.hpp>
 #include <mpmc/runtime_grpc/grpc_headers.hpp>
+#include <mpmc/model_configuration_grpc/model_sessions.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -48,6 +49,9 @@ struct PtProcessHostOptions {
     // OS-selected IPv4 loopback port and only when the adapter requires a
     // per-launch bearer token. Production deployment must leave this false.
     bool desktop_loopback_session{false};
+    // Explicit opt-in; the default listener continues to expose only service v1.
+    bool enable_model_sessions{false};
+    model_configuration_grpc::ModelSessionLimits model_sessions;
 
     [[nodiscard]] bool structurally_valid() const noexcept;
 };
@@ -74,10 +78,12 @@ public:
 
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] int selected_port() const noexcept { return selected_port_; }
+    [[nodiscard]] model_configuration_grpc::ModelSessionStatus model_session_status() const;
 
 private:
     PtCompositionRoot& root_;
     PtProcessHostOptions options_;
+    std::unique_ptr<model_configuration_grpc::ModelSessionService> model_sessions_;
     std::unique_ptr<grpc::Server> server_;
     int selected_port_{};
     std::atomic<bool> started_{false};

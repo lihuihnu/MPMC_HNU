@@ -141,6 +141,6 @@ new library and tests, retaining all earlier model-configuration regressions.
 
 The [additive configuration service](../model_configuration_grpc/README.md) now
 provides bounded protobuf/gRPC mapping and create/describe/solve/release tests.
-Production session routing, shared clients/UI, public hints, one-sided applicability
+Native host session routing is opt-in. Web identity routing, shared clients/UI, public hints, one-sided applicability
 and product vertical slices remain open Gate items. Existing `configured_backend_id`
 wire fields retain their old meanings.

@@ -417,6 +417,10 @@ bool PtGrpcAdapterLimits::structurally_valid() const noexcept {
            max_solve_deadline.count() > 0;
 }
 
+grpc::Status PtGrpcServiceAdapter::authenticate_request(const grpc::ServerContext& context) const {
+    return authorization_status(context, authentication_);
+}
+
 bool PtGrpcAuthenticationOptions::structurally_valid() const noexcept {
     if (bearer_token.empty()) { return true; }
     return bearer_token.size() >= 43U && bearer_token.size() <= 128U &&
