@@ -132,6 +132,7 @@ async function main() {
       name: 'mpmc-pt-desktop-preview',
       productName: 'MPMC PT Desktop Preview',
       version: '0.1.0',
+      author: 'MPMC_HNU contributors',
       private: true,
       type: 'module',
       main: 'main.mjs',
