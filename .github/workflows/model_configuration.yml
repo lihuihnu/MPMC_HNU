@@ -1,4 +1,4 @@
-name: Public thermodynamic model parameters
+name: Public thermodynamic model configuration
 
 on:
   pull_request:
@@ -7,8 +7,21 @@ on:
       - 'modules/model_configuration/**'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp'
       - 'modules/thermodynamics/CMakeLists.txt'
+      - 'modules/flash/CMakeLists.txt'
+      - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_three_phase.hpp'
+      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_phase_transition.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp'
       - 'tests/model_configuration/parameters/**'
+      - 'tests/model_configuration/solver_settings/**'
+      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
       - 'tests/thermodynamics/contracts/**'
       - '.github/workflows/model_configuration.yml'
   workflow_dispatch:
@@ -64,6 +77,19 @@ jobs:
         run: cmake --build build/model-parameters --config ${{ matrix.config }} --parallel 2
       - name: Run public parameter contract
         run: ctest --test-dir build/model-parameters -C ${{ matrix.config }} -R '^model[.]parameters[.]' --verbose --no-tests=error
+      - name: Configure solver settings and PR76 parity
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/model_configuration/solver_settings -B build/solver-settings \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_SOLVER_SETTINGS_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Build solver settings and PR76 parity
+        run: cmake --build build/solver-settings --config ${{ matrix.config }} --parallel 2
+      - name: Run solver settings and PR76 parity
+        run: ctest --test-dir build/solver-settings -C ${{ matrix.config }} -R '^model[.]solver_settings[.]' --verbose --no-tests=error
       - name: Verify reused thermodynamics parameter authority
         if: matrix.sanitizers == 'ON'
         run: |

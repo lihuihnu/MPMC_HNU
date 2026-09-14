@@ -14,7 +14,7 @@
 namespace mpmc::model_configuration {
 
 // Parameter-domain version only. This is not a solve request or the future
-// complete model-creation protocol (resolved solver settings are a later gate).
+// complete model-creation protocol (solver settings have a separate version).
 inline constexpr std::string_view model_parameter_definition_v1 =
     "thermodynamic-model/parameter-definition/v1";
 
@@ -115,7 +115,7 @@ enum class ModelConfigurationErrorCode {
     unsupported_version, unsupported_family, missing_field, invalid_identifier,
     duplicate_identifier, unknown_component, invalid_value, invalid_unit,
     invalid_source, invalid_range, duplicate_parameter, missing_parameter,
-    invalid_pair, resource_limit
+    invalid_pair, resource_limit, unsupported_preset, invalid_settings
 };
 class ModelConfigurationError : public std::invalid_argument {
 public:

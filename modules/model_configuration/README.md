@@ -1,10 +1,12 @@
-# Public thermodynamic model configuration — parameter increment
+# Public thermodynamic model configuration — parameters and solver settings
 
-This is the first increment of the **unified model configuration + PR76 Expert
-parameter interface Gate**. It prepares validated, immutable **parameters** from
-a public C++ definition. It does not yet create an executable backend, a model
-handle, or a model accessible from Web/Electron/Android. No solver settings are
-silently supplied by this parameter-only adapter.
+The first two increments of the **unified model configuration + PR76 Expert
+parameter interface Gate** prepare immutable parameter and numerical-settings
+snapshots. The [versioned solver contract](solver_settings.md) resolves an explicit
+preset and maps complete public settings to the existing PR76 solver options.
+These are separate preparation APIs: no executable model factory, model handle,
+or Web/Electron/Android creation endpoint is implemented yet. Parameter preparation
+does not silently select solver settings.
 
 ## Current boundary
 
@@ -102,10 +104,14 @@ were inspected before this increment. Key findings and decisions:
   gateway and Android's Capacitor/JNI bridge both need later transport increments.
   No existing configured PR76/SW92/CPA call site imports this new module yet.
 
-Next increment: versioned public `PtSolverSettings` and an explicit resolved
-preset, with independent initial/final stability controls, complete option
-mapping, host ceilings and direct-C++ option parity. Then add a prepared backend
-factory, bounded immutable registry/opaque handles and release, followed by the
+The solver-settings increment adds `PtSolverSettings`, `mpmc-balanced-default/v1`,
+independent initial/final stability controls, host ceilings and direct-C++ option
+and solve parity. Its optional `mpmc::pr76_solver_configuration` target imports
+flash; the original parameter target still does not.
+
+Next add a prepared backend factory that owns both snapshots and the full
+evaluator/backend lifetime, then bounded immutable registry/opaque handles and
+release, followed by the
 new service mapping, shared Expert UI, Electron/Android integration and final
 regression. The full Gate additionally requires dynamic-vs-direct flash parity,
 session lifecycle and all three existing configured-backend product regressions.
@@ -124,6 +130,9 @@ Values are explicitly synthetic software fixtures, not physical validation.
 
 The focused GitHub-hosted workflow runs GCC Debug + ASan/UBSan, Clang Release and
 MSVC Release; the GCC job also runs the unchanged thermodynamics contract suite.
+The separate solver test project adds 14 cases, including exhaustive field
+presence, distinct custom option mapping, preset identity, quotas, immutable
+settings and actual one-/three-phase and exhausted-budget PR76 parity.
 Its commands include:
 
 ```bash
@@ -136,4 +145,5 @@ ctest --test-dir build/model-parameters -R '^model[.]parameters[.]' --verbose --
 No existing scientific algorithm, threshold, fixture, v1 wire field, curated
 backend, UI or product packaging is changed. Those consumers do not yet depend
 on the new module, so their unrelated runtime/product suites are not selected by
-this increment. The workflow also listens to its two upstream contract headers.
+these increments. The workflow also listens to the upstream PR76 and generic
+flash headers used by the settings adapter and parity tests.
