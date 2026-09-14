@@ -69,11 +69,15 @@ if(MPMC_PT_DESKTOP_RELEASE_CANDIDATE)
         "MPMC/PT/desktop-release-candidate-payload/v1")
     set(mpmc_desktop_executable_name "${mpmc_release_executable}")
     set(mpmc_desktop_notice_name "desktop-release-candidate-notice.txt")
+    set(mpmc_installer_notice
+        "${CMAKE_CURRENT_LIST_DIR}/release-candidate-notice.txt")
     set(mpmc_package_file_version "${mpmc_display_version}")
 else()
     set(mpmc_expected_desktop_convention "MPMC/PT/desktop-preview/v1")
     set(mpmc_desktop_executable_name "${mpmc_engineering_executable}")
     set(mpmc_desktop_notice_name "desktop-preview-notice.txt")
+    set(mpmc_installer_notice
+        "${CMAKE_CURRENT_LIST_DIR}/candidate-notice.txt")
     set(mpmc_package_file_version "${mpmc_msi_product_version}")
 endif()
 string(REGEX REPLACE "[.]exe$" "" mpmc_desktop_executable_stem
@@ -94,7 +98,8 @@ foreach(required_path IN ITEMS
         "${mpmc_desktop_executable}"
         "${mpmc_desktop_manifest}"
         "${mpmc_desktop_native_manifest}"
-        "${mpmc_desktop_notice}")
+        "${mpmc_desktop_notice}"
+        "${mpmc_installer_notice}")
     if(NOT EXISTS "${required_path}")
         message(FATAL_ERROR "Desktop installer input is incomplete: ${required_path}")
     endif()
@@ -174,12 +179,9 @@ set(CPACK_PACKAGE_FILE_NAME
 set(CPACK_PACKAGE_CHECKSUM "SHA256")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY FALSE)
 set(CPACK_VERBATIM_VARIABLES TRUE)
-set(CPACK_RESOURCE_FILE_LICENSE
-    "${CMAKE_CURRENT_LIST_DIR}/candidate-notice.txt")
-set(CPACK_RESOURCE_FILE_README
-    "${CMAKE_CURRENT_LIST_DIR}/candidate-notice.txt")
-set(CPACK_RESOURCE_FILE_WELCOME
-    "${CMAKE_CURRENT_LIST_DIR}/candidate-notice.txt")
+set(CPACK_RESOURCE_FILE_LICENSE "${mpmc_installer_notice}")
+set(CPACK_RESOURCE_FILE_README "${mpmc_installer_notice}")
+set(CPACK_RESOURCE_FILE_WELCOME "${mpmc_installer_notice}")
 set(CPACK_PACKAGE_EXECUTABLES
     "${mpmc_desktop_executable_stem}" "${mpmc_product_name}")
 set(CPACK_CREATE_DESKTOP_LINKS "${mpmc_desktop_executable_stem}")
