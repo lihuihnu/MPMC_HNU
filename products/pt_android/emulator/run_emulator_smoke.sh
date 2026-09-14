@@ -72,6 +72,7 @@ fi
   -no-audio \
   -no-boot-anim \
   -no-snapshot \
+  -no-metrics \
   -gpu swiftshader_indirect \
   -camera-back none \
   -camera-front none \
@@ -86,7 +87,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$adb" wait-for-device
+show_emulator_diagnostics() {
+  echo '--- emulator diagnostics ---' >&2
+  "$adb" devices -l >&2 || true
+  tail -n 200 "$emulator_log" >&2 || true
+}
+
+"$adb" start-server >/dev/null
+if ! timeout 180 "$adb" wait-for-device; then
+  echo 'Android emulator never connected to adb within 180 seconds.' >&2
+  show_emulator_diagnostics
+  exit 1
+fi
+
 booted=0
 for _ in $(seq 1 120); do
   if [[ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
@@ -96,13 +109,15 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 if [[ $booted -ne 1 ]]; then
-  echo 'Android emulator did not complete boot.' >&2
+  echo 'Android emulator connected to adb but did not complete boot.' >&2
+  show_emulator_diagnostics
   exit 1
 fi
 
 abi="$("$adb" shell getprop ro.product.cpu.abi | tr -d '\r')"
 if [[ "$abi" != "x86_64" ]]; then
   echo "Unexpected emulator ABI: $abi" >&2
+  show_emulator_diagnostics
   exit 1
 fi
 
@@ -131,6 +146,7 @@ done
 "$adb" logcat -d -v threadtime >"$logcat_file" || true
 if [[ $success -ne 1 ]]; then
   echo 'Android JNI PT service smoke did not publish success before timeout.' >&2
+  show_emulator_diagnostics
   exit 1
 fi
 
