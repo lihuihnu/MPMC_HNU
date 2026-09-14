@@ -7,6 +7,10 @@ a versioned context-isolated preload bridge and native gRPC. Both first discover
 configured PT backends and their exact component inventories, then build the
 solve form from the selected immutable capability snapshot.
 
+The [Android Product Shell](../products/pt_android/README.md) also reuses this
+React UI through its app-local Capacitor/JNI `FlashClient`. Its build and
+lifecycle contract is maintained in that product directory.
+
 ## Scientific and service boundary
 
 The browser is not an EOS or flash implementation. It does not:
@@ -97,9 +101,11 @@ require `accepted`; it is integration evidence, not a replacement for physical
 regression or a license to reinterpret `indeterminate`.
 
 The resulting Linux x64, Windows x64, and macOS arm64 directories are unsigned
-engineering previews with `release_eligible=false`. They are not one-click public
-installers yet: code signing, notarization, licensing, update policy, and
-publisher identity remain fail-closed release gates.
+engineering previews with `release_eligible=false`. Downstream packaging is
+documented in the [product index](../products/pt/README.md): Windows has a
+[desktop MSI and protected signed RC gate](../products/pt/desktop_installer/README.md).
+Public-release signing/notarization, licensing, update and publisher requirements
+remain governed by those product contracts.
 
 ## Development
 
