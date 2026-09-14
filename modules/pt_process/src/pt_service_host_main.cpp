@@ -3,6 +3,7 @@
 #include <mpmc/pt_process/parameter_snapshot_supplier.hpp>
 #include <mpmc/pt_process/process_host.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -41,6 +42,7 @@ struct CommandLine {
     std::filesystem::path trusted_edge_client_ca{default_edge_client_ca};
     std::chrono::seconds shutdown_grace{10};
     bool print_snapshot_manifest{};
+    bool desktop_session_token_stdin{};
     bool help{};
 };
 
@@ -82,12 +84,19 @@ CommandLine parse_command_line(int argc, char** argv) {
     bool key_seen = false;
     bool client_ca_seen = false;
     bool grace_seen = false;
+    bool desktop_seen = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view option(argv[index]);
         if (option == "--help") {
             options.help = true;
         } else if (option == "--print-snapshot-manifest") {
             options.print_snapshot_manifest = true;
+        } else if (option == "--desktop-session-token-stdin") {
+            if (desktop_seen) {
+                argument_error("duplicate --desktop-session-token-stdin");
+            }
+            desktop_seen = true;
+            options.desktop_session_token_stdin = true;
         } else if (option == "--listen-address") {
             if (listen_seen) {
                 argument_error("duplicate --listen-address");
@@ -126,7 +135,31 @@ CommandLine parse_command_line(int argc, char** argv) {
             argument_error("unknown option: " + std::string(option));
         }
     }
+    if (options.desktop_session_token_stdin) {
+        if (listen_seen || certificate_seen || key_seen || client_ca_seen) {
+            argument_error(
+                "desktop session mode selects its own loopback listener and "
+                "cannot accept production TLS options");
+        }
+        options.listen_address = "127.0.0.1:0";
+    }
     return options;
+}
+
+std::string read_desktop_session_token(std::istream& input) {
+    std::string token;
+    if (!std::getline(input, token) || token.size() < 43U ||
+        token.size() > 128U ||
+        !std::all_of(token.begin(), token.end(), [](unsigned char value) {
+            return (value >= 'a' && value <= 'z') ||
+                   (value >= 'A' && value <= 'Z') ||
+                   (value >= '0' && value <= '9') || value == '-' ||
+                   value == '_';
+        })) {
+        argument_error(
+            "desktop session token stdin requires 43..128 base64url characters");
+    }
+    return token;
 }
 
 void validate_secret_paths(const CommandLine& options) {
@@ -149,8 +182,10 @@ void print_help(std::ostream& output) {
         << "  --trusted-edge-client-ca ABSOLUTE_PATH\n"
         << "  --shutdown-grace-seconds 1..300\n"
         << "  --print-snapshot-manifest\n"
+        << "  --desktop-session-token-stdin\n"
         << "\nDefaults use the documented /run/secrets/mpmc-pt/backend "
-           "mount contract.\n";
+           "mount contract. Desktop mode is loopback-only, reads one bearer "
+           "token line, and stops on the next line or stdin EOF.\n";
 }
 
 void install_signal_handlers() {
@@ -216,18 +251,29 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        validate_secret_paths(command_line);
+        mpmc::runtime_grpc::PtGrpcAuthenticationOptions authentication;
+        if (command_line.desktop_session_token_stdin) {
+            authentication.bearer_token =
+                read_desktop_session_token(std::cin);
+        } else {
+            validate_secret_paths(command_line);
+        }
         auto observer =
             std::make_shared<process::PtJsonLineObserver>(std::cout);
         process::PtCompositionRoot root(
-            std::move(snapshots.backends), {}, {}, std::move(observer));
+            std::move(snapshots.backends), {}, {}, std::move(observer),
+            std::move(authentication));
 
         process::PtProcessHostOptions host_options;
         host_options.listen_address = command_line.listen_address;
-        host_options.tls = process::load_pt_process_tls_identity({
-            command_line.certificate_chain,
-            command_line.private_key,
-            command_line.trusted_edge_client_ca});
+        host_options.desktop_loopback_session =
+            command_line.desktop_session_token_stdin;
+        if (!host_options.desktop_loopback_session) {
+            host_options.tls = process::load_pt_process_tls_identity({
+                command_line.certificate_chain,
+                command_line.private_key,
+                command_line.trusted_edge_client_ca});
+        }
         host_options.shutdown_grace = command_line.shutdown_grace;
 
         process::PtProcessHost host(root, std::move(host_options));
@@ -243,16 +289,29 @@ int main(int argc, char** argv) {
                   << ",\"selected_port\":" << host.selected_port()
                   << "}\n" << std::flush;
 
+        auto desktop_stop_requested =
+            std::make_shared<std::atomic<bool>>(false);
+        if (command_line.desktop_session_token_stdin) {
+            std::thread([desktop_stop_requested] {
+                std::string control;
+                (void)std::getline(std::cin, control);
+                desktop_stop_requested->store(true,
+                                               std::memory_order_release);
+            }).detach();
+        }
+
         std::atomic<bool> wait_completed{false};
         std::thread waiter([&host, &wait_completed] {
             host.wait();
             wait_completed.store(true, std::memory_order_release);
         });
         while (stop_requested == 0 &&
+               !desktop_stop_requested->load(std::memory_order_acquire) &&
                !wait_completed.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        if (stop_requested != 0) {
+        if (stop_requested != 0 ||
+            desktop_stop_requested->load(std::memory_order_acquire)) {
             host.shutdown();
         }
         waiter.join();

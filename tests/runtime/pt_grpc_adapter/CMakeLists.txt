@@ -52,6 +52,7 @@ endif()
 set(cases
     mapping_and_outcomes
     wire_and_size_limits
+    bearer_authentication
     concurrency_gate
     deadline_and_cancel
     headers)

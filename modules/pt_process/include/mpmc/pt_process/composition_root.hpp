@@ -43,7 +43,8 @@ public:
         std::vector<OwnedConfiguredPtBackend> backends,
         runtime::PtServiceLimits service_limits = {},
         runtime_grpc::PtGrpcAdapterLimits adapter_limits = {},
-        std::shared_ptr<runtime_grpc::PtGrpcObserver> observer = {});
+        std::shared_ptr<runtime_grpc::PtGrpcObserver> observer = {},
+        runtime_grpc::PtGrpcAuthenticationOptions authentication = {});
 
     PtCompositionRoot(const PtCompositionRoot&) = delete;
     PtCompositionRoot& operator=(const PtCompositionRoot&) = delete;

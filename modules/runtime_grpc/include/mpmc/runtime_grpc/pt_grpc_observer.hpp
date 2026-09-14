@@ -19,6 +19,7 @@ enum class PtGrpcRpcMethod {
 // PtServiceOutcome and is never inferred from transport status.
 enum class PtGrpcCompletion {
     completed,
+    authentication_failure,
     invalid_request,
     request_limit,
     response_limit,

@@ -96,8 +96,15 @@ bool PtProcessHostOptions::structurally_valid() const noexcept {
             const auto byte = static_cast<unsigned char>(value);
             return byte > 0x20U && byte <= 0x7eU;
         });
-    return address_valid && tls.structurally_valid() &&
-           shutdown_grace.count() > 0 && shutdown_grace <= std::chrono::minutes(5);
+    const bool tls_empty = tls.certificate_chain_pem.empty() &&
+                           tls.private_key_pem.empty() &&
+                           tls.trusted_client_ca_pem.empty();
+    const bool security_valid =
+        desktop_loopback_session
+            ? listen_address == "127.0.0.1:0" && tls_empty
+            : tls.structurally_valid();
+    return address_valid && security_valid && shutdown_grace.count() > 0 &&
+           shutdown_grace <= std::chrono::minutes(5);
 }
 
 PtProcessHost::PtProcessHost(PtCompositionRoot& root,
@@ -109,6 +116,16 @@ PtProcessHost::PtProcessHost(PtCompositionRoot& root,
     if (root_.configured_backend_count() == 0U) {
         throw std::invalid_argument(
             "secure PT process host requires a configured backend");
+    }
+    if (options_.desktop_loopback_session &&
+        !root_.adapter().requires_bearer_token()) {
+        throw std::invalid_argument(
+            "desktop PT process host requires adapter bearer authentication");
+    }
+    if (!options_.desktop_loopback_session &&
+        root_.adapter().requires_bearer_token()) {
+        throw std::invalid_argument(
+            "production PT process host cannot use desktop bearer authentication");
     }
 }
 
@@ -125,16 +142,22 @@ void PtProcessHost::start() {
     }
 
     enable_health_service_once();
-    grpc::SslServerCredentialsOptions tls_options(
-        GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY);
-    tls_options.pem_root_certs = options_.tls.trusted_client_ca_pem;
-    tls_options.pem_key_cert_pairs.push_back(
-        {options_.tls.private_key_pem, options_.tls.certificate_chain_pem});
-
     grpc::ServerBuilder builder;
-    builder.AddListeningPort(options_.listen_address,
-                             grpc::SslServerCredentials(tls_options),
-                             &selected_port_);
+    if (options_.desktop_loopback_session) {
+        builder.AddListeningPort(options_.listen_address,
+                                 grpc::InsecureServerCredentials(),
+                                 &selected_port_);
+    } else {
+        grpc::SslServerCredentialsOptions tls_options(
+            GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY);
+        tls_options.pem_root_certs = options_.tls.trusted_client_ca_pem;
+        tls_options.pem_key_cert_pairs.push_back(
+            {options_.tls.private_key_pem,
+             options_.tls.certificate_chain_pem});
+        builder.AddListeningPort(options_.listen_address,
+                                 grpc::SslServerCredentials(tls_options),
+                                 &selected_port_);
+    }
     runtime_grpc::configure_pt_grpc_server(builder, root_.adapter());
     server_ = builder.BuildAndStart();
     if (!server_ || selected_port_ <= 0) {
