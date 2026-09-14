@@ -1,7 +1,8 @@
 # PT cross-platform product staging
 
 This directory defines the relocatable native PT product staging gate. It is
-not an end-user installer and does not add a desktop shell.
+not an end-user installer and contains no desktop shell; a downstream Electron
+job consumes its exact staged tree without rebuilding the native product.
 
 Hosted product CI consumes the checked-in Conan lock and one fixed Release
 profile. All packages must already be published: both dependency seeding and
@@ -28,7 +29,7 @@ result-interpretation logic.
 
 ## Restore-only CI contract
 
-`PT cross-platform product staging` has two separate matrix jobs on the
+`PT cross-platform product staging` has three separate matrix jobs on the
 official Ubuntu 24.04, Windows Server 2022 and macOS 15 runners:
 
 1. `seed` restores the exact cache key. On a miss it downloads locked published
@@ -38,8 +39,12 @@ official Ubuntu 24.04, Windows Server 2022 and macOS 15 runners:
    builds disabled, validates that every dependency node came from the local
    cache, then configures, builds, installs and runs the product tests. This job
    never saves or repairs a dependency cache.
+3. `desktop` downloads that job's permission-preserving native staging archive,
+   builds the shared React/Electron layer, loads the real renderer, discovers
+   all three backends, requests one real solve from each, and assembles an
+   unsigned engineering preview. It performs no Conan resolution or C++ build.
 
-Both jobs have a 30-minute timeout. Cache identity includes `conanfile.txt`,
+Seed and stage have 30-minute timeouts; desktop has a 20-minute timeout. Cache identity includes `conanfile.txt`,
 `conan.lock` and all fixed profiles, so source-only changes reuse the verified
 dependency seed while dependency changes create a new immutable cache entry.
 The generated dependency manifest records every recipe/package revision, the
