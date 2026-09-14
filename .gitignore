@@ -11,3 +11,5 @@
 /frontend/src/gen/google/rpc/
 __pycache__/
 *.py[cod]
+
+/frontend/desktop-model-test-dist/

@@ -20,6 +20,7 @@ on:
       - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
       - 'tests/model_configuration/**'
       - 'frontend/src/api/modelSessionClient*'
+      - 'frontend/src/api/modelDesktopContract.ts'
       - 'frontend/desktop/**'
       - 'frontend/package.json'
       - 'frontend/package-lock.json'
@@ -101,7 +102,28 @@ jobs:
         run: |
           npm run typecheck
           npm run desktop:typecheck
-          npm test -- src/api/modelSessionClient.test.ts desktop/tests/modelSessionLive.test.ts
+          npm test -- src/api/modelSessionClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts
+      - name: Install pinned Electron binary for actual window IPC verification
+        if: matrix.sanitizers == 'ON'
+        working-directory: frontend
+        run: node node_modules/electron/install.js
+      - name: Prepare existing Electron sandbox under Xvfb
+        if: matrix.sanitizers == 'ON'
+        working-directory: frontend
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+          test "$(stat -c '%U:%G %a' node_modules/electron/dist/chrome-sandbox)" = "root:root 4755"
+      - name: Build renderer and versioned model IPC smoke
+        if: matrix.sanitizers == 'ON'
+        working-directory: frontend
+        run: |
+          npm run build
+          npm run desktop:model-bundle
+      - name: Verify real window isolation and close reclamation
+        if: matrix.sanitizers == 'ON'
+        working-directory: frontend
+        run: xvfb-run --auto-servernum npm run desktop:model-smoke
 
   windows:
     name: Model RPC MSVC Release
@@ -151,7 +173,18 @@ jobs:
         run: |
           npm run typecheck
           npm run desktop:typecheck
-          npm test -- src/api/modelSessionClient.test.ts desktop/tests/modelSessionLive.test.ts
+          npm test -- src/api/modelSessionClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts
+      - name: Install pinned Electron binary for actual window IPC verification
+        working-directory: frontend
+        run: node node_modules/electron/install.js
+      - name: Build renderer and versioned model IPC smoke
+        working-directory: frontend
+        run: |
+          npm run build
+          npm run desktop:model-bundle
+      - name: Verify real window isolation and close reclamation
+        working-directory: frontend
+        run: npm run desktop:model-smoke
 
   macos:
     name: Model RPC macOS arm64 Release
@@ -212,4 +245,15 @@ jobs:
         run: |
           npm run typecheck
           npm run desktop:typecheck
-          npm test -- src/api/modelSessionClient.test.ts desktop/tests/modelSessionLive.test.ts
+          npm test -- src/api/modelSessionClient.test.ts desktop/modelDesktopSession.test.ts desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts
+      - name: Install pinned Electron binary for actual window IPC verification
+        working-directory: frontend
+        run: node node_modules/electron/install.js
+      - name: Build renderer and versioned model IPC smoke
+        working-directory: frontend
+        run: |
+          npm run build
+          npm run desktop:model-bundle
+      - name: Verify real window isolation and close reclamation
+        working-directory: frontend
+        run: npm run desktop:model-smoke

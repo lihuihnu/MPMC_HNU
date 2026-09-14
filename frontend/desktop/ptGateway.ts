@@ -36,8 +36,13 @@ export class PtDesktopGateway {
   private discovery: PtCapabilityDiscovery | null = null;
 
   constructor(private readonly host: PtHostSession) {
-    this.models = new ModelSessionClient(async (signal) => {
-      const connection = await host.start();
+    this.models = this.createModelSession();
+  }
+
+  /** Caller owns disposal; each window receives an independent host session. */
+  createModelSession(): ModelSessionClient {
+    return new ModelSessionClient(async (signal) => {
+      const connection = await this.host.start();
       signal.throwIfAborted();
       return createDesktopModelConnection(connection);
     });

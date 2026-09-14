@@ -1,8 +1,10 @@
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { app, session, type BrowserWindow } from 'electron';
 
 import { registerPtDesktopIpc } from './desktopIpc';
+import { registerModelDesktopIpc } from './modelDesktopIpc';
 import { PtHostSession } from './hostSession';
 import {
   installedSmokeRequested,
@@ -34,6 +36,7 @@ if (!gotSingleInstanceLock) {
   let mainWindow: BrowserWindow | null = null;
   let removeIpc: (() => void) | null = null;
   let quitAfterStop = false;
+  let modelIpc: ReturnType<typeof registerModelDesktopIpc> | null = null;
 
   async function stopAndExit(exitCode: number): Promise<void> {
     quitAfterStop = true;
@@ -44,7 +47,8 @@ if (!gotSingleInstanceLock) {
     }
     mainWindow = null;
     try {
-      await gateway.stop();
+      try { await modelIpc?.dispose(); }
+      finally { await gateway.stop(); }
     } finally {
       app.exit(exitCode);
     }
@@ -57,6 +61,9 @@ if (!gotSingleInstanceLock) {
       showWhenReady: !installSmoke,
     });
     removeIpc = registerPtDesktopIpc(gateway, () => mainWindow?.webContents ?? null);
+    modelIpc = registerModelDesktopIpc(() => gateway.createModelSession(),
+      pathToFileURL(join(app.getAppPath(), 'renderer', 'index.html')).href);
+    modelIpc.attach(mainWindow.webContents);
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
@@ -93,7 +100,10 @@ if (!gotSingleInstanceLock) {
     event.preventDefault();
     quitAfterStop = true;
     removeIpc?.();
-    void gateway.stop().finally(() => app.quit());
+    void (async () => {
+      try { await modelIpc?.dispose(); }
+      finally { await gateway.stop(); }
+    })().finally(() => app.quit());
   });
 
   app.on('window-all-closed', () => app.quit());

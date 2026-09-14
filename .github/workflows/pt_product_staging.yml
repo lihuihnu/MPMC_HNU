@@ -20,6 +20,7 @@ on:
       - 'frontend/src/api/desktopBridgeContract.ts'
       - 'frontend/src/api/flashClient.ts'
       - 'frontend/src/api/modelSessionClient*'
+      - 'frontend/src/api/modelDesktopContract.ts'
       - 'frontend/buf.model.gen.yaml'
       - 'buf.model.yaml'
       - 'frontend/src/api/ptWire.ts'

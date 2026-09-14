@@ -4,8 +4,8 @@
 model references. It accepts a connection factory, so ownership is shared between
 clients without importing Node, Electron, transport credentials or UI code into
 the manager. The desktop gateway exposes `gateway.models` in the **main process**;
-the current renderer/preload IPC remains unchanged. The host must opt into model
-sessions. The actual app does so on its authenticated private loopback child.
+the additive model preload IPC now creates a separate owner for each window.
+The host must opt into model sessions. The actual app does so on its authenticated private loopback child.
 
 ```ts
 await gateway.models.connect();
@@ -75,3 +75,7 @@ real Node -> native host tests on Linux GCC/ASan, Windows and macOS, exporting t
 existing attributed binary definition/PT state from the C++ fixture. These are
 client/transport regressions, not independent physical validation. UI, Android
 IPC and Web routes remain subsequent work.
+
+Desktop IPC now owns one shared client per explicitly attached window. See
+[desktop IPC v1](../../desktop/modelDesktopIpc.md) for the additive preload API,
+local references, frame authorization, lifecycle and hosted regression scope.
