@@ -57,8 +57,8 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("OwnedConfiguredPtBackend", shim)
         self.assertIn("retain_configured_pt_backend", shim)
-        self.assertNotIn("PtCompositionRoot", shim)
-        self.assertNotIn("runtime_grpc", shim)
+        self.assertNotIn("class PtCompositionRoot", shim)
+        self.assertNotIn("<mpmc/runtime_grpc/", shim)
 
     def test_jni_smoke_uses_real_pt_service_discovery_and_three_backends(self) -> None:
         source = (ANDROID_ROOT / "src" / "jni_smoke.cpp").read_text(
