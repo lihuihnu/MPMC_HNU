@@ -13,12 +13,14 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/model-client-paths-$<CONFIG>.j
     CONTENT "{\"host\":\"$<TARGET_FILE:mpmc_pt_service_host>\",\"fixture\":\"$<TARGET_FILE:mpmc_model_session_process_client>\"}\n")
 add_executable(mpmc_model_grpc_tests service_test.cpp public_header.cpp)
 target_link_libraries(mpmc_model_grpc_tests PRIVATE mpmc::model_configuration_grpc mpmc::runtime_grpc)
+add_executable(mpmc_model_hint_tests hints_test.cpp)
+target_link_libraries(mpmc_model_hint_tests PRIVATE mpmc::model_configuration_grpc mpmc::runtime_grpc)
 # Unchanged legacy tests provide the necessary dependency-compatibility gate.
 add_executable(mpmc_legacy_grpc_tests ../../runtime/pt_grpc_adapter/pt_grpc_adapter_test.cpp
                                     ../../runtime/pt_grpc_adapter/pt_grpc_adapter_headers.cpp)
 target_link_libraries(mpmc_legacy_grpc_tests PRIVATE mpmc::runtime_grpc)
 set(checked_targets mpmc_model_configuration_grpc mpmc_pr76_model_registry
-                    mpmc_runtime_grpc mpmc_model_grpc_tests mpmc_legacy_grpc_tests
+                    mpmc_runtime_grpc mpmc_model_grpc_tests mpmc_model_hint_tests mpmc_legacy_grpc_tests
                     mpmc_pt_process mpmc_pt_service_host mpmc_model_session_tests mpmc_model_session_process_client)
 option(MPMC_MODEL_GRPC_ENABLE_SANITIZERS "Instrument configuration RPC boundary and registry" OFF)
 foreach(target IN LISTS checked_targets)
@@ -54,6 +56,8 @@ foreach(case IN ITEMS roundtrip metadata_roundtrip full_result_parity custom_set
     add_test(NAME model.grpc.${case} COMMAND mpmc_model_grpc_tests ${case})
     set_tests_properties(model.grpc.${case} PROPERTIES TIMEOUT 60 LABELS "model;grpc;roundtrip")
 endforeach()
+add_test(NAME model.grpc.solve_hints_parity COMMAND mpmc_model_hint_tests)
+set_tests_properties(model.grpc.solve_hints_parity PROPERTIES TIMEOUT 60 LABELS "model;grpc;roundtrip;hints")
 foreach(case IN ITEMS mapping_and_outcomes wire_and_size_limits bearer_authentication concurrency_gate deadline_and_cancel headers)
     add_test(NAME model.grpc_legacy.${case} COMMAND mpmc_legacy_grpc_tests ${case})
     set_tests_properties(model.grpc_legacy.${case} PROPERTIES TIMEOUT 30 LABELS "model;grpc;v1_compatibility")

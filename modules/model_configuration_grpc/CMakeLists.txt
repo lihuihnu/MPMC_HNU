@@ -57,7 +57,8 @@ if(MSVC)
     target_compile_options(mpmc_model_wire_generated PRIVATE
         "/FI${CMAKE_CURRENT_SOURCE_DIR}/../runtime_grpc/include/mpmc/runtime_grpc/grpc_headers.hpp")
 endif()
-add_library(mpmc_model_configuration_grpc STATIC src/model_wire.cpp src/model_grpc_adapter.cpp src/model_sessions.cpp)
+add_library(mpmc_model_configuration_grpc STATIC
+    src/model_wire.cpp src/pt_solve_hints_wire.cpp src/model_grpc_adapter.cpp src/model_sessions.cpp)
 add_library(mpmc::model_configuration_grpc ALIAS mpmc_model_configuration_grpc)
 add_dependencies(mpmc_model_configuration_grpc mpmc_model_wire_generated)
 target_compile_features(mpmc_model_configuration_grpc PUBLIC cxx_std_20)

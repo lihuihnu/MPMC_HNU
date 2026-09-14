@@ -129,6 +129,16 @@ flash::PtFlashBackendResult Pr76ModelSolveLease::solve(const flash::PtFlashReque
     }
     return admitted.entry_->model_.solve(request);
 }
+flash::PtFlashBackendResult Pr76ModelSolveLease::solve(
+    const flash::PtFlashRequest& request, const PtSolveHints& hints) && {
+    // Hints are per-call data owned by the caller. The retained registry entry
+    // pins only the model/workspace; release/close cannot turn hints into state.
+    Pr76ModelSolveLease admitted(std::move(*this));
+    if (!admitted.entry_) {
+        throw ModelRegistryError(ModelRegistryErrorCode::invalid_lease, "model solve lease is empty or consumed");
+    }
+    return admitted.entry_->model_.solve(request, hints);
+}
 
 Pr76ModelRegistry::Pr76ModelRegistry(Pr76ModelRegistryLimits limits, ModelDataPolicy policy,
                                    ModelHandleEntropySource entropy)
@@ -188,6 +198,11 @@ Pr76ModelSolveLease Pr76ModelRegistry::acquire_solve(std::string_view handle) {
 flash::PtFlashBackendResult Pr76ModelRegistry::solve(std::string_view handle,
                                                    const flash::PtFlashRequest& request) {
     return acquire_solve(handle).solve(request);
+}
+flash::PtFlashBackendResult Pr76ModelRegistry::solve(
+    std::string_view handle, const flash::PtFlashRequest& request,
+    const PtSolveHints& hints) {
+    return acquire_solve(handle).solve(request, hints);
 }
 void Pr76ModelRegistry::release(std::string_view handle) {
     const auto state = state_;

@@ -18,10 +18,16 @@ inline constexpr std::string_view model_wire_contract = "mpmc.model_configuratio
     const model_configuration::ModelConfigurationLimits& limits);
 [[nodiscard]] model_configuration::PtSolverSettings decode_settings(
     const model_configuration::v1::PtSolverSettings& input);
+// Structural wire mapping only. State-dependent support/simplex/resource checks
+// stay in Pr76ExecutableModel so direct C++ and RPC calls share one authority.
+[[nodiscard]] model_configuration::PtSolveHints decode_solve_hints(
+    const model_configuration::v1::PtSolveHints& input);
 void encode_definition(const model_configuration::ThermodynamicModelDefinition& input,
                        model_configuration::v1::ThermodynamicModelDefinition& output);
 void encode_settings(const model_configuration::PtSolverSettings& input,
                      model_configuration::v1::PtSolverSettings& output);
+void encode_solve_hints(const model_configuration::PtSolveHints& input,
+                        model_configuration::v1::PtSolveHints& output);
 void encode_snapshot(const model_configuration::Pr76RegisteredModelSnapshot& input,
                      model_configuration::v1::ModelSnapshot& output);
 void encode_result(const flash::PtFlashBackendResult& input,

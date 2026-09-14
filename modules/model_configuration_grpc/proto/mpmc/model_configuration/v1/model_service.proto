@@ -209,6 +209,25 @@ message DescribeModelResponse {
   optional string wire_contract = 1;
   optional ModelSnapshot snapshot = 2;
 }
+
+// Transport shape for the public pt-solve-hints/v1 DTO. These are numerical
+// initialization hints only; the native solver remains authoritative for the
+// current feed support, normalization, phase-fraction simplex and phase count.
+message PtCompositionStart {
+  repeated double composition = 1;
+}
+message PtThreePhaseContinuationHint {
+  // Exactly three records are required by the fixed public three-phase hint.
+  repeated PtCompositionStart compositions = 1;
+  // Exactly two entries: beta_1, beta_2; beta_0 remains dependent.
+  repeated double phase_fraction_seed = 2;
+}
+message PtSolveHints {
+  optional string version = 1;
+  repeated PtCompositionStart initial_stability_starts = 2;
+  repeated PtCompositionStart final_two_phase_stability_starts = 3;
+  repeated PtThreePhaseContinuationHint three_phase_continuation_starts = 4;
+}
 message SolveModelRequest {
   optional string wire_contract = 1;
   optional string model_handle = 2;
@@ -216,6 +235,9 @@ message SolveModelRequest {
   optional double temperature_k = 4;
   // Exactly the immutable model component order; no ID inference/normalization.
   repeated double feed = 5;
+  // Absent means the original cold solve. Present hints are per call and are
+  // never retained in the model, registry, session or solver-settings snapshot.
+  optional PtSolveHints hints = 6;
 }
 message CandidatePhase {
   optional double mole_phase_fraction = 1;

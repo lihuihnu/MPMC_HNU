@@ -4,9 +4,30 @@
 #include <iostream>
 #include <thread>
 
+namespace {
+using namespace service_test;
+
+mc::PtSolveHints binary_continuation_hints() {
+    auto owner = model_test::create(definition(binary_model()), preset());
+    const auto cold = owner->solve(binary);
+    const auto hints = mc::make_pr76_continuation_hints(cold);
+    require(hints.version == mc::pt_solve_hints_v1,
+            "binary continuation helper lost the public hint version");
+    return hints;
+}
+
+wire::SolveModelRequest binary_hinted_request(
+    const std::string& handle, const mc::PtSolveHints& hints) {
+    auto request = solve_request(handle, binary);
+    api::encode_solve_hints(hints, *request.mutable_hints());
+    return request;
+}
+} // namespace
+
 int main(int argc, char** argv) {
     using namespace service_test;
     try {
+        const auto hints = binary_continuation_hints();
         if (argc == 2 && std::string_view(argv[1]) == "--fixture-json") {
             // Export the existing attributed native fixture; no duplicate TS data.
             std::string json;
@@ -15,7 +36,14 @@ int main(int argc, char** argv) {
             std::string solve_json;
             require(google::protobuf::util::MessageToJsonString(
                 solve_request("", binary), &solve_json).ok(), "state encoding failed");
-            std::cout << "{\"create\":" << json << ",\"solve\":" << solve_json << "}\n"; return 0;
+            std::string hinted_json;
+            require(google::protobuf::util::MessageToJsonString(
+                binary_hinted_request("", hints), &hinted_json).ok(),
+                "hinted state encoding failed");
+            std::cout << "{\"create\":" << json
+                      << ",\"solve\":" << solve_json
+                      << ",\"solveHinted\":" << hinted_json << "}\n";
+            return 0;
         }
         require(argc == 3, "expected address and mode");
         std::string bearer; require(static_cast<bool>(std::getline(std::cin, bearer)), "missing test credential");
@@ -38,6 +66,17 @@ int main(int argc, char** argv) {
             wire::SolveModelResponse solved;
             ok(stub->SolveModel(&solve_context, solve_request(made.model_handle(), binary), &solved));
             compare(native_result(solved.result()), direct(binary_model(), binary));
+
+            // The process-disconnect lifecycle regression now also proves that a
+            // real authenticated session can carry pt-solve-hints/v1 without
+            // persisting them in the model/session after this unary call.
+            grpc::ClientContext hinted_context; configure(hinted_context, session.session_id());
+            wire::SolveModelResponse hinted;
+            ok(stub->SolveModel(
+                &hinted_context, binary_hinted_request(made.model_handle(), hints), &hinted));
+            auto expected_owner = model_test::create(definition(binary_model()), preset());
+            compare(native_result(hinted.result()), expected_owner->solve(binary, hints));
+
             // Pipe to the test parent only; these credentials are never CI logs.
             std::cout << session.session_id() << '\n' << made.model_handle() << '\n' << std::flush;
             std::string control; (void)std::getline(std::cin, control);

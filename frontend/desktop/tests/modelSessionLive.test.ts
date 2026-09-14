@@ -13,10 +13,15 @@ const binary = process.env.MPMC_MODEL_CLIENT_HOST;
 const fixture = process.env.MPMC_MODEL_CLIENT_FIXTURE;
 
 it.skipIf(!binary || !fixture)('shared client reconnect/release against the real native host', async () => {
-  // C++ exports the existing attributed nitrogen/ethane fixture and PT state.
-  const data = JSON.parse(readFileSync(fixture!, 'utf8')) as { create: JsonValue; solve: JsonValue };
+  // C++ exports the existing attributed nitrogen/ethane fixture, PT state and
+  // continuation hints. TypeScript does not duplicate numerical fixture data.
+  const data = JSON.parse(readFileSync(fixture!, 'utf8')) as {
+    create: JsonValue; solve: JsonValue; solveHinted: JsonValue;
+  };
   const definition = fromJson(CreateModelRequestSchema, data.create);
   const state = fromJson(SolveModelRequestSchema, data.solve);
+  const hintedState = fromJson(SolveModelRequestSchema, data.solveHinted);
+  expect(hintedState.hints?.version).toBe('pt-solve-hints/v1');
   const logs: string[] = [];
   const host = new PtHostSession(binary!, line => logs.push(line), { enableModelSessions: true });
   const gateway = new PtDesktopGateway(host);
@@ -72,6 +77,10 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
     expect(solved.temperatureK).toBe(state.temperatureK);
     expect(solved.feed).toEqual(state.feed);
     expect(solved.candidatePhaseSet?.phases).toHaveLength(2);
+    // Same typed client/transport, now carrying the public per-solve hint DTO.
+    expect(await client.solve(initial.model, hintedState)).toEqual(solved);
+    // A following cold call proves hints were not cached in the client/session/model.
+    expect(await client.solve(initial.model, state)).toEqual(solved);
     expect(await client.describe(initial.model)).toEqual(initial.snapshot);
     // Four models fill the actual per-session host cap. Release restores a slot.
     const others = [];
@@ -92,11 +101,11 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
     for (let i = 0; i < 20; ++i) {
       const previous = { ...observed.at(-1)! };
       await client.reconnect(); await gone(previous);
-      await expect(client.solve(old, state)).rejects.toMatchObject({ reason: 'model.stale_reference' });
+      await expect(client.solve(old, hintedState)).rejects.toMatchObject({ reason: 'model.stale_reference' });
       await expect(observer.models.describeModel({ wireContract: MODEL_WIRE_CONTRACT, modelHandle: previous.handle },
         options(observed.at(-1)!.id))).rejects.toMatchObject({ code: Code.NotFound });
       const made = await client.create(definition);
-      expect(await client.solve(made.model, state)).toEqual(solved);
+      expect(await client.solve(made.model, i % 2 === 0 ? hintedState : state)).toEqual(solved);
       old = made.model;
     }
     const last = { ...observed.at(-1)! };
@@ -104,8 +113,9 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
     expect(closed.every(Boolean)).toBe(true);
     await expect(client.reconnect()).rejects.toMatchObject({ reason: 'client.disposed' });
 
-    // Exercise the actual desktop gateway composition, still without renderer IPC.
+    // Exercise the actual desktop gateway composition, still without renderer IPC/UI.
     await gateway.models.connect(); const made = await gateway.models.create(definition);
+    expect(await gateway.models.solve(made.model, hintedState)).toEqual(solved);
     expect(await gateway.models.solve(made.model, state)).toEqual(solved);
     await gateway.models.reconnect();
     await expect(gateway.models.describe(made.model)).rejects.toMatchObject({ code: Code.NotFound });
@@ -118,7 +128,7 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
       expect(logs.join('\n')).not.toContain(entry.handle);
     }
     expect(logs.join('\n')).not.toContain(connection.bearerToken);
-    console.info('MODEL_CLIENT_LIVE_OK create/solve/release, 20 reconnects, stale handles, disposal and gateway shutdown');
+    console.info('MODEL_CLIENT_LIVE_OK cold/hinted solve, release, 20 reconnects, stale handles, disposal and gateway shutdown');
   } finally {
     observer.close(); await client.dispose(); await gateway.stop();
   }

@@ -71,6 +71,8 @@ public:
     Pr76ModelSolveLease(const Pr76ModelSolveLease&) = delete;
     Pr76ModelSolveLease& operator=(const Pr76ModelSolveLease&) = delete;
     [[nodiscard]] flash::PtFlashBackendResult solve(const flash::PtFlashRequest& request) &&;
+    [[nodiscard]] flash::PtFlashBackendResult solve(
+        const flash::PtFlashRequest& request, const PtSolveHints& hints) &&;
 private:
     friend class Pr76ModelRegistry;
     explicit Pr76ModelSolveLease(std::shared_ptr<detail::Pr76RegistryEntry> entry) noexcept;
@@ -98,6 +100,9 @@ public:
     [[nodiscard]] Pr76ModelSolveLease acquire_solve(std::string_view handle);
     [[nodiscard]] flash::PtFlashBackendResult solve(std::string_view handle,
                                                    const flash::PtFlashRequest& request);
+    [[nodiscard]] flash::PtFlashBackendResult solve(
+        std::string_view handle, const flash::PtFlashRequest& request,
+        const PtSolveHints& hints);
     // Removes future lookup/admission immediately; duplicate/unknown/released
     // handles all fail with model_not_found. Already admitted work may finish.
     void release(std::string_view handle);

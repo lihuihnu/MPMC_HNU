@@ -252,8 +252,16 @@ grpc::Status ModelGrpcServiceAdapter::SolveModel(grpc::ServerContext* context,
         const Admission solve_admission(solves_, limits_.max_concurrent_solves);
         const flash::PtFlashRequest input{request->pressure_pa(), request->temperature_k(),
                                          {request->feed().begin(), request->feed().end()}};
-        // Exactly one registry/lease/native solve. No local EOS or acceptance rules.
-        encode_result(registry_.solve(request->model_handle(), input), *response->mutable_result());
+        // Exactly one registry/lease/native solve. Hints are decoded into an
+        // ephemeral public DTO and are never retained by the service/registry.
+        if (request->has_hints()) {
+            const auto hints = decode_solve_hints(request->hints());
+            encode_result(registry_.solve(request->model_handle(), input, hints),
+                          *response->mutable_result());
+        } else {
+            encode_result(registry_.solve(request->model_handle(), input),
+                          *response->mutable_result());
+        }
     });
 }
 grpc::Status ModelGrpcServiceAdapter::ReleaseModel(grpc::ServerContext* context,
