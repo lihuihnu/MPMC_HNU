@@ -162,6 +162,27 @@ try {
         }
     }
 
+    if ($Mode -eq 'payload') {
+        $manifestPath = Join-Path $packageRoot 'resources\desktop-preview-manifest.json'
+        if (-not (Test-Path $manifestPath -PathType Leaf)) {
+            throw 'The Windows RC desktop package manifest is missing'
+        }
+        $payloadManifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+        if ($payloadManifest.convention -ne 'MPMC/PT/desktop-release-candidate-payload/v1' -or
+            $payloadManifest.release_candidate -ne $true) {
+            throw 'The Windows desktop payload is not the fixed release-candidate identity'
+        }
+        $payloadManifest.signature = [ordered]@{
+            status = 'authenticode-signed-timestamped'
+            verified = $true
+            signer_subject = $expectedSubject
+            file_digest = 'SHA256'
+            timestamp_protocol = 'RFC3161'
+            timestamp_digest = 'SHA256'
+        }
+        $payloadManifest | ConvertTo-Json -Depth 12 | Set-Content -Path $manifestPath -Encoding utf8
+    }
+
     $evidenceFile = [IO.Path]::GetFullPath($EvidencePath)
     $existingEntries = @()
     if (Test-Path $evidenceFile -PathType Leaf) {
