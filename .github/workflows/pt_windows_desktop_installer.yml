@@ -8,6 +8,8 @@ on:
       - 'modules/runtime/**'
       - 'modules/runtime_grpc/**'
       - 'modules/pt_process/**'
+      - 'modules/model_configuration/**'
+      - 'modules/model_configuration_grpc/**'
       - 'tests/runtime/pt_grpc_adapter/**'
       - 'products/pt/**'
       - 'frontend/desktop/**'

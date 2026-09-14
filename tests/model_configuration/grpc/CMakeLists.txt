@@ -8,7 +8,7 @@ enable_testing()
 add_executable(mpmc_model_session_tests sessions_test.cpp)
 target_link_libraries(mpmc_model_session_tests PRIVATE mpmc::pt_process)
 add_executable(mpmc_model_session_process_client session_process_client.cpp)
-target_link_libraries(mpmc_model_session_process_client PRIVATE mpmc::model_configuration_grpc)
+target_link_libraries(mpmc_model_session_process_client PRIVATE mpmc::model_configuration_grpc mpmc::runtime_grpc)
 add_executable(mpmc_model_grpc_tests service_test.cpp public_header.cpp)
 target_link_libraries(mpmc_model_grpc_tests PRIVATE mpmc::model_configuration_grpc mpmc::runtime_grpc)
 # Unchanged legacy tests provide the necessary dependency-compatibility gate.
