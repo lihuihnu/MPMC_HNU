@@ -26,10 +26,10 @@ zero/false cannot turn into an implicit native default.
 
 The canonical new schema is bundled under this module's `proto/` import root,
 with the existing `api/proto` root supplying frozen v1 capability/transition data
-types. Code generation uses protoc/gRPC, never edited generated code. Keeping
-this additive schema with its optional service avoids generating unused frontend
-clients while UI integration is postponed. Later clients must compile this same
-schema rather than invent another representation.
+types. Code generation uses protoc/gRPC, never edited generated code. The shared
+TypeScript client now generates bindings from these same local roots;
+see [client ownership and build contract](../../frontend/src/api/modelSessionClient.md).
+UI integration remains postponed.
 
 ## Host composition and lifetime
 
@@ -197,7 +197,7 @@ expose these new routes before an authoritative end-user policy is connected.
 Linux, Windows and macOS use the registry's built-in secure entropy sources;
 other hosts must supply a secure source to ModelSessionService (the existing
 default fails closed). No certificate enrollment/revocation,
-Web identity mapping, frontend session client or UI is claimed.
+Web identity mapping, UI or Web session client is claimed.
 
 The hosted suite adds real native-host bearer/mTLS isolation, stream cancellation,
 expiry and shutdown, retained-create capacity, abrupt client-process death and
@@ -210,3 +210,8 @@ staging workflows cover the changed dependency closure. See the PR for actual ru
 results. gRPC's [cancellation guide](https://grpc.io/docs/guides/cancellation/)
 explains that I/O failure and deadline expiry also cancel streams, while application
 resource cleanup remains the application's responsibility.
+
+The [shared client session owner](../../frontend/src/api/modelSessionClient.md) is
+now connected to desktop main-process native transport. It explicitly reconnects,
+rejects stale client references and drains/aborts on disposal. Renderer IPC and
+Web identity remain deferred.

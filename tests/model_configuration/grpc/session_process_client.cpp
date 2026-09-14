@@ -1,11 +1,22 @@
 #include "test_support.hpp"
 #include <mpmc/model_configuration_grpc/model_sessions.hpp>
+#include <google/protobuf/util/json_util.h>
 #include <iostream>
 #include <thread>
 
 int main(int argc, char** argv) {
     using namespace service_test;
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--fixture-json") {
+            // Export the existing attributed native fixture; no duplicate TS data.
+            std::string json;
+            require(google::protobuf::util::MessageToJsonString(
+                request(definition(binary_model())), &json).ok(), "fixture encoding failed");
+            std::string solve_json;
+            require(google::protobuf::util::MessageToJsonString(
+                solve_request("", binary), &solve_json).ok(), "state encoding failed");
+            std::cout << "{\"create\":" << json << ",\"solve\":" << solve_json << "}\n"; return 0;
+        }
         require(argc == 3, "expected address and mode");
         std::string bearer; require(static_cast<bool>(std::getline(std::cin, bearer)), "missing test credential");
         auto channel = grpc::CreateChannel(argv[1], grpc::InsecureChannelCredentials());

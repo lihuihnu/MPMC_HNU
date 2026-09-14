@@ -7,5 +7,6 @@
 /frontend/build/
 /frontend/.vite/
 /frontend/coverage/
+/frontend/src/gen/mpmc/model_configuration/
 __pycache__/
 *.py[cod]

@@ -28,7 +28,7 @@ if (!gotSingleInstanceLock) {
 } else {
   const host = new PtHostSession(nativeHostPath(), (line) => {
     console.info(`[pt-host] ${line}`);
-  });
+  }, { enableModelSessions: true });
   const gateway = new PtDesktopGateway(host);
   const installSmoke = installedSmokeRequested(process.argv);
   let mainWindow: BrowserWindow | null = null;
