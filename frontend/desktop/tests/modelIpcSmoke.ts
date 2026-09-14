@@ -194,6 +194,36 @@ async function run() {
       const dying = { ...observed.at(-1)! }; transient.destroy(); await gone(dying);
     }
     equal(value(await call(b, 'solve', survivor.model!, solveInput)), expectedResult);
+    // Run the production typed adapter in the actual sandboxed renderer, not in main.
+    const rendererCode = readFileSync(resolve('desktop-model-test-dist/model-renderer-smoke.js'), 'utf8');
+    const typedA = await window(); const typedB = await window();
+    await typedA.webContents.executeJavaScript(rendererCode);
+    await typedB.webContents.executeJavaScript(rendererCode);
+    async function renderer(target: BrowserWindow, operation: string, ...args: JsonValue[]): Promise<JsonObject> {
+      return await target.webContents.executeJavaScript(
+        `MpmcModelRendererSmoke[${JSON.stringify(operation)}](${args.map(arg => JSON.stringify(arg)).join(',')})`,
+      ) as JsonObject;
+    }
+    const typedInitial = await renderer(typedA, 'initialize', createInput, solveInput);
+    equal(typedInitial.snapshot!, expectedSnapshot); equal(typedInitial.described!, expectedSnapshot);
+    equal(typedInitial.result!, expectedResult); requireThat(typedInitial.outcome === 'accepted', 'Typed accepted outcome changed.');
+    await renderer(typedB, 'initialize', createInput, solveInput); const typedEntryB = { ...observed.at(-1)! };
+    const invalid = await renderer(typedA, 'invalidSolve');
+    requireThat(invalid.code === Code.InvalidArgument && invalid.category === 'invalid_argument' && invalid.source === 'ipc',
+      'Native validation error lost its typed renderer status.');
+    equal((await renderer(typedA, 'solve')).result!, expectedResult);
+    const releasedTyped = await renderer(typedA, 'releaseAndRecreate');
+    requireThat((releasedTyped.released as JsonObject).reason === 'renderer.stale_reference', 'Released renderer reference was reused.');
+    equal(releasedTyped.result!, expectedResult);
+    const recovery = await renderer(typedA, 'invalidCreateAndReconnect');
+    requireThat((recovery.failure as JsonObject).code === Code.InvalidArgument &&
+      (recovery.blocked as JsonObject).reason === 'renderer.reconnect_required' &&
+      (recovery.stale as JsonObject).reason === 'renderer.stale_reference', 'Renderer mutation recovery/status mapping changed.');
+    equal(recovery.result!, expectedResult);
+    const typedEntryA = { ...observed.at(-1)! }; typedA.destroy(); await gone(typedEntryA);
+    equal((await renderer(typedB, 'solve')).result!, expectedResult);
+    typedB.destroy(); await gone(typedEntryB);
+    console.info('MODEL_RENDERER_CLIENT_OK typed snapshots/full results, native validation errors, release, reconnect invalidation and independent window cleanup');
     const last = [...observed].reverse().find(entry => !entry.closed)!;
     await ipc.dispose(); await ipc.dispose(); await gone(last);
     requireThat(observed.every(entry => entry.closed), 'An IPC transport survived disposal.');

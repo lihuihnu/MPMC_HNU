@@ -18,6 +18,7 @@ on:
       - 'frontend/src/api/flashClient.ts'
       - 'frontend/src/api/modelSessionClient*'
       - 'frontend/src/api/modelDesktopContract.ts'
+      - 'frontend/src/api/rendererModel*'
       - 'frontend/buf.model.gen.yaml'
       - 'buf.model.yaml'
       - 'frontend/src/api/ptWire.ts'

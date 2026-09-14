@@ -66,6 +66,7 @@ The registration factory is an ownership seam, not a renderer-controlled API.
 all such clients before `gateway.stop()`. The legacy gateway `models` property
 retains its original gateway-owned shutdown behavior.
 
-UI forms, renderer domain adapters, Web routes and Android sessions remain future
-work. Sources: [Electron security](https://www.electronjs.org/docs/latest/tutorial/security)
+The [typed renderer client](../src/api/rendererModelClient.md) now consumes this
+bridge and preserves complete snapshots/results with explicit error states.
+UI forms, Web routes and Android sessions remain future work. Sources: [Electron security](https://www.electronjs.org/docs/latest/tutorial/security)
 and [WebContents lifecycle](https://www.electronjs.org/docs/latest/api/web-contents).
