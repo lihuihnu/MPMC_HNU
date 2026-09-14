@@ -1,0 +1,4 @@
+android/
+dist/
+node_modules/
+*.keystore
