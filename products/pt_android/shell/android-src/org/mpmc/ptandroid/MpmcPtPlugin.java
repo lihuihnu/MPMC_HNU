@@ -1,5 +1,6 @@
 package org.mpmc.ptandroid;
 
+import android.util.Log;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -13,6 +14,7 @@ import org.json.JSONObject;
 
 @CapacitorPlugin(name = "MpmcPt")
 public final class MpmcPtPlugin extends Plugin {
+    private static final String LOG_TAG = "MPMC_PT_ANDROID";
     private static final ExecutorService NATIVE_EXECUTOR =
             Executors.newSingleThreadExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "mpmc-pt-native");
@@ -22,7 +24,11 @@ public final class MpmcPtPlugin extends Plugin {
 
     @PluginMethod
     public void discover(PluginCall call) {
-        NATIVE_EXECUTOR.execute(() -> resolveJson(call, NativeBridge.discoverJson()));
+        NATIVE_EXECUTOR.execute(() -> {
+            String json = NativeBridge.discoverJson();
+            debugDiscovery(json);
+            resolveJson(call, json);
+        });
     }
 
     @PluginMethod
@@ -47,14 +53,14 @@ public final class MpmcPtPlugin extends Plugin {
                     componentIds[index] = component.getString("componentId");
                     moleFractions[index] = component.getDouble("moleFraction");
                 }
-                resolveJson(
-                        call,
-                        NativeBridge.solveJson(
-                                configuredBackendId,
-                                pressurePa,
-                                temperatureK,
-                                componentIds,
-                                moleFractions));
+                String json = NativeBridge.solveJson(
+                        configuredBackendId,
+                        pressurePa,
+                        temperatureK,
+                        componentIds,
+                        moleFractions);
+                debugSolve(configuredBackendId, json);
+                resolveJson(call, json);
             } catch (JSONException error) {
                 rejectOnUiThread(
                         call,
@@ -67,6 +73,46 @@ public final class MpmcPtPlugin extends Plugin {
                         "MPMC_PT_ANDROID_BRIDGE_FAILURE");
             }
         });
+    }
+
+    private static void debugDiscovery(String json) {
+        if (!BuildConfig.DEBUG) {
+            return;
+        }
+        try {
+            JSONObject payload = new JSONObject(json);
+            JSONArray backends = payload.optJSONArray("backends");
+            if (backends != null) {
+                Log.i(LOG_TAG, "ANDROID_PRODUCT_SHELL_DISCOVERY_OK backends=" + backends.length());
+            }
+        } catch (JSONException ignored) {
+            Log.w(LOG_TAG, "ANDROID_PRODUCT_SHELL_DISCOVERY_REPLY_INVALID_JSON");
+        }
+    }
+
+    private static void debugSolve(String configuredBackendId, String json) {
+        if (!BuildConfig.DEBUG) {
+            return;
+        }
+        try {
+            JSONObject payload = new JSONObject(json);
+            JSONObject response = payload.optJSONObject("response");
+            if (response == null || !"result".equals(response.optString("kind"))) {
+                return;
+            }
+            JSONObject result = response.optJSONObject("result");
+            JSONArray phases = result == null ? null : result.optJSONArray("phases");
+            if (phases != null) {
+                Log.i(
+                        LOG_TAG,
+                        "ANDROID_PRODUCT_SHELL_SOLVE_OK backend="
+                                + configuredBackendId
+                                + " phases="
+                                + phases.length());
+            }
+        } catch (JSONException ignored) {
+            Log.w(LOG_TAG, "ANDROID_PRODUCT_SHELL_SOLVE_REPLY_INVALID_JSON");
+        }
     }
 
     private void resolveJson(PluginCall call, String json) {
