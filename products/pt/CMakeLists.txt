@@ -256,6 +256,14 @@ if(BUILD_TESTING)
         LABELS "product;staging;dependencies;provenance"
         TIMEOUT 30)
 
+    add_test(NAME product.pt.installer_gate_contract
+        COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+            -s "${CMAKE_CURRENT_LIST_DIR}/installer/tests"
+            -p "test_*.py" -v)
+    set_tests_properties(product.pt.installer_gate_contract PROPERTIES
+        LABELS "product;installer;architecture;provenance"
+        TIMEOUT 30)
+
     add_test(NAME product.pt.staged_mtls_discovery
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_LIST_DIR}/tests/staged_smoke.py"
