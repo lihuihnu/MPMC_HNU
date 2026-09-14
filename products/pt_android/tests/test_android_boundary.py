@@ -66,7 +66,7 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         )
         self.assertIn("#include <jni.h>", source)
         self.assertIn("load_repository_curated_pt_parameter_snapshots_v1", source)
-        self.assertIn("runtime::PtService", source.replace("namespace rt = mpmc::runtime;", "runtime::"))
+        self.assertIn("rt::PtService service", source)
         self.assertIn("discover_capabilities", source)
         self.assertIn("pr76.methane-ethane-propane.literature-r1", source)
         self.assertIn("sw92.carbon-dioxide-water.freshwater.literature-r1", source)
