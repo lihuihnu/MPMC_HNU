@@ -8,6 +8,10 @@ on:
       - 'modules/thermodynamics/**'
       - 'modules/flash/**'
       - 'modules/runtime/**'
+      - 'modules/pt_process/src/configured_backends.cpp'
+      - 'modules/pt_process/src/parameter_snapshot_supplier.cpp'
+      - 'modules/pt_process/include/mpmc/pt_process/configured_backends.hpp'
+      - 'modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp'
       - 'products/pt_android/**'
       - '.github/workflows/pt_android_ndk_portability.yml'
   push:
@@ -17,6 +21,10 @@ on:
       - 'modules/thermodynamics/**'
       - 'modules/flash/**'
       - 'modules/runtime/**'
+      - 'modules/pt_process/src/configured_backends.cpp'
+      - 'modules/pt_process/src/parameter_snapshot_supplier.cpp'
+      - 'modules/pt_process/include/mpmc/pt_process/configured_backends.hpp'
+      - 'modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp'
       - 'products/pt_android/**'
       - '.github/workflows/pt_android_ndk_portability.yml'
   workflow_dispatch:
@@ -44,7 +52,7 @@ jobs:
           -p 'test_*.py' -v
 
   build:
-    name: Android ${{ matrix.abi }} core portability
+    name: Android ${{ matrix.abi }} native runtime
     needs: boundary
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -97,7 +105,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=${{ matrix.abi }} \
             -DANDROID_PLATFORM=android-26 \
-            -DANDROID_STL=c++_shared \
+            -DANDROID_STL=c++_static \
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Android shared core
@@ -123,13 +131,14 @@ jobs:
           "$toolchain/llvm-readelf" -h "$library" | grep -F "Machine:" | grep -F '${{ matrix.machine }}'
           "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'mpmc_pt_android_core_abi_version'
           "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'mpmc_pt_android_core_convention'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_runSmoke'
           cp "$library" "build/libmpmc_pt_android_core-${{ matrix.abi }}.so"
           echo 'ANDROID_NDK_PT_CORE_PORTABILITY_OK abi=${{ matrix.abi }}'
 
       - name: Upload Android portability library
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mpmc-pt-android-${{ matrix.abi }}-portability-v1
+          name: mpmc-pt-android-${{ matrix.abi }}-native-v2
           path: |
             build/libmpmc_pt_android_core-${{ matrix.abi }}.so
             build/android-${{ matrix.abi }}-elf.txt
