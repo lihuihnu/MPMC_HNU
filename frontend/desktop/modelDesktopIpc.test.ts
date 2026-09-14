@@ -74,7 +74,7 @@ it('revokes on main-document navigation, renderer loss and destruction; keeps an
     a.emit('render-process-gone', {}, { reason: 'crashed' });
     expect(await invoke(a)).toMatchObject({ error: { code: Code.PermissionDenied } });
     a.destroyed = true; a.emit('destroyed');
-    expect(clients[0]!.disconnect).toHaveBeenCalledTimes(2);
+    expect(clients[0]!.disconnect).toHaveBeenCalledTimes(3);
     expect(clients[1]!.disconnect).not.toHaveBeenCalled();
     expect(a.listenerCount('did-start-navigation')).toBe(0);
     expect(a.listenerCount('render-process-gone')).toBe(0);
