@@ -149,6 +149,7 @@ void nested_decode_paths() {
     auto base = request();
     auto* mass = base.mutable_definition()->mutable_components(1)->mutable_molar_mass_kg_per_mol();
     mass->set_value(0.1); *mass->mutable_provenance() = base.definition().provenance();
+    mass->set_original_unit("kg/mol"); mass->set_conversion("identity");
     struct ScalarCase {
         const char* path;
         wire::ModelScalar* (*select)(wire::ThermodynamicModelDefinition&);
