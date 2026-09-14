@@ -9,6 +9,12 @@
 #include <utility>
 #include <vector>
 
+// Windows SDK's message-loop macro conflicts with Protobuf reflection.
+// This translation unit uses the C++ method, never the Win32 message loop.
+#if defined(GetMessage)
+#undef GetMessage
+#endif
+
 namespace mpmc::model_configuration_grpc {
 namespace {
 namespace mc = ::mpmc::model_configuration;

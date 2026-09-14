@@ -4,6 +4,11 @@
 #include <iostream>
 #include <limits>
 
+// Match the adapter's local Win32/Protobuf reflection macro isolation.
+#if defined(GetMessage)
+#undef GetMessage
+#endif
+
 namespace service_test {
 namespace {
 using SC = grpc::StatusCode;
