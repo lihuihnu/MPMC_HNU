@@ -1,0 +1,73 @@
+name: Public thermodynamic model parameters
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/model_configuration/**'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp'
+      - 'modules/thermodynamics/CMakeLists.txt'
+      - 'tests/model_configuration/parameters/**'
+      - 'tests/thermodynamics/contracts/**'
+      - '.github/workflows/model_configuration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-configuration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parameters:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            config: Debug
+            sanitizers: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            config: Release
+            sanitizers: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            compiler: ''
+            config: Release
+            sanitizers: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure public parameter contract
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/model_configuration/parameters -B build/model-parameters \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_MODEL_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Build public parameter contract
+        run: cmake --build build/model-parameters --config ${{ matrix.config }} --parallel 2
+      - name: Run public parameter contract
+        run: ctest --test-dir build/model-parameters -C ${{ matrix.config }} -R '^model[.]parameters[.]' --verbose --no-tests=error
+      - name: Verify reused thermodynamics parameter authority
+        if: matrix.sanitizers == 'ON'
+        run: |
+          cmake -S tests/thermodynamics/contracts -B build/thermo-contracts \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++ -DMPMC_THERMO_ENABLE_SANITIZERS=ON
+          cmake --build build/thermo-contracts --parallel 2
+          ctest --test-dir build/thermo-contracts -R '^thermo[.]contracts[.]' --verbose --no-tests=error
