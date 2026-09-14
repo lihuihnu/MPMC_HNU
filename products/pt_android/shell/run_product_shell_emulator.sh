@@ -41,7 +41,7 @@ apk="$(realpath "$apk")"
 out_dir="$(mkdir -p "$out_dir" && cd "$out_dir" && pwd)"
 emulator_log="$out_dir/emulator.txt"
 logcat_file="$out_dir/logcat.txt"
-window_file="$out_dir/window.xml"
+dom_file="$out_dir/dom.json"
 avd_home="$out_dir/avd"
 mkdir -p "$avd_home"
 export ANDROID_AVD_HOME="$avd_home"
@@ -54,6 +54,10 @@ for tool in "$adb" "$emulator" "$avdmanager"; do
 done
 if [[ ! -f "$apk" ]]; then
   echo "Android product shell APK is missing: $apk" >&2
+  exit 1
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo 'Node.js is required for the WebView DevTools DOM audit.' >&2
   exit 1
 fi
 
@@ -89,6 +93,7 @@ fi
 emulator_pid=$!
 
 cleanup() {
+  "$adb" forward --remove tcp:9222 >/dev/null 2>&1 || true
   "$adb" emu kill >/dev/null 2>&1 || true
   kill "$emulator_pid" >/dev/null 2>&1 || true
 }
@@ -163,15 +168,125 @@ if [[ $success -ne 1 ]]; then
   exit 1
 fi
 
-"$adb" shell uiautomator dump /sdcard/mpmc-window.xml >/dev/null
-"$adb" pull /sdcard/mpmc-window.xml "$window_file" >/dev/null
-if ! grep -Fq 'MPMC_HNU' "$window_file" || \
-   ! grep -Fq 'Model-neutral PT Flash' "$window_file"; then
-  echo 'Android Product Shell React UI text is not visible in the accessibility tree.' >&2
+# Android's accessibility hierarchy intentionally treats WebView as one native
+# node, so uiautomator cannot prove which React text rendered. Product Shell v1
+# is a debuggable engineering APK; MainActivity enables WebView DevTools only
+# when FLAG_DEBUGGABLE is set. Audit the live DOM through that local-only CDP
+# endpoint instead of weakening the UI-render requirement or using OCR.
+webview_socket=""
+for _ in $(seq 1 40); do
+  webview_socket="$(
+    "$adb" shell cat /proc/net/unix 2>/dev/null |
+      tr -d '\r' |
+      sed -n 's/.*@\(webview_devtools_remote[^ ]*\).*/\1/p' |
+      head -n 1
+  )"
+  if [[ -n "$webview_socket" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+if [[ -z "$webview_socket" ]]; then
+  echo 'Debug WebView DevTools socket was not published.' >&2
   show_diagnostics
-  cat "$window_file" >&2 || true
   exit 1
 fi
+
+"$adb" forward --remove tcp:9222 >/dev/null 2>&1 || true
+"$adb" forward tcp:9222 "localabstract:$webview_socket" >/dev/null
+
+node - "$dom_file" <<'NODE'
+const fs = require('node:fs');
+const output = process.argv[2];
+
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function findPage() {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch('http://127.0.0.1:9222/json');
+      if (response.ok) {
+        const pages = await response.json();
+        const page = pages.find(
+          (candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl,
+        );
+        if (page) return page;
+      }
+    } catch {
+      // The WebView DevTools endpoint may need a moment after ADB forwarding.
+    }
+    await sleep(250);
+  }
+  throw new Error('No debuggable Product Shell WebView page was published.');
+}
+
+async function evaluate(page) {
+  return await new Promise((resolve, reject) => {
+    const socket = new WebSocket(page.webSocketDebuggerUrl);
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error('Timed out evaluating the Product Shell WebView DOM.'));
+    }, 10_000);
+
+    socket.addEventListener('open', () => {
+      socket.send(
+        JSON.stringify({
+          id: 1,
+          method: 'Runtime.evaluate',
+          params: {
+            expression:
+              '({text: document.body?.innerText ?? "", smoke: document.documentElement.dataset.mpmcAndroidProductShellSmoke ?? "", rootChildren: document.getElementById("root")?.childElementCount ?? 0})',
+            returnByValue: true,
+          },
+        }),
+      );
+    });
+    socket.addEventListener('message', (event) => {
+      const message = JSON.parse(String(event.data));
+      if (message.id !== 1) return;
+      clearTimeout(timeout);
+      socket.close();
+      if (message.error) {
+        reject(new Error(`CDP Runtime.evaluate failed: ${JSON.stringify(message.error)}`));
+        return;
+      }
+      const value = message.result?.result?.value;
+      if (typeof value !== 'object' || value === null) {
+        reject(new Error('CDP did not return the Product Shell DOM audit object.'));
+        return;
+      }
+      resolve(value);
+    });
+    socket.addEventListener('error', () => {
+      clearTimeout(timeout);
+      reject(new Error('Unable to connect to the Product Shell WebView CDP socket.'));
+    });
+  });
+}
+
+const page = await findPage();
+const value = await evaluate(page);
+fs.writeFileSync(
+  output,
+  `${JSON.stringify({ pageUrl: page.url, pageTitle: page.title, ...value }, null, 2)}\n`,
+  'utf8',
+);
+if (value.smoke !== 'ok') {
+  throw new Error(`React Product Shell smoke marker is ${JSON.stringify(value.smoke)}.`);
+}
+if (!Number.isInteger(value.rootChildren) || value.rootChildren < 1) {
+  throw new Error('React Product Shell root has no rendered child elements.');
+}
+if (
+  typeof value.text !== 'string' ||
+  !value.text.includes('MPMC_HNU') ||
+  !value.text.includes('Model-neutral PT Flash')
+) {
+  throw new Error('Rendered Product Shell DOM is missing the shared React PT UI text.');
+}
+console.log('ANDROID_PRODUCT_SHELL_DOM_OK shared_react_ui=true');
+NODE
 
 "$adb" uninstall org.mpmc.ptandroid >/dev/null
 if "$adb" shell pm path org.mpmc.ptandroid 2>/dev/null | grep -Fq 'package:'; then
