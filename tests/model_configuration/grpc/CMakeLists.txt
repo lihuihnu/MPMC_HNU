@@ -49,7 +49,7 @@ add_test(NAME model.grpc_sessions.process_disconnect
         "$<TARGET_FILE:mpmc_pt_service_host>" "$<TARGET_FILE:mpmc_model_session_process_client>")
 set_tests_properties(model.grpc_sessions.process_disconnect PROPERTIES TIMEOUT 90 LABELS "model;grpc;session;process")
 foreach(case IN ITEMS roundtrip metadata_roundtrip full_result_parity custom_settings settings_presence
-        wire_errors domain_errors registry_errors host_quota busy_and_release request_size
+        wire_errors nested_decode_paths decode_context_paths domain_errors registry_errors host_quota busy_and_release request_size
         response_rollback authorization_and_internal_errors deadline_policy cancellation_and_admission legacy_coexistence)
     add_test(NAME model.grpc.${case} COMMAND mpmc_model_grpc_tests ${case})
     set_tests_properties(model.grpc.${case} PROPERTIES TIMEOUT 60 LABELS "model;grpc;roundtrip")

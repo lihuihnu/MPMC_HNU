@@ -73,3 +73,22 @@ export async function invalidFieldsAndRecover() {
   await client.reconnect(); current = (await client.create(definition)).model;
   return { parameter, setting, expectedField, ...(await solve()) };
 }
+
+export async function invalidNestedFieldsAndRecover() {
+  if (!client || !current) throw new Error('Renderer model missing.');
+  const failures = [];
+  for (const location of ['pureValue', 'binarySource', 'componentSource']) {
+    const bad = clone(CreateModelRequestSchema, definition);
+    if (bad.definition?.parameters.case !== 'pr76') throw new Error('Expected attributed PR76 fixture.');
+    const parameters = bad.definition.parameters.value;
+    if (location === 'pureValue') parameters.pure[1]!.criticalTemperatureK!.value = undefined;
+    else if (location === 'binarySource') parameters.binary[0]!.kij!.provenance!.kind = undefined;
+    else bad.definition.components[1]!.provenance!.kind = undefined;
+    let failure;
+    try { await client.create(bad); } catch (cause) { failure = error(cause); }
+    if (!failure || !client.requiresReconnect) throw new Error('Nested invalid create was not rejected.');
+    failures.push(failure);
+    await client.reconnect(); current = (await client.create(definition)).model;
+  }
+  return { failures, ...(await solve()) };
+}

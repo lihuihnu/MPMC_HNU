@@ -132,6 +132,93 @@ void wire_errors() {
     error(create(server, r, out), SC::INVALID_ARGUMENT, "configuration.missing_field");
     require(registry.status().resident_models == 0, "invalid wire published a model");
 }
+// Assert the public packed detail, not an exception string or a reconstructed path.
+void field_error(Server& server, const wire::CreateModelRequest& r,
+                 std::string_view code, std::string_view field) {
+    wire::CreateModelResponse out;
+    const auto status = create(server, r, out);
+    error(status, SC::INVALID_ARGUMENT, code);
+    google::rpc::Status envelope; wire::ModelServiceError detail;
+    require(envelope.ParseFromString(status.error_details()) &&
+            envelope.details(0).UnpackTo(&detail) && detail.field() == field,
+            "wrong native decode field path");
+    require(!out.has_model_handle() && !out.has_snapshot(), "rejected definition published output");
+}
+void nested_decode_paths() {
+    mc::Pr76ModelRegistry registry({}, synthetic); Server server(registry);
+    auto base = request();
+    auto* mass = base.mutable_definition()->mutable_components(1)->mutable_molar_mass_kg_per_mol();
+    mass->set_value(0.1); *mass->mutable_provenance() = base.definition().provenance();
+    struct ScalarCase {
+        const char* path;
+        wire::ModelScalar* (*select)(wire::ThermodynamicModelDefinition&);
+    };
+    const ScalarCase cases[] = {
+        {"definition.components[1].molar_mass_kg_per_mol", [](auto& d) { return d.mutable_components(1)->mutable_molar_mass_kg_per_mol(); }},
+        {"definition.pr76.pure[1].critical_temperature_k", [](auto& d) { return d.mutable_pr76()->mutable_pure(1)->mutable_critical_temperature_k(); }},
+        {"definition.pr76.pure[1].critical_pressure_pa", [](auto& d) { return d.mutable_pr76()->mutable_pure(1)->mutable_critical_pressure_pa(); }},
+        {"definition.pr76.pure[1].acentric_factor", [](auto& d) { return d.mutable_pr76()->mutable_pure(1)->mutable_acentric_factor(); }},
+        {"definition.pr76.binary[1].kij", [](auto& d) { return d.mutable_pr76()->mutable_binary(1)->mutable_kij(); }}
+    };
+    for (const auto& item : cases) {
+        const std::string path = item.path;
+        auto r = base; item.select(*r.mutable_definition())->clear_value();
+        field_error(server, r, "configuration.missing_field", path + ".value");
+        r = base; item.select(*r.mutable_definition())->clear_provenance();
+        field_error(server, r, "configuration.missing_field", path + ".provenance");
+        r = base; item.select(*r.mutable_definition())->mutable_provenance()->clear_kind();
+        field_error(server, r, "configuration.missing_field", path + ".provenance.kind");
+        r = base;
+        item.select(*r.mutable_definition())->mutable_provenance()->set_kind(static_cast<wire::SourceKind>(99));
+        field_error(server, r, "configuration.invalid_value", path + ".provenance.kind");
+        // Decode must locate records before semantic ID validation, without echoing IDs.
+        r = base; auto* d = r.mutable_definition();
+        d->mutable_components(1)->set_component_id("mh1_untrusted].secret");
+        d->mutable_pr76()->mutable_pure(1)->set_component_id("mh1_untrusted].secret");
+        d->mutable_pr76()->mutable_binary(1)->set_first_component_id("mh1_untrusted].secret");
+        item.select(*d)->clear_value();
+        field_error(server, r, "configuration.missing_field", path + ".value");
+        require(registry.status().resident_models == 0, "nested rejection consumed registry capacity");
+    }
+    const auto made = create(server, base);
+    compare(native_result(solve(server, made.model_handle()).result()), direct(pr76_max3_test::model(), single));
+    ok(release(server, made.model_handle()));
+    require(registry.status().resident_models == 0, "nested-error recovery leaked model");
+}
+void decode_context_paths() {
+    mc::Pr76ModelRegistry registry({}, synthetic); Server server(registry);
+    struct ProvenanceCase {
+        const char* path;
+        wire::ModelProvenance* (*select)(wire::ThermodynamicModelDefinition&);
+    };
+    const ProvenanceCase cases[] = {
+        {"definition.provenance.kind", [](auto& d) { return d.mutable_provenance(); }},
+        {"definition.components[1].provenance.kind", [](auto& d) { return d.mutable_components(1)->mutable_provenance(); }},
+        {"definition.applicability.provenance.kind", [](auto& d) { return d.mutable_applicability()->mutable_provenance(); }}
+    };
+    for (const auto& item : cases) {
+        auto r = request(); item.select(*r.mutable_definition())->clear_kind();
+        field_error(server, r, "configuration.missing_field", item.path);
+        r = request(); item.select(*r.mutable_definition())->set_kind(static_cast<wire::SourceKind>(99));
+        field_error(server, r, "configuration.invalid_value", item.path);
+    }
+    auto r = request(); r.mutable_definition()->mutable_components(1)->clear_provenance();
+    field_error(server, r, "configuration.missing_field", "definition.components[1].provenance");
+    r = request(); r.mutable_definition()->mutable_applicability()->clear_provenance();
+    field_error(server, r, "configuration.missing_field", "definition.applicability.provenance");
+    r = request(); r.mutable_definition()->mutable_components(1)->clear_kind();
+    field_error(server, r, "configuration.missing_field", "definition.components[1].kind");
+    r = request(); r.mutable_definition()->mutable_components(1)->set_kind(static_cast<wire::ComponentKind>(99));
+    field_error(server, r, "configuration.invalid_value", "definition.components[1].kind");
+    r = request(); r.mutable_definition()->set_family(static_cast<wire::ModelFamily>(99));
+    field_error(server, r, "configuration.invalid_value", "definition.family");
+    r = request(); api::encode_settings(custom(), *r.mutable_settings());
+    r.mutable_settings()->set_kind(static_cast<wire::SolverSettingsKind>(99));
+    field_error(server, r, "configuration.invalid_value", "settings.kind");
+    require(registry.status().resident_models == 0, "context rejection consumed registry capacity");
+    const auto made = create(server); ok(release(server, made.model_handle()));
+    require(registry.status().resident_models == 0, "context-error recovery leaked model");
+}
 void domain_errors() {
     mc::Pr76ModelRegistry registry({}, synthetic); Server server(registry);
     wire::CreateModelResponse out;
@@ -320,6 +407,8 @@ int main(int argc, char** argv) {
         else if (name == "custom_settings") { custom_settings(); }
         else if (name == "settings_presence") { settings_presence(); }
         else if (name == "wire_errors") { wire_errors(); }
+        else if (name == "nested_decode_paths") { nested_decode_paths(); }
+        else if (name == "decode_context_paths") { decode_context_paths(); }
         else if (name == "domain_errors") { domain_errors(); }
         else if (name == "registry_errors") { registry_errors(); }
         else if (name == "host_quota") { host_quota(); }

@@ -236,6 +236,20 @@ async function run() {
     equal(fields.result!, expectedResult);
     console.info('MODEL_VALIDATION_DETAIL_OK v1/v2 coexistence, native parameter/settings/preset fields and recovered full result');
 
+    const nested = await renderer(typedA, 'invalidNestedFieldsAndRecover');
+    const nestedPaths = ['definition.pr76.pure[1].critical_temperature_k.value',
+      'definition.pr76.binary[0].kij.provenance.kind', 'definition.components[1].provenance.kind'];
+    const nestedFailures = nested.failures as JsonObject[];
+    requireThat(nestedFailures.length === nestedPaths.length, 'Nested renderer cases were skipped.');
+    nestedPaths.forEach((field, index) => {
+      const error = nestedFailures[index]!; const detail = error.validation as JsonObject;
+      requireThat(error.code === Code.InvalidArgument && error.category === 'invalid_argument' && error.source === 'ipc' &&
+        detail?.version === MODEL_VALIDATION_DETAIL_VERSION && detail?.code === 'configuration.missing_field' &&
+        detail?.field === field, 'Nested native location lost its enclosing record in the renderer.');
+    });
+    equal(nested.result!, expectedResult);
+    console.info('MODEL_NESTED_VALIDATION_PATH_OK native indexed scalar/provenance paths, explicit recovery and full result');
+
     const typedEntryA = { ...observed.at(-1)! }; typedA.destroy(); await gone(typedEntryA);
     equal((await renderer(typedB, 'solve')).result!, expectedResult);
     typedB.destroy(); await gone(typedEntryB);
@@ -243,7 +257,7 @@ async function run() {
     const last = [...observed].reverse().find(entry => !entry.closed)!;
     await ipc.dispose(); await ipc.dispose(); await gone(last);
     requireThat(observed.every(entry => entry.closed), 'An IPC transport survived disposal.');
-    const output = JSON.stringify(replies) + JSON.stringify({ invalid, recovery, fields }) + logs.join('\n');
+    const output = JSON.stringify(replies) + JSON.stringify({ invalid, recovery, fields, nested }) + logs.join('\n');
     requireThat(!output.includes(connection.bearerToken), 'Private host credential leaked.');
     for (const entry of observed) {
       requireThat(!output.includes(entry.id) && !output.includes(entry.handle), 'Private native routing data leaked.');

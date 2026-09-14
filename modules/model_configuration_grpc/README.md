@@ -110,6 +110,19 @@ the existing Protobuf `Any` implementation and adds no runtime dependency.
 | CANCELLED / DEADLINE_EXCEEDED | `rpc.cancelled` / `rpc.deadline_exceeded` when emitted by the adapter |
 | INTERNAL | Sanitized `rpc.internal_failure` or `registry.internal_failure` |
 
+Wire decode errors preserve the enclosing snake_case request path, for example
+`definition.components[1].molar_mass_kg_per_mol.value`,
+`definition.pr76.pure[1].critical_temperature_k.provenance.kind`,
+`definition.pr76.binary[0].kij.provenance` and `settings.kind`.
+Repeated-record selectors are zero-based positions in the submitted request,
+constructed after host shape limits; unvalidated component IDs are never echoed
+in these paths. Missing fields and unknown enum values retain their existing
+status/domain codes and first-error ordering. Encoding and later semantic
+validation remain unchanged: semantic paths may use component keys or identify
+only a block/request. Paths are advisory locations, not JSON Pointers or an
+aggregate validation report; existing coarse paths from older services remain
+valid. This refinement does not change the wire or validation-detail version.
+
 All existing `ModelConfigurationErrorCode` values have explicit code mappings.
 Finite/deadline-policy errors use `rpc.deadline_required` / `rpc.deadline_limit`
 with INVALID_ARGUMENT. Codes are service semantics, not exception-message parsing.

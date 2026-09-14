@@ -16,14 +16,19 @@ renderer exposes the same immutable DTO in `RendererModelError.validation`:
 `code` is a native domain code, separate from the RPC status/category and fixed
 client reason. `field` is optional. It preserves native path spelling, including
 component key, pair and index selectors; it is advisory, not a JSON Pointer.
-The existing service sometimes reports only `request`, `scalar.value`, `version`
-or an options block. No finer location is inferred, and no field is fabricated
-when none is provided. Parameter keys remain keys even when they contain dots
+Native wire decoding now reports enclosing snake_case request paths, for example
+`definition.pr76.pure[1].critical_temperature_k.provenance.kind` or
+`definition.components[1].molar_mass_kg_per_mol.value`. These indices are zero-based
+positions in the submitted records; unvalidated component IDs are never inserted.
+Later semantic validation retains its existing keyed paths and may still report
+only `request`, `version` or an options block. No finer location is inferred, and
+no field is fabricated when none is provided. Older native services can still
+return coarse aliases such as `scalar.value`. Parameter keys remain keys even when they contain dots
 or happen to look numeric. Native validation remains authoritative.
 
 | Boundary/version | Behavior |
 | --- | --- |
-| Native service v1 | Existing rich error bytes and numerical validation unchanged. |
+| Native service v1 | Same rich-error envelope/status/domain codes; decode fields now retain enclosing records. Numerical validation unchanged. |
 | Desktop bridge v1 | Existing `mpmcModelDesktop`, invoke/cancel channels and exact `{code, reason}` error shape unchanged. |
 | Desktop bridge v2 | `mpmcModelDesktopV2`, `mpmc:model:invoke:v2` and `mpmc:model:cancel:v2`; errors may add `validation`. |
 | Validation detail v1 | Independent version, allowlisted domain/status pair and optional safe native field path. |
@@ -63,5 +68,8 @@ copies, protocol compatibility and shared version ownership. Official real
 sandboxed renderer regressions retain v1 traffic and execute v2 native parameter,
 settings, preset and coarse solve validation failures, explicit recovery, full
 result equality and independent window reclamation. `MODEL_VALIDATION_DETAIL_OK`
-is required by the smoke launcher in addition to all existing completion markers.
+and `MODEL_NESTED_VALIDATION_PATH_OK` are required by the smoke launcher alongside
+all existing completion markers. Nested missing scalar values and provenance
+kinds are checked through the real native host, with explicit reconnect/recreate
+and recovered full-result equality.
 UI field rendering and configuration forms remain separate work.

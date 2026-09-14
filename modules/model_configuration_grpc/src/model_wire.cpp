@@ -2,6 +2,8 @@
 #include <google/rpc/status.pb.h>
 
 #include <limits>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace mpmc::model_configuration_grpc {
@@ -21,23 +23,23 @@ namespace wire = ::mpmc::model_configuration::v1;
 namespace old = ::mpmc::runtime::v1;
 namespace fl = ::mpmc::flash;
 
-void required(bool present, const char* field) {
+void required(bool present, std::string_view field) {
     if (!present) {
         throw mc::ModelConfigurationError(mc::ModelConfigurationErrorCode::missing_field,
-                                           field, "explicit wire field required");
+                                           std::string(field), "explicit wire field required");
     }
 }
-[[noreturn]] void invalid_enum(const char* field) {
+[[noreturn]] void invalid_enum(std::string_view field) {
     throw mc::ModelConfigurationError(mc::ModelConfigurationErrorCode::invalid_value,
-                                       field, "unknown enum value");
+                                       std::string(field), "unknown enum value");
 }
-mc::ThermodynamicModelFamily family(wire::ModelFamily value) {
+mc::ThermodynamicModelFamily family(wire::ModelFamily value, std::string_view field) {
     switch (value) {
     case wire::MODEL_FAMILY_UNSPECIFIED: return mc::ThermodynamicModelFamily::unspecified;
     case wire::MODEL_FAMILY_PR76: return mc::ThermodynamicModelFamily::peng_robinson_1976;
     case wire::MODEL_FAMILY_SW92: return mc::ThermodynamicModelFamily::soreide_whitson_1992;
     case wire::MODEL_FAMILY_CPA: return mc::ThermodynamicModelFamily::cubic_plus_association;
-    default: invalid_enum("family");
+    default: invalid_enum(field);
     }
 }
 wire::ModelFamily family(mc::ThermodynamicModelFamily value) {
@@ -49,12 +51,12 @@ wire::ModelFamily family(mc::ThermodynamicModelFamily value) {
     default: invalid_enum("family");
     }
 }
-mc::ComponentKind component_kind(wire::ComponentKind value) {
+mc::ComponentKind component_kind(wire::ComponentKind value, std::string_view field) {
     switch (value) {
     case wire::COMPONENT_KIND_UNSPECIFIED: return mc::ComponentKind::unspecified;
     case wire::COMPONENT_KIND_PURE: return mc::ComponentKind::pure;
     case wire::COMPONENT_KIND_PSEUDO: return mc::ComponentKind::pseudo;
-    default: invalid_enum("component_kind");
+    default: invalid_enum(field);
     }
 }
 wire::ComponentKind component_kind(mc::ComponentKind value) {
@@ -65,7 +67,7 @@ wire::ComponentKind component_kind(mc::ComponentKind value) {
     default: invalid_enum("component_kind");
     }
 }
-mc::SourceKind source_kind(wire::SourceKind value) {
+mc::SourceKind source_kind(wire::SourceKind value, std::string_view field) {
     switch (value) {
     case wire::SOURCE_KIND_UNSPECIFIED: return mc::SourceKind::unspecified;
     case wire::SOURCE_KIND_LITERATURE: return mc::SourceKind::literature;
@@ -73,7 +75,7 @@ mc::SourceKind source_kind(wire::SourceKind value) {
     case wire::SOURCE_KIND_USER_SUPPLIED: return mc::SourceKind::user_supplied;
     case wire::SOURCE_KIND_ASSUMPTION: return mc::SourceKind::assumption;
     case wire::SOURCE_KIND_SYNTHETIC_TEST: return mc::SourceKind::synthetic_test;
-    default: invalid_enum("source_kind");
+    default: invalid_enum(field);
     }
 }
 wire::SourceKind source_kind(mc::SourceKind value) {
@@ -87,12 +89,12 @@ wire::SourceKind source_kind(mc::SourceKind value) {
     default: invalid_enum("source_kind");
     }
 }
-mc::PtSolverSettingsKind settings_kind(wire::SolverSettingsKind value) {
+mc::PtSolverSettingsKind settings_kind(wire::SolverSettingsKind value, std::string_view field) {
     switch (value) {
     case wire::SOLVER_SETTINGS_KIND_UNSPECIFIED: return mc::PtSolverSettingsKind::unspecified;
     case wire::SOLVER_SETTINGS_KIND_PRESET: return mc::PtSolverSettingsKind::preset;
     case wire::SOLVER_SETTINGS_KIND_CUSTOM: return mc::PtSolverSettingsKind::custom;
-    default: invalid_enum("settings_kind");
+    default: invalid_enum(field);
     }
 }
 wire::SolverSettingsKind settings_kind(mc::PtSolverSettingsKind value) {
@@ -103,9 +105,9 @@ wire::SolverSettingsKind settings_kind(mc::PtSolverSettingsKind value) {
     default: invalid_enum("settings_kind");
     }
 }
-mc::ModelProvenance read_provenance(const wire::ModelProvenance& w) {
-    required(w.has_kind(), "provenance.kind");
-    return {source_kind(w.kind()), w.reference(), w.revision(), w.locator(), w.note(),
+mc::ModelProvenance read_provenance(const wire::ModelProvenance& w, const std::string& path) {
+    required(w.has_kind(), path + ".kind");
+    return {source_kind(w.kind(), path + ".kind"), w.reference(), w.revision(), w.locator(), w.note(),
             w.acquisition(), w.usage_terms()};
 }
 void write_provenance(const mc::ModelProvenance& n, wire::ModelProvenance& w) {
@@ -113,10 +115,10 @@ void write_provenance(const mc::ModelProvenance& n, wire::ModelProvenance& w) {
     w.set_reference(n.reference); w.set_revision(n.revision); w.set_locator(n.locator);
     w.set_note(n.note); w.set_acquisition(n.acquisition); w.set_usage_terms(n.usage_terms);
 }
-mc::ModelScalar read_scalar(const wire::ModelScalar& w) {
-    required(w.has_value(), "scalar.value");
-    required(w.has_provenance(), "scalar.provenance");
-    return {w.value(), read_provenance(w.provenance()), w.original_unit(), w.conversion()};
+mc::ModelScalar read_scalar(const wire::ModelScalar& w, const std::string& path) {
+    required(w.has_value(), path + ".value");
+    required(w.has_provenance(), path + ".provenance");
+    return {w.value(), read_provenance(w.provenance(), path + ".provenance"), w.original_unit(), w.conversion()};
 }
 void write_scalar(const mc::ModelScalar& n, wire::ModelScalar& w) {
     w.set_value(n.value); write_provenance(n.provenance, *w.mutable_provenance());
@@ -358,12 +360,12 @@ mc::ThermodynamicModelDefinition decode_definition(const wire::ThermodynamicMode
     required(w.has_family(), "definition.family");
     required(w.has_provenance(), "definition.provenance");
     required(w.has_applicability(), "definition.applicability");
-    required(w.applicability().has_provenance(), "applicability.provenance");
+    required(w.applicability().has_provenance(), "definition.applicability.provenance");
     mc::ThermodynamicModelDefinition n;
-    n.family = family(w.family());
+    n.family = family(w.family(), "definition.family");
     if (n.family != mc::ThermodynamicModelFamily::peng_robinson_1976) {
         throw mc::ModelConfigurationError(mc::ModelConfigurationErrorCode::unsupported_family,
-                                           "family", "custom model family is unsupported");
+                                           "definition.family", "custom model family is unsupported");
     }
     required(w.has_pr76(), "definition.pr76");
     if (static_cast<std::size_t>(w.components_size()) > limits.max_components ||
@@ -374,32 +376,38 @@ mc::ThermodynamicModelDefinition decode_definition(const wire::ThermodynamicMode
     }
     n.version = w.version(); n.display_name = w.display_name();
     n.dataset_id = w.dataset_id(); n.revision = w.revision();
-    n.provenance = read_provenance(w.provenance());
-    for (const auto& c : w.components()) {
-        required(c.has_kind(), "components.kind");
-        required(c.has_provenance(), "components.provenance");
-        mc::ComponentDefinition item{c.component_id(), c.display_name(), component_kind(c.kind()),
-                                     read_provenance(c.provenance()), {}};
-        if (c.has_molar_mass_kg_per_mol()) { item.molar_mass_kg_per_mol = read_scalar(c.molar_mass_kg_per_mol()); }
+    n.provenance = read_provenance(w.provenance(), "definition.provenance");
+    for (int i = 0; i < w.components_size(); ++i) {
+        const auto& c = w.components(i);
+        const auto path = "definition.components[" + std::to_string(i) + "]";
+        required(c.has_kind(), path + ".kind");
+        required(c.has_provenance(), path + ".provenance");
+        mc::ComponentDefinition item{c.component_id(), c.display_name(), component_kind(c.kind(), path + ".kind"),
+                                     read_provenance(c.provenance(), path + ".provenance"), {}};
+        if (c.has_molar_mass_kg_per_mol()) { item.molar_mass_kg_per_mol = read_scalar(c.molar_mass_kg_per_mol(), path + ".molar_mass_kg_per_mol"); }
         n.components.push_back(std::move(item));
     }
     const auto& bounds = w.applicability();
-    n.applicability.provenance = read_provenance(bounds.provenance());
+    n.applicability.provenance = read_provenance(bounds.provenance(), "definition.applicability.provenance");
     if (bounds.has_temperature_lower_k()) { n.applicability.temperature_lower_k = bounds.temperature_lower_k(); }
     if (bounds.has_temperature_upper_k()) { n.applicability.temperature_upper_k = bounds.temperature_upper_k(); }
     if (bounds.has_pressure_lower_pa()) { n.applicability.pressure_lower_pa = bounds.pressure_lower_pa(); }
     if (bounds.has_pressure_upper_pa()) { n.applicability.pressure_upper_pa = bounds.pressure_upper_pa(); }
     mc::Pr76ParameterDefinition pr;
-    for (const auto& record : w.pr76().pure()) {
+    for (int i = 0; i < w.pr76().pure_size(); ++i) {
+        const auto& record = w.pr76().pure(i);
+        const auto path = "definition.pr76.pure[" + std::to_string(i) + "]";
         mc::Pr76PureParameters item; item.component_id = record.component_id();
-        if (record.has_critical_temperature_k()) { item.critical_temperature_k = read_scalar(record.critical_temperature_k()); }
-        if (record.has_critical_pressure_pa()) { item.critical_pressure_pa = read_scalar(record.critical_pressure_pa()); }
-        if (record.has_acentric_factor()) { item.acentric_factor = read_scalar(record.acentric_factor()); }
+        if (record.has_critical_temperature_k()) { item.critical_temperature_k = read_scalar(record.critical_temperature_k(), path + ".critical_temperature_k"); }
+        if (record.has_critical_pressure_pa()) { item.critical_pressure_pa = read_scalar(record.critical_pressure_pa(), path + ".critical_pressure_pa"); }
+        if (record.has_acentric_factor()) { item.acentric_factor = read_scalar(record.acentric_factor(), path + ".acentric_factor"); }
         pr.pure.push_back(std::move(item));
     }
-    for (const auto& record : w.pr76().binary()) {
+    for (int i = 0; i < w.pr76().binary_size(); ++i) {
+        const auto& record = w.pr76().binary(i);
+        const auto path = "definition.pr76.binary[" + std::to_string(i) + "]";
         mc::Pr76BinaryInteraction item{record.first_component_id(), record.second_component_id(), {}};
-        if (record.has_kij()) { item.kij = read_scalar(record.kij()); }
+        if (record.has_kij()) { item.kij = read_scalar(record.kij(), path + ".kij"); }
         pr.binary.push_back(std::move(item));
     }
     n.parameters = std::move(pr);
@@ -440,7 +448,7 @@ void encode_definition(const mc::ThermodynamicModelDefinition& n, wire::Thermody
 mc::PtSolverSettings decode_settings(const wire::PtSolverSettings& w) {
     required(w.has_version(), "settings.version"); required(w.has_kind(), "settings.kind");
     mc::PtSolverSettings n;
-    n.version = w.version(); n.kind = settings_kind(w.kind()); n.preset_id = w.preset_id();
+    n.version = w.version(); n.kind = settings_kind(w.kind(), "settings.kind"); n.preset_id = w.preset_id();
     required(w.has_eos_root(), "settings.eos_root"); n.eos_root = read_settings(w.eos_root());
     required(w.has_initial_stability(), "settings.initial_stability"); n.initial_stability = read_settings(w.initial_stability());
     required(w.has_two_phase(), "settings.two_phase"); n.two_phase = read_settings(w.two_phase());

@@ -5,6 +5,10 @@ import { MODEL_VALIDATION_DETAIL_VERSION as version, readModelValidationDetail }
 it('preserves native key, pair and index selectors and returns an immutable copy', () => {
   for (const field of ['parameters.pure[nitrogen.r1].critical_temperature_k',
     'parameters.binary[nitrogen,ethane].kij.provenance.reference',
+    'definition.components[1].molar_mass_kg_per_mol.value',
+    'definition.pr76.pure[1].critical_temperature_k.provenance.kind',
+    'definition.pr76.binary[0].kij.provenance', 'definition.applicability.provenance.kind',
+    'definition.components[1].kind', 'definition.family', 'settings.kind',
     'components[0].molar_mass_kg_per_mol', 'eos_root.max_iterations', 'scalar.value', 'request']) {
     const raw = { version, code: 'configuration.missing_field', field };
     const detail = readModelValidationDetail(raw, Code.InvalidArgument)!;
