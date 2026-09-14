@@ -22,6 +22,7 @@ on:
       - 'tests/model_configuration/parameters/**'
       - 'tests/model_configuration/solver_settings/**'
       - 'tests/model_configuration/executable_model/**'
+      - 'tests/model_configuration/registry/**'
       - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
       - 'tests/thermodynamics/contracts/**'
       - '.github/workflows/model_configuration.yml'
@@ -104,6 +105,19 @@ jobs:
         run: cmake --build build/executable-model --config ${{ matrix.config }} --parallel 2
       - name: Run executable model and isolation
         run: ctest --test-dir build/executable-model -C ${{ matrix.config }} -R '^model[.]executable[.]' --verbose --no-tests=error
+      - name: Configure bounded registry and solve lifetime
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/model_configuration/registry -B build/model-registry \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_REGISTRY_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Build bounded registry and solve lifetime
+        run: cmake --build build/model-registry --config ${{ matrix.config }} --parallel 2
+      - name: Run bounded registry and solve lifetime
+        run: ctest --test-dir build/model-registry -C ${{ matrix.config }} -R '^model[.]registry[.]' --verbose --no-tests=error
       - name: Verify reused thermodynamics parameter authority
         if: matrix.sanitizers == 'ON'
         run: |

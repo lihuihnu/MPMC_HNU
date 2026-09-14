@@ -97,7 +97,7 @@ product suites are not selected. Per-model admission uses standard acquire/relea
 atomics; thread tests check actual independent execution, without claiming a TSan
 run or a general thread-local-workspace redesign.
 
-Handles/registry/release, API, UI and end-to-end product integration are deferred.
-The next bounded increment is registry ownership and stale-handle/release tests,
-including retention through an active solve; creation of a model alone does not
-provide session lifetime or resource accounting across multiple models.
+The separate [bounded registry](registry.md) now owns these models, issues opaque
+handles and retains admitted solves through release/close. It accounts for model
+slots until destruction. Standalone factory users still own lifetime themselves.
+API, UI and end-to-end product integration remain deferred.

@@ -196,5 +196,6 @@ No existing EOS/flash formula, tolerance default, v1 wire meaning, configured
 PR/SW/CPA backend or product call site is changed. An additive settings module
 was chosen over exposing native Options types or changing existing defaults.
 Executable model ownership is provided by [the PR76 factory](executable_model.md).
-Public hints, registry/release, API/UI, one-sided
-applicability and full three-platform regressions remain later Gate items.
+The optional [bounded registry](registry.md) adds handle/release lifetime.
+Public hints, API/UI, one-sided applicability and full three-platform product
+regressions remain later Gate items.
