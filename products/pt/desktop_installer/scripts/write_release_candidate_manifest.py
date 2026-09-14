@@ -132,6 +132,7 @@ def build_manifest(
     dependencies = _read_object(dependency_manifest_path)
     session = desktop.get("desktop_session")
     release_identity = desktop.get("release_identity")
+    desktop_signature = desktop.get("signature")
     native_product = native.get("product")
     native_platform = native.get("platform")
     native_dependencies = native.get("dependencies")
@@ -140,6 +141,7 @@ def build_manifest(
         for value in (
             session,
             release_identity,
+            desktop_signature,
             native_product,
             native_platform,
             native_dependencies,
@@ -148,6 +150,7 @@ def build_manifest(
         raise RuntimeError("desktop or native RC manifest is incomplete")
     assert isinstance(session, dict)
     assert isinstance(release_identity, dict)
+    assert isinstance(desktop_signature, dict)
     assert isinstance(native_product, dict)
     assert isinstance(native_platform, dict)
     assert isinstance(native_dependencies, dict)
@@ -167,8 +170,13 @@ def build_manifest(
         or release_identity.get("product_guid") != release.get("product_guid")
         or release_identity.get("upgrade_guid") != identity.get("upgrade_guid")
         or release_identity.get("identity_sha256") != _sha256(identity_path)
+        or desktop_signature.get("status") != "authenticode-signed-timestamped"
+        or desktop_signature.get("verified") is not True
+        or desktop_signature.get("file_digest") != "SHA256"
+        or desktop_signature.get("timestamp_protocol") != "RFC3161"
+        or desktop_signature.get("timestamp_digest") != "SHA256"
     ):
-        raise RuntimeError("desktop RC payload identity changed")
+        raise RuntimeError("desktop RC payload identity or signature state changed")
     if (
         native.get("convention") != "MPMC/PT/product-staging/v1"
         or native_product.get("build_revision") != expected_revision
@@ -198,9 +206,10 @@ def build_manifest(
         or evidence.get("timestamp_digest") != "SHA256"
         or not isinstance(evidence.get("signer_subject"), str)
         or not str(evidence.get("signer_subject")).strip()
+        or desktop_signature.get("signer_subject") != evidence.get("signer_subject")
         or not isinstance(evidence.get("files"), list)
     ):
-        raise RuntimeError("Authenticode evidence is incomplete")
+        raise RuntimeError("Authenticode evidence is incomplete or inconsistent")
     entries = {
         entry.get("role"): entry
         for entry in evidence["files"]
