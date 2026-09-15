@@ -106,6 +106,10 @@ export class ModelWorkbenchSession {
     if (!validDesktopRequestId(id) || id !== this.#activeRequest) return;
     this.#currentModel = undefined;
     this.#desktop.cancel(id);
+    // Apply can be between the create reply and retirement of the previous model,
+    // whose internal request ID is intentionally private. Reset cancels that whole
+    // ownership epoch so a cancelled apply can never publish its replacement.
+    void this.#desktop.reset().catch(() => {});
   }
 
   async #releaseToken(model: string): Promise<ModelDesktopReply> {
