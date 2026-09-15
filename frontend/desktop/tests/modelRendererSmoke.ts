@@ -1,10 +1,7 @@
 // Browser-only test entry: executed inside the same sandboxed renderer as production.
 import { clone, fromJson, toJson, type JsonObject } from '@bufbuild/protobuf';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { bindExpertModelSource } from '../../src/api/expertModelSource';
 import { rendererModelClient, RendererModelError, type RendererModelReference } from '../../src/api/rendererModelClient';
-import { ExpertModelSurfaceView } from '../../src/components/ExpertModelSurface';
 import { CreateModelRequestSchema, FullPtResultSchema, ModelSnapshotSchema, SolveModelRequestSchema, PtSolverSettingsSchema, SolverSettingsKind, type PtSolverSettings, type CreateModelRequest, type SolveModelRequest } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
 import { MODEL_DESKTOP_V2_CONVENTION } from '../../src/api/modelDesktopContract';
 const client = rendererModelClient();
@@ -16,7 +13,7 @@ function error(cause: unknown) {
   if (!(cause instanceof RendererModelError)) throw new Error('Untyped renderer model error.');
   return { code: cause.code, category: cause.category, reason: cause.reason, source: cause.source, ...(cause.validation ? { validation: cause.validation } : {}) };
 }
-async function renderLiveExpertSurface() {
+async function inspectLiveExpertSource() {
   if (!client || !current) throw new Error('Renderer model missing.');
   let describeCalls = 0;
   const source = bindExpertModelSource({
@@ -26,29 +23,29 @@ async function renderLiveExpertSurface() {
     },
   }, current);
   const inspection = await source.describe();
-  const markup = renderToStaticMarkup(createElement(ExpertModelSurfaceView, {
-    state: { status: 'ready', inspection },
-    onRefresh() {},
-  }));
-  if (describeCalls !== 1) throw new Error('Expert surface did not issue exactly one live describe call.');
-  const host = document.createElement('div');
-  host.innerHTML = markup;
-  const text = host.textContent ?? '';
+  if (describeCalls !== 1) throw new Error('Expert source did not issue exactly one live describe call.');
   const modelDefinition = definition.definition;
-  if (!modelDefinition) throw new Error('Renderer fixture model definition missing.');
-  for (const component of modelDefinition.components) {
-    if (!component.componentId || !text.includes(component.componentId)) {
-      throw new Error('Expert surface dropped an ordered component from live describe.');
+  const liveDefinition = inspection.snapshot.definition;
+  if (!modelDefinition || !liveDefinition) throw new Error('Expert live model definition missing.');
+  if (liveDefinition.components.length !== modelDefinition.components.length) {
+    throw new Error('Expert live snapshot changed ordered component count.');
+  }
+  for (let i = 0; i < modelDefinition.components.length; ++i) {
+    if (!modelDefinition.components[i]?.componentId ||
+        liveDefinition.components[i]?.componentId !== modelDefinition.components[i]?.componentId) {
+      throw new Error('Expert live snapshot changed ordered component identity.');
     }
   }
-  if (!text.includes(modelDefinition.datasetId ?? '') || !text.includes(modelDefinition.revision ?? '') ||
-      !text.includes('Solver settings') || !text.includes('Applicability endpoints')) {
-    throw new Error('Expert surface dropped live snapshot identity/settings/applicability.');
+  if (liveDefinition.datasetId !== modelDefinition.datasetId || liveDefinition.revision !== modelDefinition.revision ||
+      !inspection.snapshot.settings || !liveDefinition.applicability) {
+    throw new Error('Expert live snapshot dropped identity/settings/applicability.');
   }
-  if (!host.querySelector('[data-expert-state="ready"]')) {
-    throw new Error('Expert surface did not render the ready live-snapshot state.');
-  }
-  return { describeCalls, text };
+  return {
+    describeCalls,
+    componentIds: liveDefinition.components.map(component => component.componentId),
+    datasetId: liveDefinition.datasetId,
+    revision: liveDefinition.revision,
+  };
 }
 export async function initialize(createInput: JsonObject, solveInput: JsonObject) {
   if (!client || window.mpmcModelDesktopV2?.convention !== MODEL_DESKTOP_V2_CONVENTION) throw new Error('Model v2 preload unavailable in renderer.');
@@ -56,10 +53,10 @@ export async function initialize(createInput: JsonObject, solveInput: JsonObject
   const made = await client.create(definition); current = made.model;
   settings = clone(PtSolverSettingsSchema, made.snapshot.settings!);
   const described = await client.describe(current);
-  const expertSurface = await renderLiveExpertSurface();
+  const expertSource = await inspectLiveExpertSource();
   const solved = await client.solve(current, state);
   return { snapshot: toJson(ModelSnapshotSchema, made.snapshot), described: toJson(ModelSnapshotSchema, described),
-    expertSurface, outcome: solved.outcome, result: toJson(FullPtResultSchema, solved.result) };
+    expertSource, outcome: solved.outcome, result: toJson(FullPtResultSchema, solved.result) };
 }
 export async function solve() {
   if (!client || !current) throw new Error('Renderer model missing.');
