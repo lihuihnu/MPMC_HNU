@@ -3,27 +3,34 @@ project(mpmc_model_parameter_tests LANGUAGES CXX)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/model_configuration" model-library)
 enable_testing()
 add_executable(mpmc_model_parameter_tests parameters_test.cpp public_header.cpp adapter_header.cpp)
+add_executable(mpmc_model_applicability_endpoint_tests applicability_endpoint_test.cpp)
 target_link_libraries(mpmc_model_parameter_tests PRIVATE mpmc::model_configuration)
-set_target_properties(mpmc_model_parameter_tests PROPERTIES CXX_EXTENSIONS OFF)
-if(MSVC)
-    target_compile_options(mpmc_model_parameter_tests PRIVATE /W4 /WX /permissive- /utf-8)
-else()
-    target_compile_options(mpmc_model_parameter_tests PRIVATE
-        -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
-endif()
+target_link_libraries(mpmc_model_applicability_endpoint_tests PRIVATE mpmc::model_configuration)
 option(MPMC_MODEL_ENABLE_SANITIZERS "Check parameter snapshot ownership" OFF)
-if(MPMC_MODEL_ENABLE_SANITIZERS)
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
-       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
-        message(FATAL_ERROR "Model sanitizers require Linux GCC/Clang")
+foreach(target IN ITEMS mpmc_model_parameter_tests mpmc_model_applicability_endpoint_tests)
+    set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
+    else()
+        target_compile_options(${target} PRIVATE
+            -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
     endif()
-    target_compile_options(mpmc_model_parameter_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-    target_link_options(mpmc_model_parameter_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all)
-endif()
+    if(MPMC_MODEL_ENABLE_SANITIZERS)
+        if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+           NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+            message(FATAL_ERROR "Model sanitizers require Linux GCC/Clang")
+        endif()
+        target_compile_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all)
+    endif()
+endforeach()
 foreach(case IN ITEMS complete_models order_mutations missing_parameters identity_pairs
         numeric_domains provenance applicability immutability quotas versions headers)
     add_test(NAME model.parameters.${case} COMMAND mpmc_model_parameter_tests ${case})
     set_tests_properties(model.parameters.${case} PROPERTIES TIMEOUT 30 LABELS "model;parameters;unit")
 endforeach()
+add_test(NAME model.parameters.applicability_endpoints COMMAND mpmc_model_applicability_endpoint_tests)
+set_tests_properties(model.parameters.applicability_endpoints PROPERTIES
+    TIMEOUT 30 LABELS "model;parameters;unit;applicability")
