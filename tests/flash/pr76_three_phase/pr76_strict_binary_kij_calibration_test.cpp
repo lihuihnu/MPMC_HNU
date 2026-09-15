@@ -34,6 +34,10 @@ struct FitEvaluation {
     double aard{};
     std::vector<double> predicted_pressures_pa;
 };
+struct PressureBracket {
+    double unstable_pa{};
+    double stable_pa{};
+};
 
 void require(bool condition, const char* message) {
     if (!condition) { throw std::runtime_error(message); }
@@ -57,7 +61,7 @@ th::Provenance leal_source(std::string locator) {
 }
 th::Provenance trial_kij_source(const std::string& pair_id) {
     return {th::SourceKind::assumption, "strict-PR76-binary-kij-calibration",
-            "bounded-1D-fit-v1", "optimization variable for " + pair_id,
+            "bounded-1D-fit-v2", "optimization variable for " + pair_id,
             "Trial kij is fitted only to independent binary bubble-pressure data; it is not literature input",
             "Generated deterministically inside this test", "Test-only calibration variable"};
 }
@@ -117,7 +121,7 @@ th::Pr76Phase<double> make_binary_model(const HeavyComponent& heavy, double kij)
     th::PrParameterInput input;
     input.model_id = std::string(th::pr76_profile);
     input.dataset_id = "strict-PR76-independent-binary-calibration-" + heavy.id;
-    input.revision = "ufc-table6-pure/binary-observations-v1";
+    input.revision = "ufc-table6-pure/binary-observations-v2";
     input.applicability = {std::nullopt, std::nullopt, pure_source};
     input.pure = {
         {"carbon-dioxide",
@@ -150,18 +154,55 @@ std::optional<HomogeneousStatus> classify_feed(
     return std::nullopt;
 }
 
+std::optional<PressureBracket> locate_transition_bracket(
+    const BinaryDatum& datum, fl::Pr76StabilityEvaluator& evaluator) {
+    // This pressure scan selects the experimentally identified saturation branch,
+    // but does not force the transition to equal Pexp. The earlier fixed endpoint
+    // requirement rejected perfectly valid trial kij values whose transitions
+    // moved outside +/-20% during optimization.
+    constexpr int scan_intervals = 20;
+    constexpr double lower_factor = 0.65;
+    constexpr double upper_factor = 1.45;
+
+    std::optional<double> previous_pressure;
+    std::optional<HomogeneousStatus> previous_status;
+    std::optional<PressureBracket> best;
+    double best_distance = datum.pressure_pa;
+
+    for (int index = 0; index <= scan_intervals; ++index) {
+        const double fraction = static_cast<double>(index) /
+                                static_cast<double>(scan_intervals);
+        const double pressure = datum.pressure_pa *
+            (lower_factor + (upper_factor - lower_factor) * fraction);
+        const auto status = classify_feed(pressure, datum, evaluator);
+        if (!status) {
+            previous_pressure.reset();
+            previous_status.reset();
+            continue;
+        }
+        if (previous_pressure && previous_status &&
+            *previous_status == HomogeneousStatus::unstable &&
+            *status == HomogeneousStatus::stable) {
+            const double middle = 0.5 * (*previous_pressure + pressure);
+            const double distance = std::abs(middle - datum.pressure_pa);
+            if (!best || distance < best_distance) {
+                best = PressureBracket{*previous_pressure, pressure};
+                best_distance = distance;
+            }
+        }
+        previous_pressure = pressure;
+        previous_status = *status;
+    }
+    return best;
+}
+
 std::optional<double> transition_pressure(
     const BinaryDatum& datum, fl::Pr76StabilityEvaluator& evaluator) {
-    double lower = 0.82 * datum.pressure_pa;
-    double upper = 1.22 * datum.pressure_pa;
-    const auto lower_status = classify_feed(lower, datum, evaluator);
-    const auto upper_status = classify_feed(upper, datum, evaluator);
-    if (!lower_status || !upper_status ||
-        *lower_status != HomogeneousStatus::unstable ||
-        *upper_status != HomogeneousStatus::stable) {
-        return std::nullopt;
-    }
-    for (int iteration = 0; iteration < 15; ++iteration) {
+    const auto bracket = locate_transition_bracket(datum, evaluator);
+    if (!bracket) { return std::nullopt; }
+    double lower = bracket->unstable_pa;
+    double upper = bracket->stable_pa;
+    for (int iteration = 0; iteration < 14; ++iteration) {
         const double middle = 0.5 * (lower + upper);
         const auto status = classify_feed(middle, datum, evaluator);
         if (!status) { return std::nullopt; }
@@ -197,8 +238,32 @@ std::optional<FitEvaluation> evaluate_kij(
 
 template <std::size_t N>
 FitEvaluation fit_kij(const HeavyComponent& heavy, const std::array<BinaryDatum, N>& data) {
-    double left = 0.0;
-    double right = 0.16;
+    constexpr double lower_bound = 0.0;
+    constexpr double upper_bound = 0.16;
+    constexpr int coarse_intervals = 16;
+    const double coarse_step = (upper_bound - lower_bound) /
+                               static_cast<double>(coarse_intervals);
+
+    std::optional<FitEvaluation> best;
+    int best_index = -1;
+    for (int index = 0; index <= coarse_intervals; ++index) {
+        const double kij = lower_bound + coarse_step * static_cast<double>(index);
+        const auto candidate = evaluate_kij(heavy, kij, data);
+        if (candidate && (!best || candidate->relative_sse < best->relative_sse)) {
+            best = *candidate;
+            best_index = index;
+        }
+    }
+    if (!best || best_index < 0) {
+        throw std::runtime_error("strict PR76 binary kij fit found no valid coarse candidate");
+    }
+
+    double left = std::max(lower_bound,
+        lower_bound + coarse_step * static_cast<double>(best_index - 1));
+    double right = std::min(upper_bound,
+        lower_bound + coarse_step * static_cast<double>(best_index + 1));
+    if (!(right > left)) { return *best; }
+
     constexpr double inverse_phi = 0.6180339887498948482;
     const auto cost = [&](double kij) {
         const auto value = evaluate_kij(heavy, kij, data);
@@ -208,7 +273,7 @@ FitEvaluation fit_kij(const HeavyComponent& heavy, const std::array<BinaryDatum,
     double d = left + inverse_phi * (right - left);
     double fc = cost(c);
     double fd = cost(d);
-    for (int iteration = 0; iteration < 18; ++iteration) {
+    for (int iteration = 0; iteration < 14; ++iteration) {
         if (fc <= fd) {
             right = d; d = c; fd = fc;
             c = right - inverse_phi * (right - left); fc = cost(c);
@@ -217,12 +282,16 @@ FitEvaluation fit_kij(const HeavyComponent& heavy, const std::array<BinaryDatum,
             d = left + inverse_phi * (right - left); fd = cost(d);
         }
     }
-    const double fitted = 0.5 * (left + right);
-    const auto result = evaluate_kij(heavy, fitted, data);
-    if (!result) {
-        throw std::runtime_error("strict PR76 binary kij fit ended on an invalid phase bracket");
+
+    const std::array<double, 6> final_candidates{
+        best->kij, left, right, c, d, 0.5 * (left + right)};
+    for (const double kij : final_candidates) {
+        const auto candidate = evaluate_kij(heavy, kij, data);
+        if (candidate && candidate->relative_sse < best->relative_sse) {
+            best = *candidate;
+        }
     }
-    return *result;
+    return *best;
 }
 
 template <std::size_t N>
