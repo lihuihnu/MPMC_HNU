@@ -14,6 +14,8 @@ on:
       - 'modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp'
       - 'tests/flash/pr76_pt_continuation/**'
       - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
+      - 'tests/flash/pr76_three_phase/sour_gas_fixture.hpp'
+      - 'tests/flash/pr76_three_phase/sour_gas_references.hpp'
       - '.github/workflows/pr76_pt_continuation.yml'
   workflow_dispatch:
 
