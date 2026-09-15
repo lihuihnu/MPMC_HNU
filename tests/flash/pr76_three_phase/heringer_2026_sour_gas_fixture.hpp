@@ -44,8 +44,8 @@ inline th::Provenance table_b1_source(std::string locator) {
         "Heringer et al., Fluid Phase Equilibria 604 (2026) 114653",
         std::move(locator),
         "PR sour-gas benchmark input from Appendix B Table B1; not experimental validation",
-        "Tc, omega and non-zero kij transcribed as printed; Pc bar * 100000 -> Pa",
-        "Table B1 also reports rounded Mol%; C1/C2/C3 map to methane/ethane/propane"};
+        "Appendix B Table B1 transcribed from the open-access article; Pc converted from bar to Pa",
+        "CC BY 4.0 article; fixture stores cited tabulated numeric inputs and provenance metadata"};
 }
 
 inline th::SourcedScalar scalar(
