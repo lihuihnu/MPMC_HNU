@@ -27,9 +27,9 @@ describe('live read-only Expert surface presentation', () => {
     expect(markup).toContain('data-expert-state="ready"');
     expect(markup).toContain('Live <code>describe()</code> snapshot');
     expect(markup).toContain('Read-only PR76 fixture');
-    expect(markup).toContain('component-a');
-    expect(markup).toContain('component-b');
-    expect(markup).toContain('kij component-a ↔ component-b');
+    expect(markup).toContain('0: methane');
+    expect(markup).toContain('1: ethane');
+    expect(markup).toContain('kij methane ↔ ethane');
     expect(markup).toContain('Refresh snapshot');
   });
 
