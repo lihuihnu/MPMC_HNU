@@ -27,14 +27,15 @@ constexpr double decane_pc_pa = 2.110e6;
 constexpr double decane_omega = 0.4923;
 constexpr double strict_kij_from_pr101 = 0.05226578047;
 
-// Independent Wong-Sandler/NRTL parameters reported by Arenas-Quevedo et al.
+// Frozen independent Wong-Sandler/NRTL parameters from Arenas-Quevedo et al.
 // Fluid Phase Equilibria 338 (2013) 30-36, DOI 10.1016/j.fluid.2012.10.012,
-// Eqs. (10)-(15), Table 6. Their binary regression source is independent of
-// the UFC 2025 four-point dataset audited here.
+// Table 6. Their CO2+n-decane regression used 29 literature VLE points over
+// 319.11-372.94 K. Nothing below is refit to either validation dataset.
 constexpr double ws_k12 = 0.7155;
 constexpr double nrtl_delta12_j_per_mol = 11.8841e3;
 constexpr double nrtl_delta21_j_per_mol = -1.9705e3;
 constexpr double nrtl_nonrandomness = 0.3;
+constexpr double arenas_fit_temperature_max_k = 372.94;
 
 struct ExperimentalPoint {
     double temperature_k;
@@ -42,13 +43,39 @@ struct ExperimentalPoint {
     double pressure_pa;
 };
 
-// UFC 2025 Table 7 CO2+n-decane binary bubble points used by PR #101/#104.
+struct ExternalVlePoint {
+    double temperature_k;
+    double x_co2;
+    double pressure_pa;
+    double y_co2;
+};
+
+constexpr double atmosphere_pa = 101325.0;
+constexpr double atm_to_pa(double pressure_atm) {
+    return pressure_atm * atmosphere_pa;
+}
+
+// UFC 2025 Table 7 points retained as the already-merged near-323 K A/B guard.
 constexpr std::array<ExperimentalPoint, 4> ufc_points{{
     {323.08, 0.328, 3.14e6},
     {322.96, 0.495, 5.51e6},
     {323.21, 0.777, 8.57e6},
     {323.01, 0.911, 9.47e6},
 }};
+
+// Independent extrapolation oracle: Sebastian, Simnick, Lin & Chao,
+// J. Chem. Eng. Data 25 (1980) 138-140, DOI 10.1021/je60085a012,
+// Table I, CO2+n-decane at 189.4 degC = 462.55 K.
+// This source predates, and is not the Jimenez-Gallegos et al. 2006 dataset
+// used to regress the frozen Arenas-Quevedo WS/NRTL parameters.
+constexpr std::array<ExternalVlePoint, 4> sebastian_462k_points{{
+    {462.55, 0.0913, atm_to_pa(19.36), 0.9075},
+    {462.55, 0.1472, atm_to_pa(30.38), 0.9306},
+    {462.55, 0.1883, atm_to_pa(40.10), 0.9410},
+    {462.55, 0.2358, atm_to_pa(50.70), 0.9478},
+}};
+
+static_assert(sebastian_462k_points[0].temperature_k - arenas_fit_temperature_max_k > 80.0);
 
 void require(bool condition, const char* message) {
     if (!condition) {
@@ -102,6 +129,13 @@ struct ModelMetrics {
     double relative_sse{};
 };
 
+struct ExternalMetrics {
+    double pressure_aard{};
+    double pressure_relative_sse{};
+    double mean_abs_y_error{};
+    double max_abs_y_error{};
+};
+
 th::SourcedScalar scalar(double value,
                          th::Unit unit,
                          const th::Provenance& source,
@@ -116,9 +150,9 @@ PurePair make_pures() {
         "https://repositorio.ufc.br/handle/riufc/80725",
         "E. C. Q. Soria, UFC dissertation, 2025",
         "Table 6: CO2 and n-decane Tc, Pc and acentric factor",
-        "Same strict-PR76 pure inputs used by PR #101/#104/#106",
+        "Same strict-PR76 pure inputs used by PR #101/#104/#106/#107",
         "Transcribed from UFC repository dissertation",
-        "Four-point A/B audit; no parameter fitting"};
+        "Frozen pure inputs for mixing-rule validation; no parameter fitting"};
 
     std::vector<th::Component> catalog{
         {"carbon-dioxide", "carbon dioxide", th::ComponentKind::pure, source, {}},
@@ -127,8 +161,8 @@ PurePair make_pures() {
 
     th::PrParameterInput input;
     input.model_id = std::string(th::pr76_profile);
-    input.dataset_id = "UFC-2025-C10-four-point-WS-AB";
-    input.revision = "four-point-ab-v1";
+    input.dataset_id = "C10-frozen-pure-WS-validation";
+    input.revision = "sebastian-462K-extrapolation-v1";
     input.applicability = {std::nullopt, std::nullopt, source};
     input.pure = {
         {"carbon-dioxide",
@@ -192,9 +226,8 @@ MixedCoefficients<Number> mix_from_moles(
     for (std::size_t i = 0; i < 2; ++i) {
         for (std::size_t j = 0; j < 2; ++j) {
             const double kij = i == j ? 0.0 : ws_k12;
-            const double cross = 0.5 *
-                ((b_i[i] - a_i[i] / rt) + (b_i[j] - a_i[j] / rt)) *
-                (1.0 - kij);
+            const double cross =
+                0.5 * ((b_i[i] - a_i[i] / rt) + (b_i[j] - a_i[j] / rt)) * (1.0 - kij);
             q += x[i] * x[j] * cross;
         }
     }
@@ -271,6 +304,7 @@ std::optional<GenericPhase> evaluate_phase(double pressure_pa,
     if (!std::isfinite(log_ratio)) {
         return std::nullopt;
     }
+
     const double first = -std::log(pressure_pa * (molar_volume - mixed.b) / rt);
     GenericPhase result;
     result.z = z;
@@ -278,7 +312,8 @@ std::optional<GenericPhase> evaluate_phase(double pressure_pa,
         const double d_nb = nb.derivative(i);
         const double d_n2a_over_n = n2a.derivative(i) / n.value();
         const double bracket = d_n2a_over_n / mixed.a - d_nb / mixed.b;
-        result.ln_phi[i] = first + (d_nb / mixed.b) * (z - 1.0) +
+        result.ln_phi[i] =
+            first + (d_nb / mixed.b) * (z - 1.0) +
             (1.0 / (2.0 * sqrt2)) * (mixed.a / (mixed.b * rt)) * bracket * log_ratio;
         if (!std::isfinite(result.ln_phi[i])) {
             return std::nullopt;
@@ -297,12 +332,14 @@ std::optional<YResidual> y_residual(double pressure_pa,
     if (!(y_co2 > liquid_x[0] + 1.0e-8) || !(y_co2 < 1.0 - 1.0e-10)) {
         return std::nullopt;
     }
+
     const std::array<double, 2> vapor_y{y_co2, 1.0 - y_co2};
-    const auto vapor = evaluate_phase(
-        pressure_pa, temperature_k, vapor_y, RootRole::vapor, pures, mode);
+    const auto vapor =
+        evaluate_phase(pressure_pa, temperature_k, vapor_y, RootRole::vapor, pures, mode);
     if (!vapor) {
         return std::nullopt;
     }
+
     const double r0 = std::log(vapor_y[0]) + vapor->ln_phi[0] -
                       std::log(liquid_x[0]) - liquid.ln_phi[0];
     const double r1 = std::log(vapor_y[1]) + vapor->ln_phi[1] -
@@ -322,8 +359,8 @@ std::optional<BranchState> stationary_vapor(double pressure_pa,
                                             const PurePair& pures,
                                             MixingMode mode) {
     const std::array<double, 2> liquid_x{point.x_co2, 1.0 - point.x_co2};
-    const auto liquid = evaluate_phase(
-        pressure_pa, point.temperature_k, liquid_x, RootRole::liquid, pures, mode);
+    const auto liquid =
+        evaluate_phase(pressure_pa, point.temperature_k, liquid_x, RootRole::liquid, pures, mode);
     if (!liquid) {
         return std::nullopt;
     }
@@ -333,11 +370,12 @@ std::optional<BranchState> stationary_vapor(double pressure_pa,
     const double upper = 1.0 - 1.0e-8;
     std::optional<YResidual> previous;
     std::optional<std::pair<YResidual, YResidual>> best;
+
     for (int index = 0; index <= intervals; ++index) {
         const double fraction = static_cast<double>(index) / static_cast<double>(intervals);
         const double y = lower + (upper - lower) * fraction;
-        const auto current = y_residual(
-            pressure_pa, point.temperature_k, liquid_x, *liquid, y, pures, mode);
+        const auto current =
+            y_residual(pressure_pa, point.temperature_k, liquid_x, *liquid, y, pures, mode);
         if (!current) {
             previous.reset();
             continue;
@@ -358,8 +396,9 @@ std::optional<BranchState> stationary_vapor(double pressure_pa,
     YResidual right = best->second;
     for (int iteration = 0; iteration < 72 && right.y_co2 - left.y_co2 > 1.0e-13; ++iteration) {
         const double middle_y = 0.5 * (left.y_co2 + right.y_co2);
-        const auto middle = y_residual(
-            pressure_pa, point.temperature_k, liquid_x, *liquid, middle_y, pures, mode);
+        const auto middle =
+            y_residual(pressure_pa, point.temperature_k, liquid_x, *liquid,
+                       middle_y, pures, mode);
         if (!middle) {
             return std::nullopt;
         }
@@ -371,16 +410,18 @@ std::optional<BranchState> stationary_vapor(double pressure_pa,
     }
 
     const double y = 0.5 * (left.y_co2 + right.y_co2);
-    const auto final = y_residual(
-        pressure_pa, point.temperature_k, liquid_x, *liquid, y, pures, mode);
+    const auto final =
+        y_residual(pressure_pa, point.temperature_k, liquid_x, *liquid, y, pures, mode);
     if (!final) {
         return std::nullopt;
     }
-    const double relative_z_gap = std::abs(final->vapor.z - liquid->z) /
-                                  std::max(final->vapor.z, liquid->z);
+
+    const double relative_z_gap =
+        std::abs(final->vapor.z - liquid->z) / std::max(final->vapor.z, liquid->z);
     if (!(y - point.x_co2 > 1.0e-4) || !(relative_z_gap > 1.0e-5)) {
         return std::nullopt;
     }
+
     return BranchState{final->common_residual,
                        std::abs(final->difference),
                        y,
@@ -448,7 +489,27 @@ std::optional<BubbleResult> solve_bubble(const ExperimentalPoint& point,
     return BubbleResult{pressure, right_pa - left_pa, *state};
 }
 
-ModelMetrics evaluate_model(const PurePair& pures, MixingMode mode, std::string_view label) {
+void require_closed_bubble(const BubbleResult& bubble,
+                           const ExperimentalPoint& point,
+                           const char* context) {
+    (void)context;
+    require(bubble.pressure_pa > 0.0 && std::isfinite(bubble.pressure_pa),
+            "bubble pressure is not finite and positive");
+    require(bubble.bracket_width_pa <= 0.05,
+            "bubble-pressure bracket did not converge tightly enough");
+    require(std::abs(bubble.state.common_residual) <= 1.0e-8,
+            "bubble root did not close common fugacity residual");
+    require(bubble.state.component_residual_gap <= 1.0e-10,
+            "vapor composition did not close component residual difference");
+    require(bubble.state.y_co2 > point.x_co2,
+            "bubble vapor is not CO2-richer than the liquid");
+    require(bubble.state.vapor_z > bubble.state.liquid_z,
+            "liquid/vapor root ordering is not distinct");
+}
+
+ModelMetrics evaluate_ufc_model(const PurePair& pures,
+                                MixingMode mode,
+                                std::string_view label) {
     ModelMetrics metrics;
     double absolute_relative_sum = 0.0;
     double relative_sse = 0.0;
@@ -457,20 +518,12 @@ ModelMetrics evaluate_model(const PurePair& pures, MixingMode mode, std::string_
     for (std::size_t index = 0; index < ufc_points.size(); ++index) {
         const auto bubble = solve_bubble(ufc_points[index], pures, mode);
         require(bubble.has_value(), "four-point bubble solve failed on a UFC state");
-        require(bubble->bracket_width_pa <= 0.05,
-                "four-point bubble-pressure bracket did not converge tightly enough");
-        require(std::abs(bubble->state.common_residual) <= 1.0e-8,
-                "four-point bubble root did not close common fugacity residual");
-        require(bubble->state.component_residual_gap <= 1.0e-10,
-                "four-point vapor composition did not close component residual difference");
-        require(bubble->state.y_co2 > ufc_points[index].x_co2,
-                "four-point vapor is not CO2-richer than the liquid");
-        require(bubble->state.vapor_z > bubble->state.liquid_z,
-                "four-point liquid/vapor root ordering is not distinct");
+        require_closed_bubble(*bubble, ufc_points[index], "UFC");
 
         metrics.bubbles[index] = *bubble;
         const double relative =
-            (bubble->pressure_pa - ufc_points[index].pressure_pa) / ufc_points[index].pressure_pa;
+            (bubble->pressure_pa - ufc_points[index].pressure_pa) /
+            ufc_points[index].pressure_pa;
         absolute_relative_sum += std::abs(relative);
         relative_sse += relative * relative;
 
@@ -483,6 +536,7 @@ ModelMetrics evaluate_model(const PurePair& pures, MixingMode mode, std::string_
                   << " ZL=" << bubble->state.liquid_z
                   << " ZV=" << bubble->state.vapor_z << '\n';
     }
+
     metrics.aard = absolute_relative_sum / static_cast<double>(ufc_points.size());
     metrics.relative_sse = relative_sse;
     std::cout << "  AARD_pct=" << 100.0 * metrics.aard
@@ -490,16 +544,15 @@ ModelMetrics evaluate_model(const PurePair& pures, MixingMode mode, std::string_
     return metrics;
 }
 
-void audit_four_point_ab() {
-    const PurePair pures = make_pures();
+void audit_four_point_ab(const PurePair& pures) {
     std::cout << std::setprecision(14)
               << "CO2+n-C10 UFC-2025 four-point A/B; independent WS/NRTL params fixed\n";
 
-    const auto classical = evaluate_model(pures, MixingMode::classical_vdw1f, "classical-vdW1f");
-    const auto ws = evaluate_model(pures, MixingMode::wong_sandler_nrtl, "Wong-Sandler/NRTL");
+    const auto classical =
+        evaluate_ufc_model(pures, MixingMode::classical_vdw1f, "classical-vdW1f");
+    const auto ws =
+        evaluate_ufc_model(pures, MixingMode::wong_sandler_nrtl, "Wong-Sandler/NRTL");
 
-    // Guard the A arm against silently drifting away from the merged PR #101
-    // strict-PR76 calibration baseline. These values are not WS acceptance targets.
     require(std::abs(classical.aard - 0.13249929377) <= 2.0e-4,
             "classical four-point AARD no longer matches the merged strict-PR76 baseline");
     require(std::abs(classical.bubbles[3].pressure_pa / 1.0e6 - 8.92879) <= 2.0e-3,
@@ -514,12 +567,76 @@ void audit_four_point_ab() {
               << " WS_relative_SSE=" << ws.relative_sse << '\n';
 }
 
+ExternalMetrics audit_sebastian_extrapolation(const PurePair& pures) {
+    ExternalMetrics metrics;
+    double pressure_abs_relative_sum = 0.0;
+    double pressure_relative_sse = 0.0;
+    double y_abs_error_sum = 0.0;
+
+    std::cout << "Sebastian-1980 independent WS/NRTL extrapolation"
+              << " source_DOI=10.1021/je60085a012"
+              << " fit_Tmax_K=" << arenas_fit_temperature_max_k
+              << " validation_T_K=" << sebastian_462k_points[0].temperature_k
+              << " extrapolation_delta_K="
+              << sebastian_462k_points[0].temperature_k - arenas_fit_temperature_max_k
+              << '\n';
+
+    for (const auto& external : sebastian_462k_points) {
+        const ExperimentalPoint point{
+            external.temperature_k, external.x_co2, external.pressure_pa};
+        const auto bubble =
+            solve_bubble(point, pures, MixingMode::wong_sandler_nrtl);
+        require(bubble.has_value(),
+                "frozen WS/NRTL failed to produce a Sebastian-1980 bubble state");
+        require_closed_bubble(*bubble, point, "Sebastian-1980");
+
+        const double pressure_relative =
+            (bubble->pressure_pa - external.pressure_pa) / external.pressure_pa;
+        const double y_error = bubble->state.y_co2 - external.y_co2;
+        pressure_abs_relative_sum += std::abs(pressure_relative);
+        pressure_relative_sse += pressure_relative * pressure_relative;
+        y_abs_error_sum += std::abs(y_error);
+        metrics.max_abs_y_error = std::max(metrics.max_abs_y_error, std::abs(y_error));
+
+        std::cout << "  xCO2=" << external.x_co2
+                  << " Pexp_atm=" << external.pressure_pa / atmosphere_pa
+                  << " Pexp_MPa=" << external.pressure_pa / 1.0e6
+                  << " Pcalc_MPa=" << bubble->pressure_pa / 1.0e6
+                  << " signed_pressure_error_pct=" << 100.0 * pressure_relative
+                  << " yexp_CO2=" << external.y_co2
+                  << " ycalc_CO2=" << bubble->state.y_co2
+                  << " y_error=" << y_error
+                  << " ZL=" << bubble->state.liquid_z
+                  << " ZV=" << bubble->state.vapor_z << '\n';
+    }
+
+    const double count = static_cast<double>(sebastian_462k_points.size());
+    metrics.pressure_aard = pressure_abs_relative_sum / count;
+    metrics.pressure_relative_sse = pressure_relative_sse;
+    metrics.mean_abs_y_error = y_abs_error_sum / count;
+
+    require(std::isfinite(metrics.pressure_aard) &&
+                std::isfinite(metrics.pressure_relative_sse) &&
+                std::isfinite(metrics.mean_abs_y_error) &&
+                std::isfinite(metrics.max_abs_y_error),
+            "Sebastian extrapolation aggregate metrics are not finite");
+
+    std::cout << "Sebastian extrapolation summary:"
+              << " pressure_AARD_pct=" << 100.0 * metrics.pressure_aard
+              << " pressure_relative_SSE=" << metrics.pressure_relative_sse
+              << " mean_abs_yCO2_error=" << metrics.mean_abs_y_error
+              << " max_abs_yCO2_error=" << metrics.max_abs_y_error << '\n';
+    return metrics;
+}
+
 } // namespace
 
 int main() {
     try {
-        audit_four_point_ab();
-        std::cout << "[PASS] pr76_c10_wong_sandler_four_point_ab_audit\n";
+        const PurePair pures = make_pures();
+        audit_four_point_ab(pures);
+        (void)audit_sebastian_extrapolation(pures);
+        std::cout << "[PASS] pr76_c10_wong_sandler_four_point_ab_and_sebastian_extrapolation\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "[FAIL] " << error.what() << '\n';
