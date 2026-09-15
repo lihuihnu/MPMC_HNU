@@ -156,7 +156,10 @@ export function ExpertPr76Editor({ owner, seedSnapshot, onCreated }: ExpertPr76E
   const [failure, setFailure] = useState<ExpertPr76CreateFailure | null>(null);
   const alive = useRef(true);
 
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const issues = useMemo(() => validatePr76ExpertDraft(draft), [draft]);
   const componentsByKey = useMemo(
