@@ -79,18 +79,23 @@ async function waitForReactDiscovery(window: BrowserWindow): Promise<void> {
   while (Date.now() < deadline) {
     const ready = await window.webContents.executeJavaScript(
       `(() => {
+        const shell = document.querySelector('[data-desktop-product-shell="true"]');
+        const pt = document.querySelector('[data-product-mode="pt"]');
         const state = document.querySelector('.backend-state');
-        return state?.getAttribute('data-configured') === 'true' &&
+        return shell !== null && pt?.getAttribute('aria-pressed') === 'true' &&
+          document.querySelector('[data-expert-session]') === null &&
+          state?.getAttribute('data-configured') === 'true' &&
           state.textContent?.includes('3 backends discovered') === true;
       })()`,
       true,
     );
     if (ready === true) {
+      console.info('DESKTOP_PRODUCT_DEFAULT_PT_OK shell=true expert_session=false');
       return;
     }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   }
-  throw new Error('The embedded React renderer did not publish three-backend discovery.');
+  throw new Error('The embedded React renderer did not publish the default PT desktop shell and three-backend discovery.');
 }
 
 async function run(): Promise<void> {
