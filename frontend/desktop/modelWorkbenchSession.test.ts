@@ -25,13 +25,13 @@ function setup() {
     connect: vi.fn(async () => { client.connected = true; }),
     disconnect: vi.fn(async () => { client.connected = false; }),
     dispose: vi.fn(async () => { client.connected = false; }),
-    create: vi.fn(async () => ({
+    create: vi.fn(async (_input?: unknown) => ({
       model: Object.freeze({ serial: ++serial }) as unknown as ModelReference,
       snapshot,
     })),
-    describe: vi.fn(async () => snapshot),
-    solve: vi.fn(async () => result),
-    release: vi.fn(async () => {}),
+    describe: vi.fn(async (_model?: ModelReference) => snapshot),
+    solve: vi.fn(async (_model?: ModelReference, _input?: unknown) => result),
+    release: vi.fn(async (_model?: ModelReference) => {}),
   };
   return {
     client,
