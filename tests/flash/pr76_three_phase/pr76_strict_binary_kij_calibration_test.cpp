@@ -1,6 +1,7 @@
-#include <mpmc/flash/pr76_stability.hpp>
+#include <mpmc/flash/pr76_split.hpp>
 #include <mpmc/thermodynamics/pr76_phase.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -34,9 +35,17 @@ struct FitEvaluation {
     double aard{};
     std::vector<double> predicted_pressures_pa;
 };
+struct BubbleResidual {
+    double log_sum{};
+    double vapor_co2{};
+    double liquid_z{};
+    double vapor_z{};
+};
 struct PressureBracket {
-    double unstable_pa{};
-    double stable_pa{};
+    double left_pa{};
+    double right_pa{};
+    double left_residual{};
+    double right_residual{};
 };
 
 void require(bool condition, const char* message) {
@@ -61,7 +70,7 @@ th::Provenance leal_source(std::string locator) {
 }
 th::Provenance trial_kij_source(const std::string& pair_id) {
     return {th::SourceKind::assumption, "strict-PR76-binary-kij-calibration",
-            "bounded-1D-fit-v2", "optimization variable for " + pair_id,
+            "binary-bubble-fit-v3", "optimization variable for " + pair_id,
             "Trial kij is fitted only to independent binary bubble-pressure data; it is not literature input",
             "Generated deterministically inside this test", "Test-only calibration variable"};
 }
@@ -121,7 +130,7 @@ th::Pr76Phase<double> make_binary_model(const HeavyComponent& heavy, double kij)
     th::PrParameterInput input;
     input.model_id = std::string(th::pr76_profile);
     input.dataset_id = "strict-PR76-independent-binary-calibration-" + heavy.id;
-    input.revision = "ufc-table6-pure/binary-observations-v2";
+    input.revision = "ufc-table6-pure/binary-bubble-observations-v3";
     input.applicability = {std::nullopt, std::nullopt, pure_source};
     input.pure = {
         {"carbon-dioxide",
@@ -139,33 +148,106 @@ th::Pr76Phase<double> make_binary_model(const HeavyComponent& heavy, double kij)
         th::PrParameterSet::create(catalog, order, input));
 }
 
-enum class HomogeneousStatus { stable, unstable };
-std::optional<HomogeneousStatus> classify_feed(
-    double pressure_pa, const BinaryDatum& datum, fl::Pr76StabilityEvaluator& evaluator) {
-    const std::array<double, 2> feed{datum.x_co2, 1.0 - datum.x_co2};
-    const auto result = fl::test_pr76_pt_stability(
-        pressure_pa, datum.temperature_k, feed, evaluator);
-    if (result.search.status == fl::StabilityStatus::unstable) {
-        return HomogeneousStatus::unstable;
+// Experimental inputs are bubble pressures at a known saturated-liquid
+// composition x. Therefore the calibration must solve the incipient VLE branch,
+// not the first global TPD instability of that homogeneous composition: for the
+// CO2+n-C16 system an LL instability can occur at a different pressure.
+double wilson_k(double pressure_pa, double temperature_k,
+                double tc, double pc, double omega) {
+    return (pc / pressure_pa) *
+        std::exp(5.373 * (1.0 + omega) * (1.0 - tc / temperature_k));
+}
+
+std::optional<BubbleResidual> bubble_residual(
+    double pressure_pa, const BinaryDatum& datum, const HeavyComponent& heavy,
+    fl::Pr76VleEvaluator& evaluator) {
+    const std::array<double, 2> liquid_x{datum.x_co2, 1.0 - datum.x_co2};
+    fl::PtSplitPhase liquid;
+    try {
+        liquid = evaluator(pressure_pa, datum.temperature_k, liquid_x,
+                           fl::PtPhaseRole::liquid_candidate);
+    } catch (const fl::StabilityPropertyError&) {
+        return std::nullopt;
     }
-    if (result.search.status == fl::StabilityStatus::no_instability_found) {
-        return HomogeneousStatus::stable;
+
+    const double k_co2 = wilson_k(pressure_pa, datum.temperature_k,
+                                  co2_tc_k, co2_pc_pa, co2_omega);
+    const double k_heavy = wilson_k(pressure_pa, datum.temperature_k,
+                                    heavy.critical_temperature_k,
+                                    heavy.critical_pressure_pa,
+                                    heavy.acentric_factor);
+    double raw0 = liquid_x[0] * k_co2;
+    double raw1 = liquid_x[1] * k_heavy;
+    if (!(raw0 > 0.0) || !(raw1 > 0.0) || !std::isfinite(raw0 + raw1)) {
+        return std::nullopt;
+    }
+    std::array<double, 2> vapor_y{raw0 / (raw0 + raw1), raw1 / (raw0 + raw1)};
+
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        fl::PtSplitPhase vapor;
+        try {
+            vapor = evaluator(pressure_pa, datum.temperature_k, vapor_y,
+                              fl::PtPhaseRole::vapor_candidate);
+        } catch (const fl::StabilityPropertyError&) {
+            return std::nullopt;
+        }
+
+        const std::array<double, 2> log_raw{
+            std::log(liquid_x[0]) + liquid.activity.ln_phi[0] - vapor.activity.ln_phi[0],
+            std::log(liquid_x[1]) + liquid.activity.ln_phi[1] - vapor.activity.ln_phi[1]};
+        const double largest = std::max(log_raw[0], log_raw[1]);
+        const double scaled_sum = std::exp(log_raw[0] - largest) +
+                                  std::exp(log_raw[1] - largest);
+        if (!(scaled_sum > 0.0) || !std::isfinite(scaled_sum)) {
+            return std::nullopt;
+        }
+        const double log_sum = largest + std::log(scaled_sum);
+        const std::array<double, 2> next_y{
+            std::exp(log_raw[0] - log_sum),
+            std::exp(log_raw[1] - log_sum)};
+        const double change = std::max(std::abs(next_y[0] - vapor_y[0]),
+                                       std::abs(next_y[1] - vapor_y[1]));
+        if (change <= 2.0e-12) {
+            // Re-evaluate the converged vapor composition so the returned
+            // saturation residual and Z separation refer to the same state.
+            try {
+                vapor = evaluator(pressure_pa, datum.temperature_k, next_y,
+                                  fl::PtPhaseRole::vapor_candidate);
+            } catch (const fl::StabilityPropertyError&) {
+                return std::nullopt;
+            }
+            const std::array<double, 2> final_log_raw{
+                std::log(liquid_x[0]) + liquid.activity.ln_phi[0] - vapor.activity.ln_phi[0],
+                std::log(liquid_x[1]) + liquid.activity.ln_phi[1] - vapor.activity.ln_phi[1]};
+            const double final_largest = std::max(final_log_raw[0], final_log_raw[1]);
+            const double final_log_sum = final_largest + std::log(
+                std::exp(final_log_raw[0] - final_largest) +
+                std::exp(final_log_raw[1] - final_largest));
+            const double relative_z = std::abs(vapor.z - liquid.z) /
+                                      std::max(vapor.z, liquid.z);
+            if (!(next_y[0] > liquid_x[0]) || relative_z <= 1.0e-7 ||
+                !std::isfinite(final_log_sum)) {
+                return std::nullopt;
+            }
+            return BubbleResidual{final_log_sum, next_y[0], liquid.z, vapor.z};
+        }
+
+        // Damping keeps the vapor-composition fixed point on the volatile-rich
+        // branch near criticality without changing the bubble equations.
+        vapor_y[0] = 0.5 * vapor_y[0] + 0.5 * next_y[0];
+        vapor_y[1] = 1.0 - vapor_y[0];
     }
     return std::nullopt;
 }
 
-std::optional<PressureBracket> locate_transition_bracket(
-    const BinaryDatum& datum, fl::Pr76StabilityEvaluator& evaluator) {
-    // This pressure scan selects the experimentally identified saturation branch,
-    // but does not force the transition to equal Pexp. The earlier fixed endpoint
-    // requirement rejected perfectly valid trial kij values whose transitions
-    // moved outside +/-20% during optimization.
-    constexpr int scan_intervals = 20;
-    constexpr double lower_factor = 0.65;
-    constexpr double upper_factor = 1.45;
-
+std::optional<PressureBracket> locate_bubble_bracket(
+    const BinaryDatum& datum, const HeavyComponent& heavy,
+    fl::Pr76VleEvaluator& evaluator) {
+    constexpr int scan_intervals = 28;
+    constexpr double lower_factor = 0.55;
+    constexpr double upper_factor = 1.55;
     std::optional<double> previous_pressure;
-    std::optional<HomogeneousStatus> previous_status;
+    std::optional<double> previous_residual;
     std::optional<PressureBracket> best;
     double best_distance = datum.pressure_pa;
 
@@ -174,58 +256,70 @@ std::optional<PressureBracket> locate_transition_bracket(
                                 static_cast<double>(scan_intervals);
         const double pressure = datum.pressure_pa *
             (lower_factor + (upper_factor - lower_factor) * fraction);
-        const auto status = classify_feed(pressure, datum, evaluator);
-        if (!status) {
+        const auto state = bubble_residual(pressure, datum, heavy, evaluator);
+        if (!state) {
             previous_pressure.reset();
-            previous_status.reset();
+            previous_residual.reset();
             continue;
         }
-        if (previous_pressure && previous_status &&
-            *previous_status == HomogeneousStatus::unstable &&
-            *status == HomogeneousStatus::stable) {
+        if (previous_pressure && previous_residual &&
+            ((*previous_residual <= 0.0 && state->log_sum >= 0.0) ||
+             (*previous_residual >= 0.0 && state->log_sum <= 0.0))) {
             const double middle = 0.5 * (*previous_pressure + pressure);
             const double distance = std::abs(middle - datum.pressure_pa);
             if (!best || distance < best_distance) {
-                best = PressureBracket{*previous_pressure, pressure};
+                best = PressureBracket{*previous_pressure, pressure,
+                                       *previous_residual, state->log_sum};
                 best_distance = distance;
             }
         }
         previous_pressure = pressure;
-        previous_status = *status;
+        previous_residual = state->log_sum;
     }
     return best;
 }
 
-std::optional<double> transition_pressure(
-    const BinaryDatum& datum, fl::Pr76StabilityEvaluator& evaluator) {
-    const auto bracket = locate_transition_bracket(datum, evaluator);
+std::optional<double> bubble_pressure(
+    const BinaryDatum& datum, const HeavyComponent& heavy,
+    fl::Pr76VleEvaluator& evaluator) {
+    const auto bracket = locate_bubble_bracket(datum, heavy, evaluator);
     if (!bracket) { return std::nullopt; }
-    double lower = bracket->unstable_pa;
-    double upper = bracket->stable_pa;
-    for (int iteration = 0; iteration < 14; ++iteration) {
-        const double middle = 0.5 * (lower + upper);
-        const auto status = classify_feed(middle, datum, evaluator);
-        if (!status) { return std::nullopt; }
-        if (*status == HomogeneousStatus::unstable) {
-            lower = middle;
+    double left = bracket->left_pa;
+    double right = bracket->right_pa;
+    double f_left = bracket->left_residual;
+    double f_right = bracket->right_residual;
+    if (f_left == 0.0) { return left; }
+    if (f_right == 0.0) { return right; }
+
+    for (int iteration = 0; iteration < 22; ++iteration) {
+        const double middle = 0.5 * (left + right);
+        const auto state = bubble_residual(middle, datum, heavy, evaluator);
+        if (!state) { return std::nullopt; }
+        const double f_middle = state->log_sum;
+        if ((f_left <= 0.0 && f_middle >= 0.0) ||
+            (f_left >= 0.0 && f_middle <= 0.0)) {
+            right = middle;
+            f_right = f_middle;
         } else {
-            upper = middle;
+            left = middle;
+            f_left = f_middle;
         }
     }
-    return 0.5 * (lower + upper);
+    (void)f_right;
+    return 0.5 * (left + right);
 }
 
 template <std::size_t N>
 std::optional<FitEvaluation> evaluate_kij(
     const HeavyComponent& heavy, double kij, const std::array<BinaryDatum, N>& data) {
     auto model = make_binary_model(heavy, kij);
-    fl::Pr76StabilityEvaluator evaluator(model);
+    fl::Pr76VleEvaluator evaluator(model);
     FitEvaluation evaluation;
     evaluation.kij = kij;
     evaluation.predicted_pressures_pa.reserve(N);
     double abs_relative_sum = 0.0;
     for (const auto& datum : data) {
-        const auto predicted = transition_pressure(datum, evaluator);
+        const auto predicted = bubble_pressure(datum, heavy, evaluator);
         if (!predicted || !std::isfinite(*predicted)) { return std::nullopt; }
         evaluation.predicted_pressures_pa.push_back(*predicted);
         const double relative = (*predicted - datum.pressure_pa) / datum.pressure_pa;
@@ -243,7 +337,6 @@ FitEvaluation fit_kij(const HeavyComponent& heavy, const std::array<BinaryDatum,
     constexpr int coarse_intervals = 16;
     const double coarse_step = (upper_bound - lower_bound) /
                                static_cast<double>(coarse_intervals);
-
     std::optional<FitEvaluation> best;
     int best_index = -1;
     for (int index = 0; index <= coarse_intervals; ++index) {
@@ -255,15 +348,13 @@ FitEvaluation fit_kij(const HeavyComponent& heavy, const std::array<BinaryDatum,
         }
     }
     if (!best || best_index < 0) {
-        throw std::runtime_error("strict PR76 binary kij fit found no valid coarse candidate");
+        throw std::runtime_error("strict PR76 binary bubble fit found no valid coarse candidate");
     }
 
     double left = std::max(lower_bound,
         lower_bound + coarse_step * static_cast<double>(best_index - 1));
     double right = std::min(upper_bound,
         lower_bound + coarse_step * static_cast<double>(best_index + 1));
-    if (!(right > left)) { return *best; }
-
     constexpr double inverse_phi = 0.6180339887498948482;
     const auto cost = [&](double kij) {
         const auto value = evaluate_kij(heavy, kij, data);
@@ -282,7 +373,6 @@ FitEvaluation fit_kij(const HeavyComponent& heavy, const std::array<BinaryDatum,
             d = left + inverse_phi * (right - left); fd = cost(d);
         }
     }
-
     const std::array<double, 6> final_candidates{
         best->kij, left, right, c, d, 0.5 * (left + right)};
     for (const double kij : final_candidates) {
@@ -332,9 +422,9 @@ void calibrate_independent_binary_kij() {
                 c16_323 > 0.0 && c16_323 < 0.16,
             "CO2+n-C16 strict-PR76 fitted/interpolated kij left the search interval");
     require(c10.aard < 0.08,
-            "CO2+n-C10 strict-PR76 binary fit exceeds 8% pressure AARD");
+            "CO2+n-C10 strict-PR76 binary bubble fit exceeds 8% pressure AARD");
     require(c16_313.aard < 0.08 && c16_333.aard < 0.08,
-            "CO2+n-C16 strict-PR76 binary fit exceeds 8% pressure AARD");
+            "CO2+n-C16 strict-PR76 binary bubble fit exceeds 8% pressure AARD");
     require(decane_323_data.size() == 4U && hexadecane_313_data.size() == 3U &&
                 hexadecane_333_data.size() == 3U,
             "strict PR76 calibration dataset shape changed unexpectedly");
