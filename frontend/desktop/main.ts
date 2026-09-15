@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { app, session, type BrowserWindow } from 'electron';
 
 import { registerPtDesktopIpc } from './desktopIpc';
-import { registerModelDesktopIpc } from './modelDesktopIpc';
+import { registerModelWorkbenchIpc } from './modelWorkbenchIpc';
 import { PtHostSession } from './hostSession';
 import {
   installedSmokeRequested,
@@ -36,7 +36,7 @@ if (!gotSingleInstanceLock) {
   let mainWindow: BrowserWindow | null = null;
   let removeIpc: (() => void) | null = null;
   let quitAfterStop = false;
-  let modelIpc: ReturnType<typeof registerModelDesktopIpc> | null = null;
+  let modelWorkbench: ReturnType<typeof registerModelWorkbenchIpc> | null = null;
 
   async function stopAndExit(exitCode: number): Promise<void> {
     quitAfterStop = true;
@@ -47,7 +47,7 @@ if (!gotSingleInstanceLock) {
     }
     mainWindow = null;
     try {
-      try { await modelIpc?.dispose(); }
+      try { await modelWorkbench?.dispose(); }
       finally { await gateway.stop(); }
     } finally {
       app.exit(exitCode);
@@ -61,9 +61,11 @@ if (!gotSingleInstanceLock) {
       showWhenReady: !installSmoke,
     });
     removeIpc = registerPtDesktopIpc(gateway, () => mainWindow?.webContents ?? null);
-    modelIpc = registerModelDesktopIpc(() => gateway.createModelSession(),
-      pathToFileURL(join(app.getAppPath(), 'renderer', 'index.html')).href);
-    modelIpc.attach(mainWindow.webContents);
+    modelWorkbench = registerModelWorkbenchIpc(
+      () => gateway.createModelSession(),
+      pathToFileURL(join(app.getAppPath(), 'renderer', 'index.html')).href,
+    );
+    modelWorkbench.attach(mainWindow.webContents);
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
@@ -101,7 +103,7 @@ if (!gotSingleInstanceLock) {
     quitAfterStop = true;
     removeIpc?.();
     void (async () => {
-      try { await modelIpc?.dispose(); }
+      try { await modelWorkbench?.dispose(); }
       finally { await gateway.stop(); }
     })().finally(() => app.quit());
   });
