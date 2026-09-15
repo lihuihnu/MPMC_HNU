@@ -393,6 +393,10 @@ mc::ThermodynamicModelDefinition decode_definition(const wire::ThermodynamicMode
     if (bounds.has_temperature_upper_k()) { n.applicability.temperature_upper_k = bounds.temperature_upper_k(); }
     if (bounds.has_pressure_lower_pa()) { n.applicability.pressure_lower_pa = bounds.pressure_lower_pa(); }
     if (bounds.has_pressure_upper_pa()) { n.applicability.pressure_upper_pa = bounds.pressure_upper_pa(); }
+    n.applicability.temperature_lower_exclusive = bounds.temperature_lower_exclusive();
+    n.applicability.temperature_upper_exclusive = bounds.temperature_upper_exclusive();
+    n.applicability.pressure_lower_exclusive = bounds.pressure_lower_exclusive();
+    n.applicability.pressure_upper_exclusive = bounds.pressure_upper_exclusive();
     mc::Pr76ParameterDefinition pr;
     for (int i = 0; i < w.pr76().pure_size(); ++i) {
         const auto& record = w.pr76().pure(i);
@@ -430,6 +434,10 @@ void encode_definition(const mc::ThermodynamicModelDefinition& n, wire::Thermody
     if (n.applicability.temperature_upper_k) { bounds.set_temperature_upper_k(*n.applicability.temperature_upper_k); }
     if (n.applicability.pressure_lower_pa) { bounds.set_pressure_lower_pa(*n.applicability.pressure_lower_pa); }
     if (n.applicability.pressure_upper_pa) { bounds.set_pressure_upper_pa(*n.applicability.pressure_upper_pa); }
+    bounds.set_temperature_lower_exclusive(n.applicability.temperature_lower_exclusive);
+    bounds.set_temperature_upper_exclusive(n.applicability.temperature_upper_exclusive);
+    bounds.set_pressure_lower_exclusive(n.applicability.pressure_lower_exclusive);
+    bounds.set_pressure_upper_exclusive(n.applicability.pressure_upper_exclusive);
     if (const auto* pr = std::get_if<mc::Pr76ParameterDefinition>(&n.parameters)) {
         auto& payload = *w.mutable_pr76();
         for (const auto& record : pr->pure) {
