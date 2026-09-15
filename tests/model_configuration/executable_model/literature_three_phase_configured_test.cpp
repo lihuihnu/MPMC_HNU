@@ -1,8 +1,10 @@
 #include "test_support.hpp"
 #include "../../flash/pr76_three_phase/sour_gas_fixture.hpp"
 
+#include <cstddef>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace {
 namespace mc = mpmc::model_configuration;
