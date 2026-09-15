@@ -52,14 +52,11 @@ async function inspectLiveExpertSource() {
 export async function initialize(createInput: JsonObject, solveInput: JsonObject) {
   if (!client || window.mpmcModelDesktopV2?.convention !== MODEL_DESKTOP_V2_CONVENTION) throw new Error('Model v2 preload unavailable in renderer.');
   definition = fromJson(CreateModelRequestSchema, createInput); state = fromJson(SolveModelRequestSchema, solveInput);
-  const made = await client.create(definition); current = made.model;
-  settings = clone(PtSolverSettingsSchema, made.snapshot.settings!);
-  const described = await client.describe(current);
-  const expertSource = await inspectLiveExpertSource();
-  const solved = await client.solve(current, state);
 
-  // Exercise the actual account-free workbench adapter, using attributed native
-  // fixture data rather than a second set of hand-written numerical expectations.
+  // Exercise the account-free workbench first, using attributed native fixture
+  // data rather than hand-written numerical expectations. Release this probe
+  // before creating the long-lived current model: the main-process lifecycle
+  // observer tracks the last created handle and must keep observing a live one.
   const owned = await bindExpertModelOwner(client).create(definition);
   let expertResult;
   try {
@@ -69,10 +66,16 @@ export async function initialize(createInput: JsonObject, solveInput: JsonObject
       feed: fields.feed.map((entry, index) => ({ ...entry, fraction: String(state.feed[index]) })),
     });
     expertResult = await owned.solve({ ...request, ...(state.hints === undefined ? {} : { hints: state.hints }) });
-    if (JSON.stringify(toJson(FullPtResultSchema, expertResult)) !== JSON.stringify(toJson(FullPtResultSchema, solved.result))) {
-      throw new Error('Expert custom-model result differs from the native typed solve.');
-    }
   } finally { await owned.release(); }
+
+  const made = await client.create(definition); current = made.model;
+  settings = clone(PtSolverSettingsSchema, made.snapshot.settings!);
+  const described = await client.describe(current);
+  const expertSource = await inspectLiveExpertSource();
+  const solved = await client.solve(current, state);
+  if (JSON.stringify(toJson(FullPtResultSchema, expertResult)) !== JSON.stringify(toJson(FullPtResultSchema, solved.result))) {
+    throw new Error('Expert custom-model result differs from the native typed solve.');
+  }
   // modelIpcSmoke independently compares this returned result with its direct
   // native-host baseline, preserving every field (not just accepted phases).
   return { snapshot: toJson(ModelSnapshotSchema, made.snapshot), described: toJson(ModelSnapshotSchema, described),
