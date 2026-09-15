@@ -15,7 +15,7 @@ namespace fl = mpmc::flash;
 namespace fx = pr76_heringer_2026_sour_gas_test;
 using Vec = std::vector<double>;
 
-constexpr double temperature_k = 178.8;
+constexpr double audit_temperature_k = 178.8;
 constexpr double co2_fraction = 0.73;
 constexpr double pressure_three_phase_pa = 30.2e5;
 constexpr double pressure_two_phase_pa = 35.0e5;
@@ -84,7 +84,7 @@ fl::Pr76PtMax3Result solve_fresh(double pressure_pa, const Vec& feed) {
     // Deliberately provide no literature phase compositions or continuation
     // hints. The finite TPD search and any 2->3 seed are generated internally.
     return fl::solve_pr76_pt_max3(
-        pressure_pa, temperature_k, feed, evaluator);
+        pressure_pa, audit_temperature_k, feed, evaluator);
 }
 
 void require_three_phase_closure(const fl::Pr76PtMax3Result& result) {
