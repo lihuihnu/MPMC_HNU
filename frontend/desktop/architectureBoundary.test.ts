@@ -24,13 +24,12 @@ function source(relativePath: string): string {
   return readFileSync(resolve(process.cwd(), relativePath), 'utf8');
 }
 
-function evaluatePreload(debug = false) {
-  const preload = source('desktop/preload.cjs');
+function evaluatePreload(relativePath: string) {
+  const preload = source(relativePath);
   const exposed: Record<string, unknown> = {};
   const invoke = vi.fn(async () => null);
   const send = vi.fn();
   runInNewContext(preload, {
-    ...(debug ? { process: { env: { MPMC_MODEL_DESKTOP_DEBUG_BRIDGE: '1' } } } : {}),
     require(name: string) {
       expect(name).toBe('electron');
       return {
@@ -70,7 +69,7 @@ describe('PT desktop architecture boundary', () => {
     expect(gateway).toContain('mapSolveResponse(wire, expected, request)');
   });
 
-  it('exposes only PT plus the handle-free editable-model workbench by default', () => {
+  it('exposes only PT plus the handle-free editable-model workbench in product', () => {
     const window = source('desktop/window.ts');
     expect(window).toContain('contextIsolation: true');
     expect(window).toContain('nodeIntegration: false');
@@ -80,8 +79,11 @@ describe('PT desktop architecture boundary', () => {
     expect(window).toContain("on('will-navigate'");
     expect(window).toContain("on('will-attach-webview'");
 
-    const { preload, exposed, invoke, send } = evaluatePreload(false);
+    const { preload, exposed, invoke, send } = evaluatePreload('desktop/preload.cjs');
     expect(Object.keys(exposed)).toEqual(['mpmcPtDesktop', 'mpmcModelWorkbench']);
+    expect(preload).not.toContain('mpmcModelDesktop');
+    expect(preload).not.toContain('modelHandle');
+    expect(preload).not.toContain('reconnect:');
 
     const pt = exposed.mpmcPtDesktop as PtDesktopBridge;
     expect(Object.keys(pt)).toEqual(['convention', 'discoverPtCapabilities', 'solvePtFlash', 'cancel']);
@@ -114,15 +116,13 @@ describe('PT desktop architecture boundary', () => {
     expect(preload).not.toContain('sendSync');
   });
 
-  it('keeps low-level model handles behind the dedicated regression flag', () => {
-    const regular = evaluatePreload(false).exposed;
-    expect(regular).not.toHaveProperty('mpmcModelDesktop');
-    expect(regular).not.toHaveProperty('mpmcModelDesktopV2');
+  it('keeps low-level model references in a dedicated test preload only', () => {
+    const product = evaluatePreload('desktop/preload.cjs').exposed;
+    expect(product).not.toHaveProperty('mpmcModelDesktop');
+    expect(product).not.toHaveProperty('mpmcModelDesktopV2');
 
-    const { exposed, invoke, send } = evaluatePreload(true);
-    expect(Object.keys(exposed)).toEqual([
-      'mpmcPtDesktop', 'mpmcModelWorkbench', 'mpmcModelDesktop', 'mpmcModelDesktopV2',
-    ]);
+    const { exposed, invoke, send } = evaluatePreload('desktop/modelDebugPreload.cjs');
+    expect(Object.keys(exposed)).toEqual(['mpmcModelDesktop', 'mpmcModelDesktopV2']);
     const legacy = exposed.mpmcModelDesktop as ModelDesktopBridge;
     const v2 = exposed.mpmcModelDesktopV2 as ModelDesktopBridge;
     expect(Object.keys(legacy)).toEqual([
@@ -138,7 +138,7 @@ describe('PT desktop architecture boundary', () => {
     void v2.create('c2', { presetId: 'test' });
     void v2.solve('s2', 'local-token', { feed: [1] });
     v2.cancel('x2');
-    expect(invoke.mock.calls.slice(-4)).toEqual([
+    expect(invoke.mock.calls).toEqual([
       [MODEL_DESKTOP_CHANNEL, {
         version: MODEL_DESKTOP_CONVENTION, requestId: 'c1', operation: 'create', input: { presetId: 'test' },
       }],
@@ -152,7 +152,7 @@ describe('PT desktop architecture boundary', () => {
         version: MODEL_DESKTOP_V2_CONVENTION, requestId: 's2', operation: 'solve', model: 'local-token', input: { feed: [1] },
       }],
     ]);
-    expect(send.mock.calls.slice(-2)).toEqual([
+    expect(send.mock.calls).toEqual([
       [MODEL_DESKTOP_CANCEL_CHANNEL, 'x1'],
       [MODEL_DESKTOP_V2_CANCEL_CHANNEL, 'x2'],
     ]);
