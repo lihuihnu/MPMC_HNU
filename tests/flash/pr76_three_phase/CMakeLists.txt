@@ -48,6 +48,11 @@ add_executable(mpmc_pr76_strict_binary_kij_calibration_test
 target_link_libraries(mpmc_pr76_strict_binary_kij_calibration_test PRIVATE mpmc::flash)
 set_target_properties(mpmc_pr76_strict_binary_kij_calibration_test PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_pr76_soria_2025_blind_validation_test
+    pr76_soria_2025_blind_validation_test.cpp)
+target_link_libraries(mpmc_pr76_soria_2025_blind_validation_test PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_soria_2025_blind_validation_test PROPERTIES CXX_EXTENSIONS OFF)
+
 add_dependencies(mpmc_pr76_three_phase_tests
     mpmc_pr76_three_phase_seeded_tests
     mpmc_pr76_three_phase_robustness_tests
@@ -55,7 +60,8 @@ add_dependencies(mpmc_pr76_three_phase_tests
     mpmc_pr76_sour_gas_three_phase_tests
     mpmc_pr76_heringer_2026_fixture_test
     mpmc_pr76_heringer_2026_boundary_test
-    mpmc_pr76_strict_binary_kij_calibration_test)
+    mpmc_pr76_strict_binary_kij_calibration_test
+    mpmc_pr76_soria_2025_blind_validation_test)
 
 if(MSVC)
     foreach(target IN ITEMS
@@ -66,7 +72,8 @@ if(MSVC)
             mpmc_pr76_sour_gas_three_phase_tests
             mpmc_pr76_heringer_2026_fixture_test
             mpmc_pr76_heringer_2026_boundary_test
-            mpmc_pr76_strict_binary_kij_calibration_test)
+            mpmc_pr76_strict_binary_kij_calibration_test
+            mpmc_pr76_soria_2025_blind_validation_test)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
     endforeach()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
@@ -78,7 +85,8 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
             mpmc_pr76_sour_gas_three_phase_tests
             mpmc_pr76_heringer_2026_fixture_test
             mpmc_pr76_heringer_2026_boundary_test
-            mpmc_pr76_strict_binary_kij_calibration_test)
+            mpmc_pr76_strict_binary_kij_calibration_test
+            mpmc_pr76_soria_2025_blind_validation_test)
         target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
     endforeach()
@@ -97,7 +105,8 @@ if(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS)
             mpmc_pr76_sour_gas_three_phase_tests
             mpmc_pr76_heringer_2026_fixture_test
             mpmc_pr76_heringer_2026_boundary_test
-            mpmc_pr76_strict_binary_kij_calibration_test)
+            mpmc_pr76_strict_binary_kij_calibration_test
+            mpmc_pr76_soria_2025_blind_validation_test)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -158,6 +167,11 @@ add_test(NAME flash.pr76_three_phase.strict_binary_kij_calibration
          COMMAND mpmc_pr76_strict_binary_kij_calibration_test)
 set_tests_properties(flash.pr76_three_phase.strict_binary_kij_calibration PROPERTIES
     LABELS "flash;pr76;physical_mixture;experimental_binary;parameter_calibration" TIMEOUT 300)
+
+add_test(NAME flash.pr76_three_phase.soria_2025_m40_blind_validation
+         COMMAND mpmc_pr76_soria_2025_blind_validation_test)
+set_tests_properties(flash.pr76_three_phase.soria_2025_m40_blind_validation PROPERTIES
+    LABELS "flash;pr76;three_phase;max3;physical_mixture;experimental_ternary;blind_validation" TIMEOUT 300)
 
 foreach(case IN ITEMS
         reference_candidate
