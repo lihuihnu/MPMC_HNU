@@ -60,7 +60,8 @@ foreach(case IN ITEMS
         invalid_path
         bracket_contract
         bidirectional_phase_sequence
-        unresolved_resets)
+        unresolved_resets
+        sour_gas_3_to_2)
     add_test(NAME flash.pr76_pt_continuation.${case}
              COMMAND mpmc_pr76_pt_continuation_tests ${case})
     set_tests_properties(flash.pr76_pt_continuation.${case} PROPERTIES
