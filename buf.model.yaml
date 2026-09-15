@@ -1,0 +1,4 @@
+version: v2
+modules:
+  - path: api/proto
+  - path: modules/model_configuration_grpc/proto

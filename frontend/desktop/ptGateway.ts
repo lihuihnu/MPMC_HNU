@@ -20,6 +20,8 @@ import {
   toWireSolveRequest,
 } from '../src/api/ptWire';
 import { PtHostSession } from './hostSession';
+import { ModelSessionClient } from '../src/api/modelSessionClient';
+import { createDesktopModelConnection } from './modelConnection';
 
 type PtClient = Client<typeof PtFlashService>;
 
@@ -29,10 +31,22 @@ interface ConnectedClient {
 }
 
 export class PtDesktopGateway {
+  readonly models: ModelSessionClient;
   private connected: Promise<ConnectedClient> | null = null;
   private discovery: PtCapabilityDiscovery | null = null;
 
-  constructor(private readonly host: PtHostSession) {}
+  constructor(private readonly host: PtHostSession) {
+    this.models = this.createModelSession();
+  }
+
+  /** Caller owns disposal; each window receives an independent host session. */
+  createModelSession(): ModelSessionClient {
+    return new ModelSessionClient(async (signal) => {
+      const connection = await this.host.start();
+      signal.throwIfAborted();
+      return createDesktopModelConnection(connection);
+    });
+  }
 
   private connect(): Promise<ConnectedClient> {
     if (this.connected !== null) {
@@ -104,9 +118,10 @@ export class PtDesktopGateway {
     );
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
     this.connected = null;
     this.discovery = null;
-    return this.host.stop();
+    try { await this.models.dispose(); }
+    finally { await this.host.stop(); }
   }
 }

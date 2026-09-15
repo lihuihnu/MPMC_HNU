@@ -1,0 +1,300 @@
+syntax = "proto3";
+package mpmc.model_configuration.v1;
+
+import "mpmc/runtime/v1/pt_service.proto";
+
+// Additive service: never reinterpret PtFlashService v1 configured_backend_id.
+service ModelConfigurationService {
+  rpc CreateModel(CreateModelRequest) returns (CreateModelResponse);
+  rpc DescribeModel(ModelHandleRequest) returns (DescribeModelResponse);
+  rpc SolveModel(SolveModelRequest) returns (SolveModelResponse);
+  rpc ReleaseModel(ModelHandleRequest) returns (ReleaseModelResponse);
+}
+
+enum ModelFamily {
+  MODEL_FAMILY_UNSPECIFIED = 0;
+  MODEL_FAMILY_PR76 = 1;
+  MODEL_FAMILY_SW92 = 2;
+  MODEL_FAMILY_CPA = 3;
+}
+enum ComponentKind {
+  COMPONENT_KIND_UNSPECIFIED = 0;
+  COMPONENT_KIND_PURE = 1;
+  COMPONENT_KIND_PSEUDO = 2;
+}
+enum SourceKind {
+  SOURCE_KIND_UNSPECIFIED = 0;
+  SOURCE_KIND_LITERATURE = 1;
+  SOURCE_KIND_DATABASE = 2;
+  SOURCE_KIND_USER_SUPPLIED = 3;
+  SOURCE_KIND_ASSUMPTION = 4;
+  SOURCE_KIND_SYNTHETIC_TEST = 5;
+}
+enum SolverSettingsKind {
+  SOLVER_SETTINGS_KIND_UNSPECIFIED = 0;
+  SOLVER_SETTINGS_KIND_PRESET = 1;
+  SOLVER_SETTINGS_KIND_CUSTOM = 2;
+}
+message ModelProvenance {
+  optional SourceKind kind = 1;
+  optional string reference = 2;
+  optional string revision = 3;
+  optional string locator = 4;
+  optional string note = 5;
+  optional string acquisition = 6;
+  optional string usage_terms = 7;
+}
+message ModelScalar {
+  optional double value = 1;
+  optional ModelProvenance provenance = 2;
+  optional string original_unit = 3;
+  optional string conversion = 4;
+}
+message ComponentDefinition {
+  optional string component_id = 1;
+  optional string display_name = 2;
+  optional ComponentKind kind = 3;
+  optional ModelProvenance provenance = 4;
+  optional ModelScalar molar_mass_kg_per_mol = 5;
+}
+message ModelApplicability {
+  optional double temperature_lower_k = 1;
+  optional double temperature_upper_k = 2;
+  optional double pressure_lower_pa = 3;
+  optional double pressure_upper_pa = 4;
+  optional ModelProvenance provenance = 5;
+  // False preserves the v1 closed-endpoint default. Missing scalar endpoints are
+  // unknown, never implicit infinities; an exclusive flag requires its endpoint.
+  bool temperature_lower_exclusive = 6;
+  bool temperature_upper_exclusive = 7;
+  bool pressure_lower_exclusive = 8;
+  bool pressure_upper_exclusive = 9;
+}
+message Pr76PureParameters {
+  optional string component_id = 1;
+  optional ModelScalar critical_temperature_k = 2;
+  optional ModelScalar critical_pressure_pa = 3;
+  optional ModelScalar acentric_factor = 4;
+}
+message Pr76BinaryInteraction {
+  optional string first_component_id = 1;
+  optional string second_component_id = 2;
+  optional ModelScalar kij = 3;
+}
+message Pr76ParameterDefinition {
+  repeated Pr76PureParameters pure = 1;
+  repeated Pr76BinaryInteraction binary = 2;
+}
+message ThermodynamicModelDefinition {
+  optional string version = 1;
+  optional ModelFamily family = 2;
+  optional string display_name = 3;
+  optional string dataset_id = 4;
+  optional string revision = 5;
+  optional ModelProvenance provenance = 6;
+  repeated ComponentDefinition components = 7;
+  optional ModelApplicability applicability = 8;
+  oneof parameters { Pr76ParameterDefinition pr76 = 9; }
+}
+
+message PtEosRootSettings {
+  optional int64 max_iterations = 1;
+}
+
+message PtStabilitySettings {
+  optional double tpd_tolerance = 1;
+  optional double stationarity_tolerance = 2;
+  optional double line_search_armijo_coefficient = 3;
+  optional double max_log_composition_step = 4;
+  optional int64 max_iterations = 5;
+  optional int64 max_backtracks = 6;
+  optional int64 max_property_evaluations = 7;
+  optional bool automatic_multistart = 8;
+  optional int64 max_starts = 9;
+}
+
+message PtTwoPhaseSettings {
+  optional double fugacity_equilibrium_tolerance = 1;
+  optional double absolute_mass_balance_tolerance = 2;
+  optional double relative_mass_balance_tolerance = 3;
+  optional double minimum_phase_fraction = 4;
+  optional double minimum_log_composition_separation = 5;
+  optional double minimum_relative_z_separation = 6;
+  optional double max_log_equilibrium_ratio_step = 7;
+  optional double residual_progress_coefficient = 8;
+  optional double gibbs_progress_coefficient = 9;
+  optional int64 max_iterations = 10;
+  optional int64 max_backtracks = 11;
+  optional int64 max_property_evaluations = 12;
+  optional int64 rachford_rice_max_iterations = 13;
+  optional int64 max_split_attempts = 14;
+}
+
+message PtThreePhaseSettings {
+  optional double chemical_potential_tolerance = 1;
+  optional double absolute_mass_balance_tolerance = 2;
+  optional double relative_mass_balance_tolerance = 3;
+  optional double generalized_rr_balance_tolerance = 4;
+  optional double minimum_phase_fraction = 5;
+  optional double minimum_log_composition_separation = 6;
+  optional double max_log_step = 7;
+  optional double residual_progress_coefficient = 8;
+  optional int64 max_iterations = 9;
+  optional int64 max_line_search_backtracks = 10;
+  optional int64 max_balance_iterations = 11;
+  optional int64 max_balance_backtracks = 12;
+  optional int64 max_property_evaluations = 13;
+  optional int64 max_three_phase_attempts = 14;
+  optional double new_phase_seed_fraction = 15;
+}
+
+message PtSolverSettings {
+  optional string version = 1;
+  optional SolverSettingsKind kind = 2;
+  optional string preset_id = 3;
+  optional PtEosRootSettings eos_root = 4;
+  optional PtStabilitySettings initial_stability = 5;
+  optional PtTwoPhaseSettings two_phase = 6;
+  optional PtStabilitySettings final_two_phase_stability = 7;
+  optional PtThreePhaseSettings three_phase = 8;
+  optional PtStabilitySettings final_three_phase_stability = 9;
+}
+
+// Read-only host policy, never accepted as a creation field.
+message ModelConfigurationLimits {
+  optional uint64 max_components = 1;
+  optional uint64 max_pair_records = 2;
+  optional uint64 max_matrix_entries = 3;
+  optional uint64 max_identifier_bytes = 4;
+  optional uint64 max_display_name_bytes = 5;
+  optional uint64 max_provenance_field_bytes = 6;
+  optional uint64 max_total_text_bytes = 7;
+}
+
+// Read-only host policy, never accepted as a creation field.
+message PtSolverSafetyLimits {
+  optional uint64 max_root_iterations = 1;
+  optional uint64 max_iterations = 2;
+  optional uint64 max_backtracks = 3;
+  optional uint64 max_property_evaluations = 4;
+  optional uint64 max_stability_starts = 5;
+  optional uint64 max_split_attempts = 6;
+  optional uint64 max_three_phase_attempts = 7;
+  optional uint64 max_components = 8;
+  optional uint64 max_stability_start_entries = 9;
+  optional uint64 max_three_phase_starts = 10;
+  optional uint64 max_three_phase_start_entries = 11;
+}
+
+message ModelSnapshot {
+  optional ThermodynamicModelDefinition definition = 1;
+  optional PtSolverSettings settings = 2;
+  optional mpmc.runtime.v1.PtBackendCapability capability = 3;
+  optional ModelConfigurationLimits parameter_limits = 4;
+  optional PtSolverSafetyLimits solver_limits = 5;
+}
+message CreateModelRequest {
+  optional string wire_contract = 1;
+  optional ThermodynamicModelDefinition definition = 2;
+  // Both choices are explicit. A preset resolves to a complete versioned snapshot.
+  oneof solver_selection {
+    PtSolverSettings settings = 3;
+    string preset_id = 4;
+  }
+}
+message CreateModelResponse {
+  optional string wire_contract = 1;
+  optional string model_handle = 2;
+  optional ModelSnapshot snapshot = 3;
+}
+message ModelHandleRequest {
+  optional string wire_contract = 1;
+  optional string model_handle = 2;
+}
+message DescribeModelResponse {
+  optional string wire_contract = 1;
+  optional ModelSnapshot snapshot = 2;
+}
+
+// Transport shape for the public pt-solve-hints/v1 DTO. These are numerical
+// initialization hints only; the native solver remains authoritative for the
+// current feed support, normalization, phase-fraction simplex and phase count.
+message PtCompositionStart {
+  repeated double composition = 1;
+}
+message PtThreePhaseContinuationHint {
+  // Exactly three records are required by the fixed public three-phase hint.
+  repeated PtCompositionStart compositions = 1;
+  // Exactly two entries: beta_1, beta_2; beta_0 remains dependent.
+  repeated double phase_fraction_seed = 2;
+}
+message PtSolveHints {
+  optional string version = 1;
+  repeated PtCompositionStart initial_stability_starts = 2;
+  repeated PtCompositionStart final_two_phase_stability_starts = 3;
+  repeated PtThreePhaseContinuationHint three_phase_continuation_starts = 4;
+}
+message SolveModelRequest {
+  optional string wire_contract = 1;
+  optional string model_handle = 2;
+  optional double pressure_pa = 3;
+  optional double temperature_k = 4;
+  // Exactly the immutable model component order; no ID inference/normalization.
+  repeated double feed = 5;
+  // Absent means the original cold solve. Present hints are per call and are
+  // never retained in the model, registry, session or solver-settings snapshot.
+  optional PtSolveHints hints = 6;
+}
+message CandidatePhase {
+  optional double mole_phase_fraction = 1;
+  repeated double composition = 2;
+  repeated double ln_fugacity_coefficient = 3;
+  optional uint64 provider_branch = 4;
+  optional bool provider_branch_smooth = 5;
+  optional double compressibility_factor = 6;
+}
+message CandidatePhaseSet { repeated CandidatePhase phases = 1; }
+message FullPtResult {
+  optional string backend_result_convention = 1;
+  optional string phase_set_convention = 2;
+  optional mpmc.runtime.v1.PtBackendCapability capability = 3;
+  optional mpmc.runtime.v1.PtComputationOutcome outcome = 4;
+  optional uint32 maximum_phase_count = 5;
+  optional double pressure_pa = 6;
+  optional double temperature_k = 7;
+  repeated double feed = 8;
+  // Diagnostic candidates may exist for a NON-accepted outcome. Acceptance is
+  // determined by outcome, never by the presence/count of this field alone.
+  optional CandidatePhaseSet candidate_phase_set = 9;
+  optional bool global_stability_proven = 10;
+  optional string diagnostic = 11;
+  optional mpmc.runtime.v1.PtPhaseTransitionReport transition_report = 12;
+  optional string provider_result_convention = 13;
+  repeated mpmc.runtime.v1.PtPhaseMetadata phase_metadata = 14;
+  optional bool morphology_resolved = 15;
+}
+message SolveModelResponse {
+  optional string wire_contract = 1;
+  optional FullPtResult result = 2;
+}
+message ReleaseModelResponse { optional string wire_contract = 1; }
+// Any-packed in google.rpc.Status for adapter-generated non-OK RPCs.
+// Stable domain-qualified code; bounded field path. No handle/internal what().
+// Transport-level failures can occur before dispatch and have no such details.
+message ModelServiceError {
+  optional string wire_contract = 1;
+  optional string code = 2;
+  optional string field = 3;
+}
+// The stream is the lifetime lease. Cancel/transport failure/deadline closes
+// this session; a normal unary RPC ending does not. No client principal field.
+service ModelSessionService {
+  rpc OpenModelSession(OpenModelSessionRequest) returns (stream ModelSessionOpened);
+}
+message OpenModelSessionRequest {
+  optional string wire_contract = 1;
+}
+message ModelSessionOpened {
+  optional string wire_contract = 1;
+  optional string session_id = 2;
+}

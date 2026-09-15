@@ -127,6 +127,29 @@ PtProcessHost::PtProcessHost(PtCompositionRoot& root,
         throw std::invalid_argument(
             "production PT process host cannot use desktop bearer authentication");
     }
+    if (options_.enable_model_sessions) {
+        const auto& old = root_.adapter().limits();
+        const auto& rpc = options_.model_sessions.rpc;
+        if (rpc.max_request_bytes > old.max_serialized_request_bytes ||
+            rpc.max_response_bytes > old.max_serialized_response_bytes ||
+            rpc.resource_quota_bytes > old.grpc_resource_quota_bytes) {
+            throw std::invalid_argument("model sessions exceed shared listener limits");
+        }
+        model_sessions_ = std::make_unique<model_configuration_grpc::ModelSessionService>(
+            [this](const grpc::ServerContext& context) -> std::string {
+                if (options_.desktop_loopback_session) {
+                    return root_.adapter().authenticate_request(context).ok() ? "desktop-launch" : "";
+                }
+                const auto auth = context.auth_context();
+                if (!auth || !auth->IsPeerAuthenticated()) { return {}; }
+                // Bind to the verified leaf certificate, not a nonunique CN,
+                // peer socket or a client-supplied identity header. At an edge
+                // proxy this identifies the edge, not an invented Web user.
+                const auto certificates = auth->FindPropertyValues("x509_pem_cert");
+                if (certificates.size() != 1 || certificates[0].size() > 64U * 1024U) { return {}; }
+                return {certificates[0].data(), certificates[0].size()};
+            }, options_.model_sessions);
+    }
 }
 
 PtProcessHost::~PtProcessHost() {
@@ -159,6 +182,7 @@ void PtProcessHost::start() {
                                  &selected_port_);
     }
     runtime_grpc::configure_pt_grpc_server(builder, root_.adapter());
+    if (model_sessions_) { model_sessions_->register_services(builder); }
     server_ = builder.BuildAndStart();
     if (!server_ || selected_port_ <= 0) {
         started_.store(false, std::memory_order_release);
@@ -185,6 +209,9 @@ void PtProcessHost::wait() {
 }
 
 void PtProcessHost::shutdown() noexcept {
+    // Invalidate model sessions before waiting for admitted RPCs. Their owning
+    // entries survive until handlers finish; numerical work is never destroyed.
+    if (model_sessions_) { model_sessions_->close(); }
     if (!server_ ||
         shutdown_requested_.exchange(true, std::memory_order_acq_rel)) {
         return;
@@ -197,6 +224,10 @@ void PtProcessHost::shutdown() noexcept {
 bool PtProcessHost::running() const noexcept {
     return server_ != nullptr &&
            !shutdown_requested_.load(std::memory_order_acquire);
+}
+
+model_configuration_grpc::ModelSessionStatus PtProcessHost::model_session_status() const {
+    return model_sessions_ ? model_sessions_->status() : model_configuration_grpc::ModelSessionStatus{};
 }
 
 } // namespace mpmc::pt_process

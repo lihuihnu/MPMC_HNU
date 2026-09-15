@@ -108,3 +108,20 @@ Use the production Envoy renderer in
 [`deploy/pt-grpc-web`](../../deploy/pt-grpc-web/README.md) for public TLS,
 client-certificate authentication, exact deployed-origin CORS, active native
 gRPC health checks, JSON access logs, and loopback-only Prometheus/admin access.
+
+
+## Optional model configuration sessions
+
+`--enable-model-sessions` (or `PtProcessHostOptions::enable_model_sessions`)
+registers the versioned configuration and session services on the native host.
+It is off by default. Desktop mode reuses the launch bearer; production mode
+binds each session to its verified client leaf certificate. Maintain the explicit
+OpenModelSession stream and send its ID in `x-mpmc-model-session` on model RPCs.
+Stream disconnect/expiry and host shutdown close the session registry; desktop
+control-pipe EOF still stops the whole host and now reclaims its models as well.
+
+See [the session protocol, limits and lifetime contract](../model_configuration_grpc/README.md#authenticated-host-sessions-increment-6).
+The existing listener bounds and v1 routing remain in force. A native mTLS edge
+certificate does not identify a Web user, so new Envoy routes and UI clients remain
+deferred. Linux/Windows/macOS have built-in registry entropy; other platforms need a
+secure host-supplied source and the CLI default fails closed for model sessions.

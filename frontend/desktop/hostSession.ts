@@ -59,6 +59,7 @@ export class PtHostSession {
   constructor(
     private readonly binaryPath: string,
     private readonly log: (line: string) => void = () => {},
+    private readonly options: { enableModelSessions?: boolean } = {},
   ) {
     if (!isAbsolute(binaryPath)) {
       throw new Error('The PT desktop host path must be absolute.');
@@ -80,7 +81,9 @@ export class PtHostSession {
 
   private startChild(): Promise<PtHostConnection> {
     const token = randomBytes(32).toString('base64url');
-    const child = spawn(this.binaryPath, ['--desktop-session-token-stdin'], {
+    const args = ['--desktop-session-token-stdin'];
+    if (this.options.enableModelSessions === true) args.push('--enable-model-sessions');
+    const child = spawn(this.binaryPath, args, {
       detached: false,
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],

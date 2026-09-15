@@ -67,6 +67,10 @@ public:
     [[nodiscard]] bool requires_bearer_token() const noexcept {
         return authentication_.requires_bearer_token();
     }
+    // Reuse the exact desktop credential check at the host's additive service
+    // boundary without exposing/copying the secret. Empty-token production
+    // mode still requires the host to verify transport identity separately.
+    [[nodiscard]] grpc::Status authenticate_request(const grpc::ServerContext& context) const;
 
     grpc::Status DiscoverPtCapabilities(
         grpc::ServerContext* context,

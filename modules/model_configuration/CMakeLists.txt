@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.21)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(mpmc_model_configuration LANGUAGES CXX)
+endif()
+
+if(NOT TARGET mpmc::thermodynamics)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../thermodynamics" thermo-library)
+endif()
+add_library(mpmc_model_configuration INTERFACE)
+add_library(mpmc::model_configuration ALIAS mpmc_model_configuration)
+target_compile_features(mpmc_model_configuration INTERFACE cxx_std_20)
+target_include_directories(mpmc_model_configuration INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(mpmc_model_configuration INTERFACE mpmc::thermodynamics)

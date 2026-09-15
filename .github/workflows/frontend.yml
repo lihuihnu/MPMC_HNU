@@ -5,6 +5,8 @@ on:
     paths:
       - 'api/**'
       - 'frontend/**'
+      - 'modules/model_configuration_grpc/proto/**'
+      - 'buf.model.yaml'
       - '.github/workflows/frontend.yml'
       - '.gitignore'
   workflow_dispatch:

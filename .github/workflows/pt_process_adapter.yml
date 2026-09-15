@@ -9,6 +9,8 @@ on:
       - 'modules/runtime/**'
       - 'modules/runtime_grpc/**'
       - 'modules/pt_process/**'
+      - 'modules/model_configuration/**'
+      - 'modules/model_configuration_grpc/**'
       - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
       - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
       - 'modules/flash/include/mpmc/flash/pt_phase_transition.hpp'
