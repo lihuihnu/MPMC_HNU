@@ -63,7 +63,7 @@ function humanize(name: string): string {
   return `${spaced.slice(0, 1).toUpperCase()}${spaced.slice(1)}`;
 }
 
-function Provenance({ value }: { value?: ModelProvenance }) {
+function Provenance({ value }: { value: ModelProvenance | undefined }) {
   if (!value) return <span className="phase-meta">Provenance: not declared</span>;
   const facts: Array<[string, string]> = [
     ['Kind', enumLabel(value.kind, sourceKindLabels)],
@@ -86,7 +86,15 @@ function Provenance({ value }: { value?: ModelProvenance }) {
   );
 }
 
-function Scalar({ label, scalar, unit }: { label: string; scalar?: ModelScalar; unit?: string }) {
+function Scalar({
+  label,
+  scalar,
+  unit,
+}: {
+  label: string;
+  scalar: ModelScalar | undefined;
+  unit?: string;
+}) {
   return (
     <div className="model-contract">
       <span>{label}</span>
@@ -100,7 +108,7 @@ function Scalar({ label, scalar, unit }: { label: string; scalar?: ModelScalar; 
   );
 }
 
-function SettingsBlock({ title, value }: { title: string; value?: object }) {
+function SettingsBlock({ title, value }: { title: string; value: object | undefined }) {
   const entries = value
     ? Object.entries(value as Record<string, unknown>).filter(
         ([name, item]) => name !== '$typeName' && item !== undefined,
@@ -148,7 +156,13 @@ function Endpoint({
   );
 }
 
-function DiagnosticSection({ validation, result }: { validation?: ModelValidationDetail; result?: FullPtResult }) {
+function DiagnosticSection({
+  validation,
+  result,
+}: {
+  validation: ModelValidationDetail | undefined;
+  result: FullPtResult | undefined;
+}) {
   if (!validation && !result) return null;
   return (
     <section aria-label="Structured model diagnostics">
@@ -172,7 +186,7 @@ function DiagnosticSection({ validation, result }: { validation?: ModelValidatio
         </div>
       ) : null}
       {result ? (
-        <div className="diagnostic-block" data-outcome={outcomeLabels[result.outcome] ?? 'unknown'}>
+        <div className="diagnostic-block" data-outcome={enumLabel(result.outcome, outcomeLabels)}>
           <span>Complete result diagnostic</span>
           <p>
             Outcome: <strong>{enumLabel(result.outcome, outcomeLabels)}</strong> · Candidate phases:{' '}
