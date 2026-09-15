@@ -21,7 +21,11 @@ std::vector<double> feed_at(double z_co2) {
 }
 
 int main() {
-    constexpr double z_co2 = 0.65;
+    // Source-backed boundary probe: Heringer et al. report the L1-L2
+    // interval starting at 73.6 mol% CO2 at 30.2 bar and 72 mol% at
+    // 35 bar. zCO2=0.73 therefore lies immediately on opposite sides
+    // of that published lower boundary as pressure is increased.
+    constexpr double z_co2 = 0.73;
     const auto feed = feed_at(z_co2);
     const auto model = sg::model();
     fl::Pr76VleEvaluator evaluator(model);
