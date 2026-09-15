@@ -15,6 +15,10 @@ on:
       - 'modules/flash/include/mpmc/flash/detail/**'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/**'
       - 'tests/flash/pt_flash_backend/**'
+      - 'tests/flash/pt_split/boundary_references.hpp'
+      - 'tests/flash/pt_split/dew_limit_references.hpp'
+      - 'tests/flash/pt_split/reference_boundary_decimal.py'
+      - 'tests/flash/pt_split/reference_dew_limit_decimal.py'
       - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
       - 'tests/flash/cpa_max3/test_support.hpp'
       - 'tests/flash/cpa_physical_validation/**'
@@ -78,3 +82,10 @@ jobs:
 
       - name: Run PT flash backend conformance
         run: ctest --test-dir build/pt-flash-backend -C ${{ matrix.config }} -R '^flash[.]pt_flash_backend[.]' --verbose --no-tests=error
+
+      - name: Independently verify frozen PR76 near-dew references
+        run: python tests/flash/pt_split/reference_dew_limit_decimal.py
+
+      - name: Cross-check PR76 near-dew reference precision
+        if: matrix.sanitizer == 'ON'
+        run: python tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
