@@ -46,7 +46,7 @@ active unary calls with no queue. Host quotas remain authoritative. Defaults:
   dispatched create also closes it conservatively. There is **no Create retry**
   or invisible model rebuild. Late results/handshakes cannot restore old refs.
 
-The connection factory is trusted main-process plumbing. It must honor its abort
+The connection factory is trusted transport plumbing. It must honor its abort
 signal/settle promptly, and its idempotent `close()` must not throw. The manager
 also closes any late-acquired transport. The desktop adapter owns a dedicated
 `Http2SessionManager` and aborts it to release sockets, with 64 KiB write / 4 MiB
@@ -61,7 +61,8 @@ acknowledgment. The server observes stream cancellation/transport failure and
 reclaims its registry; its finite lease bounds undetected network loss. Real
 host regressions observe disappearance independently and reconnect more than
 the host's 16-session capacity, so a leaked resident slot cannot hide behind a
-locally cleared map. No Web endpoint is exposed before Web identity policy.
+locally cleared map. No Web model endpoint is exposed before authoritative Web
+identity mapping is connected at the trusted edge.
 
 `npm run proto:model:generate` uses existing pinned Buf/Protobuf-ES packages and
 `buf.model.yaml`'s two local import roots. Additive generated ES code is an ignored
@@ -73,9 +74,14 @@ Verification: deterministic fake-transport tests exercise ownership, abort,
 late responses, admission and error handling. The official service workflow runs
 real Node -> native host tests on Linux GCC/ASan, Windows and macOS, exporting the
 existing attributed binary definition/PT state from the C++ fixture. These are
-client/transport regressions, not independent physical validation. UI, Android
-IPC and Web routes remain subsequent work.
+client/transport regressions, not independent physical validation. UI and Android
+model-session routes remain subsequent work.
 
 Desktop IPC now owns one shared client per explicitly attached window. See
 [desktop IPC v1](../../desktop/modelDesktopIpc.md) for the additive preload API,
 local references, frame authorization, lifecycle and hosted regression scope.
+The browser-side authenticated connector now lives in
+[`webModelSession.ts`](webModelSession.ts), with its trust boundary documented in
+[`webModelSession.md`](webModelSession.md). It binds an authoritative opaque Web
+access token to one session epoch, but production edge validation/principal mapping
+and model-route exposure remain separate follow-up work.
