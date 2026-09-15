@@ -20,6 +20,11 @@ add_executable(mpmc_pt_flash_backend_pr76_max3_tests
 target_link_libraries(mpmc_pt_flash_backend_pr76_max3_tests PRIVATE mpmc::flash)
 set_target_properties(mpmc_pt_flash_backend_pr76_max3_tests PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_pt_flash_backend_pr76_near_dew_tests
+    pr76_near_dew_backend_test.cpp)
+target_link_libraries(mpmc_pt_flash_backend_pr76_near_dew_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pt_flash_backend_pr76_near_dew_tests PROPERTIES CXX_EXTENSIONS OFF)
+
 add_executable(mpmc_pt_flash_backend_cpa_max3_tests
     cpa_max3_backend_test.cpp)
 target_link_libraries(mpmc_pt_flash_backend_cpa_max3_tests PRIVATE mpmc::flash)
@@ -34,12 +39,14 @@ set_target_properties(mpmc_pt_flash_backend_freeze_tests PROPERTIES CXX_EXTENSIO
 
 add_dependencies(mpmc_pt_flash_backend_tests
     mpmc_pt_flash_backend_pr76_max3_tests
+    mpmc_pt_flash_backend_pr76_near_dew_tests
     mpmc_pt_flash_backend_cpa_max3_tests
     mpmc_pt_flash_backend_freeze_tests)
 
 set(all_targets
     mpmc_pt_flash_backend_tests
     mpmc_pt_flash_backend_pr76_max3_tests
+    mpmc_pt_flash_backend_pr76_near_dew_tests
     mpmc_pt_flash_backend_cpa_max3_tests
     mpmc_pt_flash_backend_freeze_tests)
 
@@ -86,6 +93,11 @@ add_test(NAME flash.pt_flash_backend.pr76_max3_equivalence
          COMMAND mpmc_pt_flash_backend_pr76_max3_tests)
 set_tests_properties(flash.pt_flash_backend.pr76_max3_equivalence PROPERTIES
     LABELS "flash;pt_flash_backend;pr76;three_phase;max3;seeded_multistart;conformance" TIMEOUT 300)
+
+add_test(NAME flash.pt_flash_backend.pr76_near_dew_classification
+         COMMAND mpmc_pt_flash_backend_pr76_near_dew_tests)
+set_tests_properties(flash.pt_flash_backend.pr76_near_dew_classification PROPERTIES
+    LABELS "flash;pt_flash_backend;pr76;boundary;phase_disappearance;stability;conformance" TIMEOUT 300)
 
 add_test(NAME flash.pt_flash_backend.cpa_max3_equivalence
          COMMAND mpmc_pt_flash_backend_cpa_max3_tests)
