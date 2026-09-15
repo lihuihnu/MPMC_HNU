@@ -16,6 +16,12 @@ Each endpoint is closed by default. The corresponding `*_exclusive` flag changes
 
 The combined `assess(T, p)` is outside if either axis is definitely outside, inside only if both axes are inside, and otherwise unknown. Non-finite query values assess as unknown; solve-request validation rejects non-finite or non-positive P/T separately.
 
+## Frozen v1 semantics
+
+The endpoint contract above is frozen for the v1 public model-configuration surface. Existing meanings must not be reinterpreted in place: missing endpoints remain **unknown**, `*_exclusive == false` remains a closed declared endpoint, and no adapter may convert an undeclared endpoint into an implicit infinite bound. Any incompatible future endpoint semantics require a new versioned contract; additive consumers must preserve these v1 meanings.
+
+This freeze applies to the C++ DTO, immutable snapshots, PR76 public solve gate, versioned model-service mapping and structured field locations. It does not claim a wider physical validity range and it does not promote UI policy into scientific validation.
+
 ## PR76 mapping and solve enforcement
 
 The existing thermodynamics `Applicability` type stores only complete closed intervals. The model-configuration adapter therefore uses a conservative bridge:
