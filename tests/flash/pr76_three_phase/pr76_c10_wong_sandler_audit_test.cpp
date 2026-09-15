@@ -1,6 +1,4 @@
 #include <mpmc/ad/dual.hpp>
-#include <mpmc/flash/pr76_split.hpp>
-#include <mpmc/thermodynamics/pr76_phase.hpp>
 #include <mpmc/thermodynamics/pr76_pure.hpp>
 #include <mpmc/thermodynamics/pr76_roots.hpp>
 
@@ -13,12 +11,12 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace {
 namespace ad = mpmc::ad;
-namespace fl = mpmc::flash;
 namespace th = mpmc::thermodynamics;
 
 constexpr double co2_tc_k = 304.21;
@@ -30,80 +28,32 @@ constexpr double decane_omega = 0.4923;
 constexpr double strict_kij_from_pr101 = 0.05226578047;
 
 // Independent Wong-Sandler/NRTL parameters reported by Arenas-Quevedo et al.
-// (Fluid Phase Equilibria 338 (2013) 30-36, Table 6) for CO2+n-decane.
-// Their binary parameter regression used literature dataset [22]:
-// Jimenez-Gallegos, Galicia-Luna, Elizalde-Solis, JCED 51 (2006) 1624-1628.
+// Fluid Phase Equilibria 338 (2013) 30-36, DOI 10.1016/j.fluid.2012.10.012,
+// Eqs. (10)-(15), Table 6. Their binary regression source is independent of
+// the UFC 2025 four-point dataset audited here.
 constexpr double ws_k12 = 0.7155;
 constexpr double nrtl_delta12_j_per_mol = 11.8841e3;
 constexpr double nrtl_delta21_j_per_mol = -1.9705e3;
 constexpr double nrtl_nonrandomness = 0.3;
 
-constexpr double target_temperature_k = 323.01;
-constexpr double target_pressure_pa = 9.47e6;
-constexpr std::array<double, 2> target_liquid_x{0.911, 0.089};
+struct ExperimentalPoint {
+    double temperature_k;
+    double x_co2;
+    double pressure_pa;
+};
+
+// UFC 2025 Table 7 CO2+n-decane binary bubble points used by PR #101/#104.
+constexpr std::array<ExperimentalPoint, 4> ufc_points{{
+    {323.08, 0.328, 3.14e6},
+    {322.96, 0.495, 5.51e6},
+    {323.21, 0.777, 8.57e6},
+    {323.01, 0.911, 9.47e6},
+}};
 
 void require(bool condition, const char* message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
-}
-
-th::Provenance ufc_source(std::string locator, std::string note = {}) {
-    return {th::SourceKind::literature,
-            "https://repositorio.ufc.br/handle/riufc/80725",
-            "E. C. Q. Soria, UFC dissertation, 2025",
-            std::move(locator),
-            std::move(note),
-            "Transcribed from the UFC repository dissertation",
-            "Pure PR76 input and blind branch target only; not used to fit WS parameters"};
-}
-
-th::Provenance ws_source(std::string locator, std::string note = {}) {
-    return {th::SourceKind::literature,
-            "https://doi.org/10.1016/j.fluid.2012.10.012",
-            "M. G. Arenas-Quevedo et al., Fluid Phase Equilibria 338 (2013) 30-36",
-            std::move(locator),
-            std::move(note),
-            "WS/NRTL parameters transcribed from Table 6; equations from Eqs. (10)-(15)",
-            "Independent binary parameter source; no UFC-2025 target datum used in regression"};
-}
-
-th::SourcedScalar scalar(double value,
-                         th::Unit unit,
-                         const th::Provenance& source,
-                         std::string original_unit = "SI or dimensionless",
-                         std::string conversion = "identity") {
-    return {value, unit, source, std::move(original_unit), std::move(conversion)};
-}
-
-th::PrParameterSet make_parameter_set() {
-    const auto pure_source = ufc_source("Table 6: CO2 and n-decane Tc, Pc and acentric factor");
-    const auto kij_source = ufc_source(
-        "PR101 strict-PR76 binary calibration result",
-        "The production-classical A arm retains the independently calibrated scalar kij from merged PR #101.");
-
-    std::vector<th::Component> catalog{
-        {"carbon-dioxide", "carbon dioxide", th::ComponentKind::pure, pure_source, {}},
-        {"n-decane", "n-decane", th::ComponentKind::pure, pure_source, {}}};
-    const std::vector<std::string> order{"carbon-dioxide", "n-decane"};
-
-    th::PrParameterInput input;
-    input.model_id = std::string(th::pr76_profile);
-    input.dataset_id = "UFC-2025-C10-pure-plus-PR101-kij";
-    input.revision = "WS-mixing-rule-exact-bubble-audit/v3";
-    input.applicability = {std::nullopt, std::nullopt, pure_source};
-    input.pure = {
-        {"carbon-dioxide",
-         scalar(co2_tc_k, th::Unit::kelvin, pure_source, "K", "identity"),
-         scalar(co2_pc_pa, th::Unit::pascal, pure_source, "MPa", "MPa * 1e6 -> Pa"),
-         scalar(co2_omega, th::Unit::dimensionless, pure_source)},
-        {"n-decane",
-         scalar(decane_tc_k, th::Unit::kelvin, pure_source, "K", "identity"),
-         scalar(decane_pc_pa, th::Unit::pascal, pure_source, "MPa", "MPa * 1e6 -> Pa"),
-         scalar(decane_omega, th::Unit::dimensionless, pure_source)}};
-    input.binary = {{"carbon-dioxide", "n-decane",
-                     scalar(strict_kij_from_pr101, th::Unit::dimensionless, kij_source)}};
-    return th::PrParameterSet::create(catalog, order, input);
 }
 
 enum class MixingMode { classical_vdw1f, wong_sandler_nrtl };
@@ -115,19 +65,14 @@ struct MixedCoefficients {
     Number b;
 };
 
+struct PurePair {
+    th::Pr76Pure<double> co2;
+    th::Pr76Pure<double> decane;
+};
+
 struct GenericPhase {
     double z{};
     std::array<double, 2> ln_phi{};
-    std::size_t root_count{};
-};
-
-struct BranchState {
-    double log_sum{};
-    std::array<double, 2> vapor_y{};
-    double liquid_z{};
-    double vapor_z{};
-    double component_residual_gap{};
-    bool distinct{};
 };
 
 struct YResidual {
@@ -137,35 +82,81 @@ struct YResidual {
     GenericPhase vapor{};
 };
 
-struct YBracket {
-    YResidual left{};
-    YResidual right{};
+struct BranchState {
+    double common_residual{};
+    double component_residual_gap{};
+    double y_co2{};
+    double liquid_z{};
+    double vapor_z{};
 };
 
-struct PressureBracket {
-    double left_pa{};
-    double right_pa{};
-    BranchState left_state{};
-    BranchState right_state{};
-};
-
-struct BubblePressureResult {
+struct BubbleResult {
     double pressure_pa{};
     double bracket_width_pa{};
     BranchState state{};
 };
 
+struct ModelMetrics {
+    std::array<BubbleResult, 4> bubbles{};
+    double aard{};
+    double relative_sse{};
+};
+
+th::SourcedScalar scalar(double value,
+                         th::Unit unit,
+                         const th::Provenance& source,
+                         std::string original_unit = "SI or dimensionless",
+                         std::string conversion = "identity") {
+    return {value, unit, source, std::move(original_unit), std::move(conversion)};
+}
+
+PurePair make_pures() {
+    const th::Provenance source{
+        th::SourceKind::literature,
+        "https://repositorio.ufc.br/handle/riufc/80725",
+        "E. C. Q. Soria, UFC dissertation, 2025",
+        "Table 6: CO2 and n-decane Tc, Pc and acentric factor",
+        "Same strict-PR76 pure inputs used by PR #101/#104/#106",
+        "Transcribed from UFC repository dissertation",
+        "Four-point A/B audit; no parameter fitting"};
+
+    std::vector<th::Component> catalog{
+        {"carbon-dioxide", "carbon dioxide", th::ComponentKind::pure, source, {}},
+        {"n-decane", "n-decane", th::ComponentKind::pure, source, {}}};
+    const std::vector<std::string> order{"carbon-dioxide", "n-decane"};
+
+    th::PrParameterInput input;
+    input.model_id = std::string(th::pr76_profile);
+    input.dataset_id = "UFC-2025-C10-four-point-WS-AB";
+    input.revision = "four-point-ab-v1";
+    input.applicability = {std::nullopt, std::nullopt, source};
+    input.pure = {
+        {"carbon-dioxide",
+         scalar(co2_tc_k, th::Unit::kelvin, source, "K", "identity"),
+         scalar(co2_pc_pa, th::Unit::pascal, source, "MPa", "MPa * 1e6 -> Pa"),
+         scalar(co2_omega, th::Unit::dimensionless, source)},
+        {"n-decane",
+         scalar(decane_tc_k, th::Unit::kelvin, source, "K", "identity"),
+         scalar(decane_pc_pa, th::Unit::pascal, source, "MPa", "MPa * 1e6 -> Pa"),
+         scalar(decane_omega, th::Unit::dimensionless, source)}};
+    input.binary = {{"carbon-dioxide", "n-decane",
+                     scalar(strict_kij_from_pr101, th::Unit::dimensionless, source)}};
+
+    const auto parameters = th::PrParameterSet::create(catalog, order, input);
+    return {th::Pr76Pure<double>::from_parameters(parameters, 0U),
+            th::Pr76Pure<double>::from_parameters(parameters, 1U)};
+}
+
 template <typename Number>
 MixedCoefficients<Number> mix_from_moles(
     double temperature_k,
     const std::array<Number, 2>& mole_numbers,
-    const th::Pr76Pure<double>& co2,
-    const th::Pr76Pure<double>& decane,
+    const PurePair& pures,
     MixingMode mode) {
     const Number total = mole_numbers[0] + mole_numbers[1];
     const std::array<Number, 2> x{mole_numbers[0] / total, mole_numbers[1] / total};
-    const auto co2_value = co2.evaluate(temperature_k);
-    const auto decane_value = decane.evaluate(temperature_k);
+    const auto co2_value = pures.co2.evaluate(temperature_k);
+    const auto decane_value = pures.decane.evaluate(temperature_k);
     const std::array<double, 2> a_i{co2_value.a, decane_value.a};
     const std::array<double, 2> b_i{co2_value.b, decane_value.b};
     const double rt = th::Pr76Pure<double>::gas_constant() * temperature_k;
@@ -236,15 +227,13 @@ std::optional<std::size_t> stable_root_index(const th::Pr76RootSet<double>& root
     return std::nullopt;
 }
 
-std::optional<GenericPhase> evaluate_generic_phase(
-    double pressure_pa,
-    double temperature_k,
-    const std::array<double, 2>& fractions,
-    RootRole role,
-    const th::Pr76Pure<double>& co2,
-    const th::Pr76Pure<double>& decane,
-    MixingMode mode) {
-    const auto mixed = mix_from_moles<double>(temperature_k, fractions, co2, decane, mode);
+std::optional<GenericPhase> evaluate_phase(double pressure_pa,
+                                           double temperature_k,
+                                           const std::array<double, 2>& fractions,
+                                           RootRole role,
+                                           const PurePair& pures,
+                                           MixingMode mode) {
+    const auto mixed = mix_from_moles<double>(temperature_k, fractions, pures, mode);
     const double rt = th::Pr76Pure<double>::gas_constant() * temperature_k;
     const double p_over_rt = pressure_pa / rt;
     const double eos_a = (mixed.a / rt) * p_over_rt;
@@ -271,7 +260,7 @@ std::optional<GenericPhase> evaluate_generic_phase(
     const std::array<Dual, 2> moles{
         Dual::variable(fractions[0], 0), Dual::variable(fractions[1], 1)};
     const Dual n = moles[0] + moles[1];
-    const auto mixed_dual = mix_from_moles<Dual>(temperature_k, moles, co2, decane, mode);
+    const auto mixed_dual = mix_from_moles<Dual>(temperature_k, moles, pures, mode);
     const Dual nb = n * mixed_dual.b;
     const Dual n2a = (n * n) * mixed_dual.a;
 
@@ -285,14 +274,12 @@ std::optional<GenericPhase> evaluate_generic_phase(
     const double first = -std::log(pressure_pa * (molar_volume - mixed.b) / rt);
     GenericPhase result;
     result.z = z;
-    result.root_count = roots.count;
     for (std::size_t i = 0; i < 2; ++i) {
         const double d_nb = nb.derivative(i);
         const double d_n2a_over_n = n2a.derivative(i) / n.value();
         const double bracket = d_n2a_over_n / mixed.a - d_nb / mixed.b;
         result.ln_phi[i] = first + (d_nb / mixed.b) * (z - 1.0) +
-            (1.0 / (2.0 * sqrt2)) * (mixed.a / (mixed.b * rt)) *
-            bracket * log_ratio;
+            (1.0 / (2.0 * sqrt2)) * (mixed.a / (mixed.b * rt)) * bracket * log_ratio;
         if (!std::isfinite(result.ln_phi[i])) {
             return std::nullopt;
         }
@@ -300,108 +287,79 @@ std::optional<GenericPhase> evaluate_generic_phase(
     return result;
 }
 
-std::optional<YResidual> evaluate_y_residual(
-    double pressure_pa,
-    double temperature_k,
-    const std::array<double, 2>& liquid_x,
-    const GenericPhase& liquid,
-    double y_co2,
-    const th::Pr76Pure<double>& co2,
-    const th::Pr76Pure<double>& decane,
-    MixingMode mode) {
-    if (!(y_co2 > liquid_x[0]) || !(y_co2 < 1.0)) {
+std::optional<YResidual> y_residual(double pressure_pa,
+                                    double temperature_k,
+                                    const std::array<double, 2>& liquid_x,
+                                    const GenericPhase& liquid,
+                                    double y_co2,
+                                    const PurePair& pures,
+                                    MixingMode mode) {
+    if (!(y_co2 > liquid_x[0] + 1.0e-8) || !(y_co2 < 1.0 - 1.0e-10)) {
         return std::nullopt;
     }
     const std::array<double, 2> vapor_y{y_co2, 1.0 - y_co2};
-    const auto vapor = evaluate_generic_phase(
-        pressure_pa, temperature_k, vapor_y, RootRole::vapor, co2, decane, mode);
+    const auto vapor = evaluate_phase(
+        pressure_pa, temperature_k, vapor_y, RootRole::vapor, pures, mode);
     if (!vapor) {
         return std::nullopt;
     }
-    const double residual0 = std::log(vapor_y[0]) + vapor->ln_phi[0] -
-                             std::log(liquid_x[0]) - liquid.ln_phi[0];
-    const double residual1 = std::log(vapor_y[1]) + vapor->ln_phi[1] -
-                             std::log(liquid_x[1]) - liquid.ln_phi[1];
-    if (!std::isfinite(residual0) || !std::isfinite(residual1)) {
+    const double r0 = std::log(vapor_y[0]) + vapor->ln_phi[0] -
+                      std::log(liquid_x[0]) - liquid.ln_phi[0];
+    const double r1 = std::log(vapor_y[1]) + vapor->ln_phi[1] -
+                      std::log(liquid_x[1]) - liquid.ln_phi[1];
+    if (!std::isfinite(r0) || !std::isfinite(r1)) {
         return std::nullopt;
     }
-    return YResidual{y_co2,
-                     residual0 - residual1,
-                     0.5 * (residual0 + residual1),
-                     *vapor};
+    return YResidual{y_co2, r0 - r1, 0.5 * (r0 + r1), *vapor};
 }
 
 bool brackets_zero(double a, double b) {
     return a == 0.0 || b == 0.0 || std::signbit(a) != std::signbit(b);
 }
 
-std::optional<YBracket> locate_y_bracket(
-    double pressure_pa,
-    double temperature_k,
-    const std::array<double, 2>& liquid_x,
-    const GenericPhase& liquid,
-    const th::Pr76Pure<double>& co2,
-    const th::Pr76Pure<double>& decane,
-    MixingMode mode,
-    std::optional<double> preferred_y) {
-    constexpr int intervals = 360;
-    const double lower = liquid_x[0] + 1.0e-5;
-    const double upper = 1.0 - 1.0e-8;
-    if (!(lower < upper)) {
+std::optional<BranchState> stationary_vapor(double pressure_pa,
+                                            const ExperimentalPoint& point,
+                                            const PurePair& pures,
+                                            MixingMode mode) {
+    const std::array<double, 2> liquid_x{point.x_co2, 1.0 - point.x_co2};
+    const auto liquid = evaluate_phase(
+        pressure_pa, point.temperature_k, liquid_x, RootRole::liquid, pures, mode);
+    if (!liquid) {
         return std::nullopt;
     }
 
+    constexpr int intervals = 480;
+    const double lower = point.x_co2 + 1.0e-5;
+    const double upper = 1.0 - 1.0e-8;
     std::optional<YResidual> previous;
-    std::optional<YBracket> best;
-    double best_metric = 0.0;
+    std::optional<std::pair<YResidual, YResidual>> best;
     for (int index = 0; index <= intervals; ++index) {
         const double fraction = static_cast<double>(index) / static_cast<double>(intervals);
         const double y = lower + (upper - lower) * fraction;
-        const auto current = evaluate_y_residual(
-            pressure_pa, temperature_k, liquid_x, liquid, y, co2, decane, mode);
+        const auto current = y_residual(
+            pressure_pa, point.temperature_k, liquid_x, *liquid, y, pures, mode);
         if (!current) {
             previous.reset();
             continue;
         }
         if (previous && brackets_zero(previous->difference, current->difference)) {
-            const YBracket candidate{*previous, *current};
-            const double midpoint = 0.5 * (candidate.left.y_co2 + candidate.right.y_co2);
-            const double metric = preferred_y ? std::abs(midpoint - *preferred_y) : -midpoint;
-            if (!best || metric < best_metric) {
-                best = candidate;
-                best_metric = metric;
+            if (!best || 0.5 * (previous->y_co2 + current->y_co2) >
+                             0.5 * (best->first.y_co2 + best->second.y_co2)) {
+                best = std::make_pair(*previous, *current);
             }
         }
         previous = *current;
     }
-    return best;
-}
-
-std::optional<BranchState> incipient_vapor_branch(
-    double pressure_pa,
-    double temperature_k,
-    const std::array<double, 2>& liquid_x,
-    const th::Pr76Pure<double>& co2,
-    const th::Pr76Pure<double>& decane,
-    MixingMode mode,
-    std::optional<double> preferred_y = std::nullopt) {
-    const auto liquid = evaluate_generic_phase(
-        pressure_pa, temperature_k, liquid_x, RootRole::liquid, co2, decane, mode);
-    if (!liquid) {
-        return std::nullopt;
-    }
-    const auto bracket = locate_y_bracket(
-        pressure_pa, temperature_k, liquid_x, *liquid, co2, decane, mode, preferred_y);
-    if (!bracket) {
+    if (!best) {
         return std::nullopt;
     }
 
-    YResidual left = bracket->left;
-    YResidual right = bracket->right;
-    for (int iteration = 0; iteration < 64 && right.y_co2 - left.y_co2 > 2.0e-13; ++iteration) {
+    YResidual left = best->first;
+    YResidual right = best->second;
+    for (int iteration = 0; iteration < 72 && right.y_co2 - left.y_co2 > 1.0e-13; ++iteration) {
         const double middle_y = 0.5 * (left.y_co2 + right.y_co2);
-        const auto middle = evaluate_y_residual(
-            pressure_pa, temperature_k, liquid_x, *liquid, middle_y, co2, decane, mode);
+        const auto middle = y_residual(
+            pressure_pa, point.temperature_k, liquid_x, *liquid, middle_y, pures, mode);
         if (!middle) {
             return std::nullopt;
         }
@@ -412,242 +370,156 @@ std::optional<BranchState> incipient_vapor_branch(
         }
     }
 
-    const double y_co2 = 0.5 * (left.y_co2 + right.y_co2);
-    const auto final = evaluate_y_residual(
-        pressure_pa, temperature_k, liquid_x, *liquid, y_co2, co2, decane, mode);
+    const double y = 0.5 * (left.y_co2 + right.y_co2);
+    const auto final = y_residual(
+        pressure_pa, point.temperature_k, liquid_x, *liquid, y, pures, mode);
     if (!final) {
         return std::nullopt;
     }
-    const double composition_gap = std::abs(y_co2 - liquid_x[0]);
     const double relative_z_gap = std::abs(final->vapor.z - liquid->z) /
                                   std::max(final->vapor.z, liquid->z);
-    return BranchState{-final->common_residual,
-                       {y_co2, 1.0 - y_co2},
-                       liquid->z,
-                       final->vapor.z,
+    if (!(y - point.x_co2 > 1.0e-4) || !(relative_z_gap > 1.0e-5)) {
+        return std::nullopt;
+    }
+    return BranchState{final->common_residual,
                        std::abs(final->difference),
-                       composition_gap > 1.0e-4 && relative_z_gap > 1.0e-5};
+                       y,
+                       liquid->z,
+                       final->vapor.z};
 }
 
-std::optional<PressureBracket> locate_ws_bubble_bracket(
-    const th::Pr76Pure<double>& co2,
-    const th::Pr76Pure<double>& decane) {
-    const auto center = incipient_vapor_branch(target_pressure_pa,
-                                               target_temperature_k,
-                                               target_liquid_x,
-                                               co2,
-                                               decane,
-                                               MixingMode::wong_sandler_nrtl);
-    if (!center || !center->distinct || !std::isfinite(center->log_sum)) {
-        return std::nullopt;
-    }
+std::optional<BubbleResult> solve_bubble(const ExperimentalPoint& point,
+                                         const PurePair& pures,
+                                         MixingMode mode) {
+    constexpr double step_pa = 25.0e3;
+    constexpr int max_steps = 360;
+    std::optional<double> previous_pressure;
+    std::optional<BranchState> previous_state;
+    double left_pa = 0.0;
+    double right_pa = 0.0;
+    BranchState left_state{};
+    bool found = false;
 
-    constexpr double step_pa = 10.0e3;
-    constexpr int max_steps_each_direction = 250;
-    std::optional<PressureBracket> best;
-    double best_midpoint_distance = 0.0;
-
-    for (const int direction : {-1, 1}) {
-        double previous_pressure = target_pressure_pa;
-        BranchState previous_state = *center;
-        for (int step = 1; step <= max_steps_each_direction; ++step) {
-            const double pressure = target_pressure_pa +
-                                    static_cast<double>(direction * step) * step_pa;
-            if (!(pressure > 0.0)) {
-                break;
-            }
-            const auto current = incipient_vapor_branch(
-                pressure,
-                target_temperature_k,
-                target_liquid_x,
-                co2,
-                decane,
-                MixingMode::wong_sandler_nrtl,
-                previous_state.vapor_y[0]);
-            if (!current || !current->distinct || !std::isfinite(current->log_sum)) {
-                break;
-            }
-            if (brackets_zero(previous_state.log_sum, current->log_sum)) {
-                PressureBracket candidate;
-                if (previous_pressure < pressure) {
-                    candidate = {previous_pressure, pressure, previous_state, *current};
-                } else {
-                    candidate = {pressure, previous_pressure, *current, previous_state};
-                }
-                const double midpoint = 0.5 * (candidate.left_pa + candidate.right_pa);
-                const double distance = std::abs(midpoint - target_pressure_pa);
-                if (!best || distance < best_midpoint_distance) {
-                    best = candidate;
-                    best_midpoint_distance = distance;
-                }
-                break;
-            }
-            previous_pressure = pressure;
-            previous_state = *current;
+    for (int offset = -max_steps; offset <= max_steps; ++offset) {
+        const double pressure = point.pressure_pa + static_cast<double>(offset) * step_pa;
+        if (!(pressure > 0.1e6)) {
+            continue;
         }
+        const auto state = stationary_vapor(pressure, point, pures, mode);
+        if (!state || !std::isfinite(state->common_residual)) {
+            previous_pressure.reset();
+            previous_state.reset();
+            continue;
+        }
+        if (previous_pressure && previous_state &&
+            brackets_zero(previous_state->common_residual, state->common_residual)) {
+            left_pa = *previous_pressure;
+            right_pa = pressure;
+            left_state = *previous_state;
+            found = true;
+            break;
+        }
+        previous_pressure = pressure;
+        previous_state = *state;
     }
-    return best;
-}
-
-std::optional<BubblePressureResult> solve_ws_bubble_pressure(
-    const th::Pr76Pure<double>& co2,
-    const th::Pr76Pure<double>& decane) {
-    const auto bracket = locate_ws_bubble_bracket(co2, decane);
-    if (!bracket) {
+    if (!found) {
         return std::nullopt;
     }
 
-    double left = bracket->left_pa;
-    double right = bracket->right_pa;
-    BranchState left_state = bracket->left_state;
-    BranchState right_state = bracket->right_state;
-    for (int iteration = 0; iteration < 64 && right - left > 0.05; ++iteration) {
-        const double middle = 0.5 * (left + right);
-        const double seed_y = 0.5 * (left_state.vapor_y[0] + right_state.vapor_y[0]);
-        const auto middle_state = incipient_vapor_branch(
-            middle,
-            target_temperature_k,
-            target_liquid_x,
-            co2,
-            decane,
-            MixingMode::wong_sandler_nrtl,
-            seed_y);
-        if (!middle_state || !middle_state->distinct || !std::isfinite(middle_state->log_sum)) {
+    for (int iteration = 0; iteration < 72 && right_pa - left_pa > 0.05; ++iteration) {
+        const double middle_pa = 0.5 * (left_pa + right_pa);
+        const auto middle = stationary_vapor(middle_pa, point, pures, mode);
+        if (!middle || !std::isfinite(middle->common_residual)) {
             return std::nullopt;
         }
-        if (brackets_zero(left_state.log_sum, middle_state->log_sum)) {
-            right = middle;
-            right_state = *middle_state;
+        if (brackets_zero(left_state.common_residual, middle->common_residual)) {
+            right_pa = middle_pa;
         } else {
-            left = middle;
-            left_state = *middle_state;
+            left_pa = middle_pa;
+            left_state = *middle;
         }
     }
 
-    const double pressure = 0.5 * (left + right);
-    const double seed_y = 0.5 * (left_state.vapor_y[0] + right_state.vapor_y[0]);
-    const auto state = incipient_vapor_branch(pressure,
-                                              target_temperature_k,
-                                              target_liquid_x,
-                                              co2,
-                                              decane,
-                                              MixingMode::wong_sandler_nrtl,
-                                              seed_y);
-    if (!state || !state->distinct || !std::isfinite(state->log_sum)) {
+    const double pressure = 0.5 * (left_pa + right_pa);
+    const auto state = stationary_vapor(pressure, point, pures, mode);
+    if (!state) {
         return std::nullopt;
     }
-    return BubblePressureResult{pressure, right - left, *state};
+    return BubbleResult{pressure, right_pa - left_pa, *state};
 }
 
-void validate_generic_classical_fugacity(
-    const th::Pr76Phase<double>& production,
-    const th::Pr76Pure<double>& co2,
-    const th::Pr76Pure<double>& decane) {
-    fl::Pr76VleEvaluator production_evaluator(production);
-    constexpr double pressure_pa = 8.0e6;
-    constexpr double temperature_k = 323.01;
-    const std::array<std::array<double, 2>, 2> compositions{{
-        {0.911, 0.089},
-        {0.995, 0.005}}};
-    const std::array<fl::PtPhaseRole, 2> production_roles{
-        fl::PtPhaseRole::liquid_candidate,
-        fl::PtPhaseRole::vapor_candidate};
-    const std::array<RootRole, 2> generic_roles{RootRole::liquid, RootRole::vapor};
+ModelMetrics evaluate_model(const PurePair& pures, MixingMode mode, std::string_view label) {
+    ModelMetrics metrics;
+    double absolute_relative_sum = 0.0;
+    double relative_sse = 0.0;
 
-    for (std::size_t state = 0; state < compositions.size(); ++state) {
-        const auto production_phase = production_evaluator(
-            pressure_pa, temperature_k, compositions[state], production_roles[state]);
-        const auto generic_phase = evaluate_generic_phase(
-            pressure_pa,
-            temperature_k,
-            compositions[state],
-            generic_roles[state],
-            co2,
-            decane,
-            MixingMode::classical_vdw1f);
-        require(generic_phase.has_value(),
-                "generic arbitrary-mixing fugacity path could not reproduce a classical phase");
-        require(std::abs(generic_phase->z - production_phase.z) <= 2.0e-12,
-                "generic arbitrary-mixing root differs from production classical PR76");
-        for (std::size_t i = 0; i < 2; ++i) {
-            require(std::abs(generic_phase->ln_phi[i] - production_phase.activity.ln_phi[i]) <=
-                        2.0e-10,
-                    "generic arbitrary-mixing fugacity differs from production classical PR76");
-        }
+    std::cout << label << '\n';
+    for (std::size_t index = 0; index < ufc_points.size(); ++index) {
+        const auto bubble = solve_bubble(ufc_points[index], pures, mode);
+        require(bubble.has_value(), "four-point bubble solve failed on a UFC state");
+        require(bubble->bracket_width_pa <= 0.05,
+                "four-point bubble-pressure bracket did not converge tightly enough");
+        require(std::abs(bubble->state.common_residual) <= 1.0e-8,
+                "four-point bubble root did not close common fugacity residual");
+        require(bubble->state.component_residual_gap <= 1.0e-10,
+                "four-point vapor composition did not close component residual difference");
+        require(bubble->state.y_co2 > ufc_points[index].x_co2,
+                "four-point vapor is not CO2-richer than the liquid");
+        require(bubble->state.vapor_z > bubble->state.liquid_z,
+                "four-point liquid/vapor root ordering is not distinct");
+
+        metrics.bubbles[index] = *bubble;
+        const double relative =
+            (bubble->pressure_pa - ufc_points[index].pressure_pa) / ufc_points[index].pressure_pa;
+        absolute_relative_sum += std::abs(relative);
+        relative_sse += relative * relative;
+
+        std::cout << "  T_K=" << ufc_points[index].temperature_k
+                  << " xCO2=" << ufc_points[index].x_co2
+                  << " Pexp_MPa=" << ufc_points[index].pressure_pa / 1.0e6
+                  << " Pcalc_MPa=" << bubble->pressure_pa / 1.0e6
+                  << " signed_error_pct=" << 100.0 * relative
+                  << " yCO2=" << bubble->state.y_co2
+                  << " ZL=" << bubble->state.liquid_z
+                  << " ZV=" << bubble->state.vapor_z << '\n';
     }
+    metrics.aard = absolute_relative_sum / static_cast<double>(ufc_points.size());
+    metrics.relative_sse = relative_sse;
+    std::cout << "  AARD_pct=" << 100.0 * metrics.aard
+              << " relative_SSE=" << metrics.relative_sse << '\n';
+    return metrics;
 }
 
-void audit_wong_sandler_exact_bubble_pressure() {
-    const auto parameters = make_parameter_set();
-    const auto production = th::Pr76Phase<double>::from_parameters(parameters);
-    const auto co2 = th::Pr76Pure<double>::from_parameters(parameters, 0U);
-    const auto decane = th::Pr76Pure<double>::from_parameters(parameters, 1U);
-
-    validate_generic_classical_fugacity(production, co2, decane);
-
-    const auto source = ws_source(
-        "Eqs. (10)-(15), Table 6: PR + Wong-Sandler + NRTL for CO2+n-decane",
-        "Table 6 reports k12=0.7155, delta12=11.8841 kJ/mol, delta21=-1.9705 kJ/mol; NRTL alpha=0.3 is fixed in the text. Binary source [22] is JCED 51 (2006) 1624-1628.");
-    require(source.kind == th::SourceKind::literature &&
-                source.reference.find("fluid.2012.10.012") != std::string::npos,
-            "Wong-Sandler audit lost its literature provenance");
-
-    const auto target_state = incipient_vapor_branch(target_pressure_pa,
-                                                      target_temperature_k,
-                                                      target_liquid_x,
-                                                      co2,
-                                                      decane,
-                                                      MixingMode::wong_sandler_nrtl,
-                                                      0.99254);
-    require(target_state.has_value() && target_state->distinct,
-            "direct binary fugacity solve no longer recovers the PR105 target branch");
-    require(std::abs(target_state->component_residual_gap) <= 1.0e-10,
-            "direct binary vapor-composition solve did not close component fugacity difference");
-
-    const auto bubble = solve_ws_bubble_pressure(co2, decane);
-    require(bubble.has_value(),
-            "Wong-Sandler exact bubble-pressure solve found no continuous distinct-branch root");
-
-    const double signed_error_pa = bubble->pressure_pa - target_pressure_pa;
-    const double absolute_error_pa = std::abs(signed_error_pa);
-    const double relative_error = absolute_error_pa / target_pressure_pa;
-
+void audit_four_point_ab() {
+    const PurePair pures = make_pures();
     std::cout << std::setprecision(14)
-              << "CO2+n-C10 WS/NRTL exact bubble: T_K=" << target_temperature_k
-              << " xCO2=" << target_liquid_x[0] << '\n'
-              << "P_bubble_MPa=" << bubble->pressure_pa / 1.0e6
-              << " P_exp_MPa=" << target_pressure_pa / 1.0e6
-              << " signed_error_MPa=" << signed_error_pa / 1.0e6
-              << " abs_error_MPa=" << absolute_error_pa / 1.0e6
-              << " relative_error_pct=" << 100.0 * relative_error << '\n'
-              << "yCO2=" << bubble->state.vapor_y[0]
-              << " ZL=" << bubble->state.liquid_z
-              << " ZV=" << bubble->state.vapor_z
-              << " log_sum=" << bubble->state.log_sum
-              << " sum_xK_minus_1=" << std::expm1(bubble->state.log_sum)
-              << " component_residual_gap=" << bubble->state.component_residual_gap
-              << " bracket_width_Pa=" << bubble->bracket_width_pa << '\n';
+              << "CO2+n-C10 UFC-2025 four-point A/B; independent WS/NRTL params fixed\n";
 
-    require(bubble->pressure_pa > 0.0 && std::isfinite(bubble->pressure_pa),
-            "Wong-Sandler bubble pressure is not finite and positive");
-    require(bubble->bracket_width_pa <= 0.05,
-            "Wong-Sandler bubble-pressure bracket did not converge tightly enough");
-    require(std::abs(bubble->state.log_sum) <= 1.0e-8,
-            "Wong-Sandler bubble-pressure root does not satisfy common fugacity closure");
-    require(bubble->state.component_residual_gap <= 1.0e-10,
-            "Wong-Sandler bubble vapor does not satisfy equal component fugacity residuals");
-    require(bubble->state.vapor_y[0] > target_liquid_x[0],
-            "Wong-Sandler bubble vapor is not CO2-richer than the specified liquid");
-    require(bubble->state.vapor_z > bubble->state.liquid_z,
-            "Wong-Sandler bubble root lost distinct liquid/vapor ordering");
+    const auto classical = evaluate_model(pures, MixingMode::classical_vdw1f, "classical-vdW1f");
+    const auto ws = evaluate_model(pures, MixingMode::wong_sandler_nrtl, "Wong-Sandler/NRTL");
+
+    // Guard the A arm against silently drifting away from the merged PR #101
+    // strict-PR76 calibration baseline. These values are not WS acceptance targets.
+    require(std::abs(classical.aard - 0.13249929377) <= 2.0e-4,
+            "classical four-point AARD no longer matches the merged strict-PR76 baseline");
+    require(std::abs(classical.bubbles[3].pressure_pa / 1.0e6 - 8.92879) <= 2.0e-3,
+            "classical high-CO2 bubble no longer matches the merged strict-PR76 branch");
+    require(std::isfinite(ws.aard) && std::isfinite(ws.relative_sse),
+            "WS four-point aggregate metrics are not finite");
+
+    std::cout << "A/B summary: classical_AARD_pct=" << 100.0 * classical.aard
+              << " WS_AARD_pct=" << 100.0 * ws.aard
+              << " AARD_delta_pct_points=" << 100.0 * (ws.aard - classical.aard)
+              << " classical_relative_SSE=" << classical.relative_sse
+              << " WS_relative_SSE=" << ws.relative_sse << '\n';
 }
 
 } // namespace
 
 int main() {
     try {
-        audit_wong_sandler_exact_bubble_pressure();
-        std::cout << "[PASS] pr76_c10_wong_sandler_exact_bubble_audit\n";
+        audit_four_point_ab();
+        std::cout << "[PASS] pr76_c10_wong_sandler_four_point_ab_audit\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "[FAIL] " << error.what() << '\n';
