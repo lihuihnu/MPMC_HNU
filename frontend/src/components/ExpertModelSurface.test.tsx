@@ -1,9 +1,9 @@
 import { fromJson } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { inspectionFromSnapshot } from '../api/expertModelInspector';
+import { inspectionFromSnapshot, type ExpertModelInspection } from '../api/expertModelInspector';
 import { ModelClientError } from '../api/modelSessionClient';
 import { RendererModelError } from '../api/rendererModelClient';
 import { MODEL_VALIDATION_DETAIL_VERSION } from '../api/modelValidationDetail';
@@ -12,11 +12,19 @@ import { expertSnapshotJson } from '../test/modelInspectorFixtures';
 import {
   ExpertModelSurfaceView,
   expertModelSurfaceFailure,
+  readExpertModelSurface,
   type ExpertModelSurfaceState,
 } from './ExpertModelSurface';
 
 function html(state: ExpertModelSurfaceState): string {
   return renderToStaticMarkup(<ExpertModelSurfaceView state={state} onRefresh={() => {}} />);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
 }
 
 describe('live read-only Expert surface presentation', () => {
@@ -65,5 +73,47 @@ describe('live read-only Expert surface presentation', () => {
     const unknown = expertModelSurfaceFailure(new Error('private-session-token'));
     expect(unknown).toEqual({ reason: 'expert.describe_failed' });
     expect(JSON.stringify(unknown)).not.toContain('private-session-token');
+  });
+
+  it('skips a retired StrictMode setup and issues only the active describe without a cancellation signal', async () => {
+    const inspection = inspectionFromSnapshot(fromJson(ModelSnapshotSchema, expertSnapshotJson()));
+    const read = vi.fn(async () => inspection);
+    const oldPublish = vi.fn();
+    const publish = vi.fn();
+    const source = { describe: read };
+    readExpertModelSurface(source, oldPublish)();
+    const stop = readExpertModelSurface(source, publish);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(read).toHaveBeenCalledExactlyOnceWith();
+    expect(oldPublish).not.toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledExactlyOnceWith({ status: 'ready', inspection });
+    stop();
+  });
+
+  it.each(['success', 'failure'] as const)('discards late %s after source change/unmount without cancelling the owning model', async (outcome) => {
+    const pending = deferred<ExpertModelInspection>();
+    const describe = vi.fn(() => pending.promise);
+    const publish = vi.fn();
+    const stop = readExpertModelSurface({ describe }, publish);
+    await Promise.resolve();
+    expect(describe).toHaveBeenCalledExactlyOnceWith();
+    stop();
+    if (outcome === 'success') pending.resolve(inspectionFromSnapshot(fromJson(ModelSnapshotSchema, expertSnapshotJson())));
+    else pending.reject(new Error('private late failure'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('publishes current typed read errors through the existing safe error contract', async () => {
+    const publish = vi.fn();
+    readExpertModelSurface({ describe: async () => {
+      throw new ModelClientError(Code.NotFound, 'model.stale_reference');
+    } }, publish);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(publish).toHaveBeenCalledExactlyOnceWith({ status: 'failed',
+      failure: { code: Code.NotFound, reason: 'model.stale_reference' } });
   });
 });
