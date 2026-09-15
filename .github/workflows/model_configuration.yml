@@ -24,6 +24,8 @@ on:
       - 'tests/model_configuration/executable_model/**'
       - 'tests/model_configuration/registry/**'
       - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
+      - 'tests/flash/pr76_three_phase/sour_gas_fixture.hpp'
+      - 'tests/flash/pr76_three_phase/sour_gas_references.hpp'
       - 'tests/thermodynamics/contracts/**'
       - '.github/workflows/model_configuration.yml'
   workflow_dispatch:
