@@ -11,6 +11,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -384,13 +385,14 @@ PointFit fit_point(const BinaryDatum& datum) {
     return *best;
 }
 
-DatasetEvaluation evaluate_kij_assignments(const std::array<double, 4>& kijs) {
+std::optional<DatasetEvaluation> try_evaluate_kij_assignments(
+    const std::array<double, 4>& kijs) {
     DatasetEvaluation evaluation;
     double abs_relative_sum = 0.0;
     for (std::size_t i = 0; i < decane_323_data.size(); ++i) {
         const auto point = evaluate_point(kijs[i], decane_323_data[i]);
         if (!point) {
-            throw std::runtime_error("C10 kij assignment left the tracked incipient-VLE branch");
+            return std::nullopt;
         }
         evaluation.predicted_pressures_pa[i] = point->predicted_pressure_pa;
         evaluation.relative_sse += point->relative_error * point->relative_error;
@@ -398,6 +400,18 @@ DatasetEvaluation evaluate_kij_assignments(const std::array<double, 4>& kijs) {
     }
     evaluation.aard = abs_relative_sum /
                       static_cast<double>(decane_323_data.size());
+    return evaluation;
+}
+
+DatasetEvaluation summarize_pointwise_fits(const std::array<PointFit, 4>& fits) {
+    DatasetEvaluation evaluation;
+    double abs_relative_sum = 0.0;
+    for (std::size_t i = 0; i < fits.size(); ++i) {
+        evaluation.predicted_pressures_pa[i] = fits[i].predicted_pressure_pa;
+        evaluation.relative_sse += fits[i].relative_error * fits[i].relative_error;
+        abs_relative_sum += std::abs(fits[i].relative_error);
+    }
+    evaluation.aard = abs_relative_sum / static_cast<double>(fits.size());
     return evaluation;
 }
 
@@ -435,13 +449,15 @@ LinearRegression regress(const std::array<double, 4>& coordinates,
     return LinearRegression{intercept, slope, 1.0 - residual_sum / syy};
 }
 
-std::array<double, 4> project_kij(const LinearRegression& regression,
-                                  const std::array<double, 4>& coordinates) {
+std::optional<std::array<double, 4>> try_project_kij(
+    const LinearRegression& regression,
+    const std::array<double, 4>& coordinates) {
     std::array<double, 4> result{};
     for (std::size_t i = 0; i < result.size(); ++i) {
         result[i] = regression.intercept + regression.slope * coordinates[i];
-        require(result[i] >= 0.0 && result[i] <= 0.16 && std::isfinite(result[i]),
-                "C10 projected effective kij left the audit interval");
+        if (!(result[i] >= 0.0 && result[i] <= 0.16) || !std::isfinite(result[i])) {
+            return std::nullopt;
+        }
     }
     return result;
 }
@@ -459,6 +475,21 @@ void print_dataset(std::string_view name,
                   << " Pexp_MPa=" << decane_323_data[i].pressure_pa / 1.0e6
                   << " Pcalc_MPa=" << evaluation.predicted_pressures_pa[i] / 1.0e6
                   << '\n';
+    }
+}
+
+void print_unresolved_profile(std::string_view name,
+                              const std::optional<std::array<double, 4>>& kijs) {
+    std::cout << name << ": ";
+    if (!kijs) {
+        std::cout << "projected kij left the audit interval [0,0.16]\n";
+        return;
+    }
+    std::cout << "one or more projected states left the tracked incipient-VLE branch\n";
+    for (std::size_t i = 0; i < decane_323_data.size(); ++i) {
+        std::cout << "  T=" << decane_323_data[i].temperature_k
+                  << " xCO2=" << decane_323_data[i].x_co2
+                  << " projected_kij=" << (*kijs)[i] << '\n';
     }
 }
 
@@ -490,42 +521,69 @@ void audit_c10_kij_structure() {
 
     std::array<double, 4> constant_kijs{};
     constant_kijs.fill(strict_kij_from_pr101);
-    const auto constant = evaluate_kij_assignments(constant_kijs);
+    const auto constant = try_evaluate_kij_assignments(constant_kijs);
+    require(constant.has_value(),
+            "C10 structure audit could not reproduce the merged PR101 constant-kij VLE branches");
+    const auto pointwise_profile = summarize_pointwise_fits(pointwise_fits);
+
     const auto temperature_regression = regress(temperatures, pointwise_kijs);
     const auto composition_regression = regress(compositions, pointwise_kijs);
-    const auto temperature_kijs = project_kij(temperature_regression, temperatures);
-    const auto composition_kijs = project_kij(composition_regression, compositions);
-    const auto temperature_profile = evaluate_kij_assignments(temperature_kijs);
-    const auto composition_profile = evaluate_kij_assignments(composition_kijs);
-    const auto pointwise_profile = evaluate_kij_assignments(pointwise_kijs);
+    const auto temperature_kijs = try_project_kij(temperature_regression, temperatures);
+    const auto composition_kijs = try_project_kij(composition_regression, compositions);
+    const auto temperature_profile = temperature_kijs
+        ? try_evaluate_kij_assignments(*temperature_kijs)
+        : std::optional<DatasetEvaluation>{};
+    const auto composition_profile = composition_kijs
+        ? try_evaluate_kij_assignments(*composition_kijs)
+        : std::optional<DatasetEvaluation>{};
 
     std::cout << std::setprecision(12)
               << "C10 effective-kij structure audit: T_span_K=" << temperature_span
               << " xCO2_span=" << composition_span
               << " pointwise_kij_span=" << pointwise_kij_span << '\n';
-    print_dataset("constant PR101 kij", constant_kijs, constant);
+    print_dataset("constant PR101 kij", constant_kijs, *constant);
     print_dataset("pointwise effective kij", pointwise_kijs, pointwise_profile);
+
     std::cout << "linear kij(T): intercept=" << temperature_regression.intercept
               << " slope_per_K=" << temperature_regression.slope
               << " R2_on_pointwise_kij=" << temperature_regression.r_squared << '\n';
-    print_dataset("projected linear kij(T)", temperature_kijs, temperature_profile);
+    if (temperature_kijs && temperature_profile) {
+        print_dataset("projected linear kij(T)", *temperature_kijs, *temperature_profile);
+    } else {
+        print_unresolved_profile("projected linear kij(T)", temperature_kijs);
+    }
+
     std::cout << "linear kij(xCO2): intercept=" << composition_regression.intercept
               << " slope_per_mole_fraction=" << composition_regression.slope
               << " R2_on_pointwise_kij=" << composition_regression.r_squared << '\n';
-    print_dataset("projected linear kij(xCO2)", composition_kijs, composition_profile);
+    if (composition_kijs && composition_profile) {
+        print_dataset("projected linear kij(xCO2)", *composition_kijs, *composition_profile);
+    } else {
+        print_unresolved_profile("projected linear kij(xCO2)", composition_kijs);
+    }
 
     require(temperature_span <= 0.30,
             "C10 structure audit is no longer a near-isothermal test");
     require(composition_span >= 0.50,
             "C10 structure audit lost the wide composition span needed for diagnosis");
-    require(std::abs(constant.aard - 0.1324992938) <= 5.0e-6,
+    require(std::abs(constant->aard - 0.1324992938) <= 5.0e-6,
             "C10 structure audit no longer reproduces the merged PR101 constant-kij AARD");
     require(std::isfinite(temperature_regression.r_squared) &&
                 std::isfinite(composition_regression.r_squared) &&
-                std::isfinite(temperature_profile.aard) &&
-                std::isfinite(composition_profile.aard),
-            "C10 structure audit produced nonfinite diagnostics");
-    require(pointwise_profile.relative_sse <= constant.relative_sse,
+                std::isfinite(pointwise_profile.aard) &&
+                std::isfinite(pointwise_profile.relative_sse),
+            "C10 structure audit produced nonfinite primary diagnostics");
+    if (temperature_profile) {
+        require(std::isfinite(temperature_profile->aard) &&
+                    std::isfinite(temperature_profile->relative_sse),
+                "C10 linear kij(T) projection produced nonfinite diagnostics");
+    }
+    if (composition_profile) {
+        require(std::isfinite(composition_profile->aard) &&
+                    std::isfinite(composition_profile->relative_sse),
+                "C10 linear kij(x) projection produced nonfinite diagnostics");
+    }
+    require(pointwise_profile.relative_sse <= constant->relative_sse,
             "pointwise effective kij unexpectedly worsened the constant-kij objective");
 }
 
