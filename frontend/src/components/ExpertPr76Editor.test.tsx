@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ExpertModelOwner, ExpertOwnedModel } from '../api/expertModelOwner';
-import { ModelClientError } from '../api/modelSessionClient';
+import { ModelClientError, type ModelCallOptions, type ModelCreateInput } from '../api/modelSessionClient';
 import { MODEL_VALIDATION_DETAIL_VERSION } from '../api/modelValidationDetail';
 import { pr76ExpertDraftFromSnapshot } from '../api/pr76ExpertDraft';
 import {
@@ -45,7 +45,9 @@ function fakeOwned(snapshot = fromJson(ModelSnapshotSchema, expertSnapshotJson()
 }
 
 function fakeOwner(): ExpertModelOwner {
-  return { create: vi.fn(async () => fakeOwned()) };
+  return {
+    create: vi.fn(async (_input: ModelCreateInput, _options?: ModelCallOptions) => fakeOwned()),
+  };
 }
 
 describe('PR76 Expert editor presentation and create boundary', () => {
@@ -79,7 +81,10 @@ describe('PR76 Expert editor presentation and create boundary', () => {
   it('submits only the domain-built immutable request through ExpertModelOwner', async () => {
     const snapshot = fromJson(ModelSnapshotSchema, expertSnapshotJson());
     const draft = userIdentity(pr76ExpertDraftFromSnapshot(snapshot));
-    const createModel = vi.fn(async () => fakeOwned(snapshot));
+    const createModel = vi.fn(async (
+      _input: ModelCreateInput,
+      _options?: ModelCallOptions,
+    ) => fakeOwned(snapshot));
     const owner: ExpertModelOwner = { create: createModel };
 
     const made = await createPr76ExpertModel(owner, draft, { timeoutMs: 4321 });
