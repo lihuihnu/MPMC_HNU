@@ -2,8 +2,10 @@ import { spawnSync } from 'node:child_process';
 import electron from 'electron';
 
 // Electron may exit cleanly before an async test finishes; exit status alone is insufficient.
+// The low-level model bridge is test-only; product windows receive only the safe workbench bridge.
 const child = spawnSync(electron, ['desktop-model-test-dist/model-ipc-smoke.mjs'], {
   encoding: 'utf8', timeout: 200_000, maxBuffer: 16 * 1024 * 1024,
+  env: { ...process.env, MPMC_MODEL_DESKTOP_DEBUG_BRIDGE: '1' },
 });
 process.stdout.write(child.stdout ?? '');
 process.stderr.write(child.stderr ?? '');
