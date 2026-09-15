@@ -86,6 +86,9 @@ void run() {
     a.pressure_upper_pa = 2.0e6;
     require(a.assess(300.0, 2.1e6) == Assessment::outside_declared_bounds,
             "one definite axis violation must dominate unknown axis");
+    require(a.assess(300.0, 1.0e6) == Assessment::unknown,
+            "missing pressure lower endpoint must remain unknown");
+    a.pressure_lower_pa = 0.5e6;
     require(a.assess(300.0, 1.0e6) == Assessment::inside_declared_bounds,
             "complete temperature and pressure bounds should be inside");
     require(a.assess(std::numeric_limits<double>::quiet_NaN(), 1.0e6) == Assessment::unknown,
