@@ -24,20 +24,20 @@
 | 层次 | 已实现 | 关键边界 |
 | --- | --- | --- |
 | AD | `Dual<T,N>`、常见初等函数、固定维数 `value_and_jacobian`、分块 `value_and_jacobian_runtime<K>` | 仅依赖标准库；运行期驱动复用固定宽度 Dual。未实现反向模式、通用高阶或稀疏传播。 |
-| PR76 | 有序参数、纯/混合/PT 物性、有限 TPD、汽液 PT、maximum-three-phase 编排与 continuation、统一 PT backend | 两相有独立高精度二元/三元参考；max3 有 synthetic structural regression，不据此声明真实流体三相实验验证或通用相形态分类。 |
+| PR76 | 有序参数、纯/混合/PT 物性、有限 TPD、汽液 PT、maximum-three-phase 编排与 continuation、统一 PT backend | 两相有独立高精度二元/三元参考；max3 有 synthetic structural regression，并有 Li–Firoozabadi 六组分文献工程状态的独立数值三相回归。后者不是实验三相验证，也不据此声明通用相形态分类。 |
 | SW92 | corrected-original 物性、fixed-family stability/VLE、Whitson dual-model observables、Xu-style max2、Profile-C authoritative 1/2/3-phase PT | 各算法 profile 保持独立。Profile-C 有 Sample-6 与 n-butane/H2O 实验三相线验证；固定 NaCl molality 不等于盐库存守恒，H 相仍为 `nonaqueous_unclassified`。 |
 | CPA | explicit-site-pair 参数、缔合、PT 物性、minimum-Gibbs stability、VLE、max3 与统一 PT backend | 甲醇(2B)/水(4C) 两相已有可追溯物理回归；max3 仍为 synthetic structural validation，缺兼容的物理 VLLE oracle。 |
 | 灵敏度与 physics | PR76 内部两相、SW92 Profile-C 固定相集合的局部隐式导数及 closure；两者的 model-neutral component inventory/local Jacobian | 导数绑定已接受的光滑相/根/family 分支；PR76 standalone 单相 closure、CPA flash sensitivity/closure 尚未实现。Inventory 单位为 `mol/m³ fluid`，不是孔隙体积累积项。 |
 
-三个已配置 PT 后端均通过 [统一能力与结果契约](modules/flash/pt_flash_backend.md) 暴露 1/2/3 相能力、版本与有序组分身份。组分增减、替换、重排需建立完整的新参数快照；当前前端发现并选择后端已有 inventory，不能任意增删后端组分。内建 PR76 甲烷/乙烷/丙烷、SW92 CO₂/淡水、CPA 甲醇/水快照只覆盖声明的窄文献体系，不是通用物性数据库。
+三个预置 PT 后端均通过 [统一能力与结果契约](modules/flash/pt_flash_backend.md) 暴露 1/2/3 相能力、版本与有序组分身份。预置 backend inventory 本身仍是冻结快照；组分增减、替换、重排不能原地修改该快照。Electron 的免登录 **PR76 Expert** 工作台另行支持用完整的新参数快照创建不可变运行时 PR76 模型，可新增、删除、重排组分并显式给出 `Tc`、`Pc`、偏心因子、摩尔质量、`kij` 与 solver settings，再由同一 C++ 相稳定/最多三相内核求解。这个能力不是通用物性数据库；内建 PR76 甲烷/乙烷/丙烷、SW92 CO₂/淡水、CPA 甲醇/水快照仍只覆盖声明的窄文献体系。
 
 ## 应用与产品
 
 | 路径 | 当前状态与入口 |
 | --- | --- |
-| Hosted Web | React 经版本化 Protobuf/gRPC-Web、Envoy 和 C++ adapter 调用 `PtService`；部署使用显式 HTTPS origin、mTLS 与外部身份配置。详见 [部署说明](deploy/pt-grpc-web/README.md)。 |
+| Hosted Web | React 经版本化 Protobuf/gRPC-Web、Envoy 和 C++ adapter 调用 `PtService`；部署使用显式 HTTPS origin、mTLS 与外部身份配置。详见 [部署说明](deploy/pt-grpc-web/README.md)。该可选部署路径的边缘安全配置不是本地桌面工作台的登录前置条件。 |
 | Windows/macOS/Linux native staging | 锁定 Conan binary graph，以 dependency seed + restore-only staging 生成可搬移 host。vcpkg 路径保留用于本地 source build。详见 [产品构建](products/pt/README.md)。 |
-| Electron desktop | 复用 React 与 native staging，经 sandbox preload/IPC、ephemeral loopback bearer 和原生 gRPC 调用后端；跨平台产物仍为未签名工程预览。详见 [桌面前端](frontend/README.md)。 |
+| Electron desktop | 复用 React 与 native staging，经 sandbox preload/IPC、ephemeral loopback transport token 和原生 gRPC 调用后端；PR76 Expert 直接本地使用，无账号/注册/登录。renderer 只得到 `apply/solve/release/cancel` 工作台能力与权威快照/结果，不得到原生 model handle、session ID、connect/reconnect 或 transport。跨平台产物仍为未签名工程预览。详见 [桌面前端](frontend/README.md)。 |
 | 原生 host 安装包 | 有 Linux DEB、Windows MSI、macOS PKG 候选打包 gate；其载荷为 native host。详见 [host installer](products/pt/installer/README.md)。 |
 | Windows desktop 安装器 | 有完整 Electron MSI 安装/启动/卸载 gate，以及固定发布身份、手动受保护的签名 RC workflow；真实签名材料缺失时停止，公开发行仍未完成。详见 [desktop installer](products/pt/desktop_installer/README.md)。 |
 | Android | 复用 React，经 Capacitor/JNI 直接调用 C++ `PtService`；universal debug APK 包含 `arm64-v8a` 与 `x86_64`，已有 emulator gate。详见 [Android Product Shell](products/pt_android/README.md)。 |
@@ -73,7 +73,7 @@
 
 | 后续方向 | 所需证据或前置条件 |
 | --- | --- |
-| 补齐模型能力 | PR76/CPA 物理三相参考、CPA 灵敏度/closure、PR76 单相 closure 按独立增量推进；先取得兼容的参数、公式和验证资料。 |
+| 补齐模型能力 | PR76 继续补实验三相/相变压力证据，CPA 补兼容物理三相参考与灵敏度/closure，PR76 standalone 单相 closure 按独立增量推进；先取得兼容的参数、公式和验证资料。 |
 | 扩展物理与数值 | 从已有局部 closure/inventory 出发，分别审计孔隙体积累积项、守恒残差/通量、网格、离散、时间推进和全局 Jacobian/求解器；以解析解、制造解及守恒/收敛回归验收。 |
 | 细化含水体系 | H 相物理分类、盐库存、电解质/反应、固相/水合物及有限速率传质均需新的模型与证据，不由当前 fixed-molality PT 能力自动获得。 |
 | 完成应用发行与结果能力 | 产品签名/公证、项目许可、发布/更新策略、真实部署，以及可视化和结果导出分别验收。工程 APK/MSI/PKG/DEB 不能自动升级为正式发行。 |
