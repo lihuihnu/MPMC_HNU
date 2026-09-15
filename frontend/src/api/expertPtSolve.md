@@ -60,9 +60,10 @@ workbench 边界不会把候选收敛、根数或小残差重新解释成相集�
 `release`。失败 apply 会使旧 renderer ownership 一并失效，因为主进程已经保守清理
 该模型 epoch；不会恢复可能已经陈旧的对象。
 
-生产 preload 默认只暴露通用 PT bridge 和无 handle 的 model workbench。旧的低级
-model desktop bridge 仅在专用 IPC 回归进程显式设置测试环境变量时暴露；产品主进程
-也不注册该低级接口。
+生产 `preload.cjs` 只包含通用 PT bridge 和无 handle 的 model workbench，源码中不存在
+低级 create/describe/model-token/connect/reconnect bridge。旧的低级 model desktop bridge
+被隔离到专用 `modelDebugPreload.cjs`，只由 native IPC 回归 harness 临时加载；产品打包
+只复制生产 preload，且产品主进程不注册该低级 IPC。
 
 聚焦前端/桌面回归覆盖：动态组分对齐、空/非法输入、原样传递进料、单请求限制、
 迟到结果/错误、模型替换、旧对象释放、窗口清理、完整结果克隆、字段级错误映射和
