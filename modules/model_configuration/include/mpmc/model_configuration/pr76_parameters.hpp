@@ -5,6 +5,7 @@
 #include <mpmc/thermodynamics/pr_parameters.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <utility>
 
@@ -24,7 +25,7 @@ public:
         model_require(value.size() <= maximum && value.size() <= remaining_,
                       ModelConfigurationErrorCode::resource_limit, field,
                       "configuration text quota exceeded");
-        remaining_ -= value.size(); // Subtraction only after the bound check.
+        remaining_ -= value.size();
     }
     void id(const std::string& value, const std::string& field) {
         text(value, limits_.max_identifier_bytes, field);
@@ -112,7 +113,7 @@ inline thermodynamics::SourceKind source_kind(SourceKind kind) {
     case SourceKind::user_supplied: return thermodynamics::SourceKind::user_supplied;
     case SourceKind::assumption: return thermodynamics::SourceKind::assumption;
     case SourceKind::synthetic_test: return thermodynamics::SourceKind::synthetic_test;
-    default: return thermodynamics::SourceKind::unspecified; // Existing validator rejects it.
+    default: return thermodynamics::SourceKind::unspecified;
     }
 }
 inline thermodynamics::Provenance source(const ModelProvenance& value) {
@@ -125,12 +126,59 @@ inline std::optional<thermodynamics::SourcedScalar> scalar(
     return thermodynamics::SourcedScalar{
         value->value, unit, source(value->provenance), value->original_unit, value->conversion};
 }
+
+inline void validate_applicability_endpoint(
+    const std::optional<double>& value, bool exclusive,
+    const std::string& value_field, const std::string& exclusive_field) {
+    model_require(!exclusive || value.has_value(),
+                  ModelConfigurationErrorCode::invalid_range, exclusive_field,
+                  "exclusive marker requires a declared endpoint");
+    if (!value) { return; }
+    model_require(std::isfinite(*value) && *value > 0.0,
+                  ModelConfigurationErrorCode::invalid_range, value_field,
+                  "applicability endpoint must be finite and positive");
+}
+
+inline void validate_applicability_axis(
+    const std::optional<double>& lower, bool lower_exclusive,
+    const std::optional<double>& upper, bool upper_exclusive,
+    const std::string& lower_field, const std::string& lower_exclusive_field,
+    const std::string& upper_field, const std::string& upper_exclusive_field,
+    const std::string& axis_field) {
+    validate_applicability_endpoint(lower, lower_exclusive, lower_field,
+                                    lower_exclusive_field);
+    validate_applicability_endpoint(upper, upper_exclusive, upper_field,
+                                    upper_exclusive_field);
+    if (!lower || !upper) { return; }
+    model_require(*lower <= *upper, ModelConfigurationErrorCode::invalid_range, axis_field,
+                  "applicability lower endpoint exceeds upper endpoint");
+    model_require(*lower < *upper || (!lower_exclusive && !upper_exclusive),
+                  ModelConfigurationErrorCode::invalid_range, axis_field,
+                  "exclusive equal endpoints declare an empty applicability interval");
+}
+
+inline void validate_applicability(const ModelApplicability& bounds) {
+    validate_applicability_axis(
+        bounds.temperature_lower_k, bounds.temperature_lower_exclusive,
+        bounds.temperature_upper_k, bounds.temperature_upper_exclusive,
+        "applicability.temperature_lower_k", "applicability.temperature_lower_exclusive",
+        "applicability.temperature_upper_k", "applicability.temperature_upper_exclusive",
+        "applicability.temperature_k");
+    validate_applicability_axis(
+        bounds.pressure_lower_pa, bounds.pressure_lower_exclusive,
+        bounds.pressure_upper_pa, bounds.pressure_upper_exclusive,
+        "applicability.pressure_lower_pa", "applicability.pressure_lower_exclusive",
+        "applicability.pressure_upper_pa", "applicability.pressure_upper_exclusive",
+        "applicability.pressure_pa");
+}
+
+// Native thermodynamics currently stores complete closed intervals. A complete
+// public interval maps to that conservative numeric envelope; exclusive endpoints
+// are enforced by the executable public guard. One-sided public bounds remain
+// absent natively instead of fabricating their unknown opposite endpoint.
 inline std::optional<thermodynamics::ClosedInterval> interval(
-    std::optional<double> lower, std::optional<double> upper, const std::string& field) {
-    model_require(lower.has_value() == upper.has_value(),
-                  ModelConfigurationErrorCode::invalid_range, field,
-                  "this parameter adapter requires both interval endpoints or neither");
-    if (!lower) { return std::nullopt; }
+    std::optional<double> lower, std::optional<double> upper) {
+    if (!lower || !upper) { return std::nullopt; }
     return thermodynamics::ClosedInterval{*lower, *upper};
 }
 
@@ -156,7 +204,6 @@ inline ModelConfigurationErrorCode public_code(thermodynamics::ContractErrorCode
 }
 
 inline std::string public_field(std::string field) {
-    // Keep identity-keyed diagnostics, translating parameter names to this DTO.
     if (field.starts_with("pure[") || field.starts_with("binary[")) {
         field.insert(0, "parameters.");
     } else if (field == "binary") {
@@ -166,7 +213,6 @@ inline std::string public_field(std::string field) {
     } else if (field.starts_with("order")) {
         field.replace(0, 5, "components");
     }
-    // Replace suffixes only: IDs can legally contain dots and parameter names.
     const std::size_t start = field.rfind(']');
     const std::size_t suffix = start == std::string::npos ? 0 : start + 1;
     const auto replace = [&](std::string_view old_name, std::string_view new_name) {
@@ -184,8 +230,6 @@ inline std::string public_field(std::string field) {
 }
 } // namespace detail
 
-// An owning immutable PARAMETER snapshot, not an executable model or a handle.
-// Concurrent reads are safe. The caller must not mutate the draft during create.
 class Pr76ModelParameters {
 public:
     Pr76ModelParameters(const Pr76ModelParameters&) = default;
@@ -205,20 +249,18 @@ public:
         const auto data_policy = policy == ModelDataPolicy::ordinary
             ? thermodynamics::DataPolicy::ordinary : thermodynamics::DataPolicy::allow_synthetic_tests;
         try {
-            // Reuse the existing provenance/text validators; no parallel physical rules.
             thermodynamics::detail::require_text(definition.display_name, "display_name");
             thermodynamics::detail::validate_source(
                 detail::source(definition.provenance), "provenance", data_policy);
+            detail::validate_applicability(definition.applicability);
             thermodynamics::PrParameterInput input;
             input.model_id = thermodynamics::pr76_profile;
             input.dataset_id = definition.dataset_id;
             input.revision = definition.revision;
             const auto& bounds = definition.applicability;
             input.applicability = {
-                detail::interval(bounds.temperature_lower_k, bounds.temperature_upper_k,
-                                 "applicability.temperature_k"),
-                detail::interval(bounds.pressure_lower_pa, bounds.pressure_upper_pa,
-                                 "applicability.pressure_pa"),
+                detail::interval(bounds.temperature_lower_k, bounds.temperature_upper_k),
+                detail::interval(bounds.pressure_lower_pa, bounds.pressure_upper_pa),
                 detail::source(bounds.provenance)};
             std::vector<thermodynamics::Component> catalog;
             std::vector<std::string> order;
@@ -254,7 +296,6 @@ public:
             throw ModelConfigurationError(detail::public_code(error.code()),
                                           detail::public_field(error.field()), error.what());
         }
-        // Allocation failures and programming errors propagate unchanged.
     }
 
     [[nodiscard]] const ThermodynamicModelDefinition& definition() const & noexcept { return definition_; }

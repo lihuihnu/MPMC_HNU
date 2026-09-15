@@ -19,16 +19,11 @@
 
 namespace mpmc::model_configuration {
 
-// Admission failure, not a thermodynamic outcome. A caller may retry after the
-// active call completes; the model does not queue work or silently share scratch.
 class Pr76ModelBusyError : public std::runtime_error {
 public:
     Pr76ModelBusyError() : std::runtime_error("PR76 model already has an active solve") {}
 };
 
-// Additive location interface: the concrete exception also retains the original
-// std::invalid_argument/domain_error/length_error base and its what() text.
-// Only already-rejected native requests acquire this metadata.
 class Pr76SolveRequestError {
 public:
     virtual ~Pr76SolveRequestError() = default;
@@ -168,10 +163,6 @@ inline void pr76_check_public_hint_storage(
 }
 } // namespace detail
 
-// Owns both immutable public snapshots and one prepared evaluator/backend graph.
-// Stable address is required: backend_ borrows evaluator_. Move the unique_ptr,
-// never the object. Drafts may be edited/destroyed after construction. Callers
-// must keep the model alive until every call (including a rejected call) ends.
 class Pr76ExecutableModel final : public flash::PtFlashBackend {
 public:
     Pr76ExecutableModel(const ThermodynamicModelDefinition& definition,
@@ -207,28 +198,23 @@ public:
     }
     const ModelConfigurationLimits& parameter_limits() const && = delete;
 
-    // Read-only snapshots/capability may be inspected while solving. The coarse
-    // interface retains the original no-public-hint behavior for registry/service
-    // compatibility and returns the complete owning native envelope unchanged.
     [[nodiscard]] const flash::PtFlashBackendCapability& capability() const noexcept override {
         return backend_.capability();
     }
     [[nodiscard]] flash::PtFlashBackendResult solve(const flash::PtFlashRequest& request) override {
         const detail::Pr76SolveGuard guard(active_);
+        enforce_public_applicability_gap(request);
         try { return backend_.solve(request); }
         catch (const std::invalid_argument& error) { locate_rejection(request, error); }
         catch (const std::domain_error& error) { locate_rejection(request, error); }
         catch (const std::length_error& error) { locate_rejection(request, error); }
     }
 
-    // Public per-solve initialization/continuation hints. They are copied into an
-    // ephemeral backend options snapshot; the immutable model/settings snapshots
-    // and the coarse PtFlashBackend path remain unchanged. Native validation and
-    // numerical decisions remain authoritative for the current P/T/feed state.
     [[nodiscard]] flash::PtFlashBackendResult solve(
         const flash::PtFlashRequest& request, const PtSolveHints& hints) {
         const detail::Pr76SolveGuard guard(active_);
         auto options = detail::pr76_options_with_public_hints(solver_configuration_, hints);
+        enforce_public_applicability_gap(request);
         flash::Pr76PtFlashBackend hinted_backend(evaluator_, std::move(options));
         try { return hinted_backend.solve(request); }
         catch (const std::invalid_argument& error) { locate_rejection(request, hints, error); }
@@ -237,9 +223,6 @@ public:
     }
 
 private:
-    // Diagnosis runs only after the native backend rejects. It neither admits a
-    // request nor changes numerical validation/normalization. Unknown failures
-    // are rethrown unchanged instead of attributing internal errors to a field.
     [[nodiscard]] std::optional<std::string> rejected_request_field(
         const flash::PtFlashRequest& request) const {
         if (request.feed.size() != evaluator_.model().size()) { return "feed"; }
@@ -256,7 +239,7 @@ private:
                     return "feed[" + std::to_string(i) + "]";
                 }
             }
-            return "feed"; // Aggregate normalization failure has no single culprit.
+            return "feed";
         }
         const auto& bounds = parameter_snapshot_.parameters().applicability();
         if (bounds.pressure_pa &&
@@ -270,6 +253,54 @@ private:
             return "temperature_k";
         }
         return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<std::string> public_applicability_gap_field(
+        const flash::PtFlashRequest& request) const {
+        if (request.feed.size() != evaluator_.model().size()) { return std::nullopt; }
+        try { flash::detail::split_check_pt(request.pressure_pa, request.temperature_k); }
+        catch (const std::domain_error&) { return std::nullopt; }
+        try { (void)flash::detail::stability_check_composition(request.feed); }
+        catch (const std::domain_error&) { return std::nullopt; }
+
+        const auto& bounds = parameter_snapshot_.definition().applicability;
+        const auto gap = [](double value, const std::optional<double>& lower,
+                            bool lower_exclusive, const std::optional<double>& upper,
+                            bool upper_exclusive) {
+            if (lower && !upper &&
+                (value < *lower || (lower_exclusive && value == *lower))) {
+                return true;
+            }
+            if (!lower && upper &&
+                (value > *upper || (upper_exclusive && value == *upper))) {
+                return true;
+            }
+            if (lower && upper &&
+                ((lower_exclusive && value == *lower) ||
+                 (upper_exclusive && value == *upper))) {
+                return true;
+            }
+            return false;
+        };
+        if (gap(request.pressure_pa, bounds.pressure_lower_pa,
+                bounds.pressure_lower_exclusive, bounds.pressure_upper_pa,
+                bounds.pressure_upper_exclusive)) {
+            return "pressure_pa";
+        }
+        if (gap(request.temperature_k, bounds.temperature_lower_k,
+                bounds.temperature_lower_exclusive, bounds.temperature_upper_k,
+                bounds.temperature_upper_exclusive)) {
+            return "temperature_k";
+        }
+        return std::nullopt;
+    }
+
+    void enforce_public_applicability_gap(const flash::PtFlashRequest& request) const {
+        if (auto field = public_applicability_gap_field(request)) {
+            const std::domain_error error(
+                "Pr76ExecutableModel: state outside declared public applicability");
+            throw detail::Pr76LocatedRequestError<std::domain_error>(error, std::move(*field));
+        }
     }
 
     [[nodiscard]] std::optional<std::string> rejected_hint_field(
@@ -363,7 +394,7 @@ private:
         if (auto field = rejected_request_field(request)) {
             throw detail::Pr76LocatedRequestError<Exception>(error, std::move(*field));
         }
-        throw; // Preserve the original exception, including its dynamic type.
+        throw;
     }
 
     template <class Exception>
@@ -382,8 +413,6 @@ private:
     static Pr76ModelParameters prepare_parameters(
         const ThermodynamicModelDefinition& definition, ModelConfigurationLimits parameter_limits,
         PtSolverSafetyLimits solver_limits, ModelDataPolicy policy) {
-        // Reject the cross-layer mismatch before copying the draft/building its
-        // dense matrix, even if parameter policy permits a larger component set.
         if (definition.components.size() > solver_limits.max_components) {
             throw ModelConfigurationError(ModelConfigurationErrorCode::resource_limit,
                                           "components", "model exceeds solver component ceiling");
@@ -394,17 +423,11 @@ private:
     const ModelConfigurationLimits parameter_limits_;
     const Pr76SolverConfiguration solver_configuration_;
     const Pr76ModelParameters parameter_snapshot_;
-    // The evaluator itself owns a phase-model copy and mutable workspaces.
-    // Reverse destruction releases the borrowing backend before its evaluator.
     flash::Pr76VleEvaluator evaluator_;
     flash::Pr76PtFlashBackend backend_;
     std::atomic_flag active_ = ATOMIC_FLAG_INIT;
 };
 
-// Convert a previous accepted PR76 publication into numerical continuation hints.
-// An unresolved/non-accepted point deliberately yields an empty v1 hint set,
-// matching the native continuation rule that stale state is cleared. The output
-// remains only a start for a future fresh solve and does not carry phase evidence.
 [[nodiscard]] inline PtSolveHints make_pr76_continuation_hints(
     const flash::PtFlashBackendResult& previous) {
     PtSolveHints hints = make_pt_solve_hints_v1();

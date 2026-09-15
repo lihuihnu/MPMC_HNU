@@ -1,6 +1,7 @@
 #ifndef MPMC_MODEL_CONFIGURATION_MODEL_DEFINITION_HPP
 #define MPMC_MODEL_CONFIGURATION_MODEL_DEFINITION_HPP
 
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <optional>
@@ -55,15 +56,67 @@ struct ComponentDefinition {
     std::optional<ModelScalar> molar_mass_kg_per_mol;
 };
 
+enum class ModelApplicabilityAssessment {
+    inside_declared_bounds, outside_declared_bounds, unknown
+};
+
 struct ModelApplicability {
     std::optional<double> temperature_lower_k;
     std::optional<double> temperature_upper_k;
     std::optional<double> pressure_lower_pa;
     std::optional<double> pressure_upper_pa;
     ModelProvenance provenance;
-    // Absence means UNKNOWN. The first PR adapter requires both endpoints of
-    // each declared interval; it rejects a one-sided range rather than inventing
-    // an endpoint unsupported by the existing thermodynamics contract.
+
+    // Missing endpoint means UNKNOWN, never unbounded. Existing definitions remain
+    // closed by default; an exclusive marker is meaningful only when its endpoint
+    // is present. Model creation validates endpoint values, ordering and nonempty
+    // intervals before any lossy native mapping.
+    bool temperature_lower_exclusive{false};
+    bool temperature_upper_exclusive{false};
+    bool pressure_lower_exclusive{false};
+    bool pressure_upper_exclusive{false};
+
+    [[nodiscard]] static ModelApplicabilityAssessment assess_axis(
+        double value, const std::optional<double>& lower, bool lower_exclusive,
+        const std::optional<double>& upper, bool upper_exclusive) noexcept {
+        if (!std::isfinite(value) || (lower && !std::isfinite(*lower)) ||
+            (upper && !std::isfinite(*upper))) {
+            return ModelApplicabilityAssessment::unknown;
+        }
+        if (lower && (value < *lower || (lower_exclusive && value == *lower))) {
+            return ModelApplicabilityAssessment::outside_declared_bounds;
+        }
+        if (upper && (value > *upper || (upper_exclusive && value == *upper))) {
+            return ModelApplicabilityAssessment::outside_declared_bounds;
+        }
+        return lower && upper ? ModelApplicabilityAssessment::inside_declared_bounds
+                              : ModelApplicabilityAssessment::unknown;
+    }
+
+    [[nodiscard]] ModelApplicabilityAssessment assess_temperature(
+        double temperature_k) const noexcept {
+        return assess_axis(temperature_k, temperature_lower_k, temperature_lower_exclusive,
+                           temperature_upper_k, temperature_upper_exclusive);
+    }
+    [[nodiscard]] ModelApplicabilityAssessment assess_pressure(
+        double pressure_pa) const noexcept {
+        return assess_axis(pressure_pa, pressure_lower_pa, pressure_lower_exclusive,
+                           pressure_upper_pa, pressure_upper_exclusive);
+    }
+    [[nodiscard]] ModelApplicabilityAssessment assess(
+        double temperature_k, double pressure_pa) const noexcept {
+        const auto temperature = assess_temperature(temperature_k);
+        const auto pressure = assess_pressure(pressure_pa);
+        if (temperature == ModelApplicabilityAssessment::outside_declared_bounds ||
+            pressure == ModelApplicabilityAssessment::outside_declared_bounds) {
+            return ModelApplicabilityAssessment::outside_declared_bounds;
+        }
+        if (temperature == ModelApplicabilityAssessment::inside_declared_bounds &&
+            pressure == ModelApplicabilityAssessment::inside_declared_bounds) {
+            return ModelApplicabilityAssessment::inside_declared_bounds;
+        }
+        return ModelApplicabilityAssessment::unknown;
+    }
 };
 
 struct Pr76PureParameters {

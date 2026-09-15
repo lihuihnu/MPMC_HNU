@@ -63,6 +63,12 @@ message ModelApplicability {
   optional double pressure_lower_pa = 3;
   optional double pressure_upper_pa = 4;
   optional ModelProvenance provenance = 5;
+  // False preserves the v1 closed-endpoint default. Missing scalar endpoints are
+  // unknown, never implicit infinities; an exclusive flag requires its endpoint.
+  bool temperature_lower_exclusive = 6;
+  bool temperature_upper_exclusive = 7;
+  bool pressure_lower_exclusive = 8;
+  bool pressure_upper_exclusive = 9;
 }
 message Pr76PureParameters {
   optional string component_id = 1;
