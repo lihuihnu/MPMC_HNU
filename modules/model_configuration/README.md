@@ -49,7 +49,7 @@ the input draft during creation.
 | `parameters.pure` | ID-keyed mandatory Tc in K, Pc in Pa, and dimensionless omega, each with provenance and original-unit/conversion history. No implicit missing values. |
 | `parameters.binary` | Explicit constant, symmetric dimensionless `kij` for every unordered pair. Missing, duplicate/reversed, self and unknown pairs fail; diagonal zero is structural. |
 | `dataset_id`, `revision`, `provenance` | Explicit dataset and model-definition identity; provenance is retained rather than upgraded or invented. |
-| `applicability` | Optional T/P endpoints and a required declaration source. No declared bounds means **unknown**, not unlimited validity. |
+| `applicability` | Optional independent T/P endpoints, closed by default with explicit open-endpoint flags, plus a required declaration source. Missing endpoints mean **unknown**, never unlimited validity; see [endpoint semantics](applicability.md). |
 
 The existing thermodynamics contract remains the authority for physical domains,
 component identity, provenance completeness, parameter completeness and range
@@ -63,12 +63,18 @@ explicit user record identity and revision; it does not require a fabricated
 literature citation. Ordinary creation rejects `synthetic_test`; a host-owned
 test policy can explicitly admit artificial software fixtures.
 
-**Current range limitation:** the existing `Applicability` stores complete closed
-intervals. This adapter accepts both endpoints or neither per dimension, rejects
-one-sided intervals, and never fabricates the missing endpoint. Independent
-one-sided bounds need a subsequent applicability-contract increment before the
-full Expert Gate can be declared complete. Bounds only assess declared dataset
-scope, not physical accuracy; out-of-range assessments remain unchanged.
+**Applicability contract:** the public definition supports lower-only, upper-only,
+complete and absent bounds independently for temperature and pressure. A missing
+endpoint remains unknown rather than becoming an implicit infinity. Declared
+endpoints are closed unless their corresponding `*_exclusive` flag is true;
+exclusive markers without endpoints and empty/inverted intervals are rejected.
+The existing thermodynamics `Applicability` still stores complete closed intervals,
+so the adapter maps only complete numeric envelopes and never fabricates a missing
+endpoint. `Pr76ExecutableModel` supplies the public-only enforcement gap for
+one-sided violations and exact open-endpoint equality, while strict violations of
+complete intervals continue through the unchanged native PR76 property path.
+No PR76 formula, root, stability, split, three-phase tolerance or acceptance rule
+is changed. See [the full endpoint contract](applicability.md).
 
 ## Resource policy
 
@@ -134,21 +140,21 @@ outside this increment. No global stability or arbitrary P/T validity is claimed
 
 ## Verification
 
-The independent test project has 11 cases covering complete one/two/three-component
-inputs (including pseudo components), permutations/add/remove/replace, missing
-parameters, identity/pair failures, numeric domains, metadata/units, applicability,
-snapshot isolation, quotas, version/family rejection and header self-containment.
-Values are explicitly synthetic software fixtures, not physical validation.
+The parameter test project has the original 11 cases plus an independent
+applicability-endpoint contract case covering one-sided presence, open/closed
+boundaries, singleton/empty intervals, exact field errors and conservative native
+mapping. Values are explicitly synthetic software fixtures, not physical validation.
 
 The focused GitHub-hosted workflow runs GCC Debug + ASan/UBSan, Clang Release and
 MSVC Release; the GCC job also runs the unchanged thermodynamics contract suite.
 The registry project adds 17 capacity, handle and concurrent-lifetime cases.
-The separate executable test project adds 13 cases for full-envelope parity,
-ownership, parameter/settings A/B isolation, budgets, admission and failures.
-The solver test project adds 14 cases, including exhaustive field
-presence, distinct custom option mapping, preset identity, quotas, immutable
-settings and actual one-/three-phase and exhausted-budget PR76 parity.
-Its commands include:
+The separate executable test project has the original 17 cases plus an independent
+applicability-endpoint solve regression covering one-sided and exact open-boundary
+rejection for both cold and hinted paths. The solver test project adds 14 cases,
+including exhaustive field presence, distinct custom option mapping, preset identity,
+quotas, immutable settings and actual one-/three-phase and exhausted-budget PR76
+parity. The versioned gRPC project separately exercises applicability endpoint
+presence/snapshot roundtrip and structured solve error locations. Its commands include:
 
 ```bash
 cmake -S tests/model_configuration/parameters -B build/model-parameters \
@@ -157,8 +163,8 @@ cmake --build build/model-parameters --parallel 2
 ctest --test-dir build/model-parameters -R '^model[.]parameters[.]' --verbose --no-tests=error
 ```
 
-No existing scientific algorithm, threshold, fixture, v1 wire field, curated
-backend, UI or product packaging is changed. Those consumers do not yet depend
-on the new module, so their unrelated runtime/product suites are not selected by
-these increments. The workflow also listens to the upstream PR76 and generic
-flash headers used by the settings adapter and parity tests.
+No existing scientific algorithm, threshold, fixture, or `mpmc.runtime.v1`
+`PtFlashService` field is changed. The versioned model-configuration service gains
+only additive applicability endpoint flags with closed defaults. UI code is not
+changed by this increment; product workflows may still run when their dependency
+filters include the shared configuration/proto paths.
