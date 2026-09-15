@@ -34,6 +34,29 @@ export function expertModelSurfaceFailure(cause: unknown): ExpertModelSurfaceFai
   return Object.freeze({ reason: 'expert.describe_failed' });
 }
 
+/**
+ * Retire only this reader on cleanup. Transport cancellation can invalidate every
+ * model in the owning typed client and must not be an inspector side effect.
+ * Queue admission one microtask so StrictMode replay can retire a fake mount
+ * before it issues an RPC. Already-admitted reads drain under the client deadline.
+ */
+export function readExpertModelSurface(
+  source: ExpertModelSource,
+  publish: (state: ExpertModelSurfaceState) => void,
+): () => void {
+  let active = true;
+  void Promise.resolve().then(async () => {
+    if (!active) return;
+    try {
+      const inspection = await source.describe();
+      if (active) publish({ status: 'ready', inspection });
+    } catch (cause) {
+      if (active) publish({ status: 'failed', failure: expertModelSurfaceFailure(cause) });
+    }
+  });
+  return () => { active = false; };
+}
+
 interface ExpertModelSurfaceViewProps {
   state: ExpertModelSurfaceState;
   onRefresh(): void;
@@ -120,30 +143,23 @@ export interface ExpertModelSurfaceProps {
   source: ExpertModelSource;
 }
 
-/**
- * User-facing read-only shell around one already-owned model reference.
- * A source change or manual refresh aborts the prior describe request; no retry or
- * session mutation happens behind the caller's back.
- */
+/** Read-only shell: changing a view must not cancel the user's applied model. */
 export function ExpertModelSurface({ source }: ExpertModelSurfaceProps) {
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<ExpertModelSurfaceState>({ status: 'loading' });
+  const [read, setRead] = useState<{
+    source: ExpertModelSource;
+    attempt: number;
+    state: ExpertModelSurfaceState;
+  }>({ source, attempt: 0, state: { status: 'loading' } });
 
   useEffect(() => {
-    const controller = new AbortController();
-    setState({ status: 'loading' });
-    void source.describe({ signal: controller.signal }).then(
-      (inspection) => {
-        if (!controller.signal.aborted) setState({ status: 'ready', inspection });
-      },
-      (cause: unknown) => {
-        if (!controller.signal.aborted) {
-          setState({ status: 'failed', failure: expertModelSurfaceFailure(cause) });
-        }
-      },
-    );
-    return () => controller.abort();
+    const publish = (state: ExpertModelSurfaceState) => setRead({ source, attempt, state });
+    publish({ status: 'loading' });
+    return readExpertModelSurface(source, publish);
   }, [source, attempt]);
 
+  // Do not paint the previous model's snapshot before the new effect runs.
+  const state: ExpertModelSurfaceState = read.source === source && read.attempt === attempt
+    ? read.state : { status: 'loading' };
   return <ExpertModelSurfaceView state={state} onRefresh={() => setAttempt((value) => value + 1)} />;
 }
