@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ExpertModelOwner, ExpertOwnedModel } from '../api/expertModelOwner';
 import { ModelClientError, type ModelCallOptions, type ModelCreateInput } from '../api/modelSessionClient';
 import { MODEL_VALIDATION_DETAIL_VERSION } from '../api/modelValidationDetail';
-import { pr76ExpertDraftFromSnapshot } from '../api/pr76ExpertDraft';
+import { pr76ExpertDraftFromSnapshot, setPr76SolverMode } from '../api/pr76ExpertDraft';
 import {
   CreateModelRequestSchema,
   ModelSnapshotSchema,
@@ -63,7 +63,7 @@ describe('PR76 Expert editor presentation and create boundary', () => {
     expect(html).not.toContain('kij methane');
   });
 
-  it('renders a derived snapshot with frozen component identities, explicit kij and complete settings', () => {
+  it('renders a derived snapshot with frozen component identities, explicit kij and custom mode available', () => {
     const snapshot = fromJson(ModelSnapshotSchema, expertSnapshotJson());
     const html = renderToStaticMarkup(
       <ExpertPr76Editor owner={fakeOwner()} seedSnapshot={snapshot} onCreated={() => {}} />,
@@ -72,15 +72,15 @@ describe('PR76 Expert editor presentation and create boundary', () => {
     expect(html).toContain('0: methane');
     expect(html).toContain('1: ethane');
     expect(html).toContain('kij methane ↔ ethane');
-    expect(html).toContain('Complete custom snapshot');
-    expect(html).toContain('EOS root');
-    expect(html).toContain('Initial stability');
+    expect(html).toContain('<option value="custom">Complete custom snapshot</option>');
+    expect(html).toContain('<option value="preset" selected="">Frozen preset</option>');
+    expect(html).not.toContain('EOS root');
     expect(html.match(/readOnly=""/gu)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
   it('submits only the domain-built immutable request through ExpertModelOwner', async () => {
     const snapshot = fromJson(ModelSnapshotSchema, expertSnapshotJson());
-    const draft = userIdentity(pr76ExpertDraftFromSnapshot(snapshot));
+    const draft = setPr76SolverMode(userIdentity(pr76ExpertDraftFromSnapshot(snapshot)), 'custom');
     const createModel = vi.fn(async (
       _input: ModelCreateInput,
       _options?: ModelCallOptions,
