@@ -10,6 +10,7 @@ import { ModelSnapshotSchema } from '../gen/mpmc/model_configuration/v1/model_se
 import { expertSnapshotJson } from '../test/modelInspectorFixtures';
 import {
   ExpertPr76WorkspaceView,
+  deferExpertWorkspaceRelease,
   expertWorkspaceFailure,
   retirePreviousExpertModel,
 } from './ExpertPr76Workspace';
@@ -82,6 +83,37 @@ describe('PR76 Expert workspace ownership and presentation', () => {
     expect(previous.released).toBe(true);
     expect(await retirePreviousExpertModel(previous, next)).toBeNull();
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels StrictMode replay cleanup and releases only the current model on real teardown', () => {
+    const firstRelease = vi.fn(async () => {});
+    const secondRelease = vi.fn(async () => {});
+    const first = owned(firstRelease);
+    const second = owned(secondRelease);
+    let current: ExpertOwnedModel | null = first;
+    let stillUnmounted = false;
+    const queued: Array<() => void> = [];
+
+    deferExpertWorkspaceRelease(
+      () => current,
+      () => stillUnmounted,
+      (task) => queued.push(task),
+    );
+    current = second;
+    queued.shift()?.();
+    expect(firstRelease).not.toHaveBeenCalled();
+    expect(secondRelease).not.toHaveBeenCalled();
+
+    stillUnmounted = true;
+    deferExpertWorkspaceRelease(
+      () => current,
+      () => stillUnmounted,
+      (task) => queued.push(task),
+    );
+    queued.shift()?.();
+    expect(firstRelease).not.toHaveBeenCalled();
+    expect(secondRelease).toHaveBeenCalledTimes(1);
+    expect(second.released).toBe(true);
   });
 
   it('surfaces typed ambiguous cleanup failure without leaking arbitrary error text', async () => {
