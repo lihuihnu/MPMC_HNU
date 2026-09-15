@@ -257,7 +257,11 @@ void applicability() {
     require(unknown.parameters().applicability().assess(300, 1e6) == th::RangeAssessment::unknown,
             "absent bounds are unknown");
     d.applicability.temperature_lower_k = 200;
-    expect_error(Code::invalid_range, [&] { (void)prepare(d); });
+    const auto one_sided = prepare(d);
+    require(!one_sided.parameters().applicability().temperature_k,
+            "one-sided public range must not fabricate a native endpoint");
+    require(one_sided.definition().applicability.temperature_lower_k == 200,
+            "one-sided public endpoint lost from snapshot");
     d.applicability.temperature_upper_k = 400;
     const auto temperature_only = prepare(d);
     require(temperature_only.parameters().applicability().assess(300, 1e6) == th::RangeAssessment::unknown,
