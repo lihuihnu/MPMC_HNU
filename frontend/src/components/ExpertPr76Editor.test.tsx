@@ -96,7 +96,7 @@ describe('PR76 Expert editor presentation and create boundary', () => {
     expect(request.definition?.datasetId).toBe('edited-pr76');
     expect(request.definition?.components.map(component => component.componentId)).toEqual(['methane', 'ethane']);
     expect(request.solverSelection.case).toBe('settings');
-    expect(JSON.stringify(initializer)).not.toContain('modelHandle');
+    expect(Object.hasOwn(initializer as object, 'modelHandle')).toBe(false);
   });
 
   it('preserves typed creation errors and sanitizes arbitrary exception text', () => {
