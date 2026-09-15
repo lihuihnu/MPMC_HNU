@@ -175,15 +175,28 @@ function requirePr76Snapshot(snapshot: ModelSnapshot) {
 
 export function pr76ExpertDraftFromSnapshot(snapshot: ModelSnapshot): Pr76ExpertDraft {
   const { definition, pr76, settings } = requirePr76Snapshot(snapshot);
-  const pure = new Map(pr76.pure.map((record) => [record.componentId, record]));
+  const pure = new Map<string, (typeof pr76.pure)[number]>();
+  for (const record of pr76.pure) {
+    if (!record.componentId) throw new TypeError('PR76 snapshot pure record is missing component identity');
+    pure.set(record.componentId, record);
+  }
   const components: Pr76ComponentDraft[] = definition.components.map((component, index) => {
-    const record = pure.get(component.componentId);
-    if (!record) throw new TypeError(`PR76 snapshot missing pure record for component ${component.componentId}`);
+    const componentId = component.componentId;
+    const displayName = component.displayName;
+    const kind = component.kind;
+    if (!componentId || !displayName ||
+        (kind !== ComponentKind.PURE && kind !== ComponentKind.PSEUDO)) {
+      throw new TypeError(`PR76 snapshot component ${index} is incomplete`);
+    }
+    const record = pure.get(componentId);
+    if (!record || !record.criticalTemperatureK || !record.criticalPressurePa || !record.acentricFactor) {
+      throw new TypeError(`PR76 snapshot missing pure parameters for component ${componentId}`);
+    }
     return {
       key: `snapshot-${index}`,
-      componentId: component.componentId,
-      displayName: component.displayName,
-      kind: component.kind,
+      componentId,
+      displayName,
+      kind,
       definitionDirty: false,
       originalDefinition: clone(ComponentDefinitionSchema, component),
       molarMassKgPerMol: scalarDraft('kg/mol', true, true, component.molarMassKgPerMol),
@@ -194,8 +207,13 @@ export function pr76ExpertDraftFromSnapshot(snapshot: ModelSnapshot): Pr76Expert
   });
   const index = new Map(components.map((component) => [component.componentId, component.key]));
   const pairs: Pr76PairDraft[] = pr76.binary.map((record) => {
-    const first = index.get(record.firstComponentId);
-    const second = index.get(record.secondComponentId);
+    const firstId = record.firstComponentId;
+    const secondId = record.secondComponentId;
+    if (!firstId || !secondId || !record.kij) {
+      throw new TypeError('PR76 snapshot binary pair is incomplete');
+    }
+    const first = index.get(firstId);
+    const second = index.get(secondId);
     if (!first || !second) throw new TypeError('PR76 snapshot binary pair references an unknown component');
     return {
       key: pairKey(first, second),
@@ -206,7 +224,7 @@ export function pr76ExpertDraftFromSnapshot(snapshot: ModelSnapshot): Pr76Expert
     };
   });
   return {
-    displayName: definition.displayName,
+    displayName: definition.displayName ?? '',
     // A derived immutable model must receive explicit new identity before creation.
     datasetId: '',
     revision: '',
@@ -403,15 +421,15 @@ export function validatePr76ExpertDraft(draft: Pr76ExpertDraft): Pr76DraftIssue[
     if (component.kind !== ComponentKind.PURE && component.kind !== ComponentKind.PSEUDO) {
       issues.push({ field: `${prefix}.kind`, message: 'component kind must be pure or pseudo' });
     }
-    for (const [name, scalar] of [
+    for (const [name, item] of [
       ['molar_mass_kg_per_mol', component.molarMassKgPerMol],
       ['critical_temperature_k', component.criticalTemperatureK],
       ['critical_pressure_pa', component.criticalPressurePa],
       ['acentric_factor', component.acentricFactor],
     ] as const) {
-      const value = numeric(scalar);
+      const value = numeric(item);
       if (value !== undefined && !Number.isFinite(value)) {
-        issues.push({ field: `${prefix}.${name}`, message: scalar.positive ? 'finite positive value is required' : 'finite value is required' });
+        issues.push({ field: `${prefix}.${name}`, message: item.positive ? 'finite positive value is required' : 'finite value is required' });
       }
     }
   }
@@ -472,6 +490,7 @@ export function buildPr76CreateInput(draft: Pr76ExpertDraft): ModelCreateInput {
   const componentByKey = new Map(draft.components.map((component) => [component.key, component]));
   const components = draft.components.map((component) => {
     const prior = component.originalDefinition;
+    const molarMass = scalar(component.molarMassKgPerMol, provenance);
     return create(ComponentDefinitionSchema, {
       componentId: component.componentId,
       displayName: component.displayName,
@@ -479,16 +498,14 @@ export function buildPr76CreateInput(draft: Pr76ExpertDraft): ModelCreateInput {
       provenance: !component.definitionDirty && prior?.provenance
         ? clone(ModelProvenanceSchema, prior.provenance)
         : clone(ModelProvenanceSchema, provenance),
-      ...(scalar(component.molarMassKgPerMol, provenance) === undefined
-        ? {}
-        : { molarMassKgPerMol: scalar(component.molarMassKgPerMol, provenance)! }),
+      ...(molarMass === undefined ? {} : { molarMassKgPerMol: molarMass }),
     });
   });
   const pure = draft.components.map((component) => create(Pr76PureParametersSchema, {
     componentId: component.componentId,
-    criticalTemperatureK: scalar(component.criticalTemperatureK, provenance),
-    criticalPressurePa: scalar(component.criticalPressurePa, provenance),
-    acentricFactor: scalar(component.acentricFactor, provenance),
+    criticalTemperatureK: scalar(component.criticalTemperatureK, provenance)!,
+    criticalPressurePa: scalar(component.criticalPressurePa, provenance)!,
+    acentricFactor: scalar(component.acentricFactor, provenance)!,
   }));
   const binary = draft.pairs.map((pair) => {
     const first = componentByKey.get(pair.firstComponentKey)!;
@@ -496,7 +513,7 @@ export function buildPr76CreateInput(draft: Pr76ExpertDraft): ModelCreateInput {
     return create(Pr76BinaryInteractionSchema, {
       firstComponentId: first.componentId,
       secondComponentId: second.componentId,
-      kij: scalar(pair.kij, provenance),
+      kij: scalar(pair.kij, provenance)!,
     });
   });
   const applicability = draft.originalApplicability

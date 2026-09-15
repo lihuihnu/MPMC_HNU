@@ -1,6 +1,7 @@
-import { fromJson } from '@bufbuild/protobuf';
+import { create, fromJson } from '@bufbuild/protobuf';
 import { describe, expect, it } from 'vitest';
 
+import type { ModelCreateInput } from './modelSessionClient';
 import {
   addPr76Component,
   buildPr76CreateInput,
@@ -18,6 +19,7 @@ import {
 } from './pr76ExpertDraft';
 import {
   ComponentKind,
+  CreateModelRequestSchema,
   ModelSnapshotSchema,
   SolverSettingsKind,
   SourceKind,
@@ -39,6 +41,19 @@ function identity<T extends ReturnType<typeof newPr76ExpertDraft>>(draft: T): T 
       usageTerms: 'user-supplied for this project',
     },
   };
+}
+
+function request(input: ModelCreateInput) {
+  return create(CreateModelRequestSchema, input);
+}
+
+function pr76Request(input: ModelCreateInput) {
+  const value = request(input);
+  const definition = value.definition;
+  if (!definition || definition.parameters.case !== 'pr76') {
+    throw new Error('materialized request is missing PR76 definition');
+  }
+  return { request: value, definition, pr76: definition.parameters.value };
 }
 
 function addComponent(
@@ -76,16 +91,15 @@ describe('PR76 Expert draft/create contract', () => {
     expect(() => buildPr76CreateInput(draft)).toThrow(Pr76DraftValidationError);
 
     draft = editPr76Kij(draft, draft.pairs[0]!.key, '0');
-    const input = buildPr76CreateInput(draft);
-    expect(input.solverSelection).toEqual({ case: 'presetId', value: 'mpmc-balanced-default/v1' });
-    expect(input.definition?.components.map(component => component.componentId)).toEqual(['methane', 'ethane']);
-    if (input.definition?.parameters.case !== 'pr76') throw new Error('missing PR76 input');
-    expect(input.definition.parameters.value.binary).toHaveLength(1);
-    expect(input.definition.parameters.value.binary[0]?.kij?.value).toBe(0);
-    expect(input.definition.parameters.value.binary[0]?.kij?.provenance?.kind).toBe(SourceKind.USER_SUPPLIED);
-    expect(input.definition.provenance?.reference).toBe('user-record-2026-09-15');
-    expect(input.definition.applicability?.temperatureLowerK).toBeUndefined();
-    expect(input.definition.applicability?.provenance?.kind).toBe(SourceKind.USER_SUPPLIED);
+    const { request: value, definition, pr76 } = pr76Request(buildPr76CreateInput(draft));
+    expect(value.solverSelection).toEqual({ case: 'presetId', value: 'mpmc-balanced-default/v1' });
+    expect(definition.components.map(component => component.componentId)).toEqual(['methane', 'ethane']);
+    expect(pr76.binary).toHaveLength(1);
+    expect(pr76.binary[0]?.kij?.value).toBe(0);
+    expect(pr76.binary[0]?.kij?.provenance?.kind).toBe(SourceKind.USER_SUPPLIED);
+    expect(definition.provenance?.reference).toBe('user-record-2026-09-15');
+    expect(definition.applicability?.temperatureLowerK).toBeUndefined();
+    expect(definition.applicability?.provenance?.kind).toBe(SourceKind.USER_SUPPLIED);
   });
 
   it('keeps pair records explicit through reorder/remove/add operations', () => {
@@ -100,9 +114,8 @@ describe('PR76 Expert draft/create contract', () => {
     expect(draft.components.map(component => component.componentId)).toEqual(['b', 'a']);
     expect(draft.pairs).toHaveLength(1);
     expect(draft.pairs[0]!.kij.text).toBe('0.04');
-    const reordered = buildPr76CreateInput(draft);
-    if (reordered.definition?.parameters.case !== 'pr76') throw new Error('missing PR76 input');
-    expect(reordered.definition.parameters.value.binary[0]).toMatchObject({
+    const { pr76 } = pr76Request(buildPr76CreateInput(draft));
+    expect(pr76.binary[0]).toMatchObject({
       firstComponentId: 'a', secondComponentId: 'b',
     });
 
@@ -119,26 +132,24 @@ describe('PR76 Expert draft/create contract', () => {
   it('preserves unchanged provenance and marks only edited values as user supplied', () => {
     const snapshot = fromJson(ModelSnapshotSchema, expertSnapshotJson());
     let draft = identity(pr76ExpertDraftFromSnapshot(snapshot));
-    let input = buildPr76CreateInput(draft);
-    if (input.definition?.parameters.case !== 'pr76') throw new Error('missing PR76 input');
-    expect(input.definition.parameters.value.pure[0]?.criticalTemperatureK?.provenance?.kind).toBe(SourceKind.LITERATURE);
-    expect(input.definition.parameters.value.binary[0]?.kij?.provenance?.kind).toBe(SourceKind.LITERATURE);
-    expect(input.definition.provenance?.kind).toBe(SourceKind.USER_SUPPLIED);
-    expect(input.definition.applicability?.provenance?.kind).toBe(SourceKind.LITERATURE);
+    let materialized = pr76Request(buildPr76CreateInput(draft));
+    expect(materialized.pr76.pure[0]?.criticalTemperatureK?.provenance?.kind).toBe(SourceKind.LITERATURE);
+    expect(materialized.pr76.binary[0]?.kij?.provenance?.kind).toBe(SourceKind.LITERATURE);
+    expect(materialized.definition.provenance?.kind).toBe(SourceKind.USER_SUPPLIED);
+    expect(materialized.definition.applicability?.provenance?.kind).toBe(SourceKind.LITERATURE);
 
     const methane = draft.components[0]!;
     draft = editPr76ComponentScalar(draft, methane.key, 'criticalTemperatureK', '191');
     draft = editPr76Kij(draft, draft.pairs[0]!.key, '0.02');
-    input = buildPr76CreateInput(draft);
-    if (input.definition?.parameters.case !== 'pr76') throw new Error('missing PR76 input');
-    expect(input.definition.parameters.value.pure[0]?.criticalTemperatureK).toMatchObject({
+    materialized = pr76Request(buildPr76CreateInput(draft));
+    expect(materialized.pr76.pure[0]?.criticalTemperatureK).toMatchObject({
       value: 191,
       originalUnit: 'K',
       conversion: 'identity: Expert UI canonical SI input',
       provenance: { kind: SourceKind.USER_SUPPLIED, reference: 'user-record-2026-09-15' },
     });
-    expect(input.definition.parameters.value.pure[0]?.criticalPressurePa?.provenance?.kind).toBe(SourceKind.LITERATURE);
-    expect(input.definition.parameters.value.binary[0]?.kij?.provenance?.kind).toBe(SourceKind.USER_SUPPLIED);
+    expect(materialized.pr76.pure[0]?.criticalPressurePa?.provenance?.kind).toBe(SourceKind.LITERATURE);
+    expect(materialized.pr76.binary[0]?.kij?.provenance?.kind).toBe(SourceKind.USER_SUPPLIED);
   });
 
   it('supports complete custom settings only after a resolved snapshot exists', () => {
@@ -151,14 +162,15 @@ describe('PR76 Expert draft/create contract', () => {
     draft = editPr76Setting(draft, 'eosRoot', 'maxIterations', '17');
     draft = editPr76Setting(draft, 'initialStability', 'automaticMultistart', true);
     draft = editPr76Setting(draft, 'initialStability', 'tpdTolerance', '1e-8');
-    const input = buildPr76CreateInput(draft);
-    expect(input.solverSelection.case).toBe('settings');
-    if (input.solverSelection.case !== 'settings') throw new Error('missing custom settings');
-    expect(input.solverSelection.value.kind).toBe(SolverSettingsKind.CUSTOM);
-    expect(input.solverSelection.value.presetId).toBe('');
-    expect(input.solverSelection.value.eosRoot?.maxIterations).toBe(17n);
-    expect(input.solverSelection.value.initialStability?.automaticMultistart).toBe(true);
-    expect(input.solverSelection.value.initialStability?.tpdTolerance).toBe(1e-8);
+    const value = request(buildPr76CreateInput(draft));
+    expect(value.solverSelection.case).toBe('settings');
+    if (value.solverSelection.case !== 'settings') throw new Error('missing custom settings');
+    const settings = value.solverSelection.value;
+    expect(settings.kind).toBe(SolverSettingsKind.CUSTOM);
+    expect(settings.presetId).toBe('');
+    expect(settings.eosRoot?.maxIterations).toBe(17n);
+    expect(settings.initialStability?.automaticMultistart).toBe(true);
+    expect(settings.initialStability?.tpdTolerance).toBe(1e-8);
     expect(snapshot.settings?.eosRoot?.maxIterations).toBe(9007199254740993n);
   });
 
