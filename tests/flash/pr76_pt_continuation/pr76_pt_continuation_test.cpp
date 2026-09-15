@@ -1,14 +1,18 @@
 #include <mpmc/flash/pr76_pt_continuation.hpp>
 
+#include "../pr76_three_phase/sour_gas_fixture.hpp"
 #include "../pr76_three_phase/synthetic_fixture.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace {
 namespace fl = mpmc::flash;
+namespace sg = pr76_sour_gas_test;
 
 void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
@@ -181,13 +185,95 @@ void unresolved_point_resets_continuation() {
     require_fresh_state(result.points[2]);
 }
 
+std::vector<double> sour_gas_feed_at_co2_fraction(double co2_fraction) {
+    require(std::isfinite(co2_fraction) && co2_fraction > 0.0 && co2_fraction < 1.0,
+            "sour-gas P-Z feed requires 0 < zCO2 < 1");
+    auto composition = sg::feed();
+    const double source_non_co2 = 1.0 - composition[0];
+    const double target_non_co2 = 1.0 - co2_fraction;
+    require(source_non_co2 > 0.0,
+            "sour-gas reference feed lost non-CO2 support");
+    const double scale = target_non_co2 / source_non_co2;
+    composition[0] = co2_fraction;
+    for (std::size_t component = 1U; component < composition.size(); ++component) {
+        composition[component] *= scale;
+    }
+    return composition;
+}
+
+fl::Pr76PtContinuationOptions sour_gas_continuation_options() {
+    fl::Pr76PtContinuationOptions options;
+    options.point_options = sg::max3_options();
+    options.fallback_initial_starts = sg::starts();
+    options.fallback_final_starts = sg::starts();
+    return options;
+}
+
+void sour_gas_physical_three_to_two_boundary() {
+    // Heringer et al., Fluid Phase Equilibria 604 (2026) 114653, reports
+    // the 178.8 K sour-gas P-Z topology. At zCO2=0.65 the published
+    // pressure slices place 20, 25, 30.2 and 35 bar inside the three-phase
+    // band, while 40 bar is in a two-phase region. This regression uses
+    // that topology only; no phase composition/fraction is copied from it.
+    constexpr double co2_fraction = 0.65;
+    const auto feed = sour_gas_feed_at_co2_fraction(co2_fraction);
+    const auto model = sg::model();
+    fl::Pr76VleEvaluator evaluator(model);
+    const std::array<fl::Pr76PtPathState, 5> path{{
+        {2.00e6, 178.8},
+        {2.50e6, 178.8},
+        {3.02e6, 178.8},
+        {3.50e6, 178.8},
+        {4.00e6, 178.8}
+    }};
+    const std::array<std::size_t, 5> expected{3U, 3U, 3U, 3U, 2U};
+
+    const auto result = fl::solve_pr76_pt_continuation(
+        path, feed, evaluator, sour_gas_continuation_options());
+    require(result.all_points_accepted && result.points.size() == path.size(),
+            "physical sour-gas pressure path contains an unresolved point");
+    for (std::size_t index = 0; index < result.points.size(); ++index) {
+        require(result.points[index].accepted_phase_count &&
+                    *result.points[index].accepted_phase_count == expected[index],
+                "physical sour-gas pressure path disagrees with literature topology");
+        require_fresh_state(result.points[index]);
+    }
+
+    require(result.transition_brackets.size() == 1U,
+            "physical sour-gas path did not expose exactly one 3->2 bracket");
+    const auto& bracket = result.transition_brackets.front();
+    require(bracket.left_index == 3U && bracket.right_index == 4U &&
+                bracket.left_phase_count == 3U && bracket.right_phase_count == 2U &&
+                bracket.adjacent_phase_count_step && !bracket.exact_boundary_resolved,
+            "physical sour-gas path changed the published 3->2 transition ordering");
+    const auto& right = result.points[bracket.right_index];
+    require(right.incoming_hint == fl::Pr76PtContinuationHintKind::three_phase &&
+                right.carried_three_phase_start,
+            "physical 3->2 neighbor did not receive the previous accepted three-phase hint");
+    require(!right.carried_three_phase_start_consumed,
+            "stable physical two-phase neighbor unnecessarily consumed a three-phase hint");
+
+    // Fresh-neighbor control: resolve the 40 bar point without any carried
+    // three-phase state. The same topology must be recovered independently.
+    const auto fallback = sg::starts();
+    const auto cold = fl::solve_pr76_pt_max3(
+        4.00e6, 178.8, feed, evaluator, {}, fallback, fallback);
+    require(cold.status == fl::Pr76PtMax3Status::two_phase &&
+                cold.base.solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
+                cold.base.solution.candidate() != nullptr,
+            "cold-start physical neighbor did not independently resolve as two phase");
+    require(cold.attempts.empty(),
+            "cold-start stable two-phase neighbor entered an unnecessary three-phase attempt");
+}
+
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"repeated_three_phase", repeated_three_phase_is_fresh_continuation},
     {"invalid_path", invalid_path_is_rejected_before_solve},
     {"bracket_contract", transition_bracket_contract},
     {"bidirectional_phase_sequence", bidirectional_phase_sequence},
-    {"unresolved_resets", unresolved_point_resets_continuation}};
+    {"unresolved_resets", unresolved_point_resets_continuation},
+    {"sour_gas_3_to_2", sour_gas_physical_three_to_two_boundary}};
 
 } // namespace
 
