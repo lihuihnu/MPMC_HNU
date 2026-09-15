@@ -49,7 +49,7 @@ target_link_libraries(mpmc_pr76_strict_binary_kij_calibration_test PRIVATE mpmc:
 set_target_properties(mpmc_pr76_strict_binary_kij_calibration_test PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_pr76_c10_kappa_mismatch_audit_test
-    pr76_c10_kappa_mismatch_audit_test.cpp)
+    pr76_c10_kappa_mismatch_audit_driver.cpp)
 target_link_libraries(mpmc_pr76_c10_kappa_mismatch_audit_test PRIVATE mpmc::flash)
 set_target_properties(mpmc_pr76_c10_kappa_mismatch_audit_test PROPERTIES CXX_EXTENSIONS OFF)
 
