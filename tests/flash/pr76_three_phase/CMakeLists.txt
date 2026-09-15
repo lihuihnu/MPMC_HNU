@@ -43,13 +43,19 @@ add_executable(mpmc_pr76_heringer_2026_boundary_test
 target_link_libraries(mpmc_pr76_heringer_2026_boundary_test PRIVATE mpmc::flash)
 set_target_properties(mpmc_pr76_heringer_2026_boundary_test PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_pr76_soria_2025_transition_test
+    pr76_soria_2025_transition_test.cpp)
+target_link_libraries(mpmc_pr76_soria_2025_transition_test PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_soria_2025_transition_test PROPERTIES CXX_EXTENSIONS OFF)
+
 add_dependencies(mpmc_pr76_three_phase_tests
     mpmc_pr76_three_phase_seeded_tests
     mpmc_pr76_three_phase_robustness_tests
     mpmc_pr76_three_phase_reference_test
     mpmc_pr76_sour_gas_three_phase_tests
     mpmc_pr76_heringer_2026_fixture_test
-    mpmc_pr76_heringer_2026_boundary_test)
+    mpmc_pr76_heringer_2026_boundary_test
+    mpmc_pr76_soria_2025_transition_test)
 
 if(MSVC)
     foreach(target IN ITEMS
@@ -59,7 +65,8 @@ if(MSVC)
             mpmc_pr76_three_phase_reference_test
             mpmc_pr76_sour_gas_three_phase_tests
             mpmc_pr76_heringer_2026_fixture_test
-            mpmc_pr76_heringer_2026_boundary_test)
+            mpmc_pr76_heringer_2026_boundary_test
+            mpmc_pr76_soria_2025_transition_test)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
     endforeach()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
@@ -70,7 +77,8 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
             mpmc_pr76_three_phase_reference_test
             mpmc_pr76_sour_gas_three_phase_tests
             mpmc_pr76_heringer_2026_fixture_test
-            mpmc_pr76_heringer_2026_boundary_test)
+            mpmc_pr76_heringer_2026_boundary_test
+            mpmc_pr76_soria_2025_transition_test)
         target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
     endforeach()
@@ -88,7 +96,8 @@ if(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS)
             mpmc_pr76_three_phase_reference_test
             mpmc_pr76_sour_gas_three_phase_tests
             mpmc_pr76_heringer_2026_fixture_test
-            mpmc_pr76_heringer_2026_boundary_test)
+            mpmc_pr76_heringer_2026_boundary_test
+            mpmc_pr76_soria_2025_transition_test)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -144,6 +153,11 @@ add_test(NAME flash.pr76_three_phase.heringer_2026_3_to_2
          COMMAND mpmc_pr76_heringer_2026_boundary_test)
 set_tests_properties(flash.pr76_three_phase.heringer_2026_3_to_2 PROPERTIES
     LABELS "flash;pr76;three_phase;max3;physical_mixture;literature_topology" TIMEOUT 300)
+
+add_test(NAME flash.pr76_three_phase.soria_2025_m40_transition_pressure
+         COMMAND mpmc_pr76_soria_2025_transition_test)
+set_tests_properties(flash.pr76_three_phase.soria_2025_m40_transition_pressure PROPERTIES
+    LABELS "flash;pr76;three_phase;max3;physical_mixture;experimental_transition" TIMEOUT 300)
 
 foreach(case IN ITEMS
         reference_candidate
