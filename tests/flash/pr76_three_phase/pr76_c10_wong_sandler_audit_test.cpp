@@ -302,28 +302,46 @@ double log_sum_from_raw(const std::array<double, 2>& log_raw) {
                               std::exp(log_raw[1] - largest));
 }
 
+std::optional<std::array<double, 2>> normalized_vapor_seed(
+    const std::optional<std::array<double, 2>>& supplied) {
+    if (!supplied) {
+        return std::nullopt;
+    }
+    const double sum = (*supplied)[0] + (*supplied)[1];
+    if (!(sum > 0.0) || !std::isfinite(sum) ||
+        !((*supplied)[0] > 0.0) || !((*supplied)[1] > 0.0)) {
+        return std::nullopt;
+    }
+    return std::array<double, 2>{(*supplied)[0] / sum, (*supplied)[1] / sum};
+}
+
 std::optional<BranchState> incipient_vapor_branch(
     double pressure_pa,
     double temperature_k,
     const std::array<double, 2>& liquid_x,
     const th::Pr76Pure<double>& co2,
     const th::Pr76Pure<double>& decane,
-    MixingMode mode) {
+    MixingMode mode,
+    std::optional<std::array<double, 2>> supplied_vapor_seed = std::nullopt) {
     const auto liquid = evaluate_generic_phase(
         pressure_pa, temperature_k, liquid_x, RootRole::liquid, co2, decane, mode);
     if (!liquid) {
         return std::nullopt;
     }
 
-    const std::array<double, 2> initial_raw{
-        liquid_x[0] * wilson_k(pressure_pa, temperature_k, co2_tc_k, co2_pc_pa, co2_omega),
-        liquid_x[1] * wilson_k(pressure_pa, temperature_k, decane_tc_k, decane_pc_pa, decane_omega)};
-    const double initial_sum = initial_raw[0] + initial_raw[1];
-    if (!(initial_sum > 0.0) || !std::isfinite(initial_sum)) {
-        return std::nullopt;
+    std::array<double, 2> vapor_y{};
+    if (const auto seed = normalized_vapor_seed(supplied_vapor_seed)) {
+        vapor_y = *seed;
+    } else {
+        const std::array<double, 2> initial_raw{
+            liquid_x[0] * wilson_k(pressure_pa, temperature_k, co2_tc_k, co2_pc_pa, co2_omega),
+            liquid_x[1] * wilson_k(pressure_pa, temperature_k, decane_tc_k, decane_pc_pa, decane_omega)};
+        const double initial_sum = initial_raw[0] + initial_raw[1];
+        if (!(initial_sum > 0.0) || !std::isfinite(initial_sum)) {
+            return std::nullopt;
+        }
+        vapor_y = {initial_raw[0] / initial_sum, initial_raw[1] / initial_sum};
     }
-    std::array<double, 2> vapor_y{
-        initial_raw[0] / initial_sum, initial_raw[1] / initial_sum};
 
     for (int iteration = 0; iteration < 160; ++iteration) {
         const auto vapor = evaluate_generic_phase(
@@ -386,8 +404,8 @@ std::optional<PressureBracket> locate_ws_bubble_bracket(
         return std::nullopt;
     }
 
-    constexpr double step_pa = 25.0e3;
-    constexpr int max_steps_each_direction = 80;
+    constexpr double step_pa = 10.0e3;
+    constexpr int max_steps_each_direction = 250;
     std::optional<PressureBracket> best;
     double best_midpoint_distance = 0.0;
 
@@ -400,12 +418,14 @@ std::optional<PressureBracket> locate_ws_bubble_bracket(
             if (!(pressure > 0.0)) {
                 break;
             }
-            const auto current = incipient_vapor_branch(pressure,
-                                                        target_temperature_k,
-                                                        target_liquid_x,
-                                                        co2,
-                                                        decane,
-                                                        MixingMode::wong_sandler_nrtl);
+            const auto current = incipient_vapor_branch(
+                pressure,
+                target_temperature_k,
+                target_liquid_x,
+                co2,
+                decane,
+                MixingMode::wong_sandler_nrtl,
+                previous_state.vapor_y);
             if (!current || !current->distinct || !std::isfinite(current->log_sum)) {
                 break; // Do not jump across a branch discontinuity.
             }
@@ -449,12 +469,17 @@ std::optional<BubblePressureResult> solve_ws_bubble_pressure(
 
     for (int iteration = 0; iteration < 64 && right - left > 0.05; ++iteration) {
         const double middle = 0.5 * (left + right);
-        const auto middle_state = incipient_vapor_branch(middle,
-                                                         target_temperature_k,
-                                                         target_liquid_x,
-                                                         co2,
-                                                         decane,
-                                                         MixingMode::wong_sandler_nrtl);
+        const std::array<double, 2> middle_seed{
+            0.5 * (left_state.vapor_y[0] + right_state.vapor_y[0]),
+            0.5 * (left_state.vapor_y[1] + right_state.vapor_y[1])};
+        const auto middle_state = incipient_vapor_branch(
+            middle,
+            target_temperature_k,
+            target_liquid_x,
+            co2,
+            decane,
+            MixingMode::wong_sandler_nrtl,
+            middle_seed);
         if (!middle_state || !middle_state->distinct || !std::isfinite(middle_state->log_sum)) {
             return std::nullopt;
         }
@@ -468,12 +493,16 @@ std::optional<BubblePressureResult> solve_ws_bubble_pressure(
     }
 
     const double pressure = 0.5 * (left + right);
+    const std::array<double, 2> final_seed{
+        0.5 * (left_state.vapor_y[0] + right_state.vapor_y[0]),
+        0.5 * (left_state.vapor_y[1] + right_state.vapor_y[1])};
     const auto state = incipient_vapor_branch(pressure,
                                               target_temperature_k,
                                               target_liquid_x,
                                               co2,
                                               decane,
-                                              MixingMode::wong_sandler_nrtl);
+                                              MixingMode::wong_sandler_nrtl,
+                                              final_seed);
     if (!state || !state->distinct || !std::isfinite(state->log_sum)) {
         return std::nullopt;
     }
