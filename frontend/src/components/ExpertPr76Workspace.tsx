@@ -43,6 +43,28 @@ export async function retirePreviousExpertModel(
   }
 }
 
+/**
+ * Defer irreversible teardown release until the current JS turn completes.
+ * React StrictMode's development setup→cleanup→setup replay can invalidate the
+ * cleanup token before release admission; a real unmount still releases only
+ * the model that is current when this deferred callback executes.
+ */
+export function deferExpertWorkspaceRelease(
+  readCurrent: () => ExpertOwnedModel | null,
+  stillUnmounted: () => boolean,
+  enqueue: (task: () => void) => void = queueMicrotask,
+): void {
+  enqueue(() => {
+    if (!stillUnmounted()) return;
+    const current = readCurrent();
+    if (current === null || current.released) return;
+    void current.release().catch(() => {
+      // Teardown cannot publish UI state. The typed client/session remains the
+      // authority for ambiguous release and eventual session cleanup.
+    });
+  });
+}
+
 export interface ExpertPr76WorkspaceViewProps {
   owner: ExpertModelOwner;
   current: ExpertOwnedModel | null;
@@ -135,19 +157,18 @@ export function ExpertPr76Workspace({ owner }: ExpertPr76WorkspaceProps) {
   const [retirementFailure, setRetirementFailure] = useState<ExpertWorkspaceFailure | null>(null);
   const currentRef = useRef<ExpertOwnedModel | null>(null);
   const alive = useRef(true);
+  const mountToken = useRef<symbol | null>(null);
 
   useEffect(() => {
+    const token = Symbol('expert-pr76-workspace-mount');
+    mountToken.current = token;
     alive.current = true;
     return () => {
       alive.current = false;
-      const owned = currentRef.current;
-      currentRef.current = null;
-      if (owned && !owned.released) {
-        void owned.release().catch(() => {
-          // Teardown cannot publish UI state. The typed client/session remains the
-          // authority for ambiguous release and eventual session cleanup.
-        });
-      }
+      deferExpertWorkspaceRelease(
+        () => currentRef.current,
+        () => mountToken.current === token && !alive.current,
+      );
     };
   }, []);
 
