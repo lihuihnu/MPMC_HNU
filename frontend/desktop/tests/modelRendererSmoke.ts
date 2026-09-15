@@ -1,6 +1,10 @@
 // Browser-only test entry: executed inside the same sandboxed renderer as production.
 import { clone, fromJson, toJson, type JsonObject } from '@bufbuild/protobuf';
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { bindExpertModelSource } from '../../src/api/expertModelSource';
 import { rendererModelClient, RendererModelError, type RendererModelReference } from '../../src/api/rendererModelClient';
+import { ExpertModelSurface } from '../../src/components/ExpertModelSurface';
 import { CreateModelRequestSchema, FullPtResultSchema, ModelSnapshotSchema, SolveModelRequestSchema, PtSolverSettingsSchema, SolverSettingsKind, type PtSolverSettings, type CreateModelRequest, type SolveModelRequest } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
 import { MODEL_DESKTOP_V2_CONVENTION } from '../../src/api/modelDesktopContract';
 const client = rendererModelClient();
@@ -12,15 +16,57 @@ function error(cause: unknown) {
   if (!(cause instanceof RendererModelError)) throw new Error('Untyped renderer model error.');
   return { code: cause.code, category: cause.category, reason: cause.reason, source: cause.source, ...(cause.validation ? { validation: cause.validation } : {}) };
 }
+async function renderLiveExpertSurface() {
+  if (!client || !current) throw new Error('Renderer model missing.');
+  let describeCalls = 0;
+  const source = bindExpertModelSource({
+    describe: async (model: RendererModelReference, options?: { signal?: AbortSignal; timeoutMs?: number }) => {
+      ++describeCalls;
+      return client.describe(model, options);
+    },
+  }, current);
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    root.render(createElement(ExpertModelSurface, { source }));
+    const deadline = Date.now() + 10_000;
+    while (!host.querySelector('[data-expert-state="ready"]')) {
+      if (host.querySelector('[data-expert-state="failed"]')) {
+        throw new Error(`Live Expert surface describe failed: ${host.textContent ?? ''}`);
+      }
+      if (Date.now() >= deadline) throw new Error('Live Expert surface did not publish describe snapshot.');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    if (describeCalls !== 1) throw new Error('Expert surface did not issue exactly one live describe call.');
+    const text = host.textContent ?? '';
+    const modelDefinition = definition.definition;
+    if (!modelDefinition) throw new Error('Renderer fixture model definition missing.');
+    for (const component of modelDefinition.components) {
+      if (!component.componentId || !text.includes(component.componentId)) {
+        throw new Error('Expert surface dropped an ordered component from live describe.');
+      }
+    }
+    if (!text.includes(modelDefinition.datasetId ?? '') || !text.includes(modelDefinition.revision ?? '') ||
+        !text.includes('Solver settings') || !text.includes('Applicability endpoints')) {
+      throw new Error('Expert surface dropped live snapshot identity/settings/applicability.');
+    }
+    return { describeCalls, text };
+  } finally {
+    root.unmount();
+    host.remove();
+  }
+}
 export async function initialize(createInput: JsonObject, solveInput: JsonObject) {
   if (!client || window.mpmcModelDesktopV2?.convention !== MODEL_DESKTOP_V2_CONVENTION) throw new Error('Model v2 preload unavailable in renderer.');
   definition = fromJson(CreateModelRequestSchema, createInput); state = fromJson(SolveModelRequestSchema, solveInput);
   const made = await client.create(definition); current = made.model;
   settings = clone(PtSolverSettingsSchema, made.snapshot.settings!);
   const described = await client.describe(current);
+  const expertSurface = await renderLiveExpertSurface();
   const solved = await client.solve(current, state);
   return { snapshot: toJson(ModelSnapshotSchema, made.snapshot), described: toJson(ModelSnapshotSchema, described),
-    outcome: solved.outcome, result: toJson(FullPtResultSchema, solved.result) };
+    expertSurface, outcome: solved.outcome, result: toJson(FullPtResultSchema, solved.result) };
 }
 export async function solve() {
   if (!client || !current) throw new Error('Renderer model missing.');
