@@ -20,9 +20,9 @@ namespace th = mpmc::thermodynamics;
 using Ref = dew_limit_reference::State;
 using Vec = std::vector<double>;
 
-constexpr double temperature_k = 220.0;
+constexpr double near_dew_temperature = 220.0;
 constexpr double feed_co2 = 0.3;
-constexpr double eps = std::numeric_limits<double>::epsilon();
+constexpr double machine_epsilon = std::numeric_limits<double>::epsilon();
 
 void require(bool condition, std::string_view message) {
     if (!condition) { throw std::runtime_error(std::string(message)); }
@@ -179,7 +179,7 @@ void require_two_phase(const fl::PtFlashBackendResult& result,
     require(liquid.mole_phase_fraction > 0.0 && vapor.mole_phase_fraction > 0.0,
             "accepted two-phase result contains a nonpositive phase fraction");
     require(std::abs(liquid.mole_phase_fraction + vapor.mole_phase_fraction - 1.0) <=
-                64.0 * eps,
+                64.0 * machine_epsilon,
             "accepted two-phase fractions do not sum to one");
 
     for (std::size_t i = 0; i < feed.size(); ++i) {
@@ -192,7 +192,7 @@ void require_two_phase(const fl::PtFlashBackendResult& result,
         const double residual =
             (std::log(liquid.composition[i]) + liquid.activity.ln_phi[i]) -
             (std::log(vapor.composition[i]) + vapor.activity.ln_phi[i]);
-        require(std::abs(residual) <= 1e-11 + 32.0 * eps,
+        require(std::abs(residual) <= 1e-11 + 32.0 * machine_epsilon,
                 "public two-phase result violates fugacity balance");
     }
 
@@ -260,10 +260,10 @@ void check_state(const Ref& reference, bool reverse) {
     const Vec feed = compose(feed_co2, reverse);
     const fl::Pr76PtFlashBackendOptions options;
     const auto direct = fl::solve_pr76_pt_max3(
-        reference.p, temperature_k, feed, evaluator, max3_options(options));
+        reference.p, near_dew_temperature, feed, evaluator, max3_options(options));
     const auto published = fl::project_pr76_pt_max3_phase_set(direct);
     fl::Pr76PtFlashBackend backend(evaluator, options);
-    const auto result = backend.solve({reference.p, temperature_k, feed});
+    const auto result = backend.solve({reference.p, near_dew_temperature, feed});
 
     require(result.structurally_valid(), "public PR76 backend result is structurally invalid");
     require_transition_contract(result.capability);
@@ -333,9 +333,9 @@ void check_budget_failure(bool reverse) {
     fl::Pr76PtFlashBackendOptions options;
     options.split.max_split_attempts = 0U;
     const auto direct = fl::solve_pr76_pt_max3(
-        reference.p, temperature_k, feed, evaluator, max3_options(options));
+        reference.p, near_dew_temperature, feed, evaluator, max3_options(options));
     fl::Pr76PtFlashBackend backend(evaluator, options);
-    const auto result = backend.solve({reference.p, temperature_k, feed});
+    const auto result = backend.solve({reference.p, near_dew_temperature, feed});
 
     require(direct.base.solution.initial_stability.status == fl::StabilityStatus::unstable,
             "budget regression did not reach the known unstable near-dew feed");
