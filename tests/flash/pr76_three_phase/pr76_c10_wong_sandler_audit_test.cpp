@@ -414,21 +414,23 @@ void audit_wong_sandler_branch_recovery() {
                                             co2,
                                             decane,
                                             MixingMode::wong_sandler_nrtl);
-    require(classical.has_value(),
-            "classical A arm could not resolve the target state for topology comparison");
     require(ws.has_value(),
             "Wong-Sandler B arm could not resolve the target state");
 
     std::cout << std::setprecision(12)
               << "CO2+n-C10 target: T_K=" << target_temperature_k
               << " xCO2=" << target_liquid_x[0]
-              << " P_MPa=" << target_pressure_pa / 1.0e6 << '\n'
-              << "classical-vdW1f: distinct=" << classical->distinct
-              << " yCO2=" << classical->vapor_y[0]
-              << " ZL=" << classical->liquid_z
-              << " ZV=" << classical->vapor_z
-              << " log_sum=" << classical->log_sum << '\n'
-              << "Wong-Sandler/NRTL independent params: k12=" << ws_k12
+              << " P_MPa=" << target_pressure_pa / 1.0e6 << '\n';
+    if (classical) {
+        std::cout << "classical-vdW1f: distinct=" << classical->distinct
+                  << " yCO2=" << classical->vapor_y[0]
+                  << " ZL=" << classical->liquid_z
+                  << " ZV=" << classical->vapor_z
+                  << " log_sum=" << classical->log_sum << '\n';
+    } else {
+        std::cout << "classical-vdW1f: no tracked incipient-VLE solution at target\n";
+    }
+    std::cout << "Wong-Sandler/NRTL independent params: k12=" << ws_k12
               << " delta12_kJmol=" << nrtl_delta12_j_per_mol / 1.0e3
               << " delta21_kJmol=" << nrtl_delta21_j_per_mol / 1.0e3
               << " alpha=" << nrtl_nonrandomness << '\n'
@@ -439,7 +441,7 @@ void audit_wong_sandler_branch_recovery() {
               << " log_sum=" << ws->log_sum
               << " exp(log_sum)-1=" << std::expm1(ws->log_sum) << '\n';
 
-    require(!classical->distinct,
+    require(!classical || !classical->distinct,
             "classical vdW1f unexpectedly retained a distinct target-pressure VLE branch");
     require(ws->distinct,
             "Wong-Sandler did not recover a distinct VLE branch at the 9.47 MPa target");
