@@ -30,7 +30,7 @@ constexpr double strict_kij_from_pr101 = 0.05226578047;
 // Frozen independent Wong-Sandler/NRTL parameters from Arenas-Quevedo et al.
 // Fluid Phase Equilibria 338 (2013) 30-36, DOI 10.1016/j.fluid.2012.10.012,
 // Table 6. Their CO2+n-decane regression used 29 literature VLE points over
-// 319.11-372.94 K. Nothing below is refit to either validation dataset.
+// 319.11-372.94 K. Nothing below is refit to any validation dataset.
 constexpr double ws_k12 = 0.7155;
 constexpr double nrtl_delta12_j_per_mol = 11.8841e3;
 constexpr double nrtl_delta21_j_per_mol = -1.9705e3;
@@ -63,7 +63,22 @@ constexpr std::array<ExperimentalPoint, 4> ufc_points{{
     {323.01, 0.911, 9.47e6},
 }};
 
-// Independent extrapolation oracle: Sebastian, Simnick, Lin & Chao,
+// Independent middle-temperature transfer oracle: Inomata, Tuchiya, Arai & Saito,
+// J. Chem. Eng. Japan 19 (1986) 386-391, DOI 10.1252/jcej.19.386,
+// Table 4, CO2+n-decane at 411.2 K. The paper reports overall pressure accuracy
+// of 0.05 MPa and equilibrium-composition error below 0.5 mol%.
+// This source is not the Jimenez-Gallegos et al. 2006 dataset used to regress
+// the frozen Arenas-Quevedo WS/NRTL parameters.
+constexpr std::array<ExternalVlePoint, 6> inomata_411k_points{{
+    {411.2, 0.254, 4.81e6, 0.986},
+    {411.2, 0.467, 9.82e6, 0.989},
+    {411.2, 0.543, 11.52e6, 0.980},
+    {411.2, 0.659, 14.80e6, 0.969},
+    {411.2, 0.739, 16.82e6, 0.953},
+    {411.2, 0.804, 17.99e6, 0.925},
+}};
+
+// Independent far-temperature extrapolation oracle: Sebastian, Simnick, Lin & Chao,
 // J. Chem. Eng. Data 25 (1980) 138-140, DOI 10.1021/je60085a012,
 // Table I, CO2+n-decane at 189.4 degC = 462.55 K.
 // This source predates, and is not the Jimenez-Gallegos et al. 2006 dataset
@@ -75,6 +90,7 @@ constexpr std::array<ExternalVlePoint, 4> sebastian_462k_points{{
     {462.55, 0.2358, atm_to_pa(50.70), 0.9478},
 }};
 
+static_assert(inomata_411k_points[0].temperature_k - arenas_fit_temperature_max_k > 30.0);
 static_assert(sebastian_462k_points[0].temperature_k - arenas_fit_temperature_max_k > 80.0);
 
 void require(bool condition, const char* message) {
@@ -150,7 +166,7 @@ PurePair make_pures() {
         "https://repositorio.ufc.br/handle/riufc/80725",
         "E. C. Q. Soria, UFC dissertation, 2025",
         "Table 6: CO2 and n-decane Tc, Pc and acentric factor",
-        "Same strict-PR76 pure inputs used by PR #101/#104/#106/#107",
+        "Same strict-PR76 pure inputs used by PR #101/#104/#106/#107/#108",
         "Transcribed from UFC repository dissertation",
         "Frozen pure inputs for mixing-rule validation; no parameter fitting"};
 
@@ -162,7 +178,7 @@ PurePair make_pures() {
     th::PrParameterInput input;
     input.model_id = std::string(th::pr76_profile);
     input.dataset_id = "C10-frozen-pure-WS-validation";
-    input.revision = "sebastian-462K-extrapolation-v1";
+    input.revision = "multi-temperature-transfer-v2";
     input.applicability = {std::nullopt, std::nullopt, source};
     input.pure = {
         {"carbon-dioxide",
@@ -567,6 +583,67 @@ void audit_four_point_ab(const PurePair& pures) {
               << " WS_relative_SSE=" << ws.relative_sse << '\n';
 }
 
+ExternalMetrics audit_inomata_midrange_transfer(const PurePair& pures) {
+    ExternalMetrics metrics;
+    double pressure_abs_relative_sum = 0.0;
+    double pressure_relative_sse = 0.0;
+    double y_abs_error_sum = 0.0;
+
+    std::cout << "Inomata-1986 independent WS/NRTL middle-temperature transfer"
+              << " source_DOI=10.1252/jcej.19.386"
+              << " fit_Tmax_K=" << arenas_fit_temperature_max_k
+              << " validation_T_K=" << inomata_411k_points[0].temperature_k
+              << " extrapolation_delta_K="
+              << inomata_411k_points[0].temperature_k - arenas_fit_temperature_max_k
+              << '\n';
+
+    for (const auto& external : inomata_411k_points) {
+        const ExperimentalPoint point{
+            external.temperature_k, external.x_co2, external.pressure_pa};
+        const auto bubble =
+            solve_bubble(point, pures, MixingMode::wong_sandler_nrtl);
+        require(bubble.has_value(),
+                "frozen WS/NRTL failed to produce an Inomata-1986 bubble state");
+        require_closed_bubble(*bubble, point, "Inomata-1986");
+
+        const double pressure_relative =
+            (bubble->pressure_pa - external.pressure_pa) / external.pressure_pa;
+        const double y_error = bubble->state.y_co2 - external.y_co2;
+        pressure_abs_relative_sum += std::abs(pressure_relative);
+        pressure_relative_sse += pressure_relative * pressure_relative;
+        y_abs_error_sum += std::abs(y_error);
+        metrics.max_abs_y_error = std::max(metrics.max_abs_y_error, std::abs(y_error));
+
+        std::cout << "  xCO2=" << external.x_co2
+                  << " Pexp_MPa=" << external.pressure_pa / 1.0e6
+                  << " Pcalc_MPa=" << bubble->pressure_pa / 1.0e6
+                  << " signed_pressure_error_pct=" << 100.0 * pressure_relative
+                  << " yexp_CO2=" << external.y_co2
+                  << " ycalc_CO2=" << bubble->state.y_co2
+                  << " y_error=" << y_error
+                  << " ZL=" << bubble->state.liquid_z
+                  << " ZV=" << bubble->state.vapor_z << '\n';
+    }
+
+    const double count = static_cast<double>(inomata_411k_points.size());
+    metrics.pressure_aard = pressure_abs_relative_sum / count;
+    metrics.pressure_relative_sse = pressure_relative_sse;
+    metrics.mean_abs_y_error = y_abs_error_sum / count;
+
+    require(std::isfinite(metrics.pressure_aard) &&
+                std::isfinite(metrics.pressure_relative_sse) &&
+                std::isfinite(metrics.mean_abs_y_error) &&
+                std::isfinite(metrics.max_abs_y_error),
+            "Inomata transfer aggregate metrics are not finite");
+
+    std::cout << "Inomata transfer summary:"
+              << " pressure_AARD_pct=" << 100.0 * metrics.pressure_aard
+              << " pressure_relative_SSE=" << metrics.pressure_relative_sse
+              << " mean_abs_yCO2_error=" << metrics.mean_abs_y_error
+              << " max_abs_yCO2_error=" << metrics.max_abs_y_error << '\n';
+    return metrics;
+}
+
 ExternalMetrics audit_sebastian_extrapolation(const PurePair& pures) {
     ExternalMetrics metrics;
     double pressure_abs_relative_sum = 0.0;
@@ -635,8 +712,9 @@ int main() {
     try {
         const PurePair pures = make_pures();
         audit_four_point_ab(pures);
+        (void)audit_inomata_midrange_transfer(pures);
         (void)audit_sebastian_extrapolation(pures);
-        std::cout << "[PASS] pr76_c10_wong_sandler_four_point_ab_and_sebastian_extrapolation\n";
+        std::cout << "[PASS] pr76_c10_wong_sandler_three_temperature_transfer_audit\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "[FAIL] " << error.what() << '\n';
