@@ -28,17 +28,24 @@ add_executable(mpmc_pr76_three_phase_reference_test
 target_link_libraries(mpmc_pr76_three_phase_reference_test PRIVATE mpmc::flash)
 set_target_properties(mpmc_pr76_three_phase_reference_test PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_pr76_sour_gas_three_phase_tests
+    pr76_sour_gas_three_phase_test.cpp)
+target_link_libraries(mpmc_pr76_sour_gas_three_phase_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_sour_gas_three_phase_tests PROPERTIES CXX_EXTENSIONS OFF)
+
 add_dependencies(mpmc_pr76_three_phase_tests
     mpmc_pr76_three_phase_seeded_tests
     mpmc_pr76_three_phase_robustness_tests
-    mpmc_pr76_three_phase_reference_test)
+    mpmc_pr76_three_phase_reference_test
+    mpmc_pr76_sour_gas_three_phase_tests)
 
 if(MSVC)
     foreach(target IN ITEMS
             mpmc_pr76_three_phase_tests
             mpmc_pr76_three_phase_seeded_tests
             mpmc_pr76_three_phase_robustness_tests
-            mpmc_pr76_three_phase_reference_test)
+            mpmc_pr76_three_phase_reference_test
+            mpmc_pr76_sour_gas_three_phase_tests)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
     endforeach()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
@@ -46,7 +53,8 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
             mpmc_pr76_three_phase_tests
             mpmc_pr76_three_phase_seeded_tests
             mpmc_pr76_three_phase_robustness_tests
-            mpmc_pr76_three_phase_reference_test)
+            mpmc_pr76_three_phase_reference_test
+            mpmc_pr76_sour_gas_three_phase_tests)
         target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
     endforeach()
@@ -61,7 +69,8 @@ if(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS)
             mpmc_pr76_three_phase_tests
             mpmc_pr76_three_phase_seeded_tests
             mpmc_pr76_three_phase_robustness_tests
-            mpmc_pr76_three_phase_reference_test)
+            mpmc_pr76_three_phase_reference_test
+            mpmc_pr76_sour_gas_three_phase_tests)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -107,3 +116,15 @@ add_test(NAME flash.pr76_three_phase.reference_candidate
          COMMAND mpmc_pr76_three_phase_reference_test)
 set_tests_properties(flash.pr76_three_phase.reference_candidate PROPERTIES
     LABELS "flash;pr76;three_phase;max3;reference_candidate" TIMEOUT 300)
+
+foreach(case IN ITEMS
+        reference_candidate
+        seeded_max3
+        interior_reweighted
+        component_permutation
+        backend_publication)
+    add_test(NAME flash.pr76_three_phase.sour_gas_${case}
+             COMMAND mpmc_pr76_sour_gas_three_phase_tests ${case})
+    set_tests_properties(flash.pr76_three_phase.sour_gas_${case} PROPERTIES
+        LABELS "flash;pr76;three_phase;max3;physical_mixture;literature_reference" TIMEOUT 300)
+endforeach()

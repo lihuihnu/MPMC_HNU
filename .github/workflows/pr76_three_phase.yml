@@ -70,3 +70,10 @@ jobs:
 
       - name: Run PR76 max3
         run: ctest --test-dir build/pr76-three-phase -C ${{ matrix.config }} -R '^flash[.]pr76_three_phase[.]' --verbose --no-tests=error
+
+      - name: Independently verify PR76 sour-gas three-phase reference
+        run: python tests/flash/pr76_three_phase/reference_sour_gas_decimal.py --precision 80
+
+      - name: Cross-check PR76 sour-gas reference precision
+        if: matrix.sanitizer == 'ON'
+        run: python tests/flash/pr76_three_phase/reference_sour_gas_decimal.py --precision 96
