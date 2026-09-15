@@ -1,4 +1,4 @@
-import { fromJson } from '@bufbuild/protobuf';
+import { create, fromJson } from '@bufbuild/protobuf';
 import { Code } from '@connectrpc/connect';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ExpertModelOwner, ExpertOwnedModel } from '../api/expertModelOwner';
 import { ModelClientError } from '../api/modelSessionClient';
 import { MODEL_VALIDATION_DETAIL_VERSION } from '../api/modelValidationDetail';
-import { ModelSnapshotSchema } from '../gen/mpmc/model_configuration/v1/model_service_pb';
+import { FullPtResultSchema, ModelSnapshotSchema } from '../gen/mpmc/model_configuration/v1/model_service_pb';
 import { expertSnapshotJson } from '../test/modelInspectorFixtures';
 import {
   ExpertPr76WorkspaceView,
@@ -24,6 +24,7 @@ function owned(
     snapshot,
     source: { describe: async () => ({ snapshot }) },
     get released() { return released; },
+    solve: async () => create(FullPtResultSchema),
     async release() {
       if (released) return;
       released = true;
@@ -39,6 +40,7 @@ function owner(): ExpertModelOwner {
 function render(
   current: ExpertOwnedModel | null,
   retirementFailure: ReturnType<typeof expertWorkspaceFailure> | null = null,
+  unapplied = false,
 ) {
   return renderToStaticMarkup(
     <ExpertPr76WorkspaceView
@@ -47,6 +49,7 @@ function render(
       generation={current ? 1 : 0}
       retirementFailure={retirementFailure}
       onCreated={() => {}}
+      unapplied={unapplied}
     />,
   );
 }
@@ -59,6 +62,8 @@ describe('PR76 Expert workspace ownership and presentation', () => {
     expect(html).toContain('No Expert model created yet');
     expect(html).toContain('No unordered component pair exists yet');
     expect(html).not.toContain('Read-only PR76 fixture');
+    expect(html).not.toContain('data-expert-pt-solve');
+    expect(html).toContain('no account or login required');
   });
 
   it('derives the next immutable revision from the current owned snapshot and exposes live describe loading', () => {
@@ -68,6 +73,17 @@ describe('PR76 Expert workspace ownership and presentation', () => {
     expect(html).toContain('kij methane ↔ ethane');
     expect(html).toContain('Reading live model snapshot');
     expect(html).not.toContain('No Expert model created yet');
+    expect(html).toContain('Compute PR76 flash');
+    expect(html).toContain('Expert feed methane');
+    expect(html).toContain('Expert feed ethane');
+  });
+
+  it('blocks the applied solve while edits are not applied and does not expose native handles', () => {
+    const html = render(owned(), null, true);
+    expect(html).toContain('Parameters have changed');
+    expect(html).toContain('type="submit" disabled=""');
+    expect(html).not.toContain('modelHandle');
+    expect(html).not.toContain('data-expert-result');
   });
 
   it('retires the previous model only after a distinct next model exists', async () => {

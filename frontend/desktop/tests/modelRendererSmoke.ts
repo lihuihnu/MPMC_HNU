@@ -1,6 +1,8 @@
 // Browser-only test entry: executed inside the same sandboxed renderer as production.
 import { clone, fromJson, toJson, type JsonObject } from '@bufbuild/protobuf';
 import { bindExpertModelSource } from '../../src/api/expertModelSource';
+import { bindExpertModelOwner } from '../../src/api/expertModelOwner';
+import { buildExpertPtRequest, emptyExpertPtInput } from '../../src/api/expertPtSolve';
 import { rendererModelClient, RendererModelError, type RendererModelReference } from '../../src/api/rendererModelClient';
 import { CreateModelRequestSchema, FullPtResultSchema, ModelSnapshotSchema, SolveModelRequestSchema, PtSolverSettingsSchema, SolverSettingsKind, type PtSolverSettings, type CreateModelRequest, type SolveModelRequest } from '../../src/gen/mpmc/model_configuration/v1/model_service_pb';
 import { MODEL_DESKTOP_V2_CONVENTION } from '../../src/api/modelDesktopContract';
@@ -50,13 +52,34 @@ async function inspectLiveExpertSource() {
 export async function initialize(createInput: JsonObject, solveInput: JsonObject) {
   if (!client || window.mpmcModelDesktopV2?.convention !== MODEL_DESKTOP_V2_CONVENTION) throw new Error('Model v2 preload unavailable in renderer.');
   definition = fromJson(CreateModelRequestSchema, createInput); state = fromJson(SolveModelRequestSchema, solveInput);
+
+  // Exercise the account-free workbench first, using attributed native fixture
+  // data rather than hand-written numerical expectations. Release this probe
+  // before creating the long-lived current model: the main-process lifecycle
+  // observer tracks the last created handle and must keep observing a live one.
+  const owned = await bindExpertModelOwner(client).create(definition);
+  let expertResult;
+  try {
+    const fields = emptyExpertPtInput(owned.snapshot);
+    const request = buildExpertPtRequest(owned.snapshot, {
+      pressurePa: String(state.pressurePa), temperatureK: String(state.temperatureK),
+      feed: fields.feed.map((entry, index) => ({ ...entry, fraction: String(state.feed[index]) })),
+    });
+    expertResult = await owned.solve({ ...request, ...(state.hints === undefined ? {} : { hints: state.hints }) });
+  } finally { await owned.release(); }
+
   const made = await client.create(definition); current = made.model;
   settings = clone(PtSolverSettingsSchema, made.snapshot.settings!);
   const described = await client.describe(current);
   const expertSource = await inspectLiveExpertSource();
   const solved = await client.solve(current, state);
+  if (JSON.stringify(toJson(FullPtResultSchema, expertResult)) !== JSON.stringify(toJson(FullPtResultSchema, solved.result))) {
+    throw new Error('Expert custom-model result differs from the native typed solve.');
+  }
+  // modelIpcSmoke independently compares this returned result with its direct
+  // native-host baseline, preserving every field (not just accepted phases).
   return { snapshot: toJson(ModelSnapshotSchema, made.snapshot), described: toJson(ModelSnapshotSchema, described),
-    expertSource, outcome: solved.outcome, result: toJson(FullPtResultSchema, solved.result) };
+    expertSource, outcome: solved.outcome, result: toJson(FullPtResultSchema, expertResult) };
 }
 export async function solve() {
   if (!client || !current) throw new Error('Renderer model missing.');

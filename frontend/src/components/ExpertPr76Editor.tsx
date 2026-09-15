@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type SetStateAction,
 } from 'react';
 import { Code } from '@connectrpc/connect';
 
@@ -60,10 +61,22 @@ export function createPr76ExpertModel(
   return owner.create(buildPr76CreateInput(draft), options);
 }
 
+/** A late create belongs to neither an unmounted editor nor a replacement view. */
+export async function handoffExpertModel(
+  model: ExpertOwnedModel,
+  isCurrent: () => boolean,
+  accept: (model: ExpertOwnedModel) => void,
+): Promise<boolean> {
+  if (isCurrent()) { accept(model); return true; }
+  try { await model.release(); } catch { /* Existing typed session owns ambiguous cleanup. */ }
+  return false;
+}
+
 export interface ExpertPr76EditorProps {
   owner: ExpertModelOwner;
   seedSnapshot?: ModelSnapshot;
   onCreated(model: ExpertOwnedModel): void;
+  onDraftChanged?(): void;
 }
 
 const settingsGroups: ReadonlyArray<[Pr76SettingsGroup, string]> = [
@@ -149,17 +162,30 @@ function SettingsEditor({
  * a new immutable model through ExpertModelOwner. Raw model handles never enter
  * component state or the DOM.
  */
-export function ExpertPr76Editor({ owner, seedSnapshot, onCreated }: ExpertPr76EditorProps) {
-  const [draft, setDraft] = useState(() => initialDraft(seedSnapshot));
+export function ExpertPr76Editor({ owner, seedSnapshot, onCreated, onDraftChanged }: ExpertPr76EditorProps) {
+  const [draft, setDraftValue] = useState(() => initialDraft(seedSnapshot));
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<ExpertPr76CreateFailure | null>(null);
   const alive = useRef(true);
+  const draftRef = useRef(draft);
+  const creating = useRef(false);
 
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
+
+  // Resolve event-derived edits synchronously, not in a deferred React updater:
+  // currentTarget only belongs to the active event, and onBlur must catch domain
+  // validation before React renders. The ref also composes same-turn edits.
+  function setDraft(update: SetStateAction<Pr76ExpertDraft>) {
+    if (creating.current) return;
+    const next = typeof update === 'function' ? update(draftRef.current) : update;
+    draftRef.current = next;
+    setDraftValue(next);
+    onDraftChanged?.();
+  }
 
   const issues = useMemo(() => validatePr76ExpertDraft(draft), [draft]);
   const componentsByKey = useMemo(
@@ -185,31 +211,34 @@ export function ExpertPr76Editor({ owner, seedSnapshot, onCreated }: ExpertPr76E
     event.preventDefault();
     setSubmitted(true);
     setFailure(null);
-    if (busy || issues.length > 0) return;
+    if (creating.current || validatePr76ExpertDraft(draftRef.current).length > 0) return;
+    creating.current = true;
+    onDraftChanged?.();
     setBusy(true);
     try {
-      const made = await createPr76ExpertModel(owner, draft);
+      const made = await createPr76ExpertModel(owner, draftRef.current);
+      if (!await handoffExpertModel(made, () => alive.current, onCreated)) return;
+      // The workspace may remount this editor for the applied model revision.
       if (!alive.current) return;
-      let nextDraft: Pr76ExpertDraft | undefined;
       try {
-        nextDraft = pr76ExpertDraftFromSnapshot(made.snapshot);
+        const nextDraft = pr76ExpertDraftFromSnapshot(made.snapshot);
+        draftRef.current = nextDraft;
+        setDraftValue(nextDraft);
+        setSubmitted(false);
       } catch {
         setFailure({ reason: 'expert.created_snapshot_invalid' });
-      }
-      onCreated(made);
-      if (nextDraft) {
-        setDraft(nextDraft);
-        setSubmitted(false);
       }
     } catch (cause) {
       if (alive.current) setFailure(expertPr76CreateFailure(cause));
     } finally {
+      creating.current = false;
       if (alive.current) setBusy(false);
     }
   }
 
   return (
-    <form className="flash-form expert-pr76-editor" onSubmit={(event) => void submit(event)} noValidate>
+    <form className="flash-form expert-pr76-editor" onSubmit={(event) => void submit(event)} onInput={() => onDraftChanged?.()} noValidate>
+      <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="section-heading">
         <div>
           <p className="eyebrow">PR76 Expert model</p>
@@ -436,6 +465,7 @@ export function ExpertPr76Editor({ owner, seedSnapshot, onCreated }: ExpertPr76E
           {busy ? 'Creating…' : 'Create immutable model'}
         </button>
       </div>
+      </fieldset>
     </form>
   );
 }

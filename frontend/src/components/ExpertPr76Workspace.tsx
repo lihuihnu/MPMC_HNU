@@ -7,6 +7,7 @@ import { RendererModelError } from '../api/rendererModelClient';
 import type { ModelValidationDetail } from '../api/modelValidationDetail';
 import { ExpertModelSurface } from './ExpertModelSurface';
 import { ExpertPr76Editor } from './ExpertPr76Editor';
+import { ExpertPtSolvePanel } from './ExpertPtSolvePanel';
 
 export interface ExpertWorkspaceFailure {
   readonly reason: string;
@@ -26,9 +27,9 @@ export function expertWorkspaceFailure(cause: unknown): ExpertWorkspaceFailure {
 }
 
 /**
- * A successful create becomes current before the previous model is retired.
- * This preserves the old model when create itself fails, while still bounding
- * steady-state ownership to one model per workspace. No release is retried.
+ * Replace the applied snapshot only after create succeeds. A failed mutation
+ * may invalidate the typed client's lease; keeping an old snapshot does not
+ * promise that its reference remains usable. No release is retried.
  */
 export async function retirePreviousExpertModel(
   previous: ExpertOwnedModel | null,
@@ -71,6 +72,8 @@ export interface ExpertPr76WorkspaceViewProps {
   generation: number;
   retirementFailure: ExpertWorkspaceFailure | null;
   onCreated(model: ExpertOwnedModel): void;
+  unapplied?: boolean;
+  onDraftChanged?(): void;
 }
 
 export function ExpertPr76WorkspaceView({
@@ -79,6 +82,8 @@ export function ExpertPr76WorkspaceView({
   generation,
   retirementFailure,
   onCreated,
+  unapplied = false,
+  onDraftChanged,
 }: ExpertPr76WorkspaceViewProps) {
   return (
     <div className="app-shell expert-pr76-workspace" data-expert-workspace="pr76">
@@ -87,13 +92,13 @@ export function ExpertPr76WorkspaceView({
           <p className="brand-mark">MPMC_HNU · Expert</p>
           <h1>PR76 model workspace</h1>
           <p>
-            Create immutable parameter/settings revisions on the authenticated model
-            service, then inspect the live server-owned snapshot through describe().
+            Edit component parameters and kij, apply the model, then enter P, T and z
+            for C++ phase-stability analysis and flash calculations up to three phases.
           </p>
         </div>
         <div className="backend-state" data-configured="true">
           <span className="backend-dot" />
-          Opaque session-owned model references
+          Local computation · no account or login required
         </div>
       </header>
 
@@ -118,6 +123,7 @@ export function ExpertPr76WorkspaceView({
             key={generation}
             owner={owner}
             {...(current === null ? {} : { seedSnapshot: current.snapshot })}
+            {...(onDraftChanged === undefined ? {} : { onDraftChanged })}
             onCreated={onCreated}
           />
         </section>
@@ -127,20 +133,24 @@ export function ExpertPr76WorkspaceView({
               <p className="eyebrow">Live model</p>
               <h2>No Expert model created yet</h2>
               <p>
-                Complete the explicit PR76 draft on the left. A successful create will
-                return a session-local opaque reference and this panel will read the
-                authoritative snapshot through the existing typed describe path.
+                Complete and apply the explicit PR76 draft on the left. The calculation
+                panel will use that model, not a preconfigured example fluid.
               </p>
             </section>
           ) : (
-            <ExpertModelSurface source={current.source} />
+            <>
+              <ExpertPtSolvePanel key={generation} model={current} blocked={unapplied || retirementFailure !== null} />
+              <details className="contract-details"><summary>Applied model parameters and provenance</summary>
+                <ExpertModelSurface source={current.source} />
+              </details>
+            </>
           )}
         </section>
       </main>
 
       <footer className="app-footer">
-        <span>Expert mutations create immutable models; existing handles are never edited in place</span>
-        <span>No browser-side EOS, parameter fallback, implicit kij, retry or reconnect</span>
+        <span>Parameters are editable data; EOS and flash algorithms remain in C++</span>
+        <span>No implicit kij, feed normalization, model fallback or account setup</span>
       </footer>
     </div>
   );
@@ -154,6 +164,7 @@ export interface ExpertPr76WorkspaceProps {
 export function ExpertPr76Workspace({ owner }: ExpertPr76WorkspaceProps) {
   const [current, setCurrent] = useState<ExpertOwnedModel | null>(null);
   const [generation, setGeneration] = useState(0);
+  const [unapplied, setUnapplied] = useState(false);
   const [retirementFailure, setRetirementFailure] = useState<ExpertWorkspaceFailure | null>(null);
   const currentRef = useRef<ExpertOwnedModel | null>(null);
   const alive = useRef(true);
@@ -177,6 +188,7 @@ export function ExpertPr76Workspace({ owner }: ExpertPr76WorkspaceProps) {
     currentRef.current = next;
     setCurrent(next);
     setGeneration((value) => value + 1);
+    setUnapplied(false);
     setRetirementFailure(null);
 
     void retirePreviousExpertModel(previous, next).then((failure) => {
@@ -191,6 +203,8 @@ export function ExpertPr76Workspace({ owner }: ExpertPr76WorkspaceProps) {
       generation={generation}
       retirementFailure={retirementFailure}
       onCreated={handleCreated}
+      unapplied={unapplied}
+      onDraftChanged={() => setUnapplied(true)}
     />
   );
 }

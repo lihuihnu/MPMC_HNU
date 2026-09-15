@@ -9,6 +9,7 @@ import { MODEL_VALIDATION_DETAIL_VERSION } from '../api/modelValidationDetail';
 import { pr76ExpertDraftFromSnapshot, setPr76SolverMode } from '../api/pr76ExpertDraft';
 import {
   CreateModelRequestSchema,
+  FullPtResultSchema,
   ModelSnapshotSchema,
 } from '../gen/mpmc/model_configuration/v1/model_service_pb';
 import { expertSnapshotJson } from '../test/modelInspectorFixtures';
@@ -16,6 +17,7 @@ import {
   ExpertPr76Editor,
   createPr76ExpertModel,
   expertPr76CreateFailure,
+  handoffExpertModel,
 } from './ExpertPr76Editor';
 
 function userIdentity<T extends ReturnType<typeof pr76ExpertDraftFromSnapshot>>(draft: T): T {
@@ -40,6 +42,7 @@ function fakeOwned(snapshot = fromJson(ModelSnapshotSchema, expertSnapshotJson()
     snapshot,
     source: { describe: async () => ({ snapshot }) },
     released: false,
+    solve: async () => create(FullPtResultSchema),
     release: async () => {},
   };
 }
@@ -112,5 +115,26 @@ describe('PR76 Expert editor presentation and create boundary', () => {
     const unknown = expertPr76CreateFailure(new Error('private-host-token'));
     expect(unknown).toEqual({ reason: 'expert.create_failed' });
     expect(JSON.stringify(unknown)).not.toContain('private-host-token');
+  });
+
+  it('releases a create that completes after unmount instead of leaking its ownership', async () => {
+    const release = vi.fn(async () => {});
+    const accept = vi.fn();
+    const made = { ...fakeOwned(), release };
+    expect(await handoffExpertModel(made, () => false, accept)).toBe(false);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(accept).not.toHaveBeenCalled();
+    const cleanupFailure = { ...fakeOwned(), release: vi.fn(async () => { throw new Error('private'); }) };
+    expect(await handoffExpertModel(cleanupFailure, () => false, accept)).toBe(false);
+    expect(cleanupFailure.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a live create to the workspace without releasing the new model', async () => {
+    const release = vi.fn(async () => {});
+    const accept = vi.fn();
+    const made = { ...fakeOwned(), release };
+    expect(await handoffExpertModel(made, () => true, accept)).toBe(true);
+    expect(accept).toHaveBeenCalledWith(made);
+    expect(release).not.toHaveBeenCalled();
   });
 });
