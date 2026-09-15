@@ -22,18 +22,25 @@ add_executable(mpmc_pr76_literature_reference_test
 target_link_libraries(mpmc_pr76_literature_reference_test PRIVATE mpmc::flash)
 set_target_properties(mpmc_pr76_literature_reference_test PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_pr76_sour_gas_boundary_probe
+    pr76_sour_gas_boundary_probe.cpp)
+target_link_libraries(mpmc_pr76_sour_gas_boundary_probe PRIVATE mpmc::flash)
+set_target_properties(mpmc_pr76_sour_gas_boundary_probe PROPERTIES CXX_EXTENSIONS OFF)
+
 if(MSVC)
     foreach(target IN ITEMS
             mpmc_pr76_pt_continuation_tests
             mpmc_pr76_pt_continuation_headers
-            mpmc_pr76_literature_reference_test)
+            mpmc_pr76_literature_reference_test
+            mpmc_pr76_sour_gas_boundary_probe)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
     endforeach()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     foreach(target IN ITEMS
             mpmc_pr76_pt_continuation_tests
             mpmc_pr76_pt_continuation_headers
-            mpmc_pr76_literature_reference_test)
+            mpmc_pr76_literature_reference_test
+            mpmc_pr76_sour_gas_boundary_probe)
         target_compile_options(${target} PRIVATE
             -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
     endforeach()
@@ -47,7 +54,8 @@ if(MPMC_PR76_PT_CONTINUATION_ENABLE_SANITIZERS)
     foreach(target IN ITEMS
             mpmc_pr76_pt_continuation_tests
             mpmc_pr76_pt_continuation_headers
-            mpmc_pr76_literature_reference_test)
+            mpmc_pr76_literature_reference_test
+            mpmc_pr76_sour_gas_boundary_probe)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -67,6 +75,11 @@ foreach(case IN ITEMS
     set_tests_properties(flash.pr76_pt_continuation.${case} PROPERTIES
         LABELS "flash;pr76;continuation;max3" TIMEOUT 300)
 endforeach()
+
+add_test(NAME flash.pr76_pt_continuation.sour_gas_boundary_probe
+         COMMAND mpmc_pr76_sour_gas_boundary_probe)
+set_tests_properties(flash.pr76_pt_continuation.sour_gas_boundary_probe PROPERTIES
+    LABELS "flash;pr76;continuation;probe" TIMEOUT 300)
 
 add_test(NAME flash.pr76_pt_continuation.literature_reference
          COMMAND mpmc_pr76_literature_reference_test)
