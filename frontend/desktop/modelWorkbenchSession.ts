@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { Code } from '@connectrpc/connect';
-import type { JsonObject, JsonValue } from '@bufbuild/protobuf';
+import type { JsonValue } from '@bufbuild/protobuf';
 
 import type { ModelSessionClient } from '../src/api/modelSessionClient';
 import {
