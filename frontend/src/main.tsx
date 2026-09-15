@@ -29,8 +29,8 @@ function renderPtOnly(expertShellUnavailable = false) {
       {expertShellUnavailable ? (
         <div className="app-shell" data-desktop-product-shell="failed" role="alert">
           <div className="connection-banner connection-banner-error">
-            <strong>Expert desktop shell unavailable.</strong>
-            <span>PT Flash remains available; no model session was opened.</span>
+            <strong>Local model workbench unavailable.</strong>
+            <span>PT Flash remains available; no editable model was applied.</span>
           </div>
         </div>
       ) : null}
@@ -40,31 +40,29 @@ function renderPtOnly(expertShellUnavailable = false) {
 }
 
 async function renderProduct() {
-  // The model bridge is an Electron preload capability. Ordinary Web/Android do
-  // not import or initialize the Expert model runtime until Web identity/session
-  // integration is separately reviewed.
-  const modelBridge = window.mpmcModelDesktopV2 ?? window.mpmcModelDesktop;
+  // The editable-model bridge is a narrow Electron preload capability. Ordinary
+  // Web/Android builds do not receive native model ownership or process transport.
+  const modelBridge = window.mpmcModelWorkbench;
   if (!modelBridge) {
     renderPtOnly();
     return;
   }
 
   try {
-    const [{ rendererModelClient }, { DesktopProductShell }] = await Promise.all([
-      import('./api/rendererModelClient'),
+    const [{ modelWorkbenchOwner }, { DesktopProductShell }] = await Promise.all([
+      import('./api/modelWorkbenchOwner'),
       import('./components/DesktopProductShell'),
     ]);
-    const modelClient = rendererModelClient(modelBridge);
-    if (!modelClient) throw new Error('model bridge unavailable');
+    const expertOwner = modelWorkbenchOwner(modelBridge);
+    if (!expertOwner) throw new Error('model workbench unavailable');
     root.render(
       <StrictMode>
-        <DesktopProductShell flashClient={flashClient} modelClient={modelClient} />
+        <DesktopProductShell flashClient={flashClient} expertOwner={expertOwner} />
       </StrictMode>,
     );
   } catch {
     // Never expose dynamic-loader or preload exception text. The PT path remains
-    // usable, while desktop product smoke requires the shell marker and will fail
-    // packaging if this fallback is reached.
+    // usable, while desktop product smoke can detect this explicit fallback.
     renderPtOnly(true);
   }
 }

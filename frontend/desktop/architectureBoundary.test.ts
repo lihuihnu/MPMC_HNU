@@ -3,11 +3,44 @@ import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 
 import { describe, expect, it, vi } from 'vitest';
-import { MODEL_DESKTOP_CONVENTION, MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CANCEL_CHANNEL, MODEL_DESKTOP_V2_CONVENTION, MODEL_DESKTOP_V2_CHANNEL, MODEL_DESKTOP_V2_CANCEL_CHANNEL, type ModelDesktopBridge } from '../src/api/modelDesktopContract';
+import {
+  MODEL_DESKTOP_CONVENTION,
+  MODEL_DESKTOP_CHANNEL,
+  MODEL_DESKTOP_CANCEL_CHANNEL,
+  MODEL_DESKTOP_V2_CONVENTION,
+  MODEL_DESKTOP_V2_CHANNEL,
+  MODEL_DESKTOP_V2_CANCEL_CHANNEL,
+  type ModelDesktopBridge,
+} from '../src/api/modelDesktopContract';
+import {
+  MODEL_WORKBENCH_CANCEL_CHANNEL,
+  MODEL_WORKBENCH_CHANNEL,
+  MODEL_WORKBENCH_CONVENTION,
+  type ModelWorkbenchBridge,
+} from '../src/api/modelWorkbenchContract';
 import type { PtDesktopBridge } from '../src/api/desktopBridgeContract';
 
 function source(relativePath: string): string {
   return readFileSync(resolve(process.cwd(), relativePath), 'utf8');
+}
+
+function evaluatePreload(relativePath: string) {
+  const preload = source(relativePath);
+  const exposed: Record<string, unknown> = {};
+  const invoke = vi.fn(async () => null);
+  const send = vi.fn();
+  runInNewContext(preload, {
+    require(name: string) {
+      expect(name).toBe('electron');
+      return {
+        contextBridge: {
+          exposeInMainWorld(key: string, value: unknown) { exposed[key] = value; },
+        },
+        ipcRenderer: { invoke, send },
+      };
+    },
+  });
+  return { preload, exposed, invoke, send };
 }
 
 describe('PT desktop architecture boundary', () => {
@@ -20,6 +53,8 @@ describe('PT desktop architecture boundary', () => {
       'desktop/desktopIpcPolicy.ts',
       'desktop/ptGateway.ts',
       'desktop/preload.cjs',
+      'desktop/modelWorkbenchIpc.ts',
+      'desktop/modelWorkbenchSession.ts',
     ];
     for (const file of files) {
       const text = source(file).toLowerCase();
@@ -34,7 +69,7 @@ describe('PT desktop architecture boundary', () => {
     expect(gateway).toContain('mapSolveResponse(wire, expected, request)');
   });
 
-  it('locks the renderer behind a narrow versioned preload bridge', () => {
+  it('exposes only PT plus the handle-free editable-model workbench in product', () => {
     const window = source('desktop/window.ts');
     expect(window).toContain('contextIsolation: true');
     expect(window).toContain('nodeIntegration: false');
@@ -44,64 +79,92 @@ describe('PT desktop architecture boundary', () => {
     expect(window).toContain("on('will-navigate'");
     expect(window).toContain("on('will-attach-webview'");
 
-    const preload = source('desktop/preload.cjs');
-    expect(preload).toContain("convention: 'MPMC/PT/desktop-bridge/v1'");
-    expect([...preload.matchAll(/ipcRenderer\.(?:invoke|send)\(\s*'([^']+)'/gu)].map(match => match[1]))
-      .toEqual(['mpmc:pt:discover:v1', 'mpmc:pt:solve:v1', 'mpmc:pt:cancel:v1',
-        MODEL_DESKTOP_CHANNEL, MODEL_DESKTOP_CANCEL_CHANNEL, MODEL_DESKTOP_V2_CHANNEL, MODEL_DESKTOP_V2_CANCEL_CHANNEL]);
-    const exposed: Record<string, unknown> = {};
-    const invoke = vi.fn(async () => null); const send = vi.fn();
-    runInNewContext(preload, { require(name: string) {
-      expect(name).toBe('electron');
-      return { contextBridge: { exposeInMainWorld(key: string, value: unknown) { exposed[key] = value; } },
-        ipcRenderer: { invoke, send } };
-    } });
-    expect(Object.keys(exposed)).toEqual(['mpmcPtDesktop', 'mpmcModelDesktop', 'mpmcModelDesktopV2']);
-    const legacy = exposed.mpmcPtDesktop as PtDesktopBridge;
-    expect(Object.keys(legacy)).toEqual(['convention', 'discoverPtCapabilities', 'solvePtFlash', 'cancel']);
-    expect(Object.isFrozen(legacy)).toBe(true);
-    const model = exposed.mpmcModelDesktop as ModelDesktopBridge;
-    expect(Object.isFrozen(model)).toBe(true);
-    expect(Object.keys(model)).toEqual(['convention', 'connect', 'reconnect', 'create', 'describe', 'solve', 'release', 'cancel']);
-    expect(model.convention).toBe(MODEL_DESKTOP_CONVENTION);
-    void model.connect('open'); void model.reconnect('again');
-    void model.create('create', { presetId: 'explicit-test' });
-    void model.describe('describe', 'local'); void model.solve('solve', 'local', { feed: [1] });
-    void model.release('release', 'local'); model.cancel('cancel');
+    const { preload, exposed, invoke, send } = evaluatePreload('desktop/preload.cjs');
+    expect(Object.keys(exposed)).toEqual(['mpmcPtDesktop', 'mpmcModelWorkbench']);
+    expect(preload).not.toContain('mpmcModelDesktop');
+    expect(preload).not.toContain('modelHandle');
+    expect(preload).not.toContain('reconnect:');
+
+    const pt = exposed.mpmcPtDesktop as PtDesktopBridge;
+    expect(Object.keys(pt)).toEqual(['convention', 'discoverPtCapabilities', 'solvePtFlash', 'cancel']);
+    expect(Object.isFrozen(pt)).toBe(true);
+
+    const workbench = exposed.mpmcModelWorkbench as ModelWorkbenchBridge;
+    expect(Object.isFrozen(workbench)).toBe(true);
+    expect(Object.keys(workbench)).toEqual(['convention', 'apply', 'solve', 'release', 'cancel']);
+    expect(workbench.convention).toBe(MODEL_WORKBENCH_CONVENTION);
+    void workbench.apply('apply', { definition: {} });
+    void workbench.solve('solve', { pressurePa: 1, temperatureK: 1, feed: [1] });
+    void workbench.release('release');
+    workbench.cancel('cancel');
     expect(invoke.mock.calls).toEqual([
-      [MODEL_DESKTOP_CHANNEL, { version: MODEL_DESKTOP_CONVENTION, operation: 'connect', requestId: 'open' }],
-      [MODEL_DESKTOP_CHANNEL, { version: MODEL_DESKTOP_CONVENTION, operation: 'reconnect', requestId: 'again' }],
-      [MODEL_DESKTOP_CHANNEL, { version: MODEL_DESKTOP_CONVENTION, operation: 'create', requestId: 'create', input: { presetId: 'explicit-test' } }],
-      [MODEL_DESKTOP_CHANNEL, { version: MODEL_DESKTOP_CONVENTION, operation: 'describe', requestId: 'describe', model: 'local' }],
-      [MODEL_DESKTOP_CHANNEL, { version: MODEL_DESKTOP_CONVENTION, operation: 'solve', requestId: 'solve', model: 'local', input: { feed: [1] } }],
-      [MODEL_DESKTOP_CHANNEL, { version: MODEL_DESKTOP_CONVENTION, operation: 'release', requestId: 'release', model: 'local' }],
+      [MODEL_WORKBENCH_CHANNEL, {
+        version: MODEL_WORKBENCH_CONVENTION,
+        requestId: 'apply', operation: 'apply', input: { definition: {} },
+      }],
+      [MODEL_WORKBENCH_CHANNEL, {
+        version: MODEL_WORKBENCH_CONVENTION,
+        requestId: 'solve', operation: 'solve',
+        input: { pressurePa: 1, temperatureK: 1, feed: [1] },
+      }],
+      [MODEL_WORKBENCH_CHANNEL, {
+        version: MODEL_WORKBENCH_CONVENTION,
+        requestId: 'release', operation: 'release',
+      }],
     ]);
-    expect(send.mock.calls).toEqual([[MODEL_DESKTOP_CANCEL_CHANNEL, 'cancel']]);
-    invoke.mockClear(); send.mockClear();
-    const v2 = exposed.mpmcModelDesktopV2 as ModelDesktopBridge;
-    expect(Object.isFrozen(v2)).toBe(true); expect(Object.keys(v2)).toEqual(Object.keys(model));
-    expect(v2.convention).toBe(MODEL_DESKTOP_V2_CONVENTION);
-    void v2.connect('open'); void v2.reconnect('again'); void v2.create('c', { presetId: 'explicit-test' });
-    void v2.describe('d', 'local'); void v2.solve('s', 'local', { feed: [1] }); void v2.release('r', 'local'); v2.cancel('x');
-    expect(invoke.mock.calls).toEqual([
-      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'connect', requestId: 'open' }],
-      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'reconnect', requestId: 'again' }],
-      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'create', requestId: 'c', input: { presetId: 'explicit-test' } }],
-      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'describe', requestId: 'd', model: 'local' }],
-      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'solve', requestId: 's', model: 'local', input: { feed: [1] } }],
-      [MODEL_DESKTOP_V2_CHANNEL, { version: MODEL_DESKTOP_V2_CONVENTION, operation: 'release', requestId: 'r', model: 'local' }],
-    ]);
-    expect(send.mock.calls).toEqual([[MODEL_DESKTOP_V2_CANCEL_CHANNEL, 'x']]);
+    expect(send.mock.calls).toEqual([[MODEL_WORKBENCH_CANCEL_CHANNEL, 'cancel']]);
     expect(preload).not.toContain('sendSync');
   });
 
-  it('starts only an authenticated ephemeral loopback child session', () => {
+  it('keeps low-level model references in a dedicated test preload only', () => {
+    const product = evaluatePreload('desktop/preload.cjs').exposed;
+    expect(product).not.toHaveProperty('mpmcModelDesktop');
+    expect(product).not.toHaveProperty('mpmcModelDesktopV2');
+
+    const { exposed, invoke, send } = evaluatePreload('desktop/modelDebugPreload.cjs');
+    expect(Object.keys(exposed)).toEqual(['mpmcModelDesktop', 'mpmcModelDesktopV2']);
+    const legacy = exposed.mpmcModelDesktop as ModelDesktopBridge;
+    const v2 = exposed.mpmcModelDesktopV2 as ModelDesktopBridge;
+    expect(Object.keys(legacy)).toEqual([
+      'convention', 'connect', 'reconnect', 'create', 'describe', 'solve', 'release', 'cancel',
+    ]);
+    expect(Object.isFrozen(legacy)).toBe(true);
+    expect(legacy.convention).toBe(MODEL_DESKTOP_CONVENTION);
+    expect(v2.convention).toBe(MODEL_DESKTOP_V2_CONVENTION);
+
+    void legacy.create('c1', { presetId: 'test' });
+    void legacy.solve('s1', 'local-token', { feed: [1] });
+    legacy.cancel('x1');
+    void v2.create('c2', { presetId: 'test' });
+    void v2.solve('s2', 'local-token', { feed: [1] });
+    v2.cancel('x2');
+    expect(invoke.mock.calls).toEqual([
+      [MODEL_DESKTOP_CHANNEL, {
+        version: MODEL_DESKTOP_CONVENTION, requestId: 'c1', operation: 'create', input: { presetId: 'test' },
+      }],
+      [MODEL_DESKTOP_CHANNEL, {
+        version: MODEL_DESKTOP_CONVENTION, requestId: 's1', operation: 'solve', model: 'local-token', input: { feed: [1] },
+      }],
+      [MODEL_DESKTOP_V2_CHANNEL, {
+        version: MODEL_DESKTOP_V2_CONVENTION, requestId: 'c2', operation: 'create', input: { presetId: 'test' },
+      }],
+      [MODEL_DESKTOP_V2_CHANNEL, {
+        version: MODEL_DESKTOP_V2_CONVENTION, requestId: 's2', operation: 'solve', model: 'local-token', input: { feed: [1] },
+      }],
+    ]);
+    expect(send.mock.calls).toEqual([
+      [MODEL_DESKTOP_CANCEL_CHANNEL, 'x1'],
+      [MODEL_DESKTOP_V2_CANCEL_CHANNEL, 'x2'],
+    ]);
+  });
+
+  it('starts only an ephemeral loopback child session with a private transport token', () => {
     const session = source('desktop/hostSession.ts');
     expect(session).toContain("randomBytes(32).toString('base64url')");
     expect(session).toContain("['--desktop-session-token-stdin']");
-    expect(session).toContain("shell: false");
+    expect(session).toContain('shell: false');
     expect(session).toContain("child.stdin.write(`${token}\\n`)");
-    expect(session).not.toContain("bearerToken: process.env");
+    expect(session).not.toContain('bearerToken: process.env');
   });
 
   it('keeps installed smoke generic and unreachable from the renderer API', () => {
