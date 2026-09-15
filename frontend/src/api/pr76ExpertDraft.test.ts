@@ -124,9 +124,8 @@ describe('PR76 Expert draft/create contract', () => {
     draft = addComponent(draft, 'c', 'C', '350', '5500000', '0.3');
     expect(draft.pairs).toHaveLength(1);
     expect(draft.pairs[0]!.kij.text).toBe('');
-    expect(() => editPr76ComponentText(draft, b.key, 'componentId', 'renamed-existing')).toThrow(
-      'Existing component identity is immutable',
-    );
+    draft = editPr76ComponentText(draft, b.key, 'componentId', 'renamed-new');
+    expect(draft.components.find(component => component.key === b.key)?.componentId).toBe('renamed-new');
   });
 
   it('preserves unchanged provenance and marks only edited values as user supplied', () => {
@@ -139,6 +138,9 @@ describe('PR76 Expert draft/create contract', () => {
     expect(materialized.definition.applicability?.provenance?.kind).toBe(SourceKind.LITERATURE);
 
     const methane = draft.components[0]!;
+    expect(() => editPr76ComponentText(draft, methane.key, 'componentId', 'renamed-existing')).toThrow(
+      'Existing component identity is immutable',
+    );
     draft = editPr76ComponentScalar(draft, methane.key, 'criticalTemperatureK', '191');
     draft = editPr76Kij(draft, draft.pairs[0]!.key, '0.02');
     materialized = pr76Request(buildPr76CreateInput(draft));
