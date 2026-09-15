@@ -448,8 +448,10 @@ std::optional<BranchState> stationary_vapor(double pressure_pa,
 std::optional<BubbleResult> solve_bubble(const ExperimentalPoint& point,
                                          const PurePair& pures,
                                          MixingMode mode) {
-    constexpr double step_pa = 25.0e3;
-    constexpr int max_steps = 360;
+    // Preserve the +/-9 MPa search envelope while resolving the narrow
+    // near-critical Inomata xCO2=0.804 branch before it terminates.
+    constexpr double step_pa = 10.0e3;
+    constexpr int max_steps = 900;
     std::optional<double> previous_pressure;
     std::optional<BranchState> previous_state;
     double left_pa = 0.0;
