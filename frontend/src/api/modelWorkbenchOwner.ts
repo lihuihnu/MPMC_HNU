@@ -9,6 +9,7 @@ import { Code } from '@connectrpc/connect';
 
 import type { ExpertModelOwner, ExpertOwnedModel } from './expertModelOwner';
 import { inspectionFromSnapshot } from './expertModelInspector';
+import type { ExpertModelSource } from './expertModelSource';
 import type { ModelCallOptions, ModelCreateInput, ModelSolveInput } from './modelSessionClient';
 import {
   MODEL_WORKBENCH_CONVENTION,
@@ -26,6 +27,7 @@ import {
 import {
   CreateModelRequestSchema,
   FullPtResultSchema,
+  ModelSnapshotSchema,
   SolveModelRequestSchema,
   type ModelSnapshot,
 } from '../gen/mpmc/model_configuration/v1/model_service_pb';
@@ -120,7 +122,7 @@ function solveJson(message: ReturnType<typeof solveMessage>): JsonObject {
 }
 
 /**
- * Renderer ownership façade for the local desktop workbench. The renderer keeps
+ * Renderer ownership facade for the local desktop workbench. The renderer keeps
  * only immutable snapshots plus a local generation number; the main process owns
  * the actual model/session lifetime and atomically retires replaced models.
  */
@@ -139,6 +141,10 @@ export class ModelWorkbenchOwner implements ExpertModelOwner {
 
   #invalidate(): void {
     ++this.#generation;
+  }
+
+  #current(generation: number): boolean {
+    return generation === this.#generation;
   }
 
   #timeout(options: ModelCallOptions): number {
@@ -218,10 +224,11 @@ export class ModelWorkbenchOwner implements ExpertModelOwner {
   }
 
   async create(input: ModelCreateInput, options: ModelCallOptions = {}): Promise<ExpertOwnedModel> {
+    const json = createJson(input);
     let snapshot: ModelSnapshot;
     try {
       snapshot = readModelSnapshot(await this.#invoke(
-        id => this.bridge.apply(id, createJson(input)), options,
+        id => this.bridge.apply(id, json), options,
       ));
     } catch (cause) {
       // Main-process workbench contract tears down ownership after any failed apply.
@@ -230,13 +237,62 @@ export class ModelWorkbenchOwner implements ExpertModelOwner {
     }
 
     const generation = ++this.#generation;
-    const snapshotCopy = clone(snapshot.$typeName ? snapshot : snapshot, snapshot);
-    // clone() is schema-driven below; the temporary expression keeps strict TS
-    // from widening the generated message when exactOptionalPropertyTypes is on.
-    const immutableSnapshot = readModelSnapshot(toJson(snapshot.$typeName ? undefined as never : undefined));
-    void snapshotCopy;
-    void immutableSnapshot;
-    throw new Error('unreachable');
+    const storedSnapshot = clone(ModelSnapshotSchema, snapshot);
+    let released = false;
+    const authority = this;
+    const stale = () => released || !authority.#current(generation);
+    const source: ExpertModelSource = Object.freeze({
+      describe(describeOptions = {}) {
+        authority.#timeout(describeOptions);
+        if (stale()) {
+          return Promise.reject(new RendererModelError(Code.NotFound, 'workbench.stale_model', 'client'));
+        }
+        return Promise.resolve(inspectionFromSnapshot(storedSnapshot));
+      },
+    });
+
+    const owned: ExpertOwnedModel = {
+      snapshot: clone(ModelSnapshotSchema, storedSnapshot),
+      source,
+      get released() {
+        return released;
+      },
+      async solve(solveInput: ModelSolveInput, solveOptions: ModelCallOptions = {}) {
+        if (stale()) {
+          throw new RendererModelError(Code.NotFound, 'workbench.stale_model', 'client');
+        }
+        const message = solveMessage(solveInput);
+        const jsonInput = solveJson(message);
+        try {
+          const value = await authority.#invoke(
+            id => authority.bridge.solve(id, jsonInput), solveOptions,
+          );
+          return clone(
+            FullPtResultSchema,
+            readModelResult(value, storedSnapshot, message).result,
+          );
+        } catch (cause) {
+          if (cause instanceof RendererModelError && ownershipErrors.has(cause.code)) {
+            released = true;
+            if (authority.#current(generation)) authority.#invalidate();
+          }
+          throw cause;
+        }
+      },
+      async release(releaseOptions: ModelCallOptions = {}) {
+        if (released) return;
+        released = true;
+        // A successful later apply already retired this model in main. Never let
+        // stale React cleanup release the replacement model.
+        if (!authority.#current(generation)) return;
+        try {
+          await authority.#invoke(id => authority.bridge.release(id), releaseOptions);
+        } finally {
+          if (authority.#current(generation)) authority.#invalidate();
+        }
+      },
+    };
+    return Object.freeze(owned);
   }
 }
 
