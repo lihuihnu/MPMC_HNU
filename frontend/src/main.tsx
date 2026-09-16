@@ -8,6 +8,7 @@ import {
 } from './api/flashClient';
 import { desktopFlashClient } from './api/desktopBridge';
 import './styles.css';
+import './prProduct.css';
 
 const rootElement = document.getElementById('root');
 if (rootElement === null) {
