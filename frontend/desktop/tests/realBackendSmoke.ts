@@ -74,28 +74,26 @@ function requireBridgeValue<T>(reply: DesktopBridgeReply<T>, operation: string):
   return reply.value;
 }
 
-async function waitForReactDiscovery(window: BrowserWindow): Promise<void> {
+async function waitForReactProduct(window: BrowserWindow): Promise<void> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const ready = await window.webContents.executeJavaScript(
       `(() => {
         const shell = document.querySelector('[data-desktop-product-shell="true"]');
-        const pt = document.querySelector('[data-product-mode="pt"]');
-        const state = document.querySelector('.backend-state');
-        return shell !== null && pt?.getAttribute('aria-pressed') === 'true' &&
-          document.querySelector('[data-expert-session]') === null &&
-          state?.getAttribute('data-configured') === 'true' &&
-          state.textContent?.includes('3 backends discovered') === true;
+        const expert = document.querySelector('[data-product-mode="expert"]');
+        const workbench = document.querySelector('[data-expert-workbench="ready"]');
+        return shell !== null && expert?.getAttribute('aria-pressed') === 'true' &&
+          workbench !== null;
       })()`,
       true,
     );
     if (ready === true) {
-      console.info('DESKTOP_PRODUCT_DEFAULT_PT_OK shell=true expert_session=false');
+      console.info('DESKTOP_PRODUCT_DEFAULT_CLASSIC_PR_OK shell=true workbench=true');
       return;
     }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   }
-  throw new Error('The embedded React renderer did not publish the default PT desktop shell and three-backend discovery.');
+  throw new Error('The embedded React renderer did not publish the default Classic PR desktop shell.');
 }
 
 async function run(): Promise<void> {
@@ -112,7 +110,7 @@ async function run(): Promise<void> {
   const removeIpc = registerPtDesktopIpc(gateway, () => window.webContents);
   try {
     await window.loadFile(resolve(process.cwd(), 'dist', 'index.html'));
-    await waitForReactDiscovery(window);
+    await waitForReactProduct(window);
     const discoveryReply = (await window.webContents.executeJavaScript(
       `globalThis.mpmcPtDesktop.discoverPtCapabilities('desktop-smoke-discovery')`,
       true,
