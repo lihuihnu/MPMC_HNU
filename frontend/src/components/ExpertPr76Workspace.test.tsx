@@ -70,7 +70,7 @@ describe('PR76 workspace ownership and product presentation', () => {
   it('derives the next immutable revision and exposes product-level flash inputs', () => {
     const html = render(owned());
     expect(html).toContain('Edit PR fluid');
-    expect(html).toContain('<summary>methane</summary>');
+    expect(html).toContain('<summary>Methane</summary>');
     expect(html).toContain('kij methane ↔ ethane');
     expect(html).toContain('Reading live model snapshot');
     expect(html).not.toContain('Create a PR fluid model');
