@@ -70,6 +70,14 @@ def _positive_days(value: Any, field: str) -> int:
     return value
 
 
+def _port(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer port")
+    if not 1 <= value <= 65535:
+        raise ValueError(f"{field} must be in [1,65535]")
+    return value
+
+
 def _loopback_listener(value: Any) -> tuple[str, int]:
     if not isinstance(value, str) or value.count(":") != 1:
         raise ValueError(
@@ -100,6 +108,7 @@ class DeploymentBundle:
     frontend_origins: tuple[str, ...]
     backend_listen_address: str
     backend_server_dns: str
+    model_authz_loopback_port: int | None
     ca_ids: tuple[str, str, str, str]
     edge_client_identity: str
     secret_generation: str
@@ -142,16 +151,22 @@ class DeploymentBundle:
                 "deployment snapshot bundle does not match the compiled host"
             )
 
-        network = _exact_keys(
-            _object(top["network"], "network"),
-            {
-                "api_dns",
-                "frontend_origins",
-                "backend_listen_address",
-                "backend_server_dns",
-            },
-            "network",
-        )
+        network = _object(top["network"], "network")
+        required_network = {
+            "api_dns",
+            "frontend_origins",
+            "backend_listen_address",
+            "backend_server_dns",
+        }
+        optional_network = {"model_authz_loopback_port"}
+        missing_network = required_network - network.keys()
+        extra_network = network.keys() - required_network - optional_network
+        if missing_network or extra_network:
+            raise ValueError(
+                "network fields mismatch; "
+                f"missing={sorted(missing_network)}, "
+                f"unexpected={sorted(extra_network)}"
+            )
         api_dns = _validate_public_dns_name(
             _text(network["api_dns"], "network.api_dns"),
             "network.api_dns",
@@ -171,6 +186,18 @@ class DeploymentBundle:
                 "network.frontend_origins requires at least one exact origin"
             )
         _, backend_port = _loopback_listener(network["backend_listen_address"])
+        model_authz_port = (
+            None
+            if "model_authz_loopback_port" not in network
+            else _port(
+                network["model_authz_loopback_port"],
+                "network.model_authz_loopback_port",
+            )
+        )
+        if model_authz_port == backend_port:
+            raise ValueError(
+                "network.model_authz_loopback_port must differ from the backend port"
+            )
         backend_dns = _validate_dns_name(
             _text(
                 network["backend_server_dns"],
@@ -261,6 +288,7 @@ class DeploymentBundle:
             frontend_origins=origins,
             backend_listen_address=f"127.0.0.1:{backend_port}",
             backend_server_dns=backend_dns,
+            model_authz_loopback_port=model_authz_port,
             ca_ids=ca_ids,
             edge_client_identity=_identifier(
                 identity["edge_client_identity"],
@@ -310,21 +338,25 @@ class DeploymentBundle:
             upstream_server_ca=(
                 f"{SECRET_MOUNT_ROOT}/edge/backend-server-ca.pem"
             ),
+            model_authz_loopback_port=self.model_authz_loopback_port,
         )
 
     def host_launch(self) -> dict[str, Any]:
+        argv = [
+            "--listen-address",
+            self.backend_listen_address,
+            "--tls-certificate-chain",
+            f"{SECRET_MOUNT_ROOT}/backend/tls.crt",
+            "--tls-private-key",
+            f"{SECRET_MOUNT_ROOT}/backend/tls.key",
+            "--trusted-edge-client-ca",
+            f"{SECRET_MOUNT_ROOT}/backend/edge-client-ca.pem",
+        ]
+        if self.model_authz_loopback_port is not None:
+            argv.append("--enable-model-sessions")
         return {
             "executable": "mpmc_pt_service_host",
-            "argv": [
-                "--listen-address",
-                self.backend_listen_address,
-                "--tls-certificate-chain",
-                f"{SECRET_MOUNT_ROOT}/backend/tls.crt",
-                "--tls-private-key",
-                f"{SECRET_MOUNT_ROOT}/backend/tls.key",
-                "--trusted-edge-client-ca",
-                f"{SECRET_MOUNT_ROOT}/backend/edge-client-ca.pem",
-            ],
+            "argv": argv,
             "snapshot_bundle": {
                 "id": SNAPSHOT_BUNDLE_ID,
                 "revision": SNAPSHOT_BUNDLE_REVISION,
@@ -337,6 +369,10 @@ class DeploymentBundle:
             "deployment_id": self.deployment_id,
             "api_dns": self.api_dns,
             "frontend_origins": list(self.frontend_origins),
+            "hosted_model": {
+                "enabled": self.model_authz_loopback_port is not None,
+                "authz_loopback_port": self.model_authz_loopback_port,
+            },
             "identity": {
                 "public_server_ca_id": self.ca_ids[0],
                 "browser_client_ca_id": self.ca_ids[1],
