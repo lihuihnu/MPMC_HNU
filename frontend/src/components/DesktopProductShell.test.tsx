@@ -31,7 +31,7 @@ describe('Electron desktop product shell', () => {
     expect(markup).toContain('aria-pressed="true">Classic PR');
     expect(markup).toContain('data-expert-workbench="ready"');
     expect(markup).toContain('Peng–Robinson flash');
-    expect(markup).toContain('Create custom PR76 model');
+    expect(markup).toContain('Define PR fluid');
     expect(markup).toContain('Create a PR fluid model');
     expect(markup).toContain('no account or login required');
     expect(markup).not.toContain('authenticated model session');
