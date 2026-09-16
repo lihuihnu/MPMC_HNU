@@ -85,18 +85,33 @@ void continuation_quota_does_not_starve_automatic() {
         1.0e6, 250.0, feed, evaluator, options, vle_starts, vle_starts);
     require(result.base.solution.status == fl::PtSplitStatus::phase_set_unstable,
             "budget fixture no longer has final two-phase instability evidence");
+    require(result.base.solution.final_stability.has_value(),
+            "budget fixture lost final two-phase TPD evidence");
 
-    bool saw_continuation = false;
-    bool saw_automatic = false;
+    std::size_t supplied_attempts = 0U;
+    std::size_t automatic_attempts = 0U;
     for (const auto& attempt : result.attempts) {
-        saw_continuation = saw_continuation || attempt.supplied_start.has_value();
-        saw_automatic = saw_automatic ||
-            (attempt.witness_trial.has_value() && !attempt.supplied_start.has_value());
+        if (attempt.supplied_start.has_value()) {
+            ++supplied_attempts;
+            require(!attempt.witness_trial.has_value(),
+                    "supplied three-phase hint was incorrectly tagged as TPD evidence");
+            continue;
+        }
+        if (attempt.witness_trial.has_value()) {
+            ++automatic_attempts;
+            const std::size_t witness = *attempt.witness_trial;
+            require(witness < result.base.solution.final_stability->trials.size(),
+                    "automatic attempt lost its originating final-TPD trial");
+            const auto& trial = result.base.solution.final_stability->trials[witness];
+            require(trial.status == fl::StabilityTrialStatus::negative_tpd &&
+                        trial.point.has_value(),
+                    "automatic attempt did not originate from retained negative TPD evidence");
+        }
     }
-    require(saw_continuation,
-            "bounded continuation hint was not attempted before its source quota closed");
-    require(saw_automatic,
-            "continuation quota exhaustion starved the automatic negative-TPD witness route");
+    require(supplied_attempts == 1U,
+            "supplied-source quota did not stop independently at one attempt");
+    require(automatic_attempts == 1U,
+            "supplied-source quota starved or altered the one-attempt automatic quota");
     require(result.attempt_limit_reached,
             "per-source quota exhaustion was not retained in diagnostics");
 }
@@ -169,12 +184,40 @@ void three_to_two_boundary_requires_fresh_neighbor() {
             "3->2 boundary was not independently fresh-resolved as a stable two-phase neighbor");
 }
 
+void start_requires_instability_evidence() {
+    const auto model = pr76_max3_test::model();
+    fl::Pr76VleEvaluator evaluator(model);
+    const auto starts = pr76_max3_test::starts();
+    const auto& phases = pr76_max3_test::reference_phases();
+    constexpr double beta1 = 0.4;
+    Vec feed(3U, 0.0);
+    for (std::size_t i = 0; i < feed.size(); ++i) {
+        feed[i] = (1.0 - beta1) * phases[0][i] + beta1 * phases[1][i];
+    }
+
+    const auto result = fl::solve_pr76_pt_max3(
+        1.0e6, 250.0, feed, evaluator,
+        options_from_starts(starts), starts, starts);
+    require(result.base.solution.status ==
+                fl::PtSplitStatus::two_phase_no_instability_found &&
+                result.base.solution.candidate() != nullptr &&
+                result.base.solution.final_stability.has_value() &&
+                result.base.solution.final_stability->status ==
+                    fl::StabilityStatus::no_instability_found,
+            "two-phase trigger fixture no longer closes as an accepted pair");
+    require(result.status == fl::Pr76PtMax3Status::two_phase &&
+                result.attempts.empty() && !result.selected_attempt.has_value() &&
+                result.three_phase_candidate() == nullptr,
+            "caller-supplied exact three-phase start manufactured 2->3 phase-count evidence");
+}
+
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"automatic_cold_start", automatic_cold_start_is_exercised},
     {"continuation_budget", continuation_quota_does_not_starve_automatic},
     {"continuation_3_to_3", accepted_three_phase_continues_three_to_three},
-    {"continuation_3_to_2", three_to_two_boundary_requires_fresh_neighbor}};
+    {"continuation_3_to_2", three_to_two_boundary_requires_fresh_neighbor},
+    {"start_requires_instability", start_requires_instability_evidence}};
 
 } // namespace
 
