@@ -1,8 +1,9 @@
 # Authenticated Web model session connector
 
 This module connects an **authoritative browser identity provider** to the existing
-`ModelSessionClient`; it does not expose model routes publicly and it does not make
-Electron credentials usable from Web code.
+`ModelSessionClient`. It does not make Electron credentials usable from Web code,
+and it does not itself authenticate or authorize a browser principal at the
+network edge.
 
 ## Identity contract
 
@@ -66,29 +67,52 @@ The runtime capability must be supplied by trusted host integration code. Do not
 put a bearer token in `VITE_*`, generated HTML, DOM attributes, browser storage or
 a static runtime-config object.
 
-## What this does not provide
+## Production trusted-edge contract
 
-The product adapter does **not** make the current native model service a Web-user
-service by itself. The existing production Envoy route intentionally exposes only
-the legacy PT service, and the native host currently authenticates its private
-bearer or mTLS edge identity. An Envoy certificate is an edge identity, not an end
-user. A production deployment must not publish the runtime ownership capability
-until the trusted edge has the required end-user identity policy and model routes.
+The product adapter is usable in production only when the deployment provides an
+authoritative trusted edge. The repository production renderer remains **PT-only
+by default**. Model-session/configuration exposure is an explicit opt-in through
+`model_authz_loopback_port` (CLI: `--model-authz-loopback-port`); without that
+value no `/model-api/` routes or external-authorization filter are emitted.
 
-That later edge increment must:
+When model routing is enabled, the rendered edge exposes only the versioned
+`ModelSessionService` and `ModelConfigurationService` prefixes required by this
+client. Those routes pass through a fail-closed external authorization service on
+a loopback-only port. The edge sends that service only the bearer/session inputs
+needed for authorization and accepts one internal
+`x-mpmc-authenticated-principal` value back for the native upstream. The legacy
+`PtFlashService` route explicitly bypasses this model authorization filter and
+keeps its existing contract.
 
-1. validate the authoritative Web access token at the trusted edge;
-2. map it to a stable end-user principal without accepting browser-supplied subject
-   headers;
-3. propagate that principal to the native host through an authenticated trusted
-   channel;
-4. expose only the versioned model-session/configuration routes required by this
-   client;
-5. preserve session-owner isolation, CORS/CSRF policy, quotas, deadlines and error
-   redaction already frozen by the model-service contract.
+The browser is **not** authoritative for that principal header. Production native
+model sessions are accepted only over the existing verified edge-client mTLS
+channel. Once that peer is authenticated, the native host accepts at most one
+bounded, character-validated `x-mpmc-authenticated-principal` value and binds the
+model session to `web:<principal>`. Duplicate or invalid values fail closed. A
+browser-supplied spoofed value therefore cannot establish session ownership; the
+trusted edge authorization result is the value that reaches the native model
+service.
 
-No desktop launch token, model session ID or model handle may substitute for that
-identity mapping.
+A production deployment that enables this path must therefore provide the
+external identity policy that:
+
+1. validates the authoritative Web bearer at the trusted edge;
+2. maps it to a stable end-user principal;
+3. returns that principal to Envoy in the internal header contract;
+4. keeps the native listener private and mutually authenticated to the dedicated
+   edge-client CA;
+5. starts `mpmc_pt_service_host` with model sessions enabled; and
+6. publishes `mpmcHostedWebModelOwnership` only from trusted hosting integration
+   after those conditions are satisfied.
+
+No desktop launch token, model session ID or model handle may substitute for this
+mapping. The repository intentionally does **not** invent a JWT issuer, JWKS URL,
+account database, role model or third-party identity provider.
+
+The versioned production bundle carries the same fail-closed behavior: omitting
+`network.model_authz_loopback_port` preserves the historical PT-only edge/host;
+providing it renders the model routes, adds `--enable-model-sessions` to the host
+argv and records the non-secret hosted-model state in deployment metadata.
 
 ## Verification boundary
 
@@ -100,3 +124,13 @@ before the first Create, no token-valued shortcut field, and cancellation of a
 still-opening session before Create dispatch. The existing `ModelSessionClient`
 suite remains the authority for session metadata, reconnect, stale-reference and
 mutation-failure behavior.
+
+The `Hosted Web model product` workflow additionally builds the production native
+host, validates the model-enabled Envoy configuration and drives a real Chrome /
+ChromeDriver product regression through a test hosting shell, trusted edge and
+native host. Its authorization sidecar recognizes only repository test tokens and
+exists solely to exercise the contract: the regression deliberately sends a
+spoofed internal-principal header, verifies a second principal cannot use the
+first principal's session, then completes shared Classic PR apply/solve/release.
+That fixture is **not** a production identity provider and carries no account or
+physical-data meaning.

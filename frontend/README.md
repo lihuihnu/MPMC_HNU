@@ -112,12 +112,24 @@ session epoch. The token is not put in DOM state, browser storage, generated HTM
 or user-facing errors. Page teardown disposes the session. There is no automatic
 Create retry, reconnect or principal change.
 
-The checked-in production edge currently exposes only `PtFlashService`; it does
-**not** yet expose model-session/configuration routes or map a Web access token to
-an authoritative native principal. Therefore production deployment must not
-publish `mpmcHostedWebModelOwnership` merely because the frontend adapter exists.
-That trusted-edge identity/routing gate remains a separate security increment.
-See [`webModelSession.md`](src/api/webModelSession.md) and the
+Production model ownership is an explicit deployment opt-in. The production edge
+renderer remains PT-only when `model_authz_loopback_port` is absent. When an
+operator provides that loopback external-authorization endpoint, the renderer
+adds only the versioned model-session/configuration prefixes under `/model-api/`.
+The edge validates the browser bearer through that authorization service, accepts
+one stable internal principal result, and forwards it to the native host over the
+existing verified edge-client mTLS channel. The native host must be started with
+model sessions enabled; it accepts the internal principal only from an
+authenticated edge peer and binds session ownership to that principal. Duplicate,
+invalid or cross-principal use fails closed.
+
+The repository does not provide a production JWT issuer, JWKS URL, account store
+or role policy. Its test authorization sidecar is only a contract fixture. A real
+deployment must supply its own authoritative external identity policy before its
+hosting code publishes `mpmcHostedWebModelOwnership`. The versioned deployment
+bundle carries the same opt-in through `network.model_authz_loopback_port`; an old
+manifest without that field remains PT-only. See
+[`webModelSession.md`](src/api/webModelSession.md) and the
 [edge deployment contract](../deploy/pt-grpc-web/README.md).
 
 Startup discovery must complete before generic PT solve is enabled. Switching the
@@ -212,6 +224,13 @@ through the native gRPC adapter and Envoy, and exercises discovery, accepted,
 indeterminate, service-error, provenance, variable-phase, and CORS behavior with
 this generated TypeScript client. It has software-contract meaning only and is
 not a physical regression.
+
+The `Hosted Web model product` workflow separately validates the production
+hosted-model path: it builds the native model-session host and shared Vite frontend,
+validates the model-enabled production Envoy configuration, then drives real
+Chrome through the trusted-edge contract. The regression requires the shared
+Classic PR UI, cross-principal session denial and release cleanup; its test authz
+service is synthetic and is not a production identity provider.
 
 Browser dependencies remain confined to the frontend/product shells and do not
 become prerequisites of `runtime`, `flash` or `thermodynamics`.
