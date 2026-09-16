@@ -64,6 +64,12 @@ def grpc_web_status(body: bytes) -> int | None:
     return None
 
 
+def grpc_response_status(header: str | None, body: bytes) -> int | None:
+    if header is not None and header.isdecimal():
+        return int(header)
+    return grpc_web_status(body)
+
+
 def webdriver_request(
     port: int,
     method: str,
@@ -360,6 +366,7 @@ class ProductServer:
                 try:
                     connection.request("POST", self.path, body=body, headers=upstream_headers)
                     response = connection.getresponse()
+                    grpc_status_header = response.getheader("grpc-status")
                     self.send_response(response.status)
                     for name, value in response.getheaders():
                         if name.lower() in {
@@ -394,7 +401,9 @@ class ProductServer:
                     self.end_headers()
                     self.wfile.write(payload)
                     if "ReleaseModel" in self.path:
-                        outer.observed.note_release(grpc_web_status(payload))
+                        outer.observed.note_release(
+                            grpc_response_status(grpc_status_header, payload)
+                        )
                 finally:
                     connection.close()
 
@@ -442,7 +451,8 @@ def post_wrong_principal(base_url: str, session_id: str) -> int | None:
         },
     )
     with urllib.request.urlopen(request, timeout=15) as response:
-        return grpc_web_status(response.read())
+        body = response.read()
+        return grpc_response_status(response.headers.get("grpc-status"), body)
 
 
 def fill_required_model(browser: Browser) -> None:
