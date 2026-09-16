@@ -63,6 +63,87 @@
   border-top: 1px solid var(--line);
 }
 
+.pr-model-name {
+  margin-bottom: 18px;
+}
+
+.pr-fluid-editor .backend-selector > input,
+.pr-fluid-editor .field-grid label > input,
+.pr-fluid-editor .field-grid label > select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  outline: 0;
+  background: #fff;
+  color: var(--ink);
+}
+
+.pr-fluid-editor .backend-selector > input:focus,
+.pr-fluid-editor .field-grid label > input:focus,
+.pr-fluid-editor .field-grid label > select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(18, 94, 98, 0.11);
+}
+
+.pr-record-details,
+.pr-solver-settings {
+  margin: 14px 0 22px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+
+.pr-record-details[open],
+.pr-solver-settings[open] {
+  padding-bottom: 16px;
+}
+
+.pr-record-details .field-grid,
+.pr-solver-settings .field-grid {
+  margin: 14px 0 0;
+}
+
+.pr-editor-section {
+  margin-top: 24px;
+}
+
+.pr-component-card {
+  margin: 10px 0 0;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.pr-component-card > summary {
+  color: #35454b;
+  font-size: 0.82rem;
+}
+
+.pr-component-card .field-grid {
+  margin: 14px 0 12px;
+}
+
+.pr-component-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.pr-component-actions .secondary-button {
+  margin-top: 0;
+}
+
+.pr-kij-row {
+  margin-top: 8px;
+}
+
+.pr-solver-settings .backend-selector {
+  margin-top: 12px;
+}
+
 .pr-result-panel {
   min-height: 0;
   margin-top: 18px;
@@ -215,6 +296,14 @@
   .desktop-product-mode .submit-actions button {
     flex: 1 1 0;
     min-width: 0;
+  }
+
+  .pr-component-actions {
+    width: 100%;
+  }
+
+  .pr-component-actions .secondary-button {
+    flex: 1 1 0;
   }
 
   .fraction-chart-row,
