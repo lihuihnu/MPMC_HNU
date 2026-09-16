@@ -363,11 +363,22 @@ void temperature_and_seeds() {
     const auto mix = th::Pr76Mixture<T>::from_parameters(fixture.select({0, 1}));
     th::Pr76MixtureWorkspace<T> work;
     const std::array<T, 1> x{T{0.5}};
-    (void)mix.evaluate_reduced(T{200}, x, work); (void)mix.evaluate_reduced(T{600}, x, work);
-    for (T t : std::array<T, 6>{T{0}, T{-1}, T{199}, T{601},
+    (void)mix.evaluate_reduced(T{200}, x, work);
+    (void)mix.evaluate_reduced(T{600}, x, work);
+    for (T t : std::array<T, 2>{T{199}, T{601}}) {
+        const auto value = mix.evaluate_reduced(t, x, work);
+        require(std::isfinite(value.a) && std::isfinite(value.b),
+                "declared temperature extrapolation must remain computationally available");
+        require(mix.parameters().applicability().assess(static_cast<double>(t), 1e6) ==
+                    th::RangeAssessment::outside_declared_bounds,
+                "temperature extrapolation lost its advisory outside status");
+    }
+    for (T t : std::array<T, 4>{T{0}, T{-1},
             std::numeric_limits<T>::quiet_NaN(), std::numeric_limits<T>::infinity()}) {
         expect_error<std::domain_error>([&] { (void)mix.evaluate_reduced(t, x, work); });
     }
+    require(mix.parameters().applicability().assess(300, 1e6) == th::RangeAssessment::unknown,
+            "missing pressure applicability must remain unknown");
     using Number = ad::Dual<T, 1>;
     th::Pr76MixtureWorkspace<Number> ad_work;
     const T inf = std::numeric_limits<T>::infinity();
