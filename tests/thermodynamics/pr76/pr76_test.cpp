@@ -301,8 +301,10 @@ void declared_bounds() {
     for (T temperature : std::array<T, 2>{T{150}, T{700}}) {
         near(bounded.evaluate(temperature).a, reference(temperature).a);
     }
-    const T below = std::nextafter(T{150}, T{0});
-    const T above = std::nextafter(T{700}, std::numeric_limits<T>::infinity());
+    // assess() consumes binary64 state values, so use outside probes exactly
+    // representable in every supported scalar type rather than long-double nextafter values.
+    const T below = T{149};
+    const T above = T{701};
     near(bounded.evaluate(below).a, reference(below).a);
     const auto extrapolated = bounded.evaluate(ad::Dual<T>::variable(above, 0));
     near(extrapolated.a.value(), reference(above).a);
