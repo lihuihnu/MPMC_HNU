@@ -74,6 +74,7 @@ export interface ExpertPr76WorkspaceViewProps {
   onCreated(model: ExpertOwnedModel): void;
   unapplied?: boolean;
   onDraftChanged?(): void;
+  accessLabel?: string;
 }
 
 export function ExpertPr76WorkspaceView({
@@ -84,6 +85,7 @@ export function ExpertPr76WorkspaceView({
   onCreated,
   unapplied = false,
   onDraftChanged,
+  accessLabel = 'Local calculation · no login',
 }: ExpertPr76WorkspaceViewProps) {
   return (
     <div className="app-shell expert-pr76-workspace pr-product-workspace" data-expert-workspace="pr76">
@@ -98,7 +100,7 @@ export function ExpertPr76WorkspaceView({
         </div>
         <div className="backend-state" data-configured="true">
           <span className="backend-dot" />
-          Local calculation · no login
+          {accessLabel}
         </div>
       </header>
 
@@ -165,10 +167,11 @@ export function ExpertPr76WorkspaceView({
 
 export interface ExpertPr76WorkspaceProps {
   owner: ExpertModelOwner;
+  accessLabel?: string;
 }
 
 /** Owns at most one current Expert model under normal successful cleanup. */
-export function ExpertPr76Workspace({ owner }: ExpertPr76WorkspaceProps) {
+export function ExpertPr76Workspace({ owner, accessLabel }: ExpertPr76WorkspaceProps) {
   const [current, setCurrent] = useState<ExpertOwnedModel | null>(null);
   const [generation, setGeneration] = useState(0);
   const [unapplied, setUnapplied] = useState(false);
@@ -212,6 +215,7 @@ export function ExpertPr76Workspace({ owner }: ExpertPr76WorkspaceProps) {
       onCreated={handleCreated}
       unapplied={unapplied}
       onDraftChanged={() => setUnapplied(true)}
+      {...(accessLabel === undefined ? {} : { accessLabel })}
     />
   );
 }

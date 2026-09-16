@@ -13,6 +13,8 @@ export interface DesktopProductShellViewProps {
   mode: DesktopProductMode;
   onPtMode(): void;
   onExpertMode(): void;
+  environmentLabel?: string;
+  workspaceAccessLabel?: string;
 }
 
 export function DesktopProductShellView({
@@ -21,6 +23,8 @@ export function DesktopProductShellView({
   mode,
   onPtMode,
   onExpertMode,
+  environmentLabel = 'Local desktop calculation · no account or login required',
+  workspaceAccessLabel = 'Local calculation · no login',
 }: DesktopProductShellViewProps) {
   return (
     <>
@@ -31,7 +35,7 @@ export function DesktopProductShellView({
       >
         <div>
           <strong>Flash workspace</strong>
-          <span>Local desktop calculation · no account or login required</span>
+          <span>{environmentLabel}</span>
         </div>
         <div className="submit-actions">
           <button
@@ -57,7 +61,7 @@ export function DesktopProductShellView({
 
       {mode === 'expert' ? (
         <div data-expert-workbench="ready">
-          <ExpertPr76Workspace owner={expertOwner} />
+          <ExpertPr76Workspace owner={expertOwner} accessLabel={workspaceAccessLabel} />
         </div>
       ) : null}
       {mode === 'pt' ? <App client={flashClient} /> : null}
@@ -68,14 +72,21 @@ export function DesktopProductShellView({
 export interface DesktopProductShellProps {
   flashClient: FlashClient;
   expertOwner: ExpertModelOwner;
+  environmentLabel?: string;
+  workspaceAccessLabel?: string;
 }
 
 /**
- * Electron-only shell. Classic PR is the product entry point and requires no
- * account/session action; the pre-existing configured-PT surface remains a
- * secondary compatibility path.
+ * Shared Classic PR product shell. Existing local products use the default
+ * no-login labels; hosted callers may override presentation text without
+ * changing ownership or scientific semantics.
  */
-export function DesktopProductShell({ flashClient, expertOwner }: DesktopProductShellProps) {
+export function DesktopProductShell({
+  flashClient,
+  expertOwner,
+  environmentLabel,
+  workspaceAccessLabel,
+}: DesktopProductShellProps) {
   const [mode, setMode] = useState<DesktopProductMode>('expert');
   return (
     <DesktopProductShellView
@@ -84,6 +95,8 @@ export function DesktopProductShell({ flashClient, expertOwner }: DesktopProduct
       mode={mode}
       onPtMode={() => setMode('pt')}
       onExpertMode={() => setMode('expert')}
+      {...(environmentLabel === undefined ? {} : { environmentLabel })}
+      {...(workspaceAccessLabel === undefined ? {} : { workspaceAccessLabel })}
     />
   );
 }

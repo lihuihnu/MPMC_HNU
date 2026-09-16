@@ -11,7 +11,10 @@ function owned(): ExpertOwnedModel {
 function owner(): ExpertModelOwner {
   return { create: vi.fn(async () => owned()) };
 }
-function html(mode: 'pt' | 'expert') {
+function html(
+  mode: 'pt' | 'expert',
+  labels: { environmentLabel?: string; workspaceAccessLabel?: string } = {},
+) {
   return renderToStaticMarkup(
     <DesktopProductShellView
       flashClient={unconfiguredFlashClient}
@@ -19,12 +22,13 @@ function html(mode: 'pt' | 'expert') {
       mode={mode}
       onPtMode={() => {}}
       onExpertMode={() => {}}
+      {...labels}
     />,
   );
 }
 
-describe('Electron desktop product shell', () => {
-  it('presents the no-login classic PR workspace as the primary product mode', () => {
+describe('shared Classic PR product shell', () => {
+  it('preserves the existing local no-login labels by default', () => {
     const markup = html('expert');
     expect(markup).toContain('data-desktop-product-shell="true"');
     expect(markup).toContain('data-product-mode="expert"');
@@ -34,8 +38,22 @@ describe('Electron desktop product shell', () => {
     expect(markup).toContain('Define PR fluid');
     expect(markup).toContain('Create a PR fluid model');
     expect(markup).toContain('no account or login required');
+    expect(markup).toContain('Local calculation · no login');
     expect(markup).not.toContain('authenticated model session');
     expect(markup).not.toContain('Reconnect Expert session');
+  });
+
+  it('supports hosted authenticated labels without changing the shared Expert workspace', () => {
+    const markup = html('expert', {
+      environmentLabel: 'Hosted calculation · authenticated model session',
+      workspaceAccessLabel: 'Hosted calculation · authenticated session',
+    });
+    expect(markup).toContain('Hosted calculation · authenticated model session');
+    expect(markup).toContain('Hosted calculation · authenticated session');
+    expect(markup).toContain('data-expert-workspace="pr76"');
+    expect(markup).toContain('Peng–Robinson flash');
+    expect(markup).not.toContain('Local calculation · no login');
+    expect(markup).not.toContain('no account or login required');
   });
 
   it('keeps the pre-existing configured PT surface as a secondary compatibility mode', () => {

@@ -2,8 +2,8 @@
 
 This React + TypeScript + Vite application consumes the versioned
 [`mpmc.runtime.v1.PtFlashService`](../api/README.md) contract. A hosted browser
-uses gRPC-Web; local product shells reuse the same React product components
-through platform-specific typed adapters. The generic configured-PT path first
+uses gRPC-Web; product shells reuse the same React product components through
+platform-specific typed ownership adapters. The generic configured-PT path first
 discovers configured backends and their exact component inventories, then builds
 the solve form from the selected immutable capability snapshot.
 
@@ -14,10 +14,11 @@ that product directory.
 
 ## Classic PR product workspace
 
-Classic PR is the shared editable PR76 product workflow. Electron and Android now
-render the same React shell and `ExpertPr76Workspace`; they differ only in the
-transport adapter that owns the native model. The workflow is local on those
-platforms and requires no account or login:
+Classic PR is the shared editable PR76 product workflow. Electron, Android and an
+explicitly authorized hosted-Web integration render the same React shell and
+`ExpertPr76Workspace`; they differ only in the typed adapter that owns the model.
+Electron and Android are local no-login products. Hosted Web instead requires an
+authoritative browser identity provider and an authenticated model-session route:
 
 1. define the ordered component set and each component's molar mass, critical
    temperature, critical pressure, and acentric factor;
@@ -40,13 +41,15 @@ change returned values. PR76 EOS evaluation, stability search, phase splitting,
 final phase-set review, parameter validation and model lifetime remain native C++
 backend responsibilities.
 
-The shared CSS and React presentation are responsive so supported shells retain
+The shared CSS and React presentation are responsive so supported products retain
 one visual language. Transport parity is platform-specific: Electron uses its
 context-isolated model-workbench/IPC path; Android uses the app-local
 Capacitor/JNI typed ownership adapter backed by the same native
-`Pr76ExecutableModel`. Hosted Web is still pending the corresponding
-model-session adapter in the next platform slice; its current configured-PT path
-must not be mistaken for completed Classic PR parity.
+`Pr76ExecutableModel`; hosted Web uses the existing same-origin authenticated
+`webModelSession` connector, `ModelSessionClient` and `bindExpertModelOwner`.
+Hosted ownership is fail-closed: without the exact trusted runtime capability,
+the browser remains on its existing configured-PT product and does not open a
+model session.
 
 ## Scientific and service boundary
 
@@ -89,6 +92,34 @@ repository-curated three-backend process host, but no deployed endpoint. If the
 variable is absent outside a local product shell, the generic hosted frontend
 remains explicitly unconfigured and sends no request.
 
+Hosted Classic PR is deliberately **not** enabled by a build-time bearer or a
+`VITE_*` token. A trusted hosting shell may provide this runtime capability only
+after its deployment has authoritative end-user identity mapping and the required
+same-origin model routes:
+
+```ts
+window.mpmcHostedWebModelOwnership = {
+  convention: 'MPMC/model/hosted-web-ownership/v1',
+  baseUrl: '/model-api',
+  identity: authoritativeIdentityProvider,
+};
+```
+
+`identity` is a `WebIdentityProvider` function object, not a token value. The
+same-origin connector obtains the bearer only when the first model is applied,
+opens one `ModelSessionClient` lease, and keeps that identity snapshot for the
+session epoch. The token is not put in DOM state, browser storage, generated HTML
+or user-facing errors. Page teardown disposes the session. There is no automatic
+Create retry, reconnect or principal change.
+
+The checked-in production edge currently exposes only `PtFlashService`; it does
+**not** yet expose model-session/configuration routes or map a Web access token to
+an authoritative native principal. Therefore production deployment must not
+publish `mpmcHostedWebModelOwnership` merely because the frontend adapter exists.
+That trusted-edge identity/routing gate remains a separate security increment.
+See [`webModelSession.md`](src/api/webModelSession.md) and the
+[edge deployment contract](../deploy/pt-grpc-web/README.md).
+
 Startup discovery must complete before generic PT solve is enabled. Switching the
 configured backend switches the inventory; component IDs cannot be added, removed
 or edited through that generic path. A result provenance snapshot must exactly
@@ -112,11 +143,11 @@ and an RPC/service error is never presented as a thermodynamic decision.
 
 The generic form allows one in-flight solve. Discovery has a 10-second client
 deadline, solve has a 120-second deadline, both accept cancellation, and neither
-is retried automatically. The shared Classic PR owner similarly permits one
-active ownership request and invalidates stale model generations rather than
-publishing late results.
+is retried automatically. The shared Classic PR owner similarly invalidates stale
+model generations rather than publishing late results; the hosted owner opens its
+authenticated session before dispatching the first Create.
 
-## Local product adapters
+## Product adapters
 
 Electron embeds the built React files without giving the renderer Node access.
 Its sandboxed preload exposes the configured-PT bridge plus the typed local
@@ -131,10 +162,18 @@ only serializes work onto the native executor and transports bounded fields;
 `Pr76ExecutableModel` remains authoritative for model preparation, settings,
 solve and result semantics. No gRPC C++ runtime is added to the APK.
 
-The configured compatibility path remains available in both local shells and
-continues to exercise repository-curated PR76, SW92 and CPA backends. Editable
-Classic PR remains PR76-only; this frontend work does not change those backend
-implementations or add editable SW92/CPA semantics.
+Hosted Web uses the same product component tree only when the trusted runtime
+capability described above is present and valid. `hostedWebModelOwner.ts` lazily
+connects the existing authenticated `ModelSessionClient` and adapts it with
+`bindExpertModelOwner`; it does not expose handles, reproduce model lifecycle or
+interpret scientific results. Missing or malformed capability falls back to the
+existing configured-PT hosted application without attempting anonymous model
+access.
+
+The configured compatibility path remains available and continues to exercise
+repository-curated PR76, SW92 and CPA backends. Editable Classic PR remains
+PR76-only; this frontend work does not change those backend implementations or
+add editable SW92/CPA semantics.
 
 The resulting desktop directories and Android APK are engineering products with
 separate release/signing gates. Windows downstream packaging is documented in the
@@ -163,9 +202,10 @@ npm run build
 The generated `src/gen/mpmc/runtime/v1/pt_service_pb.ts` is committed and must not
 be hand-edited. Model-configuration TypeScript is generated from the dedicated
 versioned model-service proto before typecheck/test/build. Tests cover the generic
-PT wire contract as well as Classic PR model editing, P/T/z input, no-login
+PT wire contract as well as Classic PR model editing, P/T/z input, local/hosted
 product presentation, phase-count/fraction/composition output, chart values,
-non-accepted candidate isolation, and structured error handling.
+non-accepted candidate isolation, hosted runtime-capability gating and structured
+error handling.
 
 An additional cross-language golden starts a synthetic C++ `PtService`, maps it
 through the native gRPC adapter and Envoy, and exercises discovery, accepted,
