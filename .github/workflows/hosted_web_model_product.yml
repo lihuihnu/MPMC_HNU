@@ -1,0 +1,226 @@
+name: Hosted Web model product
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - 'deploy/pt-grpc-web/**'
+      - 'modules/pt_process/**'
+      - 'modules/model_configuration/**'
+      - 'modules/model_configuration_grpc/**'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'frontend/src/**'
+      - '.github/workflows/hosted_web_model_product.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-web-model-product-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hosted-web-model:
+    name: Chrome → trusted edge → native Classic PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned native model-service dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libgrpc++-dev=1.51.1-4.1build5 \
+            protobuf-compiler-grpc=1.51.1-4.1build5 \
+            libprotobuf-dev=3.21.12-8.2ubuntu0.3 \
+            protobuf-compiler=3.21.12-8.2ubuntu0.3
+
+      - name: Generate isolated edge/backend test identities
+        run: |
+          set -euo pipefail
+          cert_dir="${PWD}/build/hosted-web-certs"
+          mkdir -p "${cert_dir}"
+
+          issue_ca() {
+            local name=$1
+            openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+              -subj "/CN=${name}" \
+              -keyout "${cert_dir}/${name}.key" \
+              -out "${cert_dir}/${name}.crt"
+          }
+          issue_identity() {
+            local name=$1
+            local common_name=$2
+            local authority=$3
+            local extension=$4
+            openssl req -newkey rsa:2048 -nodes -sha256 \
+              -subj "/CN=${common_name}" -addext "${extension}" \
+              -keyout "${cert_dir}/${name}.key" \
+              -out "${cert_dir}/${name}.csr"
+            openssl x509 -req -sha256 -days 1 -copy_extensions copy \
+              -in "${cert_dir}/${name}.csr" \
+              -CA "${cert_dir}/${authority}.crt" \
+              -CAkey "${cert_dir}/${authority}.key" \
+              -CAcreateserial -out "${cert_dir}/${name}.crt"
+          }
+
+          issue_ca backend-ca
+          issue_ca edge-ca
+          issue_ca public-ca
+          issue_ca browser-ca
+          issue_identity backend pt-backend.internal backend-ca \
+            "subjectAltName=DNS:pt-backend.internal"
+          issue_identity edge envoy-edge edge-ca \
+            "extendedKeyUsage=clientAuth"
+          issue_identity public api.example.test public-ca \
+            "subjectAltName=DNS:api.example.test"
+          issue_identity browser browser-test-client browser-ca \
+            "extendedKeyUsage=clientAuth"
+          chmod 0644 "${cert_dir}"/*.crt "${cert_dir}"/*.key
+
+      - name: Configure and build production model-session host
+        run: |
+          cmake -S tests/runtime/pt_process_host \
+            -B build/hosted-web-process-host \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DMPMC_PT_PROCESS_ENABLE_SANITIZERS=OFF \
+            -DMPMC_PT_PROCESS_TEST_CERT_DIR="${PWD}/build/hosted-web-certs"
+          cmake --build build/hosted-web-process-host \
+            --target mpmc_pt_service_host --parallel 2
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build shared hosted Classic PR frontend
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run proto:model:generate
+          ./node_modules/.bin/vite build
+
+      - name: Verify hosted browser runtime
+        run: |
+          google-chrome --version
+          test -x "${CHROMEWEBDRIVER}/chromedriver"
+          "${CHROMEWEBDRIVER}/chromedriver" --version
+
+      - name: Validate model-enabled production edge
+        run: |
+          set -euo pipefail
+          cert_dir="${PWD}/build/hosted-web-certs"
+          python3 deploy/pt-grpc-web/render_production_config.py \
+            --public-host api.example.test \
+            --public-origin https://ui.example.test \
+            --downstream-certificate-chain /run/secrets/public.crt \
+            --downstream-private-key /run/secrets/public.key \
+            --downstream-client-ca /run/secrets/browser-ca.crt \
+            --upstream-port 50053 \
+            --upstream-server-name pt-backend.internal \
+            --upstream-client-certificate-chain /run/secrets/edge.crt \
+            --upstream-client-private-key /run/secrets/edge.key \
+            --upstream-server-ca /run/secrets/backend-ca.crt \
+            --public-port 8444 \
+            --admin-port 9902 \
+            --model-authz-loopback-port 10003 \
+            > build/hosted-web-envoy.yaml
+          docker run --rm \
+            --volume "${PWD}/build/hosted-web-envoy.yaml:/etc/envoy/envoy.yaml:ro" \
+            --volume "${cert_dir}:/run/secrets:ro" \
+            envoyproxy/envoy:v1.36.9 \
+            --mode validate -c /etc/envoy/envoy.yaml
+
+      - name: Run real hosted browser model ownership regression
+        run: |
+          set -euo pipefail
+          cert_dir="${PWD}/build/hosted-web-certs"
+          host_log="${PWD}/build/hosted-web-host.log"
+          authz_log="${PWD}/build/hosted-web-authz.log"
+          envoy_name="mpmc-hosted-web-envoy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          sudo sh -c "printf '%s\n' '127.0.0.1 api.example.test' >> /etc/hosts"
+
+          ./build/hosted-web-process-host/pt-process-library/mpmc_pt_service_host \
+            --listen-address 127.0.0.1:50053 \
+            --tls-certificate-chain "${cert_dir}/backend.crt" \
+            --tls-private-key "${cert_dir}/backend.key" \
+            --trusted-edge-client-ca "${cert_dir}/edge-ca.crt" \
+            --enable-model-sessions \
+            >"${host_log}" 2>&1 &
+          host_pid=$!
+
+          python3 deploy/pt-grpc-web/tests/web_identity_authz_fixture.py \
+            --port 10003 >"${authz_log}" 2>&1 &
+          authz_pid=$!
+
+          cleanup() {
+            docker rm --force "${envoy_name}" >/dev/null 2>&1 || true
+            kill -TERM "${authz_pid}" 2>/dev/null || true
+            kill -TERM "${host_pid}" 2>/dev/null || true
+            wait "${authz_pid}" 2>/dev/null || true
+            wait "${host_pid}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..100}; do
+            if grep --quiet '"event":"pt_process_ready"' "${host_log}" &&
+               curl --fail --silent http://127.0.0.1:10003/healthz >/dev/null; then
+              break
+            fi
+            if ! kill -0 "${host_pid}" 2>/dev/null; then
+              cat "${host_log}"
+              exit 1
+            fi
+            if ! kill -0 "${authz_pid}" 2>/dev/null; then
+              cat "${authz_log}"
+              exit 1
+            fi
+            sleep 0.1
+          done
+          grep --quiet '"configured_backends":3' "${host_log}"
+          curl --fail --silent http://127.0.0.1:10003/healthz >/dev/null
+
+          docker run --detach --rm --network host \
+            --name "${envoy_name}" \
+            --volume "${PWD}/build/hosted-web-envoy.yaml:/etc/envoy/envoy.yaml:ro" \
+            --volume "${cert_dir}:/run/secrets:ro" \
+            envoyproxy/envoy:v1.36.9 \
+            -c /etc/envoy/envoy.yaml
+
+          for attempt in {1..100}; do
+            if curl --fail --silent http://127.0.0.1:9902/ready >/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          if ! curl --fail --silent http://127.0.0.1:9902/ready >/dev/null; then
+            docker logs "${envoy_name}" || true
+            exit 1
+          fi
+
+          python3 deploy/pt-grpc-web/tests/hosted_web_product_smoke.py \
+            --dist frontend/dist \
+            --edge-host api.example.test \
+            --edge-port 8444 \
+            --public-ca "${cert_dir}/public-ca.crt" \
+            --client-cert "${cert_dir}/browser.crt" \
+            --client-key "${cert_dir}/browser.key" \
+            --chromedriver "${CHROMEWEBDRIVER}/chromedriver"
+
+          kill -TERM "${host_pid}"
+          wait "${host_pid}"
+          grep --quiet '"event":"pt_process_stopped"' "${host_log}"
+          trap - EXIT
+          docker rm --force "${envoy_name}" >/dev/null 2>&1 || true
+          kill -TERM "${authz_pid}" 2>/dev/null || true
+          wait "${authz_pid}" 2>/dev/null || true
