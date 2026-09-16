@@ -26,12 +26,12 @@ bool valid_pem_field(const std::string& value) noexcept {
 bool valid_trusted_model_principal(std::string_view value) noexcept {
     return !value.empty() && value.size() <= trusted_model_principal_max_bytes &&
            std::all_of(value.begin(), value.end(), [](char raw) {
-               const auto value = static_cast<unsigned char>(raw);
-               return (value >= 'a' && value <= 'z') ||
-                      (value >= 'A' && value <= 'Z') ||
-                      (value >= '0' && value <= '9') || value == '.' ||
-                      value == '_' || value == ':' || value == '@' ||
-                      value == '+' || value == '-' || value == '/';
+               const auto byte = static_cast<unsigned char>(raw);
+               return (byte >= 'a' && byte <= 'z') ||
+                      (byte >= 'A' && byte <= 'Z') ||
+                      (byte >= '0' && byte <= '9') || byte == '.' ||
+                      byte == '_' || byte == ':' || byte == '@' ||
+                      byte == '+' || byte == '-' || byte == '/';
            });
 }
 
