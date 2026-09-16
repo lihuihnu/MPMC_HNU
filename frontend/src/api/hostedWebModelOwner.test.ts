@@ -7,7 +7,6 @@ import {
 import {
   MODEL_SESSION_CONTRACT,
   MODEL_WIRE_CONTRACT,
-  ModelClientError,
   ModelSessionClient,
   type ModelCreateInput,
   type ModelSessionConnector,
@@ -116,7 +115,7 @@ describe('hosted Web Expert model owner', () => {
     const pending = owner.create({} as ModelCreateInput, { signal: controller.signal });
     controller.abort();
 
-    await expect(pending).rejects.toMatchObject<ModelClientError>({
+    await expect(pending).rejects.toMatchObject({
       reason: 'web.owner_cancelled',
     });
     expect(createModel).not.toHaveBeenCalled();
