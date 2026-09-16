@@ -54,33 +54,35 @@ function render(
   );
 }
 
-describe('PR76 Expert workspace ownership and presentation', () => {
-  it('starts with the explicit editor and no invented live model', () => {
+describe('PR76 workspace ownership and product presentation', () => {
+  it('starts with editable PR fluid data and no invented live result', () => {
     const html = render(null);
     expect(html).toContain('data-expert-workspace="pr76"');
+    expect(html).toContain('Peng–Robinson flash');
     expect(html).toContain('Create custom PR76 model');
-    expect(html).toContain('No Expert model created yet');
+    expect(html).toContain('Create a PR fluid model');
     expect(html).toContain('No unordered component pair exists yet');
     expect(html).not.toContain('Read-only PR76 fixture');
     expect(html).not.toContain('data-expert-pt-solve');
-    expect(html).toContain('no account or login required');
+    expect(html).toContain('Local calculation · no login');
   });
 
-  it('derives the next immutable revision from the current owned snapshot and exposes live describe loading', () => {
+  it('derives the next immutable revision and exposes product-level flash inputs', () => {
     const html = render(owned());
     expect(html).toContain('Create immutable revision');
     expect(html).toContain('0: methane');
     expect(html).toContain('kij methane ↔ ethane');
     expect(html).toContain('Reading live model snapshot');
-    expect(html).not.toContain('No Expert model created yet');
-    expect(html).toContain('Compute PR76 flash');
-    expect(html).toContain('Expert feed methane');
-    expect(html).toContain('Expert feed ethane');
+    expect(html).not.toContain('Create a PR fluid model');
+    expect(html).toContain('Run PR flash');
+    expect(html).toContain('PR feed methane');
+    expect(html).toContain('PR feed ethane');
+    expect(html).toContain('Advanced: applied model parameters and provenance');
   });
 
   it('blocks the applied solve while edits are not applied and does not expose native handles', () => {
     const html = render(owned(), null, true);
-    expect(html).toContain('Parameters have changed');
+    expect(html).toContain('Fluid data changed');
     expect(html).toContain('type="submit" disabled=""');
     expect(html).not.toContain('modelHandle');
     expect(html).not.toContain('data-expert-result');
@@ -144,7 +146,8 @@ describe('PR76 Expert workspace ownership and presentation', () => {
     const failure = await retirePreviousExpertModel(previous, owned());
     expect(failure).toEqual({ reason: 'rpc.failed', code: Code.Unavailable, validation });
     const html = render(owned(), failure);
-    expect(html).toContain('Previous model cleanup was not confirmed');
+    expect(html).toContain('The previous model could not be fully released');
+    expect(html).toContain('Technical details');
     expect(html).toContain('rpc.failed');
     expect(html).toContain('request');
 
