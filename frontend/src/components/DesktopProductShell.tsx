@@ -24,21 +24,16 @@ export function DesktopProductShellView({
 }: DesktopProductShellViewProps) {
   return (
     <>
-      <nav className="desktop-product-mode" data-desktop-product-shell="true" aria-label="Desktop product mode">
+      <nav
+        className="desktop-product-mode"
+        data-desktop-product-shell="true"
+        aria-label="Flash workspace mode"
+      >
         <div>
-          <strong>Desktop workspace</strong>
-          <span>PT Flash and the editable PR76 workbench run locally; no account or login is required.</span>
+          <strong>Flash workspace</strong>
+          <span>Local desktop calculation · no account or login required</span>
         </div>
         <div className="submit-actions">
-          <button
-            type="button"
-            className={mode === 'pt' ? 'primary-button' : 'secondary-button cancel-button'}
-            data-product-mode="pt"
-            aria-pressed={mode === 'pt'}
-            onClick={onPtMode}
-          >
-            PT Flash
-          </button>
           <button
             type="button"
             className={mode === 'expert' ? 'primary-button' : 'secondary-button cancel-button'}
@@ -46,17 +41,26 @@ export function DesktopProductShellView({
             aria-pressed={mode === 'expert'}
             onClick={onExpertMode}
           >
-            PR76 Expert
+            Classic PR
+          </button>
+          <button
+            type="button"
+            className={mode === 'pt' ? 'primary-button' : 'secondary-button cancel-button'}
+            data-product-mode="pt"
+            aria-pressed={mode === 'pt'}
+            onClick={onPtMode}
+          >
+            Configured PT
           </button>
         </div>
       </nav>
 
-      {mode === 'pt' ? <App client={flashClient} /> : null}
       {mode === 'expert' ? (
         <div data-expert-workbench="ready">
           <ExpertPr76Workspace owner={expertOwner} />
         </div>
       ) : null}
+      {mode === 'pt' ? <App client={flashClient} /> : null}
     </>
   );
 }
@@ -66,9 +70,13 @@ export interface DesktopProductShellProps {
   expertOwner: ExpertModelOwner;
 }
 
-/** Electron-only shell. Entering Expert mode requires no account/session action. */
+/**
+ * Electron-only shell. Classic PR is the product entry point and requires no
+ * account/session action; the pre-existing configured-PT surface remains a
+ * secondary compatibility path.
+ */
 export function DesktopProductShell({ flashClient, expertOwner }: DesktopProductShellProps) {
-  const [mode, setMode] = useState<DesktopProductMode>('pt');
+  const [mode, setMode] = useState<DesktopProductMode>('expert');
   return (
     <DesktopProductShellView
       flashClient={flashClient}
