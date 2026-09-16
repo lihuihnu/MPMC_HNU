@@ -194,15 +194,27 @@ void start_requires_instability_evidence() {
     const auto model = pr76_max3_test::model();
     fl::Pr76VleEvaluator evaluator(model);
     const auto starts = pr76_max3_test::starts();
-    const auto feed = pr76_max3_test::reference_phases()[1];
+    const auto& phases = pr76_max3_test::reference_phases();
+    constexpr double beta1 = 0.4;
+    Vec feed(3U, 0.0);
+    for (std::size_t i = 0; i < feed.size(); ++i) {
+        feed[i] = (1.0 - beta1) * phases[0][i] + beta1 * phases[1][i];
+    }
+
     const auto result = fl::solve_pr76_pt_max3(
         1.0e6, 250.0, feed, evaluator,
         options_from_starts(starts), starts, starts);
-    require(result.base.solution.status != fl::PtSplitStatus::phase_set_unstable,
-            "coexistence-phase feed unexpectedly produced negative final instability evidence");
-    require(result.attempts.empty() &&
-                result.status != fl::Pr76PtMax3Status::three_phase,
-            "three-phase start was consumed without two-phase instability evidence");
+    require(result.base.solution.status ==
+                fl::PtSplitStatus::two_phase_no_instability_found &&
+                result.base.solution.candidate() != nullptr &&
+                result.base.solution.final_stability.has_value() &&
+                result.base.solution.final_stability->status ==
+                    fl::StabilityStatus::no_instability_found,
+            "two-phase trigger fixture no longer closes as an accepted pair");
+    require(result.status == fl::Pr76PtMax3Status::two_phase &&
+                result.attempts.empty() && !result.selected_attempt.has_value() &&
+                result.three_phase_candidate() == nullptr,
+            "caller-supplied exact three-phase start manufactured 2->3 phase-count evidence");
 }
 
 } // namespace
