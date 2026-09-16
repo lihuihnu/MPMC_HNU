@@ -368,9 +368,22 @@ void input_domains() {
     Fixture f; f.input.applicability.pressure_pa=th::ClosedInterval{2e5,2e6};
     f.input.applicability.temperature_k=th::ClosedInterval{300,600};
     auto bounded=th::Pr76Phase<T>::from_parameters(f.select({0,1,2}));
-    expect_error<std::domain_error>([&]{(void)bounded.roots_full(T{100000},T{450},w,work);});
-    expect_error<std::domain_error>([&]{(void)bounded.roots_full(T{1000000},T{650},w,work);});
-    require(bounded.roots_full(T{200000},T{300},w,work).status==th::Pr76RootStatus::success,"inclusive bounds");
+    const auto low_pressure=bounded.roots_full(T{100000},T{450},w,work);
+    const auto high_temperature=bounded.roots_full(T{1000000},T{650},w,work);
+    require(low_pressure.status==th::Pr76RootStatus::success && low_pressure.count>0,
+            "declared pressure extrapolation must remain computationally available");
+    require(high_temperature.status==th::Pr76RootStatus::success && high_temperature.count>0,
+            "declared temperature extrapolation must remain computationally available");
+    const auto& applicability=bounded.parameters().applicability();
+    require(applicability.assess(450,100000)==th::RangeAssessment::outside_declared_bounds,
+            "pressure extrapolation lost advisory outside status");
+    require(applicability.assess(650,1000000)==th::RangeAssessment::outside_declared_bounds,
+            "temperature extrapolation lost advisory outside status");
+    require(applicability.assess(300,200000)==th::RangeAssessment::inside_declared_bounds &&
+                applicability.assess(600,2000000)==th::RangeAssessment::inside_declared_bounds,
+            "inclusive declared T/p bounds changed");
+    require(bounded.roots_full(T{200000},T{300},w,work).status==th::Pr76RootStatus::success,
+            "inclusive bounds remain computationally available");
     using D=ad::Dual<T,1>; th::Pr76PhaseWorkspace<D> dw;
     std::vector<D> dx; for(const T v:w) {dx.emplace_back(v);}
     const D bad_seed{T{1000000},{std::numeric_limits<T>::infinity()}};
