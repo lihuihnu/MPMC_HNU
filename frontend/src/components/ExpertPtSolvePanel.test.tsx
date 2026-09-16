@@ -27,44 +27,59 @@ function model(): ExpertOwnedModel {
 }
 
 describe('custom PR76 calculation presentation', () => {
-  it('renders the applied ordered feed and no invented result or login', () => {
+  it('renders product-level P, T and ordered feed inputs without invented results', () => {
     const owned = model();
     const html = renderToStaticMarkup(<ExpertPtSolvePanel model={owned} />);
-    expect(html).toContain('Expert pressure Pa');
-    expect(html).toContain('Expert temperature K');
-    expect(html).toContain('Expert feed methane');
-    expect(html).toContain('Expert feed ethane');
-    expect(html).toContain('Compute PR76 flash');
+    expect(html).toContain('PR pressure MPa');
+    expect(html).toContain('PR temperature K');
+    expect(html).toContain('PR feed methane');
+    expect(html).toContain('PR feed ethane');
+    expect(html).toContain('Run PR flash');
+    expect(html).toContain('Mole fractions are never filled, clipped or normalized');
     expect(html).not.toContain('data-expert-result');
     expect(owned.solve).not.toHaveBeenCalled();
   });
 
   it('blocks solving the old model while parameter edits are unapplied', () => {
     const html = renderToStaticMarkup(<ExpertPtSolvePanel model={model()} blocked />);
-    expect(html).toContain('Parameters have changed');
+    expect(html).toContain('Fluid data changed');
     expect(html).toContain('type="submit" disabled=""');
     expect(html).not.toContain('data-expert-result');
   });
 
-  it('shows accepted three-phase fractions/compositions without claiming global stability', () => {
-    const html = renderToStaticMarkup(<ExpertPtResultView result={fixture(PtComputationOutcome.ACCEPTED)} snapshot={model().snapshot} />);
+  it('shows accepted three-phase count, fractions, compositions and exact mole fractions', () => {
+    const html = renderToStaticMarkup(
+      <ExpertPtResultView result={fixture(PtComputationOutcome.ACCEPTED)} snapshot={model().snapshot} />,
+    );
     expect(html).toContain('data-expert-result="accepted"');
-    expect(html).toContain('Accepted phase count: 3');
-    expect(html).toContain('Mole phase fraction');
+    expect(html).toContain('Equilibrium result');
+    expect(html).toContain('Phase count');
+    expect(html).toContain('Phase fractions');
+    expect(html).toContain('20.000%');
+    expect(html).toContain('30.000%');
+    expect(html).toContain('50.000%');
+    expect(html).toContain('Composition in each phase');
     expect(html).toContain('x(methane)');
     expect(html).toContain('x(ethane)');
+    expect(html).toContain('Advanced calculation details');
     expect(html).toContain('Global stability is not proven');
     expect(html).toContain('native-test-diagnostic');
     expect(html).not.toContain('data-candidate-only');
   });
 
-  it.each([PtComputationOutcome.INDETERMINATE, PtComputationOutcome.PHASE_SET_UNSTABLE])('does not accept diagnostic candidates for outcome %s', (outcome) => {
-    const html = renderToStaticMarkup(<ExpertPtResultView result={fixture(outcome)} snapshot={model().snapshot} />);
-    expect(html).toContain('data-expert-result="not-accepted"');
-    expect(html).toContain('data-candidate-only="true"');
-    expect(html).not.toContain('Accepted phase count');
-    expect(html).toContain('Complete native result and transition evidence');
-  });
+  it.each([PtComputationOutcome.INDETERMINATE, PtComputationOutcome.PHASE_SET_UNSTABLE])(
+    'keeps diagnostic candidate phases separate from results for outcome %s',
+    (outcome) => {
+      const html = renderToStaticMarkup(
+        <ExpertPtResultView result={fixture(outcome)} snapshot={model().snapshot} />,
+      );
+      expect(html).toContain('data-expert-result="not-accepted"');
+      expect(html).toContain('data-candidate-only="true"');
+      expect(html).not.toContain('Equilibrium result');
+      expect(html).toContain('Advanced calculation details');
+      expect(html).toContain('Complete native result and transition evidence');
+    },
+  );
 
   it('preserves structured errors and never prints arbitrary backend exception text', () => {
     const validation = { version: MODEL_VALIDATION_DETAIL_VERSION, code: 'request.rejected', field: 'feed[1]' };
