@@ -13,6 +13,7 @@ import ssl
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -76,8 +77,16 @@ def webdriver_request(
         method=method,
         headers={"content-type": "application/json; charset=utf-8"},
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        decoded = json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            decoded = json.load(response)
+    except urllib.error.HTTPError as error:
+        try:
+            decoded = json.loads(error.read().decode("utf-8"))
+        except Exception as cause:
+            raise RuntimeError(
+                f"WebDriver HTTP {error.code} for {path} without a valid W3C error body"
+            ) from cause
     if "value" not in decoded:
         raise RuntimeError(f"invalid WebDriver response for {path}")
     value = decoded["value"]
@@ -179,7 +188,14 @@ class Browser:
             except Exception as error:
                 last = error
                 time.sleep(0.1)
-        raise RuntimeError(f"timed out waiting for {selector}: {last}")
+        state = self.execute(
+            "return {url: location.href, title: document.title, "
+            "body: (document.body?.innerText || '').slice(0, 4000), "
+            "root: (document.getElementById('root')?.innerHTML || '').slice(0, 4000)};"
+        )
+        raise RuntimeError(
+            f"timed out waiting for {selector}: {last}; page_state={state!r}"
+        )
 
     def click(self, element: str) -> None:
         webdriver_request(
