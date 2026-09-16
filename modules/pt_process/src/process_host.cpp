@@ -4,17 +4,35 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace mpmc::pt_process {
 namespace {
 
+inline constexpr char trusted_model_principal_metadata[] =
+    "x-mpmc-authenticated-principal";
+inline constexpr std::size_t trusted_model_principal_max_bytes = 256U;
+
 bool valid_pem_field(const std::string& value) noexcept {
     return !value.empty() && value.size() <= pt_process_max_pem_file_bytes &&
            value.find('\0') == std::string::npos;
+}
+
+bool valid_trusted_model_principal(std::string_view value) noexcept {
+    return !value.empty() && value.size() <= trusted_model_principal_max_bytes &&
+           std::all_of(value.begin(), value.end(), [](char raw) {
+               const auto value = static_cast<unsigned char>(raw);
+               return (value >= 'a' && value <= 'z') ||
+                      (value >= 'A' && value <= 'Z') ||
+                      (value >= '0' && value <= '9') || value == '.' ||
+                      value == '_' || value == ':' || value == '@' ||
+                      value == '+' || value == '-' || value == '/';
+           });
 }
 
 std::string read_bounded_file(const std::filesystem::path& path,
@@ -142,9 +160,23 @@ PtProcessHost::PtProcessHost(PtCompositionRoot& root,
                 }
                 const auto auth = context.auth_context();
                 if (!auth || !auth->IsPeerAuthenticated()) { return {}; }
-                // Bind to the verified leaf certificate, not a nonunique CN,
-                // peer socket or a client-supplied identity header. At an edge
-                // proxy this identifies the edge, not an invented Web user.
+                // Production trusts only clients issued by the dedicated edge-client
+                // CA. A verified edge may therefore forward one principal that it
+                // obtained from its own authorization layer. The browser cannot
+                // reach this listener directly and duplicate/invalid metadata fails
+                // closed. Without that metadata, keep the pre-existing direct-mTLS
+                // identity contract for native/host regressions.
+                const auto principals =
+                    context.client_metadata().equal_range(trusted_model_principal_metadata);
+                if (principals.first != principals.second) {
+                    if (std::next(principals.first) != principals.second) { return {}; }
+                    const auto& raw = principals.first->second;
+                    const std::string_view principal(raw.data(), raw.size());
+                    if (!valid_trusted_model_principal(principal)) { return {}; }
+                    return "web:" + std::string(principal);
+                }
+                // Bind direct production sessions to the verified leaf certificate,
+                // not a nonunique CN or peer socket.
                 const auto certificates = auth->FindPropertyValues("x509_pem_cert");
                 if (certificates.size() != 1 || certificates[0].size() > 64U * 1024U) { return {}; }
                 return {certificates[0].data(), certificates[0].size()};

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the fail-closed production Envoy edge for PT service v1."""
+"""Render the fail-closed production Envoy edge for PT and hosted model services."""
 
 from __future__ import annotations
 
@@ -105,6 +105,7 @@ class ProductionEdgeConfig:
     upstream_server_ca: str
     public_port: int = 8443
     admin_port: int = 9901
+    model_authz_loopback_port: int | None = None
 
     def validated(self) -> "ProductionEdgeConfig":
         public_host = _validate_public_dns_name(self.public_host, "public host")
@@ -112,6 +113,22 @@ class ProductionEdgeConfig:
         if not origins:
             raise ValueError("at least one deployed public origin is required")
         upstream_host = _validate_socket_host(self.upstream_host, "upstream host")
+        model_authz_port = (
+            None
+            if self.model_authz_loopback_port is None
+            else _validate_port(
+                self.model_authz_loopback_port, "model authz loopback port"
+            )
+        )
+        public_port = _validate_port(self.public_port, "public port")
+        admin_port = _validate_port(self.admin_port, "admin port")
+        if model_authz_port is not None and model_authz_port in {
+            public_port,
+            admin_port,
+        }:
+            raise ValueError(
+                "model authz loopback port must differ from public/admin ports"
+            )
         return ProductionEdgeConfig(
             public_host=public_host,
             public_origins=origins,
@@ -139,18 +156,106 @@ class ProductionEdgeConfig:
             upstream_server_ca=_validate_absolute_path(
                 self.upstream_server_ca, "upstream server CA"
             ),
-            public_port=_validate_port(self.public_port, "public port"),
-            admin_port=_validate_port(self.admin_port, "admin port"),
+            public_port=public_port,
+            admin_port=admin_port,
+            model_authz_loopback_port=model_authz_port,
         )
+
+
+def _model_routes(enabled: bool) -> str:
+    if not enabled:
+        return ""
+    return """                        - match:
+                            prefix: /model-api/mpmc.model_configuration.v1.ModelSessionService/
+                          route:
+                            cluster: pt_service_native_grpc
+                            prefix_rewrite: /mpmc.model_configuration.v1.ModelSessionService/
+                            timeout: 1805s
+                            max_stream_duration:
+                              grpc_timeout_header_max: 1800s
+                        - match:
+                            prefix: /model-api/mpmc.model_configuration.v1.ModelConfigurationService/
+                          route:
+                            cluster: pt_service_native_grpc
+                            prefix_rewrite: /mpmc.model_configuration.v1.ModelConfigurationService/
+                            timeout: 125s
+                            max_stream_duration:
+                              grpc_timeout_header_max: 120s
+"""
+
+
+def _ext_authz_filter(config: ProductionEdgeConfig) -> str:
+    if config.model_authz_loopback_port is None:
+        return ""
+    return f"""                  - name: envoy.filters.http.ext_authz
+                    typed_config:
+                      \"@type\": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                      failure_mode_allow: false
+                      status_on_error:
+                        code: ServiceUnavailable
+                      http_service:
+                        server_uri:
+                          uri: http://127.0.0.1:{config.model_authz_loopback_port}
+                          cluster: web_identity_authz
+                          timeout: 1s
+                        authorization_request:
+                          allowed_headers:
+                            patterns:
+                              - exact: authorization
+                              - exact: x-mpmc-model-session
+                        authorization_response:
+                          allowed_upstream_headers:
+                            patterns:
+                              - exact: x-mpmc-authenticated-principal
+                          allowed_client_headers:
+                            patterns:
+                              - exact: www-authenticate
+"""
+
+
+def _authz_cluster(config: ProductionEdgeConfig) -> str:
+    if config.model_authz_loopback_port is None:
+        return ""
+    return f"""
+    - name: web_identity_authz
+      connect_timeout: 0.25s
+      type: STATIC
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: web_identity_authz
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: 127.0.0.1
+                      port_value: {config.model_authz_loopback_port}
+"""
 
 
 def render_production_config(config: ProductionEdgeConfig) -> str:
     config = config.validated()
+    model_enabled = config.model_authz_loopback_port is not None
     origins = "\n".join(
         f"                          - exact: {_yaml(origin)}"
         for origin in config.public_origins
     )
-    return f'''admin:
+    allow_headers = (
+        "content-type,x-grpc-web,grpc-timeout,x-user-agent,"
+        "grpc-encoding,grpc-accept-encoding"
+    )
+    if model_enabled:
+        allow_headers += ",authorization,x-mpmc-model-session"
+    legacy_filter_config = (
+        """                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              \"@type\": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
+"""
+        if model_enabled
+        else ""
+    )
+    return f"""admin:
   access_log_path: /dev/null
   address:
     socket_address:
@@ -168,11 +273,11 @@ static_resources:
         - transport_socket:
             name: envoy.transport_sockets.tls
             typed_config:
-              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              \"@type\": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
               common_tls_context:
                 tls_params:
                   tls_minimum_protocol_version: TLSv1_2
-                alpn_protocols: ["h2", "http/1.1"]
+                alpn_protocols: [\"h2\", \"http/1.1\"]
                 tls_certificates:
                   - certificate_chain:
                       filename: {_yaml(config.downstream_certificate_chain)}
@@ -185,27 +290,27 @@ static_resources:
           filters:
             - name: envoy.filters.network.http_connection_manager
               typed_config:
-                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                \"@type\": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 codec_type: AUTO
                 stat_prefix: pt_grpc_web
                 max_request_headers_kb: 16
                 access_log:
                   - name: envoy.access_loggers.stdout
                     typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      \"@type\": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
                       log_format:
                         json_format:
                           event: pt_edge_request
-                          start_time: "%START_TIME%"
-                          request_id: "%REQ(X-REQUEST-ID)%"
-                          method: "%REQ(:METHOD)%"
-                          path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
-                          response_code: "%RESPONSE_CODE%"
-                          grpc_status: "%GRPC_STATUS%"
-                          duration_ms: "%DURATION%"
-                          request_bytes: "%BYTES_RECEIVED%"
-                          response_bytes: "%BYTES_SENT%"
-                          response_flags: "%RESPONSE_FLAGS%"
+                          start_time: \"%START_TIME%\"
+                          request_id: \"%REQ(X-REQUEST-ID)%\"
+                          method: \"%REQ(:METHOD)%\"
+                          path: \"%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%\"
+                          response_code: \"%RESPONSE_CODE%\"
+                          grpc_status: \"%GRPC_STATUS%\"
+                          duration_ms: \"%DURATION%\"
+                          request_bytes: \"%BYTES_RECEIVED%\"
+                          response_bytes: \"%BYTES_SENT%\"
+                          response_flags: \"%RESPONSE_FLAGS%\"
                 route_config:
                   name: pt_service_routes
                   virtual_hosts:
@@ -214,15 +319,15 @@ static_resources:
                       cors:
                         allow_origin_string_match:
 {origins}
-                        allow_methods: "POST, OPTIONS"
-                        allow_headers: "content-type,x-grpc-web,grpc-timeout,x-user-agent,grpc-encoding,grpc-accept-encoding"
-                        expose_headers: "grpc-status,grpc-message,grpc-status-details-bin"
-                        max_age: "600"
+                        allow_methods: \"POST, OPTIONS\"
+                        allow_headers: \"{allow_headers}\"
+                        expose_headers: \"grpc-status,grpc-message,grpc-status-details-bin\"
+                        max_age: \"600\"
                         allow_credentials: true
                       routes:
-                        - match:
+{_model_routes(model_enabled)}                        - match:
                             prefix: /mpmc.runtime.v1.PtFlashService/
-                          route:
+{legacy_filter_config}                          route:
                             cluster: pt_service_native_grpc
                             timeout: 125s
                             max_stream_duration:
@@ -230,17 +335,17 @@ static_resources:
                 http_filters:
                   - name: envoy.filters.http.cors
                     typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
-                  - name: envoy.filters.http.buffer
+                      \"@type\": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
+{_ext_authz_filter(config)}                  - name: envoy.filters.http.buffer
                     typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+                      \"@type\": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
                       max_request_bytes: 65541
                   - name: envoy.filters.http.grpc_web
                     typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb
+                      \"@type\": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb
                   - name: envoy.filters.http.router
                     typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                      \"@type\": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 
   clusters:
     - name: pt_service_native_grpc
@@ -256,7 +361,7 @@ static_resources:
             service_name: {pt_service_name()}
       typed_extension_protocol_options:
         envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          \"@type\": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
           explicit_http_config:
             http2_protocol_options: {{}}
       load_assignment:
@@ -271,12 +376,12 @@ static_resources:
       transport_socket:
         name: envoy.transport_sockets.tls
         typed_config:
-          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          \"@type\": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
           sni: {_yaml(config.upstream_server_name)}
           common_tls_context:
             tls_params:
               tls_minimum_protocol_version: TLSv1_2
-            alpn_protocols: ["h2"]
+            alpn_protocols: [\"h2\"]
             tls_certificates:
               - certificate_chain:
                   filename: {_yaml(config.upstream_client_certificate_chain)}
@@ -289,7 +394,7 @@ static_resources:
                 - san_type: DNS
                   matcher:
                     exact: {_yaml(config.upstream_server_name)}
-'''
+{_authz_cluster(config)}"""
 
 
 def pt_service_name() -> str:
@@ -311,6 +416,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--upstream-server-ca", required=True)
     parser.add_argument("--public-port", type=int, default=8443)
     parser.add_argument("--admin-port", type=int, default=9901)
+    parser.add_argument("--model-authz-loopback-port", type=int)
     return parser
 
 
@@ -332,6 +438,7 @@ def main() -> int:
                 upstream_server_ca=args.upstream_server_ca,
                 public_port=args.public_port,
                 admin_port=args.admin_port,
+                model_authz_loopback_port=args.model_authz_loopback_port,
             )
         )
     except ValueError as error:
