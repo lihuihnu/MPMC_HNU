@@ -4,14 +4,15 @@
 
 #include <array>
 #include <cmath>
-#include <iostream>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
 namespace {
 namespace fl = mpmc::flash;
+namespace th = mpmc::thermodynamics;
 using pr76_max3_test::Vec;
 
 void require(bool value, const char* message) {
@@ -43,6 +44,55 @@ fl::Pr76PtThreePhaseStart exact_fixture_start() {
     const auto& phases = pr76_max3_test::reference_phases();
     start.compositions = {phases[0], phases[1], phases[2]};
     return start;
+}
+
+// Fixed synthetic topology fixture used ONLY to exercise the real max3 3->2
+// recovery branch. These artificial kij values are structural regression data,
+// not a fit, parameter recommendation, or physical validation dataset.
+th::Pr76Phase<double> recovery_model() {
+    const auto provenance = pr76_max3_test::source(
+        "fixed three-phase disappearance recovery topology fixture");
+    const std::array<std::string, 3> ids{"light", "heavy-b", "heavy-c"};
+    const std::array<double, 3> tc{190.6, 500.0, 500.0};
+    const std::array<double, 3> pc{4.6e6, 5.0e6, 5.0e6};
+    const std::array<double, 3> omega{0.01, 0.10, 0.10};
+
+    std::vector<th::Component> catalog;
+    th::PrParameterInput input;
+    input.model_id = std::string(th::pr76_profile);
+    input.dataset_id = "synthetic-PR76-max3-3to2-recovery";
+    input.revision = "v1";
+    input.applicability = {std::nullopt, std::nullopt, provenance};
+    for (std::size_t i = 0U; i < ids.size(); ++i) {
+        catalog.push_back({ids[i], ids[i], th::ComponentKind::pure, provenance, {}});
+        input.pure.push_back({
+            ids[i], pr76_max3_test::scalar(tc[i], th::Unit::kelvin, provenance),
+            pr76_max3_test::scalar(pc[i], th::Unit::pascal, provenance),
+            pr76_max3_test::scalar(omega[i], th::Unit::dimensionless, provenance)});
+    }
+    input.binary.push_back({ids[0], ids[1],
+        pr76_max3_test::scalar(0.0, th::Unit::dimensionless, provenance)});
+    input.binary.push_back({ids[0], ids[2],
+        pr76_max3_test::scalar(0.03, th::Unit::dimensionless, provenance)});
+    input.binary.push_back({ids[1], ids[2],
+        pr76_max3_test::scalar(0.36, th::Unit::dimensionless, provenance)});
+
+    const std::vector<std::string> order{ids[0], ids[1], ids[2]};
+    return th::Pr76Phase<double>::from_parameters(
+        th::PrParameterSet::create(
+            catalog, order, input,
+            th::DataPolicy::allow_synthetic_tests));
+}
+
+const std::array<Vec, 3>& recovery_phases() {
+    // Frozen numerical anchors from a real accepted strict-PR76 three-phase solve
+    // of recovery_model() at p=1 MPa, T=250 K. They exist only to make this
+    // orchestration regression deterministic; max3 re-solves all equations below.
+    static const std::array<Vec, 3> values{{
+        {0.96854260046818119, 0.015729641629537154, 0.01572775790228163},
+        {0.059133645515199861, 0.93843673665865202, 0.0024296178261481098},
+        {0.050218693594532689, 0.0023772256933525067, 0.94740408071211479}}};
+    return values;
 }
 
 void automatic_cold_start_is_exercised() {
@@ -146,6 +196,9 @@ void accepted_three_phase_continues_three_to_three() {
 }
 
 void three_to_two_boundary_requires_fresh_neighbor() {
+    // Keep the original exact symmetric tie-edge checks: the low-level fixed
+    // three-phase primitive must retain disappearance evidence, and the surviving
+    // pair must independently close through a fresh full VLE solve.
     const auto model = pr76_max3_test::model();
     fl::Pr76VleEvaluator evaluator(model);
     const auto& phases = pr76_max3_test::reference_phases();
@@ -177,10 +230,6 @@ void three_to_two_boundary_requires_fresh_neighbor() {
     const std::vector<Vec> surviving{
         boundary.point->phases[0].composition,
         boundary.point->phases[1].composition};
-    require(surviving[0] == boundary.point->phases[0].composition &&
-                surviving[1] == boundary.point->phases[1].composition,
-            "surviving phase extraction changed the converged boundary compositions");
-
     const auto neighbor = fl::solve_pr76_pt_vle(
         1.0e6, 250.0, feed, evaluator, {}, surviving, surviving);
     require(neighbor.solution.status ==
@@ -198,10 +247,8 @@ void three_to_two_boundary_requires_fresh_neighbor() {
                     neighbor.solution.options.iteration.mass_relative_tolerance,
             "fresh two-phase neighbor did not re-close equilibrium/material-balance gates");
 
-    // Publication must not expose the boundary neighbor until the max3 layer has
-    // explicitly marked that fresh VLE result accepted. Even if that boolean is
-    // tampered on a malformed source, the projection still preserves the actual
-    // neighbor PtSplitStatus instead of converting it into an accepted phase set.
+    // Publication must not expose a fresh neighbor until max3 explicitly accepts
+    // it, and the generic projection still respects the neighbor's own status.
     fl::Pr76PtMax3Result publication_gate;
     publication_gate.status = fl::Pr76PtMax3Status::two_phase;
     publication_gate.selected_attempt = 0U;
@@ -212,20 +259,101 @@ void three_to_two_boundary_requires_fresh_neighbor() {
     require(fl::project_pr76_pt_max3_phase_set(publication_gate).solution.status !=
                 fl::PtPhaseSetStatus::accepted,
             "unaccepted fresh-neighbor result was published as accepted two phase");
-
     publication_gate.attempts[0].accepted_two_phase_neighbor = true;
     require(publication_gate.two_phase_neighbor() != nullptr,
             "accepted fresh-neighbor result was not exposed by the max3 accessor");
     require(fl::project_pr76_pt_max3_phase_set(publication_gate).solution.status ==
                 fl::PtPhaseSetStatus::accepted,
             "accepted fresh-neighbor result was not published as two phase");
-
     auto unresolved_neighbor = neighbor;
     unresolved_neighbor.solution.status = fl::PtSplitStatus::indeterminate;
     publication_gate.attempts[0].boundary_neighbor = std::move(unresolved_neighbor);
     require(fl::project_pr76_pt_max3_phase_set(publication_gate).solution.status !=
                 fl::PtPhaseSetStatus::accepted,
             "non-accepted fresh-neighbor status was promoted by the max3 publication layer");
+
+    // End-to-end single-call recovery regression. The fixed synthetic model has a
+    // reachable metastable two-phase basin. Its final common-tangent review is
+    // negative, which legitimately opens the max3 route; the supplied triple is
+    // only an initialization hint. Phase 1 has exactly zero lever-rule share, so
+    // the fixed-three-phase solve must report phase_disappearance and max3 must
+    // fresh-resolve phases 0+2 before publishing two phase.
+    auto recovery = recovery_model();
+    fl::Pr76VleEvaluator recovery_evaluator(recovery);
+    const auto& recovery_phase = recovery_phases();
+    Vec recovery_feed(3U, 0.0);
+    for (std::size_t i = 0U; i < recovery_feed.size(); ++i) {
+        recovery_feed[i] = 0.25 * recovery_phase[0][i] +
+                           0.75 * recovery_phase[2][i];
+    }
+
+    const Vec metastable_witness{
+        0.027979967031294486,
+        0.90057153296773984,
+        0.071448500000965642};
+    const std::vector<Vec> initial_starts{metastable_witness};
+    const std::vector<Vec> final_starts{
+        recovery_phase[0], recovery_phase[1], recovery_phase[2]};
+
+    fl::Pr76PtMax3Options recovery_options;
+    recovery_options.two_phase.initial_stability.automatic_starts = false;
+    // The frozen metastable split is the second role assignment for this witness.
+    recovery_options.two_phase.max_split_attempts = 2U;
+    fl::Pr76PtThreePhaseStart recovery_start;
+    recovery_start.compositions = recovery_phase;
+    recovery_start.phase_fraction_seed = {0.0, 0.75};
+    recovery_options.three_phase_starts.push_back(recovery_start);
+
+    const auto routed = fl::solve_pr76_pt_max3(
+        1.0e6, 250.0, recovery_feed, recovery_evaluator,
+        recovery_options, initial_starts, final_starts);
+
+    require(routed.base.solution.status == fl::PtSplitStatus::phase_set_unstable &&
+                routed.base.solution.final_stability.has_value() &&
+                routed.base.solution.final_stability->status ==
+                    fl::StabilityStatus::unstable,
+            "single-call 3->2 fixture lost the required negative two-phase final-TPD evidence");
+    require(routed.status == fl::Pr76PtMax3Status::two_phase &&
+                routed.selected_attempt.has_value() &&
+                routed.two_phase_neighbor() != nullptr,
+            "single-call max3 did not publish the fresh two-phase recovery target");
+
+    const auto& routed_attempt = routed.attempts[*routed.selected_attempt];
+    require(routed_attempt.supplied_start.has_value() &&
+                *routed_attempt.supplied_start == 0U &&
+                routed_attempt.equilibrium.status ==
+                    fl::PtThreePhaseStatus::phase_disappearance &&
+                routed_attempt.equilibrium.disappearing_phase.has_value() &&
+                *routed_attempt.equilibrium.disappearing_phase == 1U &&
+                routed_attempt.equilibrium.equations_converged() &&
+                routed_attempt.equilibrium.point.has_value() &&
+                routed_attempt.equilibrium.point->phases[1].mole_phase_fraction <=
+                    routed_attempt.equilibrium.options.minimum_phase_fraction,
+            "selected max3 attempt lost explicit phase-1 disappearance evidence");
+    require(routed_attempt.accepted_two_phase_neighbor &&
+                routed_attempt.boundary_neighbor.has_value(),
+            "phase disappearance was not closed by a retained fresh two-phase neighbor");
+
+    const auto& fresh = *routed_attempt.boundary_neighbor;
+    require(fresh.solution.status == fl::PtSplitStatus::two_phase_no_instability_found &&
+                fresh.solution.candidate() != nullptr &&
+                fresh.solution.final_stability.has_value() &&
+                fresh.solution.final_stability->status ==
+                    fl::StabilityStatus::no_instability_found,
+            "fresh recovery neighbor did not independently pass its own final phase-set review");
+    const auto& fresh_pair = *fresh.solution.candidate();
+    require(fresh_pair.fugacity_norm <= fresh.solution.options.iteration.fugacity_tolerance &&
+                fresh_pair.fractions.mass_absolute <=
+                    fresh.solution.options.iteration.mass_absolute_tolerance &&
+                fresh_pair.fractions.mass_relative <=
+                    fresh.solution.options.iteration.mass_relative_tolerance,
+            "fresh recovery neighbor failed its own equilibrium/material-balance tolerances");
+
+    const auto published = fl::project_pr76_pt_max3_phase_set(routed);
+    require(published.solution.status == fl::PtPhaseSetStatus::accepted &&
+                published.solution.accepted_phase_count() == 2U &&
+                published.solution.accepted_phase_set() != nullptr,
+            "single-call 3->2 recovery was not published as an accepted role-neutral two-phase set");
 }
 
 using Test = std::pair<std::string_view, void (*)()>;
@@ -243,13 +371,11 @@ int main(int argc, char** argv) {
         for (const auto& [name, run] : tests) {
             if (name == argv[1]) {
                 run();
-                std::cout << "[PASS] " << name << '\n';
                 return 0;
             }
         }
         throw std::invalid_argument("unknown test name");
-    } catch (const std::exception& error) {
-        std::cerr << "[FAIL] " << error.what() << '\n';
+    } catch (const std::exception&) {
         return 1;
     }
 }
