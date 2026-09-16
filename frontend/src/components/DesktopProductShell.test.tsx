@@ -24,24 +24,25 @@ function html(mode: 'pt' | 'expert') {
 }
 
 describe('Electron desktop product shell', () => {
-  it('keeps PT Flash as the default and does not render the Expert workspace', () => {
-    const markup = html('pt');
-    expect(markup).toContain('data-desktop-product-shell="true"');
-    expect(markup).toContain('data-product-mode="pt"');
-    expect(markup).toContain('aria-pressed="true">PT Flash');
-    expect(markup).toContain('Model-neutral PT Flash');
-    expect(markup).not.toContain('data-expert-workbench');
-    expect(markup).not.toContain('PR76 model workspace');
-  });
-
-  it('opens the local editable workbench directly without account/session UI', () => {
+  it('presents the no-login classic PR workspace as the primary product mode', () => {
     const markup = html('expert');
+    expect(markup).toContain('data-desktop-product-shell="true"');
+    expect(markup).toContain('data-product-mode="expert"');
+    expect(markup).toContain('aria-pressed="true">Classic PR');
     expect(markup).toContain('data-expert-workbench="ready"');
-    expect(markup).toContain('PR76 model workspace');
+    expect(markup).toContain('Peng–Robinson flash');
     expect(markup).toContain('Create custom PR76 model');
     expect(markup).toContain('No Expert model created yet');
-    expect(markup).toContain('no account or login is required');
+    expect(markup).toContain('no account or login required');
     expect(markup).not.toContain('authenticated model session');
     expect(markup).not.toContain('Reconnect Expert session');
+  });
+
+  it('keeps the pre-existing configured PT surface as a secondary compatibility mode', () => {
+    const markup = html('pt');
+    expect(markup).toContain('data-product-mode="pt"');
+    expect(markup).toContain('aria-pressed="true">Configured PT');
+    expect(markup).toContain('Model-neutral PT Flash');
+    expect(markup).not.toContain('data-expert-workbench');
   });
 });
