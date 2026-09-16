@@ -1,4 +1,4 @@
-#include <mpmc/flash/pr76_three_phase.hpp>
+#include <mpmc/flash/pr76_max3_phase_set.hpp>
 
 #include "synthetic_fixture.hpp"
 
@@ -169,10 +169,18 @@ void three_to_two_boundary_requires_fresh_neighbor() {
                 boundary.disappearing_phase.has_value() &&
                 *boundary.disappearing_phase == 2U && boundary.equations_converged(),
             "3->2 continuation edge did not retain explicit disappearance evidence");
+    require(boundary.point.has_value() &&
+                boundary.point->phases[2].mole_phase_fraction <=
+                    boundary.options.minimum_phase_fraction,
+            "disappearance evidence does not correspond to the configured phase-fraction gate");
 
     const std::vector<Vec> surviving{
         boundary.point->phases[0].composition,
         boundary.point->phases[1].composition};
+    require(surviving[0] == boundary.point->phases[0].composition &&
+                surviving[1] == boundary.point->phases[1].composition,
+            "surviving phase extraction changed the converged boundary compositions");
+
     const auto neighbor = fl::solve_pr76_pt_vle(
         1.0e6, 250.0, feed, evaluator, {}, surviving, surviving);
     require(neighbor.solution.status ==
@@ -182,6 +190,42 @@ void three_to_two_boundary_requires_fresh_neighbor() {
                 neighbor.solution.final_stability->status ==
                     fl::StabilityStatus::no_instability_found,
             "3->2 boundary was not independently fresh-resolved as a stable two-phase neighbor");
+    const auto& pair = *neighbor.solution.candidate();
+    require(pair.fugacity_norm <= neighbor.solution.options.iteration.fugacity_tolerance &&
+                pair.fractions.mass_absolute <=
+                    neighbor.solution.options.iteration.mass_absolute_tolerance &&
+                pair.fractions.mass_relative <=
+                    neighbor.solution.options.iteration.mass_relative_tolerance,
+            "fresh two-phase neighbor did not re-close equilibrium/material-balance gates");
+
+    // Publication must not expose the boundary neighbor until the max3 layer has
+    // explicitly marked that fresh VLE result accepted. Even if that boolean is
+    // tampered on a malformed source, the projection still preserves the actual
+    // neighbor PtSplitStatus instead of converting it into an accepted phase set.
+    fl::Pr76PtMax3Result publication_gate;
+    publication_gate.status = fl::Pr76PtMax3Status::two_phase;
+    publication_gate.selected_attempt = 0U;
+    publication_gate.attempts.resize(1U);
+    publication_gate.attempts[0].boundary_neighbor = neighbor;
+    require(publication_gate.two_phase_neighbor() == nullptr,
+            "unaccepted fresh-neighbor result leaked through the max3 accessor");
+    require(fl::project_pr76_pt_max3_phase_set(publication_gate).solution.status !=
+                fl::PtPhaseSetStatus::accepted,
+            "unaccepted fresh-neighbor result was published as accepted two phase");
+
+    publication_gate.attempts[0].accepted_two_phase_neighbor = true;
+    require(publication_gate.two_phase_neighbor() != nullptr,
+            "accepted fresh-neighbor result was not exposed by the max3 accessor");
+    require(fl::project_pr76_pt_max3_phase_set(publication_gate).solution.status ==
+                fl::PtPhaseSetStatus::accepted,
+            "accepted fresh-neighbor result was not published as two phase");
+
+    auto unresolved_neighbor = neighbor;
+    unresolved_neighbor.solution.status = fl::PtSplitStatus::indeterminate;
+    publication_gate.attempts[0].boundary_neighbor = std::move(unresolved_neighbor);
+    require(fl::project_pr76_pt_max3_phase_set(publication_gate).solution.status !=
+                fl::PtPhaseSetStatus::accepted,
+            "non-accepted fresh-neighbor status was promoted by the max3 publication layer");
 }
 
 using Test = std::pair<std::string_view, void (*)()>;
