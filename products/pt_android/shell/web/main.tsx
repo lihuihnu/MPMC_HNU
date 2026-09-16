@@ -28,10 +28,11 @@ if (rootElement === null) {
 }
 
 const client = createAndroidFlashClient();
-const owner = modelWorkbenchOwner(createAndroidModelWorkbenchBridge());
-if (owner === null) {
+const maybeOwner = modelWorkbenchOwner(createAndroidModelWorkbenchBridge());
+if (maybeOwner === null) {
   throw new Error('MPMC_HNU Android Classic PR ownership adapter is unavailable.');
 }
+const owner = maybeOwner;
 
 createRoot(rootElement).render(
   <StrictMode>

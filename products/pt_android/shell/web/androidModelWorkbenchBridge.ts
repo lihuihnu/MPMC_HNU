@@ -11,7 +11,7 @@ import {
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_REPLY_BYTES = 4 * 1024 * 1024;
 
-type JsonRecord = Record<string, unknown>;
+type JsonRecord = JsonObject;
 interface NativeRecordsReply { records: string[] }
 interface AndroidModelNativePlugin {
   modelApply(options: { requestId: string; recordsJson: string }): Promise<NativeRecordsReply>;
@@ -212,16 +212,16 @@ async function transport(operation: Promise<NativeRecordsReply>): Promise<ModelW
 export function createAndroidModelWorkbenchBridge(): ModelWorkbenchBridge {
   return Object.freeze({
     convention: MODEL_WORKBENCH_CONVENTION,
-    apply(requestId, input) {
+    apply(requestId: string, input: JsonObject) {
       return transport(plugin.modelApply({ requestId, recordsJson: requestRecords(input) }));
     },
-    solve(requestId, input) {
+    solve(requestId: string, input: JsonObject) {
       return transport(plugin.modelSolve({ requestId, recordsJson: requestRecords(input) }));
     },
-    release(requestId) {
+    release(requestId: string) {
       return transport(plugin.modelRelease({ requestId }));
     },
-    cancel(requestId) {
+    cancel(requestId: string) {
       void plugin.modelCancel({ requestId }).catch(() => {});
     },
   });
