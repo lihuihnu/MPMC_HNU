@@ -260,7 +260,6 @@ class ProductServer:
         context = ssl.create_default_context(cafile=str(public_ca))
         context.load_cert_chain(str(client_cert), str(client_key))
         self.tls_context = context
-
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -276,8 +275,28 @@ class ProductServer:
                 else:
                     self.send_error(404)
 
+            def _runtime_script(self) -> bytes:
+                return (
+                    "window.mpmcHostedWebModelOwnership={"
+                    "convention:'MPMC/model/hosted-web-ownership/v1',"
+                    "baseUrl:'/model-api',"
+                    "identity:{getAccessToken:async()=>({accessToken:'"
+                    + TOKEN_A
+                    + "'})}};"
+                ).encode("utf-8")
+
             def _static(self) -> None:
                 path = self.path.split("?", 1)[0]
+                if path == "/hosted-runtime.js":
+                    payload = self._runtime_script()
+                    self.send_response(200)
+                    self.send_header("content-type", "text/javascript; charset=utf-8")
+                    self.send_header("content-length", str(len(payload)))
+                    self.send_header("cache-control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+
                 relative = "index.html" if path in ("/", "/index.html") else path.lstrip("/")
                 candidate = (outer.dist / relative).resolve()
                 try:
@@ -291,20 +310,14 @@ class ProductServer:
                 payload = candidate.read_bytes()
                 if candidate.name == "index.html":
                     text = payload.decode("utf-8")
-                    injection = (
-                        "<script>"
-                        "window.mpmcHostedWebModelOwnership={"
-                        "convention:'MPMC/model/hosted-web-ownership/v1',"
-                        "baseUrl:'/model-api',"
-                        "identity:{getAccessToken:async()=>({accessToken:'"
-                        + TOKEN_A
-                        + "'})}};"
-                        "</script>"
-                    )
                     marker = '<script type="module"'
                     if marker not in text:
                         raise RuntimeError("Vite index is missing its module script")
-                    text = text.replace(marker, injection + marker, 1)
+                    text = text.replace(
+                        marker,
+                        '<script src="/hosted-runtime.js"></script>' + marker,
+                        1,
+                    )
                     payload = text.encode("utf-8")
                 content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
                 self.send_response(200)
@@ -336,9 +349,7 @@ class ProductServer:
                         upstream_headers[name] = value
 
                 if "CreateModel" in self.path:
-                    outer.observed.note_session(
-                        self.headers.get("x-mpmc-model-session")
-                    )
+                    outer.observed.note_session(self.headers.get("x-mpmc-model-session"))
 
                 connection = http.client.HTTPSConnection(
                     outer.edge_host,
@@ -347,9 +358,7 @@ class ProductServer:
                     timeout=130,
                 )
                 try:
-                    connection.request(
-                        "POST", self.path, body=body, headers=upstream_headers
-                    )
+                    connection.request("POST", self.path, body=body, headers=upstream_headers)
                     response = connection.getresponse()
                     self.send_response(response.status)
                     for name, value in response.getheaders():
@@ -469,7 +478,6 @@ def fill_required_model(browser: Browser) -> None:
             raise RuntimeError(f"component {index} input shape changed: {len(inputs)}")
         browser.set_value(inputs[0], values[0])
         browser.set_value(inputs[1], values[1])
-        # inputs[2] is optional molar mass.
         browser.set_value(inputs[3], values[2])
         browser.set_value(inputs[4], values[3])
         browser.set_value(inputs[5], values[4])
