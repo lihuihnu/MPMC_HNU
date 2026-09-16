@@ -120,7 +120,7 @@ function SettingsEditor({
             )
           : [];
         return (
-          <details className="contract-details" open key={group}>
+          <details className="contract-details" key={group}>
             <summary>{title}</summary>
             <div className="field-grid field-grid-two">
               {entries.map(([field, value]) => (
@@ -158,8 +158,8 @@ function SettingsEditor({
 }
 
 /**
- * PR76 Expert create/edit UI. It edits only a local draft and every submit creates
- * a new immutable model through ExpertModelOwner. Raw model handles never enter
+ * PR76 create/edit UI. It edits only a local draft and every submit creates a
+ * new immutable model through ExpertModelOwner. Raw model handles never enter
  * component state or the DOM.
  */
 export function ExpertPr76Editor({ owner, seedSnapshot, onCreated, onDraftChanged }: ExpertPr76EditorProps) {
@@ -176,9 +176,6 @@ export function ExpertPr76Editor({ owner, seedSnapshot, onCreated, onDraftChange
     return () => { alive.current = false; };
   }, []);
 
-  // Resolve event-derived edits synchronously, not in a deferred React updater:
-  // currentTarget only belongs to the active event, and onBlur must catch domain
-  // validation before React renders. The ref also composes same-turn edits.
   function setDraft(update: SetStateAction<Pr76ExpertDraft>) {
     if (creating.current) return;
     const next = typeof update === 'function' ? update(draftRef.current) : update;
@@ -218,7 +215,6 @@ export function ExpertPr76Editor({ owner, seedSnapshot, onCreated, onDraftChange
     try {
       const made = await createPr76ExpertModel(owner, draftRef.current);
       if (!await handoffExpertModel(made, () => alive.current, onCreated)) return;
-      // The workspace may remount this editor for the applied model revision.
       if (!alive.current) return;
       try {
         const nextDraft = pr76ExpertDraftFromSnapshot(made.snapshot);
@@ -237,234 +233,259 @@ export function ExpertPr76Editor({ owner, seedSnapshot, onCreated, onDraftChange
   }
 
   return (
-    <form className="flash-form expert-pr76-editor" onSubmit={(event) => void submit(event)} onInput={() => onDraftChanged?.()} noValidate>
+    <form
+      className="flash-form expert-pr76-editor pr-fluid-editor"
+      onSubmit={(event) => void submit(event)}
+      onInput={() => onDraftChanged?.()}
+      noValidate
+    >
       <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">PR76 Expert model</p>
-          <h2>{seedSnapshot ? 'Create immutable revision' : 'Create custom PR76 model'}</h2>
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Fluid definition</p>
+            <h2>{seedSnapshot ? 'Edit PR fluid' : 'Define PR fluid'}</h2>
+          </div>
+          <span className="model-chip">Classic PR</span>
         </div>
-        <span className="model-chip">Explicit parameters</span>
-      </div>
 
-      <div className="field-grid">
-        {([
-          ['displayName', 'Display name'],
-          ['datasetId', 'New dataset ID'],
-          ['revision', 'New revision'],
-        ] as const).map(([field, label]) => (
-          <label key={field}>
-            <span>{label}</span>
-            <input
-              value={draft[field]}
-              onChange={(event) => setIdentity(field, event.currentTarget.value)}
-            />
-          </label>
-        ))}
-      </div>
+        <label className="backend-selector pr-model-name">
+          <span>Fluid / model name</span>
+          <input
+            value={draft.displayName}
+            onChange={(event) => setIdentity('displayName', event.currentTarget.value)}
+          />
+        </label>
 
-      <details className="contract-details" open>
-        <summary>User-supplied provenance for new/changed records</summary>
-        <div className="field-grid field-grid-two">
-          {([
-            ['reference', 'Reference'],
-            ['revision', 'Source revision'],
-            ['locator', 'Locator'],
-            ['acquisition', 'Acquisition'],
-            ['usageTerms', 'Usage terms'],
-            ['note', 'Note (optional)'],
-          ] as const).map(([field, label]) => (
-            <label key={field}>
-              <span>{label}</span>
-              <input
-                value={draft.userRecord[field]}
-                onChange={(event) => setUserRecord(field, event.currentTarget.value)}
-              />
-            </label>
-          ))}
-        </div>
-      </details>
-
-      <div className="composition-header">
-        <div>
-          <h3>Ordered components</h3>
-          <p>Replacing an existing physical identity requires remove + add.</p>
-        </div>
-        <button
-          className="secondary-button cancel-button"
-          type="button"
-          disabled={busy}
-          onClick={() => setDraft((current) => addPr76Component(current))}
-        >
-          Add component
-        </button>
-      </div>
-
-      {draft.components.map((component, index) => (
-        <details className="contract-details" open key={component.key} data-component-index={index}>
-          <summary>{index}: {component.componentId || 'new component'}</summary>
+        <details className="contract-details advanced-details pr-record-details">
+          <summary>Data source and model record (required)</summary>
+          <p className="submit-note">
+            Keep a traceable identifier and source for user-supplied component and interaction data.
+          </p>
           <div className="field-grid field-grid-two">
             <label>
-              <span>Component ID</span>
+              <span>Dataset ID</span>
               <input
-                value={component.componentId}
-                readOnly={component.originalDefinition !== undefined}
-                onChange={(event) => setDraft((current) =>
-                  editPr76ComponentText(current, component.key, 'componentId', event.currentTarget.value))}
+                value={draft.datasetId}
+                onChange={(event) => setIdentity('datasetId', event.currentTarget.value)}
               />
             </label>
             <label>
-              <span>Display name</span>
+              <span>Model revision</span>
               <input
-                value={component.displayName}
-                onChange={(event) => setDraft((current) =>
-                  editPr76ComponentText(current, component.key, 'displayName', event.currentTarget.value))}
+                value={draft.revision}
+                onChange={(event) => setIdentity('revision', event.currentTarget.value)}
               />
-            </label>
-            <label>
-              <span>Kind</span>
-              <select
-                value={component.kind}
-                onChange={(event) => setDraft((current) =>
-                  editPr76ComponentKind(current, component.key, Number(event.currentTarget.value) as ComponentKind))}
-              >
-                <option value={ComponentKind.PURE}>Pure</option>
-                <option value={ComponentKind.PSEUDO}>Pseudo</option>
-              </select>
             </label>
             {([
-              'molarMassKgPerMol',
-              'criticalTemperatureK',
-              'criticalPressurePa',
-              'acentricFactor',
-            ] as const).map((field) => {
-              const [label, unit] = scalarLabel(field);
-              return (
-                <label key={field}>
-                  <span>{label}</span>
-                  <div className="input-with-unit">
-                    <input
-                      inputMode="decimal"
-                      value={component[field].text}
-                      onChange={(event) => setDraft((current) =>
-                        editPr76ComponentScalar(current, component.key, field, event.currentTarget.value))}
-                    />
-                    {unit ? <span>{unit}</span> : null}
-                  </div>
-                </label>
-              );
-            })}
-          </div>
-          <div className="submit-actions">
-            <button type="button" className="secondary-button" disabled={busy || index === 0}
-              onClick={() => setDraft((current) => movePr76Component(current, component.key, -1))}>
-              Move up
-            </button>
-            <button type="button" className="secondary-button" disabled={busy || index === draft.components.length - 1}
-              onClick={() => setDraft((current) => movePr76Component(current, component.key, 1))}>
-              Move down
-            </button>
-            <button type="button" className="secondary-button" disabled={busy}
-              onClick={() => setDraft((current) => removePr76Component(current, component.key))}>
-              Remove
-            </button>
+              ['reference', 'Reference'],
+              ['revision', 'Source revision'],
+              ['locator', 'Locator'],
+              ['acquisition', 'Acquisition'],
+              ['usageTerms', 'Usage terms'],
+              ['note', 'Note (optional)'],
+            ] as const).map(([field, label]) => (
+              <label key={field}>
+                <span>{label}</span>
+                <input
+                  value={draft.userRecord[field]}
+                  onChange={(event) => setUserRecord(field, event.currentTarget.value)}
+                />
+              </label>
+            ))}
           </div>
         </details>
-      ))}
 
-      <div className="composition-header">
-        <div>
-          <h3>Binary interactions</h3>
-          <p>Every unordered selected pair requires an explicit finite kij; blank never means zero.</p>
-        </div>
-      </div>
-      {draft.pairs.length === 0 ? (
-        <div className="model-contract model-contract-empty">
-          <span>No unordered component pair exists yet.</span>
-        </div>
-      ) : draft.pairs.map((pair) => {
-        const first = componentsByKey.get(pair.firstComponentKey);
-        const second = componentsByKey.get(pair.secondComponentKey);
-        return (
-          <label className="backend-selector" key={pair.key}>
-            <span>kij {first?.componentId || '?'} ↔ {second?.componentId || '?'}</span>
-            <input
-              inputMode="decimal"
-              value={pair.kij.text}
-              onChange={(event) => setDraft((current) =>
-                editPr76Kij(current, pair.key, event.currentTarget.value))}
-            />
-          </label>
-        );
-      })}
-
-      <details className="contract-details" open>
-        <summary>PT solver settings</summary>
-        <label className="backend-selector">
-          <span>Settings mode</span>
-          <select
-            value={draft.solverMode}
-            disabled={busy}
-            onChange={(event) => setDraft((current) =>
-              setPr76SolverMode(current, event.currentTarget.value as 'preset' | 'custom'))}
-          >
-            <option value="preset">Frozen preset</option>
-            <option value="custom" disabled={!draft.customSettings}>Complete custom snapshot</option>
-          </select>
-        </label>
-        {draft.solverMode === 'preset' ? (
-          <div className="model-contract">
-            <span>Preset ID</span>
-            <code>{draft.presetId}</code>
-            {!draft.customSettings ? (
-              <span>Create once with the preset to obtain a complete resolved snapshot before custom editing.</span>
-            ) : null}
+        <div className="composition-header pr-editor-section">
+          <div>
+            <h3>Components</h3>
+            <p>Add, remove or reorder the components used by this PR fluid.</p>
           </div>
-        ) : (
-          <SettingsEditor
-            draft={draft}
-            onEdit={(group, field, value) => setDraft((current) => editPr76Setting(current, group, field, value))}
-          />
-        )}
-      </details>
-
-      {submitted && issues.length > 0 ? (
-        <div className="validation-panel" role="alert">
-          <strong>Draft is incomplete</strong>
-          <ul>
-            {issues.map((issue, index) => (
-              <li key={`${issue.field}-${index}`}>
-                <code>{issue.field}</code>: {issue.message}
-              </li>
-            ))}
-          </ul>
+          <button
+            className="secondary-button cancel-button"
+            type="button"
+            disabled={busy}
+            onClick={() => setDraft((current) => addPr76Component(current))}
+          >
+            Add component
+          </button>
         </div>
-      ) : null}
 
-      {failure ? (
-        <div className="validation-panel" role="alert" data-create-reason={failure.reason}>
-          <strong>Model creation failed</strong>
-          <p>
-            Reason <code>{failure.reason}</code>
-            {failure.code === undefined ? null : <> · gRPC code <code>{failure.code}</code></>}
-          </p>
-          {failure.validation ? (
-            <p>
-              <code>{failure.validation.code}</code> · field{' '}
-              <code>{failure.validation.field ?? 'not supplied'}</code>
-            </p>
-          ) : null}
+        {draft.components.map((component, index) => (
+          <details className="contract-details pr-component-card" open key={component.key} data-component-index={index}>
+            <summary>{component.displayName || component.componentId || `Component ${index + 1}`}</summary>
+            <div className="field-grid field-grid-two">
+              <label>
+                <span>Component ID</span>
+                <input
+                  value={component.componentId}
+                  readOnly={component.originalDefinition !== undefined}
+                  onChange={(event) => setDraft((current) =>
+                    editPr76ComponentText(current, component.key, 'componentId', event.currentTarget.value))}
+                />
+              </label>
+              <label>
+                <span>Display name</span>
+                <input
+                  value={component.displayName}
+                  onChange={(event) => setDraft((current) =>
+                    editPr76ComponentText(current, component.key, 'displayName', event.currentTarget.value))}
+                />
+              </label>
+              <label>
+                <span>Component type</span>
+                <select
+                  value={component.kind}
+                  onChange={(event) => setDraft((current) =>
+                    editPr76ComponentKind(current, component.key, Number(event.currentTarget.value) as ComponentKind))}
+                >
+                  <option value={ComponentKind.PURE}>Pure</option>
+                  <option value={ComponentKind.PSEUDO}>Pseudo</option>
+                </select>
+              </label>
+              {([
+                'molarMassKgPerMol',
+                'criticalTemperatureK',
+                'criticalPressurePa',
+                'acentricFactor',
+              ] as const).map((field) => {
+                const [label, unit] = scalarLabel(field);
+                return (
+                  <label key={field}>
+                    <span>{label}</span>
+                    <div className="input-with-unit">
+                      <input
+                        inputMode="decimal"
+                        value={component[field].text}
+                        onChange={(event) => setDraft((current) =>
+                          editPr76ComponentScalar(current, component.key, field, event.currentTarget.value))}
+                      />
+                      {unit ? <span>{unit}</span> : null}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="submit-actions pr-component-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy || index === 0}
+                onClick={() => setDraft((current) => movePr76Component(current, component.key, -1))}
+              >
+                Move up
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy || index === draft.components.length - 1}
+                onClick={() => setDraft((current) => movePr76Component(current, component.key, 1))}
+              >
+                Move down
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => setDraft((current) => removePr76Component(current, component.key))}
+              >
+                Remove
+              </button>
+            </div>
+          </details>
+        ))}
+
+        <div className="composition-header pr-editor-section">
+          <div>
+            <h3>Binary interaction coefficients</h3>
+            <p>Enter an explicit finite kij for every component pair.</p>
+          </div>
         </div>
-      ) : null}
+        {draft.pairs.length === 0 ? (
+          <div className="model-contract model-contract-empty">
+            <span>Add at least two components to define a binary interaction coefficient.</span>
+          </div>
+        ) : draft.pairs.map((pair) => {
+          const first = componentsByKey.get(pair.firstComponentKey);
+          const second = componentsByKey.get(pair.secondComponentKey);
+          return (
+            <label className="backend-selector pr-kij-row" key={pair.key}>
+              <span>kij {first?.componentId || '?'} ↔ {second?.componentId || '?'}</span>
+              <input
+                inputMode="decimal"
+                value={pair.kij.text}
+                onChange={(event) => setDraft((current) =>
+                  editPr76Kij(current, pair.key, event.currentTarget.value))}
+              />
+            </label>
+          );
+        })}
 
-      <div className="submit-row">
-        <span className="submit-note">
-          Submit creates a new immutable PR76 model. No existing model handle is mutated.
-        </span>
-        <button className="primary-button" type="submit" disabled={busy}>
-          {busy ? 'Creating…' : 'Create immutable model'}
-        </button>
-      </div>
+        <details className="contract-details advanced-details pr-solver-settings">
+          <summary>Advanced: numerical solver settings</summary>
+          <label className="backend-selector">
+            <span>Settings mode</span>
+            <select
+              value={draft.solverMode}
+              disabled={busy}
+              onChange={(event) => setDraft((current) =>
+                setPr76SolverMode(current, event.currentTarget.value as 'preset' | 'custom'))}
+            >
+              <option value="preset">Validated preset</option>
+              <option value="custom" disabled={!draft.customSettings}>Custom settings</option>
+            </select>
+          </label>
+          {draft.solverMode === 'preset' ? (
+            <div className="model-contract">
+              <span>Preset</span>
+              <code>{draft.presetId}</code>
+              {!draft.customSettings ? (
+                <span>Apply once with the preset to obtain the complete editable settings snapshot.</span>
+              ) : null}
+            </div>
+          ) : (
+            <SettingsEditor
+              draft={draft}
+              onEdit={(group, field, value) => setDraft((current) => editPr76Setting(current, group, field, value))}
+            />
+          )}
+        </details>
+
+        {submitted && issues.length > 0 ? (
+          <div className="validation-panel" role="alert">
+            <strong>Complete the required fluid data before applying.</strong>
+            <ul>
+              {issues.map((issue, index) => (
+                <li key={`${issue.field}-${index}`}>
+                  <code>{issue.field}</code>: {issue.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {failure ? (
+          <div className="validation-panel" role="alert" data-create-reason={failure.reason}>
+            <strong>The PR fluid model could not be applied.</strong>
+            <p>Check the entered model data and try again.</p>
+            <details className="inline-details">
+              <summary>Technical details</summary>
+              <code>{failure.reason}</code>
+              {failure.code === undefined ? null : <code> · {failure.code}</code>}
+              {failure.validation?.field === undefined ? null : (
+                <code> · {failure.validation.field}</code>
+              )}
+            </details>
+          </div>
+        ) : null}
+
+        <div className="submit-row">
+          <span className="submit-note">
+            Applying creates a new immutable PR76 model from the entered data.
+          </span>
+          <button className="primary-button" type="submit" disabled={busy}>
+            {busy ? 'Applying…' : 'Apply fluid model'}
+          </button>
+        </div>
       </fieldset>
     </form>
   );
