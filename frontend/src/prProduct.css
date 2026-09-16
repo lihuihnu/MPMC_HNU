@@ -1,0 +1,229 @@
+.desktop-product-mode {
+  width: min(1480px, calc(100% - 40px));
+  margin: 18px auto 0;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 8px 26px rgba(37, 54, 59, 0.05);
+}
+
+.desktop-product-mode > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.desktop-product-mode > div:first-child strong {
+  font-size: 0.9rem;
+}
+
+.desktop-product-mode > div:first-child span {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.pr-product-workspace {
+  padding-top: 22px;
+}
+
+.pr-empty-state .workflow-steps {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 12px;
+  padding-left: 22px;
+  color: #425158;
+  font-size: 0.83rem;
+  line-height: 1.55;
+}
+
+.form-intro {
+  margin: -6px 0 22px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.inline-details {
+  color: inherit;
+  font-size: 0.75rem;
+}
+
+.inline-details summary,
+.advanced-details summary {
+  cursor: pointer;
+}
+
+.advanced-details {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.pr-result-panel {
+  min-height: 0;
+  margin-top: 18px;
+}
+
+.pr-result-summary {
+  margin-bottom: 22px;
+}
+
+.result-chart-section,
+.exact-results {
+  margin-top: 22px;
+}
+
+.fraction-chart,
+.composition-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.fraction-chart-row,
+.composition-bar-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.75fr) minmax(140px, 2.4fr) minmax(72px, auto);
+  align-items: center;
+  gap: 12px;
+  color: #425158;
+  font-size: 0.78rem;
+}
+
+.fraction-chart-row > strong,
+.composition-bar-row > strong {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.fraction-chart-track,
+.composition-bar-track {
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eeee;
+}
+
+.fraction-chart-track > span,
+.composition-bar-track > span {
+  display: block;
+  min-width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.composition-bar-track > span {
+  opacity: 0.82;
+}
+
+.pr-phase-card {
+  background: var(--panel-soft);
+}
+
+.pr-phase-card .phase-fraction {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.composition-bars {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.composition-bar-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.result-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+
+.result-table th,
+.result-table td {
+  padding: 9px 11px;
+  border-bottom: 1px solid #edf1f1;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-table th:first-child,
+.result-table td:first-child {
+  text-align: left;
+}
+
+.result-table thead th {
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.result-table tbody tr:last-child th,
+.result-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.pr-solve-failure p {
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.pr-result-panel pre {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: #33454b;
+  font-size: 0.7rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .desktop-product-mode {
+    width: min(100% - 24px, 1480px);
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .desktop-product-mode .submit-actions {
+    width: 100%;
+  }
+
+  .desktop-product-mode .submit-actions button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .fraction-chart-row,
+  .composition-bar-row {
+    grid-template-columns: minmax(76px, 0.8fr) minmax(90px, 1.7fr) minmax(62px, auto);
+    gap: 8px;
+  }
+
+  .pr-phase-card .phase-card-heading {
+    align-items: flex-start;
+  }
+}
