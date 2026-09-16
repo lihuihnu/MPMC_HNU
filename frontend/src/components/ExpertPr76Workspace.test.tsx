@@ -59,9 +59,9 @@ describe('PR76 workspace ownership and product presentation', () => {
     const html = render(null);
     expect(html).toContain('data-expert-workspace="pr76"');
     expect(html).toContain('Peng–Robinson flash');
-    expect(html).toContain('Create custom PR76 model');
+    expect(html).toContain('Define PR fluid');
     expect(html).toContain('Create a PR fluid model');
-    expect(html).toContain('No unordered component pair exists yet');
+    expect(html).toContain('Add at least two components to define a binary interaction coefficient');
     expect(html).not.toContain('Read-only PR76 fixture');
     expect(html).not.toContain('data-expert-pt-solve');
     expect(html).toContain('Local calculation · no login');
@@ -69,8 +69,8 @@ describe('PR76 workspace ownership and product presentation', () => {
 
   it('derives the next immutable revision and exposes product-level flash inputs', () => {
     const html = render(owned());
-    expect(html).toContain('Create immutable revision');
-    expect(html).toContain('0: methane');
+    expect(html).toContain('Edit PR fluid');
+    expect(html).toContain('<summary>methane</summary>');
     expect(html).toContain('kij methane ↔ ethane');
     expect(html).toContain('Reading live model snapshot');
     expect(html).not.toContain('Create a PR fluid model');
