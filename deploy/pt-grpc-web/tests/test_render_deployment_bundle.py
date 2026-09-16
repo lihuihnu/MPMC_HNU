@@ -36,6 +36,7 @@ def valid_manifest():
             "frontend_origins": ["https://ui.example.test"],
             "backend_listen_address": "127.0.0.1:50051",
             "backend_server_dns": "pt-backend.internal",
+            "model_authz_loopback_port": 10003,
         },
         "identity": {
             "secret_mount_root": "/run/secrets/mpmc-pt",
@@ -66,7 +67,7 @@ def valid_manifest():
 
 
 class DeploymentBundleTest(unittest.TestCase):
-    def test_renders_fail_closed_edge_host_and_observability_contract(self):
+    def test_renders_fail_closed_hosted_model_edge_and_observability_contract(self):
         document = valid_manifest()
         with tempfile.TemporaryDirectory() as temporary:
             output = pathlib.Path(temporary) / "rendered"
@@ -84,6 +85,16 @@ class DeploymentBundleTest(unittest.TestCase):
         self.assertIn('domains: ["api.example.test"]', envoy)
         self.assertIn('exact: "https://ui.example.test"', envoy)
         self.assertIn("require_client_certificate: true", envoy)
+        self.assertIn("envoy.filters.http.ext_authz", envoy)
+        self.assertIn("uri: http://127.0.0.1:10003", envoy)
+        self.assertIn(
+            "prefix: /model-api/mpmc.model_configuration.v1.ModelSessionService/",
+            envoy,
+        )
+        self.assertIn(
+            "prefix: /model-api/mpmc.model_configuration.v1.ModelConfigurationService/",
+            envoy,
+        )
         self.assertEqual(
             launch["snapshot_bundle"],
             {
@@ -98,6 +109,11 @@ class DeploymentBundleTest(unittest.TestCase):
             "/run/secrets/mpmc-pt/backend/edge-client-ca.pem",
             launch["argv"],
         )
+        self.assertIn("--enable-model-sessions", launch["argv"])
+        self.assertEqual(
+            metadata["hosted_model"],
+            {"enabled": True, "authz_loopback_port": 10003},
+        )
         self.assertEqual(
             metadata["observability"]["prometheus_scrape_url"],
             "http://127.0.0.1:9901/stats/prometheus",
@@ -105,6 +121,21 @@ class DeploymentBundleTest(unittest.TestCase):
         serialized = json.dumps({"launch": launch, "metadata": metadata})
         self.assertNotIn("PRIVATE KEY", serialized)
         self.assertNotIn("certificate_payload", serialized)
+
+    def test_legacy_manifest_without_model_authz_remains_pt_only(self):
+        document = valid_manifest()
+        del document["network"]["model_authz_loopback_port"]
+        deployment = RENDERER.DeploymentBundle.from_mapping(document)
+        envoy = RENDERER.render_production_config(deployment.edge_config())
+        launch = deployment.host_launch()
+        metadata = deployment.metadata()
+        self.assertNotIn("/model-api/", envoy)
+        self.assertNotIn("envoy.filters.http.ext_authz", envoy)
+        self.assertNotIn("--enable-model-sessions", launch["argv"])
+        self.assertEqual(
+            metadata["hosted_model"],
+            {"enabled": False, "authz_loopback_port": None},
+        )
 
     def test_rejects_snapshot_identity_and_trust_domain_aliasing(self):
         wrong_snapshot = valid_manifest()
@@ -119,7 +150,7 @@ class DeploymentBundleTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             RENDERER.DeploymentBundle.from_mapping(aliased_ca)
 
-    def test_rejects_nonloopback_backend_and_unknown_fields(self):
+    def test_rejects_nonloopback_backend_unknown_fields_and_authz_collision(self):
         public_backend = valid_manifest()
         public_backend["network"]["backend_listen_address"] = "0.0.0.0:50051"
         with self.assertRaises(ValueError):
@@ -134,6 +165,16 @@ class DeploymentBundleTest(unittest.TestCase):
         wrong_domain_type["network"]["api_dns"] = 42
         with self.assertRaises(ValueError):
             RENDERER.DeploymentBundle.from_mapping(wrong_domain_type)
+
+        collision = valid_manifest()
+        collision["network"]["model_authz_loopback_port"] = 50051
+        with self.assertRaises(ValueError):
+            RENDERER.DeploymentBundle.from_mapping(collision)
+
+        invalid_authz = valid_manifest()
+        invalid_authz["network"]["model_authz_loopback_port"] = 0
+        with self.assertRaises(ValueError):
+            RENDERER.DeploymentBundle.from_mapping(invalid_authz)
 
     def test_checked_in_template_is_deliberately_not_deployable(self):
         template = json.loads(

@@ -12,7 +12,8 @@
       "https://REQUIRED_FRONTEND_DNS"
     ],
     "backend_listen_address": "127.0.0.1:50051",
-    "backend_server_dns": "REQUIRED_BACKEND_SERVER_DNS"
+    "backend_server_dns": "REQUIRED_BACKEND_SERVER_DNS",
+    "model_authz_loopback_port": 10003
   },
   "identity": {
     "secret_mount_root": "/run/secrets/mpmc-pt",
