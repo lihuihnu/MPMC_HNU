@@ -137,6 +137,7 @@ endif()
 
 set(cases
     generic_exact
+    generic_refine
     generic_disappearance
     pr76_fresh_two_phase_neighbor
     headers)

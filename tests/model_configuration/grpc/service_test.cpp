@@ -52,11 +52,15 @@ void metadata_roundtrip() {
     const auto stored = registry.describe(made.model_handle());
     require(stored.definition.components[1].molar_mass_kg_per_mol->value == 0.1 &&
             stored.definition.components[1].kind == mc::ComponentKind::pseudo, "native metadata mismatch");
+    const fl::PtFlashRequest outside{2e6, 250.0, single.feed};
+    require(stored.definition.applicability.assess(outside.temperature_k, outside.pressure_pa) ==
+                mc::ModelApplicabilityAssessment::outside_declared_bounds,
+            "stored applicability advisory was not preserved");
     wire::SolveModelResponse result;
-    error(solve(server, solve_request(made.model_handle(), {2e6, 250.0, single.feed}), result),
-          SC::INVALID_ARGUMENT, "request.rejected");
+    ok(solve(server, solve_request(made.model_handle(), outside), result));
+    compare(native_result(result.result()), direct(pr76_max3_test::model(), outside));
     require(native_result(solve(server, made.model_handle()).result()).solution.accepted_phase_count() == 1,
-            "valid solve after domain error failed");
+            "valid solve after applicability advisory failed");
 }
 void full_result_parity() {
     mc::Pr76ModelRegistry registry({}, synthetic); Server server(registry);
@@ -277,10 +281,17 @@ void solve_request_paths() {
 
     const auto bounded_native = changed_model(true);
     const auto bounded = create(server, request(definition(bounded_native)));
+    const auto bounded_stored = registry.describe(bounded.model_handle());
     for (const auto& item : std::vector<RequestLocationCase>{
              {{0.8e6, 250.0, single.feed}, "pressure_pa"}, {{1.2e6, 250.0, single.feed}, "pressure_pa"},
              {{1e6, 239.0, single.feed}, "temperature_k"}, {{1e6, 261.0, single.feed}, "temperature_k"}}) {
-        check(solve_request(bounded.model_handle(), item.request), "request.rejected", item.field);
+        require(bounded_stored.definition.applicability.assess(
+                    item.request.temperature_k, item.request.pressure_pa) ==
+                    mc::ModelApplicabilityAssessment::outside_declared_bounds,
+                "wire model lost outside applicability advisory");
+        wire::SolveModelResponse out;
+        ok(solve(server, solve_request(bounded.model_handle(), item.request), out));
+        compare(native_result(out.result()), direct(bounded_native, item.request));
     }
     compare(native_result(solve(server, bounded.model_handle()).result()), direct(bounded_native, single));
     ok(release(server, bounded.model_handle()));

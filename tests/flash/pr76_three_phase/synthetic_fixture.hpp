@@ -15,7 +15,7 @@ using Vec = std::vector<double>;
 
 inline th::Provenance source(std::string locator) {
     return {th::SourceKind::synthetic_test,
-            "MPMC_HNU symmetric PR76 max3 structural fixture",
+            "MPMC_HNU PR76 max3 structural fixture",
             "v1",
             std::move(locator),
             "Artificial PR parameters used only to exercise generic three-phase topology; not experimental validation",

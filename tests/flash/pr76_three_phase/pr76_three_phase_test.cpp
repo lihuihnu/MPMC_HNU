@@ -67,6 +67,65 @@ void generic_exact_three_phase() {
             "generic exact three-phase invariants failed");
 }
 
+void generic_refine_with_backtracking() {
+    const std::array<Vec, 3> phases{{
+        {0.8, 0.1, 0.1}, {0.1, 0.8, 0.1}, {0.1, 0.1, 0.8}}};
+    const Vec feed{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
+    std::size_t injected_failures = 0U;
+    const auto provider = [&](double, double, std::span<const double> composition,
+                              std::size_t slot) {
+        const double major = std::fmax(
+            composition[0], std::fmax(composition[1], composition[2]));
+        // With zero initial logK the first scaled full SSI step lands in this
+        // narrow manufactured hole (~0.787 major fraction).  The half step is
+        // valid and the exact target (0.8) is valid, so success requires the
+        // outer logK loop to reject that trial, backtrack, and continue.
+        if (major > 0.78 && major < 0.795) {
+            ++injected_failures;
+            throw fl::StabilityPropertyError(
+                fl::StabilityPropertyIssue::nonfinite_properties,
+                "manufactured recoverable three-phase trial rejection");
+        }
+        fl::PtThreePhaseProperty property;
+        property.activity.ln_phi.resize(3U);
+        for (std::size_t i = 0; i < 3U; ++i) {
+            property.activity.ln_phi[i] = -std::log(phases[slot][i]);
+        }
+        property.activity.branch = slot;
+        property.activity.smooth = true;
+        property.z = 0.1 + 0.4 * static_cast<double>(slot);
+        return property;
+    };
+
+    const Vec zero_log_k(3U, 0.0);
+    const auto result = fl::iterate_pt_three_phase(
+        1.0e6, 300.0, feed,
+        zero_log_k, zero_log_k, {0.25, 0.25}, provider);
+    require(result.status == fl::PtThreePhaseStatus::converged_candidate &&
+                result.candidate() != nullptr,
+            "perturbed manufactured three-phase state did not converge");
+    require(result.iterations > 0 && result.backtracks > 0 &&
+                result.rejected_evaluations > 0 && injected_failures > 0,
+            "nontrivial logK update/backtracking path was not exercised");
+    const auto& candidate = *result.candidate();
+    require(candidate.chemical_potential_norm <=
+                result.options.chemical_potential_tolerance &&
+                candidate.generalized_rr_residual <=
+                    result.options.balance_tolerance &&
+                candidate.mass_absolute <= result.options.mass_absolute_tolerance &&
+                candidate.mass_relative <= result.options.mass_relative_tolerance,
+            "refined manufactured three-phase equations did not close");
+    for (std::size_t phase = 0; phase < 3U; ++phase) {
+        require(std::abs(candidate.phases[phase].mole_phase_fraction - 1.0 / 3.0) < 1e-12,
+                "refined manufactured phase fraction changed");
+        for (std::size_t component = 0; component < 3U; ++component) {
+            require(std::abs(candidate.phases[phase].composition[component] -
+                             phases[phase][component]) < 1e-12,
+                    "refined manufactured phase composition changed");
+        }
+    }
+}
+
 void generic_disappearance_boundary() {
     const std::array<Vec, 3> phases{{
         {0.8, 0.1, 0.1}, {0.1, 0.8, 0.1}, {0.1, 0.1, 0.8}}};
@@ -146,6 +205,7 @@ void headers() {
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"generic_exact", generic_exact_three_phase},
+    {"generic_refine", generic_refine_with_backtracking},
     {"generic_disappearance", generic_disappearance_boundary},
     {"pr76_fresh_two_phase_neighbor", pr76_fresh_two_phase_neighbor},
     {"headers", headers}};

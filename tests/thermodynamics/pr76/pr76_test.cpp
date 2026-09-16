@@ -301,12 +301,22 @@ void declared_bounds() {
     for (T temperature : std::array<T, 2>{T{150}, T{700}}) {
         near(bounded.evaluate(temperature).a, reference(temperature).a);
     }
-    const T below = std::nextafter(T{150}, T{0});
-    const T above = std::nextafter(T{700}, std::numeric_limits<T>::infinity());
-    expect_error<std::domain_error>([&] { (void)bounded.evaluate(below); });
-    expect_error<std::domain_error>([&] {
-        (void)bounded.evaluate(ad::Dual<T>::variable(above, 0));
-    });
+    // assess() consumes binary64 state values, so use outside probes exactly
+    // representable in every supported scalar type rather than long-double nextafter values.
+    const T below = T{149};
+    const T above = T{701};
+    near(bounded.evaluate(below).a, reference(below).a);
+    const auto extrapolated = bounded.evaluate(ad::Dual<T>::variable(above, 0));
+    near(extrapolated.a.value(), reference(above).a);
+    near(extrapolated.a.derivative(0), reference(above).da);
+    require(bounded.applicability().assess(static_cast<double>(below), 1e6) ==
+                th::RangeAssessment::outside_declared_bounds,
+            "lower extrapolation must stay visibly outside declared applicability");
+    require(bounded.applicability().assess(static_cast<double>(above), 1e6) ==
+                th::RangeAssessment::outside_declared_bounds,
+            "upper extrapolation must stay visibly outside declared applicability");
+    require(bounded.applicability().assess(400, 1e6) == th::RangeAssessment::unknown,
+            "missing pressure applicability must remain unknown, not proven inside");
     const auto unknown = kernel<T>();
     near(unknown.evaluate(T{900}).a, reference(900).a);
     require(unknown.applicability().assess(900, 1e6) == th::RangeAssessment::unknown,

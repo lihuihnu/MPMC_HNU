@@ -90,6 +90,40 @@ void require_fresh_state(const fl::Pr76PtContinuationPointResult& point) {
             "continuation point did not own a fresh solve at its current PT state");
 }
 
+void moving_three_phase_is_fresh_continuation() {
+    const auto model = pr76_max3_test::model();
+    fl::Pr76VleEvaluator evaluator(model);
+    // Both points lie inside the established synthetic three-phase region, but
+    // p and T differ. The second point must therefore be a new current-state max3
+    // solve; the first point's phase set is only a continuation hint.
+    const std::array<fl::Pr76PtPathState, 2> path{{
+        {1.90e6, 325.0},
+        {1.99e6, 325.6}
+    }};
+    const auto result = fl::solve_pr76_pt_continuation(
+        path, pr76_max3_test::equal_feed(), evaluator, structural_options());
+
+    require(result.all_points_accepted && result.points.size() == path.size(),
+            "moving three-phase path did not accept both fresh points");
+    require(result.points[0].accepted_phase_count &&
+                *result.points[0].accepted_phase_count == 3U &&
+                result.points[1].accepted_phase_count &&
+                *result.points[1].accepted_phase_count == 3U,
+            "moving three-phase path changed topology unexpectedly");
+    require_fresh_state(result.points[0]);
+    require_fresh_state(result.points[1]);
+    require(result.points[1].incoming_hint ==
+                fl::Pr76PtContinuationHintKind::three_phase &&
+                result.points[1].carried_stability_start_count == 3U &&
+                result.points[1].carried_three_phase_start &&
+                result.points[1].carried_three_phase_start_consumed,
+            "moving three-phase point did not consume the previous accepted state only as hints");
+    require(result.points[1].solve.three_phase_candidate() != nullptr,
+            "moving three-phase point lost its own current-state candidate");
+    require(result.transition_brackets.empty(),
+            "3->3 continuation created a false topology transition bracket");
+}
+
 void require_phase_sequence(
     const fl::Pr76PtContinuationResult& result,
     std::span<const std::size_t> expected) {
@@ -184,6 +218,7 @@ void unresolved_point_resets_continuation() {
 using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"repeated_three_phase", repeated_three_phase_is_fresh_continuation},
+    {"moving_three_phase", moving_three_phase_is_fresh_continuation},
     {"invalid_path", invalid_path_is_rejected_before_solve},
     {"bracket_contract", transition_bracket_contract},
     {"bidirectional_phase_sequence", bidirectional_phase_sequence},

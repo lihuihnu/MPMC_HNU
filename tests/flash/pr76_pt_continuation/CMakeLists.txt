@@ -57,6 +57,7 @@ endif()
 
 foreach(case IN ITEMS
         repeated_three_phase
+        moving_three_phase
         invalid_path
         bracket_contract
         bidirectional_phase_sequence

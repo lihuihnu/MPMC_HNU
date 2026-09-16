@@ -107,15 +107,17 @@ public:
     [[nodiscard]] const Applicability& applicability() const & noexcept { return applicability_; }
     const Applicability& applicability() const && = delete;
 
-    /// T_kelvin > 0, finite, with finite seeds. A declared temperature interval
-    /// is enforced without clipping (inclusive endpoints); absent bounds remain
-    /// UNKNOWN, not scientifically validated. Pressure is not an input here.
+    /// T_kelvin > 0, finite, with finite seeds. Declared empirical temperature
+    /// bounds are ADVISORY metadata, not a mathematical execution gate: evaluation
+    /// may continue outside them. A state-bearing caller should publish
+    /// applicability().assess(T,p) as inside/outside/unknown rather than silently
+    /// treating algebraic extrapolation as validated physical accuracy.
     ///
     /// alpha = [1+kappa*(1-sqrt(T/Tc))]^2. For T outside the paper's calibration
     /// interval this is an explicit algebraic continuation, not a validity claim;
     /// in particular a negative bracket is squared, never clipped or abs-ed.
     ///
-    /// domain_error: invalid temperature/seed or known temperature-bound violation.
+    /// domain_error: invalid temperature or seed.
     /// range_error: nonfinite intermediate/result or positive attraction lost to zero.
     /// AD math exceptions propagate. No finite-difference or manual AD slope injection.
     template <typename Number>
@@ -124,11 +126,6 @@ public:
         const T temperature = detail::pr76_value(temperature_k);
         if (!detail::pr76_finite(temperature_k) || !(temperature > T{0})) {
             throw std::domain_error("Pr76Pure: temperature and seeds must be finite, T > 0 K");
-        }
-        const auto& bounds = applicability_.temperature_k;
-        if (bounds && (static_cast<long double>(temperature) < bounds->lower ||
-                       static_cast<long double>(temperature) > bounds->upper)) {
-            throw std::domain_error("Pr76Pure: temperature outside declared dataset interval");
         }
         using std::sqrt; // ADL finds the caller's AD sqrt; never strip its derivatives.
         // This algebraic form avoids forming a possibly overflowing/underflowing T/Tc.

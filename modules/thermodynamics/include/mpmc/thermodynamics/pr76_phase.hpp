@@ -99,7 +99,10 @@ inline void pr76_require_resolved(Pr76RootStatus status) {
 /// Enumerate roots first, then explicitly select an index in INCREASING Z order.
 /// Even the middle (mechanically unstable) candidate can be inspected; none is
 /// silently discarded or called a stable equilibrium phase. Composition and AD
-/// coordinate semantics are exactly those of Pr76Mixture.
+/// coordinate semantics are exactly those of Pr76Mixture. Declared T/p
+/// applicability is advisory: finite positive states may be evaluated outside it,
+/// while parameters().applicability().assess(T,p) carries inside/outside/unknown
+/// information for a caller to publish as a model-validity warning.
 template <std::floating_point T = double>
     requires std::same_as<T, std::remove_cv_t<T>>
 class Pr76Phase {
@@ -164,11 +167,9 @@ private:
         if (!detail::pr76_finite(pressure) || !(p > T{0})) {
             throw std::domain_error("Pr76Phase: finite pressure/seeds and p>0 Pa required");
         }
-        const auto& bounds = parameters().applicability().pressure_pa;
-        if (bounds && (static_cast<long double>(p) < bounds->lower ||
-                       static_cast<long double>(p) > bounds->upper)) {
-            throw std::domain_error("Pr76Phase: pressure outside declared dataset interval");
-        }
+        // Dataset/model applicability bounds are advisory metadata. Do not turn a
+        // finite positive pressure into a numerical-domain error merely because it
+        // is outside a declared validation interval; callers can query assess(T,p).
     }
 
     template <typename Number>

@@ -25,7 +25,7 @@ Peng & Robinson (1976), *A New Two-Constant Equation of State*, DOI [10.1021/i16
 | `evaluate_full(p,T,w,root_index,workspace,options={})` | 普通浮点或 `Dual<T,K>`；在本次状态重新求根并求所选根的 ln(phi)。 |
 | `evaluate_reduced(...)` | 同上，使用约化组成。 |
 
-p 单位 Pa、T 单位 K，均须有限且 >0；所有 AD 种子须有限。已声明的温压边界均按闭区间检查，未知仍为未知。完整／约化组成校验及导数语义继承 [混合核](pr76_mixture.md)：完整输入允许无量纲和误差 `64*epsilon(T)`，不归一化、不裁剪；完整种子独立传播，约化种子通过最后分数传播负的种子和。非约束完整偏导只是指定表达式的形式导数；约束偏导为 full_i−full_last，不能混称。
+p 单位 Pa、T 单位 K，均须有限且 >0；所有 AD 种子须有限。参数快照中的温压范围是 **advisory 适用性元数据**，不是数学执行门禁：有限正的 T/p 即使落在声明范围外仍可继续求根和求相性质。`parameters().applicability().assess(T,p)` 按闭区间返回 `inside_declared_bounds`、`outside_declared_bounds` 或 `unknown`；调用层必须把 `outside`/`unknown` 作为模型适用性告知，而不能把成功返回的外推结果静默宣传为已验证精度。完整／约化组成校验及导数语义继承 [混合核](pr76_mixture.md)：完整输入允许无量纲和误差 `64*epsilon(T)`，不归一化、不裁剪；完整种子独立传播，约化种子通过最后分数传播负的种子和。非约束完整偏导只是指定表达式的形式导数；约束偏导为 full_i−full_last，不能混称。
 
 `root_index` 是本次可用根的递增 Z 下标，不是固定的相标识。任何状态变化后都须重新检查拓扑；不承诺跨根消失、出现或合并连续跟踪旧下标。中间根可供诊断，不自动标为物理稳定相。
 
@@ -98,7 +98,7 @@ ln(X) = log1p((Z-1)-B)
 
 ## 5. 错误、所有权与使用
 
-根求解返回 `success/near_multiple/iteration_limit/unrepresentable`。相求值将后三者转换为带 `code()` 的 `Pr76PhaseError`；导数拒绝也用此类型。非法根下标为 out_of_range，非法维数／求根选项为 invalid_argument，非法温压、组成和种子为 domain_error，无法表示的 A/B、行和、逸度或导数为 range_error；底层参数／数学／分配异常保留传播。
+根求解返回 `success/near_multiple/iteration_limit/unrepresentable`。相求值将后三者转换为带 `code()` 的 `Pr76PhaseError`；导数拒绝也用此类型。非法根下标为 out_of_range，非法维数／求根选项为 invalid_argument；**数学非法**的温压（非有限或 <=0）、非法组成和非有限种子为 domain_error；无法表示的 A/B、行和、逸度或导数为 range_error；底层参数／数学／分配异常保留传播。声明适用范围外的有限正 T/p **不是** domain_error：计算继续，调用方通过 `Applicability` 发布 `outside_declared_bounds` 或 `unknown` advisory。
 
 模型可拷贝／移动构造、不可赋值，移出后的模型不可继续计算。参数引用仅从左值取得。工作区不可拷贝／移动，仅保存每次覆盖的临时量，不跨 Jacobian 批次缓存 AD 值；同一个工作区不能并发使用。失败后内容未指定，但下一次调用重新覆盖，已经返回的结果不受影响。
 
@@ -110,6 +110,12 @@ ln(X) = log1p((Z-1)-B)
 namespace th = mpmc::thermodynamics;
 const auto model = th::Pr76Phase<double>::from_parameters(parameters);
 th::Pr76PhaseWorkspace<double> work;
+const auto applicability = model.parameters().applicability().assess(t_k, p_pa);
+if (applicability != th::RangeAssessment::inside_declared_bounds) {
+    // Publish a model-validity advisory: outside -> algebraic extrapolation;
+    // unknown -> no complete declared T/p validation range. Do not silently
+    // promote either case to validated physical accuracy.
+}
 const auto candidates = model.roots_full(p_pa, t_k, w, work);
 if (candidates.status != th::Pr76RootStatus::success) {
     // Report the diagnostic; do not use count or fabricate a phase.
@@ -119,11 +125,11 @@ const auto candidate = model.evaluate_full(p_pa, t_k, w, candidates.count - 1, w
 // Largest Z candidate only, NOT a proven stable vapor or a completed flash.
 ```
 
-这段代码依赖调用方提供合法参数、组成和温压，不包含真实物性数据；完整可执行人工构造见测试。
+这段代码依赖调用方提供合法参数、组成和数学合法的温压，不包含真实物性数据；完整可执行人工构造见测试。声明适用范围外仍可调用，但必须保留并向上层传递 advisory，不能把“成功计算”与“模型已验证适用”混为一谈。
 
 ## 6. 必要验证与下一步
 
-新增独立 `tests/thermodynamics/pr76_pt`，18 个 CTest：可因式分解的精确根、拓扑／重根、尺度、相性质参考值、完整导数、约化导数、Gibbs–Duhem、纯组分退化、低压极限、log1p 比值、零／迹量组成、4 组分 24 种排列、运行期 1→4→2→3→1、输入域、所有权／失败恢复、零／负吸引项、病态导数拒绝、独立公共头。其中前 16 项各测试 float/double/long double；病态导数构造及公共头为 double。排列和标量类型属于子情形，不重复计入 CTest 数。
+新增独立 `tests/thermodynamics/pr76_pt`，18 个 CTest：可因式分解的精确根、拓扑／重根、尺度、相性质参考值、完整导数、约化导数、Gibbs–Duhem、纯组分退化、低压极限、log1p 比值、零／迹量组成、4 组分 24 种排列、运行期 1→4→2→3→1、输入域、所有权／失败恢复、零／负吸引项、病态导数拒绝、独立公共头。其中前 16 项各测试 float/double/long double；病态导数构造及公共头为 double。排列和标量类型属于子情形，不重复计入 CTest 数。`input_domains` 现明确验证：数学非法 T/p 仍拒绝，而声明范围外的有限正状态仍可计算，并保持 `outside_declared_bounds` advisory；闭区间端点继续视为声明范围内。
 
 独立判据包括原 Z 三次式的 Cardano／三角法（仅在远离退化的参考点使用）、原始参数的完整双重混合求和、原 Z 方程隐式导数与直接式 (19) 的手工解析导数；不复用生产 shifted solver 或生产预计算系数来构造期望值。另由 Python 标准库 Decimal(80)、原 Z Newton 和直接对数式再生成 12 个数值与 48 个约化导数锚点（直接对约化坐标应用解析链式法则），脚本仅读取测试中的锚点核对，不读取生产实现、不修改参考值。全部参数明确为 synthetic_test，不是实际流体或实验数据。
 

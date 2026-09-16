@@ -193,6 +193,86 @@ void reference_candidate() {
     }
     require_state_invariants(*result.candidate());
     (void)match_reference(*result.candidate(), order);
+
+    // Audit the candidate-owned common tangent independently of max3 attempt
+    // orchestration.  The three phase activities need not be bitwise equal at
+    // the finite chemical-potential tolerance, so the arithmetic mean is the
+    // imposed tangent and the candidate norm is a conservative componentwise
+    // bound on every phase's deviation from that mean.
+    const auto& candidate = *result.candidate();
+    double reconstructed_norm = 0.0;
+    double maximum_reference_deviation = 0.0;
+    for (std::size_t component = 0; component < ref::feed.size(); ++component) {
+        std::array<double, 3> mu{};
+        for (std::size_t phase = 0; phase < 3U; ++phase) {
+            mu[phase] = std::log(candidate.phases[phase].composition[component]) +
+                        candidate.phases[phase].activity.ln_phi[component];
+        }
+        const double mean = (mu[0] + mu[1] + mu[2]) / 3.0;
+        require(std::abs(candidate.common_log_activity[component] - mean) <=
+                    arithmetic_budget,
+                "three-phase common log activity is not the arithmetic mean");
+        reconstructed_norm = std::max({
+            reconstructed_norm, std::abs(mu[0] - mu[1]), std::abs(mu[0] - mu[2])});
+        maximum_reference_deviation = std::max({
+            maximum_reference_deviation,
+            std::abs(mu[0] - mean), std::abs(mu[1] - mean), std::abs(mu[2] - mean)});
+    }
+    require(std::abs(reconstructed_norm - candidate.chemical_potential_norm) <=
+                arithmetic_budget,
+            "three-phase chemical-potential norm changed meaning");
+    require(maximum_reference_deviation <= candidate.chemical_potential_norm +
+                arithmetic_budget,
+            "three-phase common-reference allowance underestimates phase mismatch");
+
+    std::vector<Vec> phase_starts;
+    phase_starts.reserve(3U);
+    for (const auto& phase : candidate.phases) {
+        phase_starts.push_back(phase.composition);
+    }
+    auto final_options = fl::StabilityOptions{};
+    final_options.tpd_tolerance += candidate.chemical_potential_norm;
+
+    fl::Pr76StabilityEvaluator final_evaluator(model);
+    const auto stable_review = fl::test_pt_stability_against(
+        ref::pressure_pa, ref::temperature_k, fx::feed(order),
+        candidate.common_log_activity, final_evaluator,
+        final_options, phase_starts);
+    require(stable_review.status == fl::StabilityStatus::no_instability_found,
+            "independent final common-tangent review rejected the sour-gas candidate");
+    require(!stable_review.reference.has_value() &&
+                stable_review.imposed_log_activity.size() == ref::feed.size(),
+            "imposed three-phase tangent was replaced by a feed reference");
+    require(stable_review.trials.size() == ref::feed.size() + 5U,
+            "final three-phase review did not include automatic plus three phase starts");
+
+    // Raising every imposed chemical potential by a resolvable constant shifts
+    // every TPD value downward by the same constant.  The three phase starts
+    // therefore provide explicit negative evidence that a wrong tangent cannot
+    // be accepted merely because the fixed three-phase equations converged.
+    Vec wrong_reference = candidate.common_log_activity;
+    for (double& value : wrong_reference) { value += 1.0e-5; }
+    fl::Pr76StabilityEvaluator wrong_evaluator(model);
+    const auto wrong_review = fl::test_pt_stability_against(
+        ref::pressure_pa, ref::temperature_k, fx::feed(order),
+        wrong_reference, wrong_evaluator, final_options, phase_starts);
+    require(wrong_review.status == fl::StabilityStatus::unstable &&
+                wrong_review.lowest_sampled.has_value() &&
+                wrong_review.lowest_sampled->value < -5.0e-6,
+            "resolvably wrong common tangent did not produce negative TPD evidence");
+
+    // Resource exhaustion in the final search must remain indeterminate.  It is
+    // not permission to publish a three-phase state simply because the fixed
+    // equilibrium equations already converged.
+    auto limited_options = final_options;
+    limited_options.max_evaluations = 1U;
+    fl::Pr76StabilityEvaluator limited_evaluator(model);
+    const auto limited_review = fl::test_pt_stability_against(
+        ref::pressure_pa, ref::temperature_k, fx::feed(order),
+        candidate.common_log_activity, limited_evaluator,
+        limited_options, phase_starts);
+    require(limited_review.status == fl::StabilityStatus::indeterminate,
+            "final TPD resource exhaustion was promoted to a stability decision");
 }
 
 fl::Pr76PtMax3Result solve_max3(

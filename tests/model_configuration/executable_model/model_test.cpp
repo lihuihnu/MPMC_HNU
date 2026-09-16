@@ -171,7 +171,7 @@ void resource_limits() {
             model->solver_configuration().safety_limits() == s, "host limits not retained");
     compare(model->solve(single), direct(pr76_max3_test::model(), single));
 }
-// Preserve native standard exception category/message for input and declared-domain errors.
+// Preserve native standard exception category/message for genuinely invalid input errors.
 template <class F>
 std::pair<std::string, std::string> error(F&& f) {
     try { f(); }
@@ -200,13 +200,22 @@ void request_errors() {
 void applicability() {
     const auto native = changed_model(true);
     auto model = create(definition(native), preset());
+    const auto& public_applicability = model->parameter_snapshot().definition().applicability;
+    const auto& native_applicability = model->parameter_snapshot().parameters().applicability();
+    require(public_applicability.assess(single.temperature_k, single.pressure_pa) ==
+                mc::ModelApplicabilityAssessment::inside_declared_bounds &&
+            native_applicability.assess(single.temperature_k, single.pressure_pa) ==
+                th::RangeAssessment::inside_declared_bounds,
+            "inside applicability assessment changed");
     compare(model->solve(single), direct(native, single));
     for (const auto& r : std::vector<fl::PtFlashRequest>{{2e6, 250.0, single.feed},
                                                        {1e6, 300.0, single.feed}}) {
-        // Declared-range failures propagate from the native PR property layer.
-        const auto expected = error([&] { (void)direct(native, r); });
-        const auto actual = error([&] { (void)model->solve(r); });
-        require(actual == expected, "declared-domain exception changed");
+        require(public_applicability.assess(r.temperature_k, r.pressure_pa) ==
+                    mc::ModelApplicabilityAssessment::outside_declared_bounds &&
+                native_applicability.assess(r.temperature_k, r.pressure_pa) ==
+                    th::RangeAssessment::outside_declared_bounds,
+                "outside applicability advisory was not retained");
+        compare(model->solve(r), direct(native, r));
     }
     compare(model->solve(single), direct(native, single));
 }
@@ -234,13 +243,17 @@ void request_locations() {
 
     const auto bounded_native = changed_model(true);
     auto bounded = create(definition(bounded_native), preset());
+    const auto& public_applicability = bounded->parameter_snapshot().definition().applicability;
+    const auto& native_applicability = bounded->parameter_snapshot().parameters().applicability();
     for (const auto& item : std::vector<RequestLocationCase>{
              {{0.8e6, 250.0, single.feed}, "pressure_pa"}, {{1.2e6, 250.0, single.feed}, "pressure_pa"},
              {{1e6, 239.0, single.feed}, "temperature_k"}, {{1e6, 261.0, single.feed}, "temperature_k"}}) {
-        bool located = false;
-        try { (void)bounded->solve(item.request); }
-        catch (const mc::Pr76SolveRequestError& e) { located = e.field() == item.field; }
-        require(located, "declared interval rejection lost its field");
+        require(public_applicability.assess(item.request.temperature_k, item.request.pressure_pa) ==
+                    mc::ModelApplicabilityAssessment::outside_declared_bounds &&
+                native_applicability.assess(item.request.temperature_k, item.request.pressure_pa) ==
+                    th::RangeAssessment::outside_declared_bounds,
+                "declared interval advisory lost its assessment");
+        compare(bounded->solve(item.request), direct(bounded_native, item.request));
     }
     for (const auto& pt : std::vector<fl::PtFlashRequest>{
              {0.9e6, 240.0, single.feed}, {1.1e6, 260.0, single.feed}}) {
