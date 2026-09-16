@@ -2,20 +2,22 @@
 
 This React + TypeScript + Vite application consumes the versioned
 [`mpmc.runtime.v1.PtFlashService`](../api/README.md) contract. A hosted browser
-uses gRPC-Web; the Electron desktop shell reuses the same React renderer through
-a versioned context-isolated preload bridge and native gRPC. The generic PT path
-first discovers configured backends and their exact component inventories, then
-builds the solve form from the selected immutable capability snapshot.
+uses gRPC-Web; local product shells reuse the same React product components
+through platform-specific typed adapters. The generic configured-PT path first
+discovers configured backends and their exact component inventories, then builds
+the solve form from the selected immutable capability snapshot.
 
-The [Android Product Shell](../products/pt_android/README.md) also reuses the
-React PT UI through its app-local Capacitor/JNI `FlashClient`. Its build and
-lifecycle contract is maintained in that product directory.
+The [Android Product Shell](../products/pt_android/README.md) reuses the same
+Classic PR workspace and configured-PT compatibility surface through app-local
+Capacitor/JNI adapters. Its packaging and native lifecycle contract remains in
+that product directory.
 
 ## Classic PR product workspace
 
-Electron exposes the existing editable PR76 model path as the default **Classic
-PR** workspace. It is local and requires no account or login. The user-facing
-flow is deliberately narrower than the underlying service contracts:
+Classic PR is the shared editable PR76 product workflow. Electron and Android now
+render the same React shell and `ExpertPr76Workspace`; they differ only in the
+transport adapter that owns the native model. The workflow is local on those
+platforms and requires no account or login:
 
 1. define the ordered component set and each component's molar mass, critical
    temperature, critical pressure, and acentric factor;
@@ -34,20 +36,21 @@ Native diagnostics, stability declarations, complete result JSON, and model
 provenance remain available only under advanced disclosure sections.
 
 The charts are presentation only. They do not normalize, clip, fit, or otherwise
-change returned values. The PR76 EOS, stability search, phase splitting, final
-phase-set review, model registry, and model-session lifetime remain native C++
+change returned values. PR76 EOS evaluation, stability search, phase splitting,
+final phase-set review, parameter validation and model lifetime remain native C++
 backend responsibilities.
 
-The shared CSS and React presentation are responsive so supported shells can
-retain one visual language. Capability parity is still transport-specific: the
-current Android shell and ordinary hosted browser expose the existing
-model-neutral configured-PT path, while editable PR76 model ownership is provided
-by the local Electron model-workbench bridge. This frontend PR does not invent a
-new Web/Android model-configuration transport or authentication policy.
+The shared CSS and React presentation are responsive so supported shells retain
+one visual language. Transport parity is platform-specific: Electron uses its
+context-isolated model-workbench/IPC path; Android uses the app-local
+Capacitor/JNI typed ownership adapter backed by the same native
+`Pr76ExecutableModel`. Hosted Web is still pending the corresponding
+model-session adapter in the next platform slice; its current configured-PT path
+must not be mistaken for completed Classic PR parity.
 
 ## Scientific and service boundary
 
-The browser is not an EOS or flash implementation. It does not:
+The frontend is not an EOS or flash implementation. It does not:
 
 - evaluate thermodynamic properties or roots;
 - decide phase count, stability, common tangency or acceptance;
@@ -72,7 +75,7 @@ Set the gRPC-Web base URL when building or serving the generic hosted applicatio
 VITE_MPMC_GRPC_WEB_BASE_URL=https://example.test/pt-api npm run dev
 ```
 
-The client sends binary gRPC-Web requests to:
+The configured-PT client sends binary gRPC-Web requests to:
 
 ```text
 <base-url>/mpmc.runtime.v1.PtFlashService/DiscoverPtCapabilities
@@ -83,8 +86,8 @@ The endpoint or proxy must provide the required browser CORS response. The
 repository includes an audited [development/CI Envoy edge](../deploy/pt-grpc-web/README.md),
 a thin [native C++ adapter](../modules/runtime_grpc/README.md), and a
 repository-curated three-backend process host, but no deployed endpoint. If the
-variable is absent outside Electron, the generic frontend remains explicitly
-unconfigured and sends no request.
+variable is absent outside a local product shell, the generic hosted frontend
+remains explicitly unconfigured and sends no request.
 
 Startup discovery must complete before generic PT solve is enabled. Switching the
 configured backend switches the inventory; component IDs cannot be added, removed
@@ -109,36 +112,36 @@ and an RPC/service error is never presented as a thermodynamic decision.
 
 The generic form allows one in-flight solve. Discovery has a 10-second client
 deadline, solve has a 120-second deadline, both accept cancellation, and neither
-is retried automatically.
+is retried automatically. The shared Classic PR owner similarly permits one
+active ownership request and invalidates stale model generations rather than
+publishing late results.
 
-## Electron desktop vertical slice v1
+## Local product adapters
 
 Electron embeds the built React files without giving the renderer Node access.
-The sandboxed preload exposes the model-neutral PT bridge plus the typed local
-model-workbench capabilities used by the Classic PR workspace. Main-process IPC
-enforces sender identity, bounded request shapes, exact request IDs, deadlines,
-and lifecycle cleanup. The main process alone owns native process/session
-transport. Renderer code contains no EOS, flash, parameter fitting, retry,
-fallback, or scientific acceptance logic.
+Its sandboxed preload exposes the configured-PT bridge plus the typed local
+model-workbench capabilities used by Classic PR. Main-process IPC enforces sender
+identity, bounded request shapes, exact request IDs, deadlines, cancellation and
+lifecycle cleanup; native process/session transport remains outside React.
 
-Each launch creates a 256-bit random bearer, sends it to the child only through
-stdin, and accepts readiness only from an ephemeral `127.0.0.1` port. Parent
-shutdown or stdin EOF gracefully stops the child. Production mTLS and deployed
-gRPC-Web remain separate modes; desktop does not need Envoy, CORS, a deployment
-domain, or production certificates for its same-device child session.
+Android uses the same `DesktopProductShell`/`ExpertPr76Workspace` component tree
+(the component name is historical, not a platform restriction). Its
+`ModelWorkbenchBridge` implementation is app-local Capacitor/JNI transport. Java
+only serializes work onto the native executor and transports bounded fields;
+`Pr76ExecutableModel` remains authoritative for model preparation, settings,
+solve and result semantics. No gRPC C++ runtime is added to the APK.
 
-The existing model-neutral hosted product gate traverses preload/IPC/native gRPC
-to exercise the repository-curated PR76, SW92, and CPA configured backends. The
-editable Classic PR workspace is a separate PR76-only product surface layered on
-the existing model-configuration/session client. This PR changes presentation and
-entry-point behavior only; it does not alter those backend implementations.
+The configured compatibility path remains available in both local shells and
+continues to exercise repository-curated PR76, SW92 and CPA backends. Editable
+Classic PR remains PR76-only; this frontend work does not change those backend
+implementations or add editable SW92/CPA semantics.
 
-The resulting Linux x64, Windows x64, and macOS arm64 directories are unsigned
-engineering previews with `release_eligible=false`. Downstream packaging is
-documented in the [product index](../products/pt/README.md): Windows has a
-[desktop MSI and protected signed RC gate](../products/pt/desktop_installer/README.md).
-Public-release signing/notarization, licensing, update and publisher requirements
-remain governed by those product contracts.
+The resulting desktop directories and Android APK are engineering products with
+separate release/signing gates. Windows downstream packaging is documented in the
+[product index](../products/pt/README.md) and
+[desktop installer README](../products/pt/desktop_installer/README.md). Android
+packaging/lifecycle evidence is documented in the
+[Android README](../products/pt_android/README.md).
 
 ## Development
 
@@ -170,6 +173,5 @@ indeterminate, service-error, provenance, variable-phase, and CORS behavior with
 this generated TypeScript client. It has software-contract meaning only and is
 not a physical regression.
 
-The frontend remains independent of the C++ build. Browser dependencies are
-confined here and do not become prerequisites of `runtime`, `flash` or
-`thermodynamics`.
+Browser dependencies remain confined to the frontend/product shells and do not
+become prerequisites of `runtime`, `flash` or `thermodynamics`.

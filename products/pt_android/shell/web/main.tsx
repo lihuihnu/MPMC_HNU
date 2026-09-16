@@ -1,13 +1,26 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { App } from '../../../../frontend/src/App';
+import { DesktopProductShell } from '../../../../frontend/src/components/DesktopProductShell';
+import {
+  addPr76Component,
+  buildPr76CreateInput,
+  editPr76ComponentScalar,
+  editPr76ComponentText,
+  editPr76Kij,
+  newPr76ExpertDraft,
+  type Pr76ExpertDraft,
+} from '../../../../frontend/src/api/pr76ExpertDraft';
+import { modelWorkbenchOwner } from '../../../../frontend/src/api/modelWorkbenchOwner';
+import { PtComputationOutcome } from '../../../../frontend/src/gen/mpmc/runtime/v1/pt_service_pb';
 import type {
   PtBackendDescriptor,
   PtFlashRequest,
 } from '../../../../frontend/src/domain/flash';
 import '../../../../frontend/src/styles.css';
+import '../../../../frontend/src/prProduct.css';
 import { createAndroidFlashClient } from './androidFlashClient';
+import { createAndroidModelWorkbenchBridge } from './androidModelWorkbenchBridge';
 
 const rootElement = document.getElementById('root');
 if (rootElement === null) {
@@ -15,10 +28,14 @@ if (rootElement === null) {
 }
 
 const client = createAndroidFlashClient();
+const owner = modelWorkbenchOwner(createAndroidModelWorkbenchBridge());
+if (owner === null) {
+  throw new Error('MPMC_HNU Android Classic PR ownership adapter is unavailable.');
+}
 
 createRoot(rootElement).render(
   <StrictMode>
-    <App client={client} />
+    <DesktopProductShell flashClient={client} expertOwner={owner} />
   </StrictMode>,
 );
 
@@ -46,6 +63,65 @@ async function acceptedSolve(
     );
   }
   return response.result.phases.length;
+}
+
+function addSmokeComponent(
+  draft: Pr76ExpertDraft,
+  componentId: string,
+  displayName: string,
+  criticalTemperatureK: number,
+  criticalPressurePa: number,
+  acentricFactor: number,
+): Pr76ExpertDraft {
+  let next = addPr76Component(draft);
+  const component = next.components[next.components.length - 1]!;
+  next = editPr76ComponentText(next, component.key, 'componentId', componentId);
+  next = editPr76ComponentText(next, component.key, 'displayName', displayName);
+  next = editPr76ComponentScalar(next, component.key, 'criticalTemperatureK', String(criticalTemperatureK));
+  next = editPr76ComponentScalar(next, component.key, 'criticalPressurePa', String(criticalPressurePa));
+  next = editPr76ComponentScalar(next, component.key, 'acentricFactor', String(acentricFactor));
+  return next;
+}
+
+function classicPrSmokeDraft(): Pr76ExpertDraft {
+  let draft: Pr76ExpertDraft = {
+    ...newPr76ExpertDraft(),
+    displayName: 'Android Classic PR integration regression',
+    datasetId: 'android-classic-pr-repository-fixture',
+    revision: 'android-classic-pr-smoke-r1',
+    userRecord: {
+      reference: 'modules/pt_process/src/parameter_snapshot_supplier.cpp',
+      revision: 'repository-curated fixture in current source revision',
+      locator: 'pr76_parameter_source_v1',
+      acquisition: 'copied for Android Classic PR integration regression',
+      usageTerms: 'test-only repository fixture; no external usage claim',
+      note: 'Pure parameters cite https://doi.org/10.1002/aic.16730; explicit zero kij values cite https://doi.org/10.1021/i160057a011.',
+    },
+  };
+  draft = addSmokeComponent(draft, 'methane', 'Methane', 190.555, 4.595e6, 0.0);
+  draft = addSmokeComponent(draft, 'ethane', 'Ethane', 305.4, 4.88e6, 0.099);
+  draft = addSmokeComponent(draft, 'propane', 'Propane', 369.825, 4.248e6, 0.15308);
+  for (const pair of draft.pairs) draft = editPr76Kij(draft, pair.key, '0');
+  return draft;
+}
+
+async function runClassicPrSmoke(): Promise<number> {
+  const model = await owner.create(buildPr76CreateInput(classicPrSmokeDraft()));
+  try {
+    const result = await model.solve({
+      pressurePa: 1.0e6,
+      temperatureK: 350.0,
+      feed: [0.8, 0.1, 0.1],
+    });
+    if (result.outcome !== PtComputationOutcome.ACCEPTED) {
+      throw new Error('Android Classic PR model smoke did not return an accepted result.');
+    }
+    const phases = result.candidatePhaseSet?.phases.length ?? 0;
+    if (phases < 1) throw new Error('Android Classic PR model smoke returned no accepted phase.');
+    return phases;
+  } finally {
+    await model.release();
+  }
 }
 
 async function runProductShellSmoke(): Promise<void> {
@@ -99,10 +175,12 @@ async function runProductShellSmoke(): Promise<void> {
       ],
     }),
   ]);
+  const classicPhases = await runClassicPrSmoke();
 
+  document.documentElement.dataset.mpmcAndroidClassicPrSmoke = 'ok';
   document.documentElement.dataset.mpmcAndroidProductShellSmoke = 'ok';
   console.info(
-    `ANDROID_PRODUCT_SHELL_WEB_OK backends=3 pr76_phases=${phaseCounts[0]} sw92_phases=${phaseCounts[1]} cpa_phases=${phaseCounts[2]}`,
+    `ANDROID_PRODUCT_SHELL_WEB_OK backends=3 pr76_phases=${phaseCounts[0]} sw92_phases=${phaseCounts[1]} cpa_phases=${phaseCounts[2]} classic_pr_phases=${classicPhases}`,
   );
 }
 

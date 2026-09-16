@@ -6,15 +6,9 @@ import unittest
 
 ANDROID_ROOT = pathlib.Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = ANDROID_ROOT.parents[1]
-PORTABILITY_WORKFLOW = (
-    REPOSITORY_ROOT / ".github" / "workflows" / "pt_android_ndk_portability.yml"
-)
-EMULATOR_WORKFLOW = (
-    REPOSITORY_ROOT / ".github" / "workflows" / "pt_android_jni_emulator.yml"
-)
-PRODUCT_SHELL_WORKFLOW = (
-    REPOSITORY_ROOT / ".github" / "workflows" / "pt_android_product_shell.yml"
-)
+PORTABILITY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "pt_android_ndk_portability.yml"
+EMULATOR_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "pt_android_jni_emulator.yml"
+PRODUCT_SHELL_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "pt_android_product_shell.yml"
 SHELL_ROOT = ANDROID_ROOT / "shell"
 
 
@@ -27,11 +21,8 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
                 ANDROID_ROOT / "src" / "portability.cpp",
                 ANDROID_ROOT / "src" / "jni_smoke.cpp",
                 ANDROID_ROOT / "src" / "jni_product.cpp",
-                ANDROID_ROOT
-                / "private_include"
-                / "mpmc"
-                / "pt_process"
-                / "composition_root.hpp",
+                ANDROID_ROOT / "src" / "jni_model.cpp",
+                ANDROID_ROOT / "private_include" / "mpmc" / "pt_process" / "composition_root.hpp",
             )
         ).lower()
         for forbidden_token in (
@@ -52,25 +43,20 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertIn("mpmc::runtime", cmake)
         self.assertIn("private_include", cmake)
         self.assertIn("src/jni_product.cpp", cmake)
+        self.assertIn("src/jni_model.cpp", cmake)
+        self.assertIn("modules/model_configuration/pr76_solver", cmake)
+        self.assertIn("mpmc::pr76_solver_configuration", cmake)
         self.assertNotIn("add_subdirectory(\"${mpmc_repository_root}/modules/pt_process", cmake)
         self.assertNotIn("mpmc::runtime_grpc", cmake)
 
-        shim = (
-            ANDROID_ROOT
-            / "private_include"
-            / "mpmc"
-            / "pt_process"
-            / "composition_root.hpp"
-        ).read_text(encoding="utf-8")
+        shim = (ANDROID_ROOT / "private_include" / "mpmc" / "pt_process" / "composition_root.hpp").read_text(encoding="utf-8")
         self.assertIn("OwnedConfiguredPtBackend", shim)
         self.assertIn("retain_configured_pt_backend", shim)
         self.assertNotIn("class PtCompositionRoot", shim)
         self.assertNotIn("<mpmc/runtime_grpc/", shim)
 
     def test_jni_smoke_uses_real_pt_service_discovery_and_three_backends(self) -> None:
-        source = (ANDROID_ROOT / "src" / "jni_smoke.cpp").read_text(
-            encoding="utf-8"
-        )
+        source = (ANDROID_ROOT / "src" / "jni_smoke.cpp").read_text(encoding="utf-8")
         self.assertIn("#include <jni.h>", source)
         self.assertIn("load_repository_curated_pt_parameter_snapshots_v1", source)
         self.assertIn("rt::PtService service", source)
@@ -82,9 +68,7 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertIn("PtServiceOutcome::accepted", source)
 
     def test_product_jni_bridge_is_model_neutral_and_uses_pt_service(self) -> None:
-        source = (ANDROID_ROOT / "src" / "jni_product.cpp").read_text(
-            encoding="utf-8"
-        )
+        source = (ANDROID_ROOT / "src" / "jni_product.cpp").read_text(encoding="utf-8")
         self.assertIn("MPMC/PT/android-product-bridge/v1", source)
         self.assertIn("load_repository_curated_pt_parameter_snapshots_v1", source)
         self.assertIn("rt::PtService", source)
@@ -97,28 +81,26 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertNotIn("cpa.methanol", source.lower())
         self.assertNotIn("runtime_grpc", source)
 
+    def test_classic_pr_jni_reuses_existing_executable_model(self) -> None:
+        source = (ANDROID_ROOT / "src" / "jni_model.cpp").read_text(encoding="utf-8")
+        self.assertIn("<mpmc/model_configuration/pr76_executable_model.hpp>", source)
+        self.assertIn("Pr76ExecutableModel", source)
+        self.assertIn("resolve_pt_solver_preset", source)
+        self.assertIn("ModelConfigurationError", source)
+        self.assertIn("NativeBridge_modelApplyRecords", source)
+        self.assertIn("NativeBridge_modelSolveRecords", source)
+        self.assertIn("NativeBridge_modelReleaseRecords", source)
+        self.assertIn("NativeBridge_modelCancel", source)
+        self.assertNotIn("runtime_grpc", source)
+        self.assertNotIn("grpc::", source)
+        self.assertNotIn("PengRobinson", source)
+        self.assertNotIn("a_mix", source)
+        self.assertNotIn("fugacity_coefficient", source)
+
     def test_emulator_app_is_minimal_offline_and_loads_native_library(self) -> None:
-        manifest = (ANDROID_ROOT / "emulator" / "AndroidManifest.xml").read_text(
-            encoding="utf-8"
-        )
-        bridge = (
-            ANDROID_ROOT
-            / "emulator"
-            / "java"
-            / "org"
-            / "mpmc"
-            / "ptandroid"
-            / "NativeBridge.java"
-        ).read_text(encoding="utf-8")
-        activity = (
-            ANDROID_ROOT
-            / "emulator"
-            / "java"
-            / "org"
-            / "mpmc"
-            / "ptandroid"
-            / "SmokeActivity.java"
-        ).read_text(encoding="utf-8")
+        manifest = (ANDROID_ROOT / "emulator" / "AndroidManifest.xml").read_text(encoding="utf-8")
+        bridge = (ANDROID_ROOT / "emulator" / "java" / "org" / "mpmc" / "ptandroid" / "NativeBridge.java").read_text(encoding="utf-8")
+        activity = (ANDROID_ROOT / "emulator" / "java" / "org" / "mpmc" / "ptandroid" / "SmokeActivity.java").read_text(encoding="utf-8")
         self.assertNotIn("android.permission.INTERNET", manifest)
         self.assertIn('android:minSdkVersion="26"', manifest)
         self.assertIn('android:targetSdkVersion="35"', manifest)
@@ -127,29 +109,36 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertIn("new Thread", activity)
         self.assertIn("ANDROID_JNI_PT_SERVICE_FAIL", activity)
 
-    def test_product_shell_pins_capacitor_and_reuses_shared_react_app(self) -> None:
+    def test_product_shell_pins_capacitor_and_reuses_shared_classic_pr_ui(self) -> None:
         package = json.loads((SHELL_ROOT / "package.json").read_text(encoding="utf-8"))
         self.assertEqual(package["dependencies"]["@capacitor/core"], "8.5.2")
         self.assertEqual(package["dependencies"]["@capacitor/android"], "8.5.2")
         self.assertEqual(package["devDependencies"]["@capacitor/cli"], "8.5.2")
 
         main = (SHELL_ROOT / "web" / "main.tsx").read_text(encoding="utf-8")
-        self.assertIn("frontend/src/App", main)
-        self.assertIn("frontend/src/styles.css", main)
+        self.assertIn("frontend/src/components/DesktopProductShell", main)
+        self.assertIn("frontend/src/prProduct.css", main)
+        self.assertIn("modelWorkbenchOwner", main)
+        self.assertIn("createAndroidModelWorkbenchBridge", main)
         self.assertIn("createAndroidFlashClient", main)
         self.assertIn("ANDROID_PRODUCT_SHELL_WEB_OK", main)
+        self.assertIn("mpmcAndroidClassicPrSmoke", main)
         self.assertFalse((SHELL_ROOT / "android").exists())
 
+        adapter = (SHELL_ROOT / "web" / "androidModelWorkbenchBridge.ts").read_text(encoding="utf-8")
+        self.assertIn("ModelWorkbenchBridge", adapter)
+        self.assertIn("MODEL_WORKBENCH_CONVENTION", adapter)
+        self.assertIn("modelApply", adapter)
+        self.assertIn("modelSolve", adapter)
+        self.assertIn("modelRelease", adapter)
+        self.assertIn("modelCancel", adapter)
+        self.assertNotIn("criticalTemperature", adapter)
+        self.assertNotIn("acentricFactor", adapter)
+
     def test_product_shell_capacitor_plugin_stays_thin_and_native_threaded(self) -> None:
-        main_activity = (
-            SHELL_ROOT / "android-src" / "org" / "mpmc" / "ptandroid" / "MainActivity.java"
-        ).read_text(encoding="utf-8")
-        plugin = (
-            SHELL_ROOT / "android-src" / "org" / "mpmc" / "ptandroid" / "MpmcPtPlugin.java"
-        ).read_text(encoding="utf-8")
-        bridge = (
-            SHELL_ROOT / "android-src" / "org" / "mpmc" / "ptandroid" / "NativeBridge.java"
-        ).read_text(encoding="utf-8")
+        main_activity = (SHELL_ROOT / "android-src" / "org" / "mpmc" / "ptandroid" / "MainActivity.java").read_text(encoding="utf-8")
+        plugin = (SHELL_ROOT / "android-src" / "org" / "mpmc" / "ptandroid" / "MpmcPtPlugin.java").read_text(encoding="utf-8")
+        bridge = (SHELL_ROOT / "android-src" / "org" / "mpmc" / "ptandroid" / "NativeBridge.java").read_text(encoding="utf-8")
 
         self.assertIn("registerPlugin(MpmcPtPlugin.class)", main_activity)
         self.assertIn("ApplicationInfo.FLAG_DEBUGGABLE", main_activity)
@@ -158,6 +147,10 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertIn("Executors.newSingleThreadExecutor", plugin)
         self.assertIn("NativeBridge.discoverJson", plugin)
         self.assertIn("NativeBridge.solveJson", plugin)
+        self.assertIn("NativeBridge.modelApplyRecords", plugin)
+        self.assertIn("NativeBridge.modelSolveRecords", plugin)
+        self.assertIn("NativeBridge.modelReleaseRecords", plugin)
+        self.assertIn("NativeBridge.modelCancel", plugin)
         self.assertNotIn("BuildConfig.", plugin)
         self.assertIn('System.loadLibrary("mpmc_pt_android_core")', bridge)
         self.assertNotIn("Peng", plugin)
@@ -174,21 +167,26 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertIn("android.toolchain.cmake", workflow)
         self.assertIn("ANDROID_PLATFORM=android-26", workflow)
         self.assertIn("ANDROID_STL=c++_static", workflow)
-        self.assertIn("Java_org_mpmc_ptandroid_NativeBridge_runSmoke", workflow)
-        self.assertIn("Java_org_mpmc_ptandroid_NativeBridge_discoverJson", workflow)
-        self.assertIn("Java_org_mpmc_ptandroid_NativeBridge_solveJson", workflow)
+        self.assertIn("modules/model_configuration/**", workflow)
+        for symbol in (
+            "Java_org_mpmc_ptandroid_NativeBridge_runSmoke",
+            "Java_org_mpmc_ptandroid_NativeBridge_discoverJson",
+            "Java_org_mpmc_ptandroid_NativeBridge_solveJson",
+            "Java_org_mpmc_ptandroid_NativeBridge_modelApplyRecords",
+            "Java_org_mpmc_ptandroid_NativeBridge_modelSolveRecords",
+            "Java_org_mpmc_ptandroid_NativeBridge_modelReleaseRecords",
+            "Java_org_mpmc_ptandroid_NativeBridge_modelCancel",
+        ):
+            self.assertIn(symbol, workflow)
 
     def test_emulator_workflow_builds_installs_launches_and_checks_result(self) -> None:
         workflow = EMULATOR_WORKFLOW.read_text(encoding="utf-8")
-        build_script = (
-            ANDROID_ROOT / "emulator" / "build_smoke_apk.sh"
-        ).read_text(encoding="utf-8")
-        run_script = (
-            ANDROID_ROOT / "emulator" / "run_emulator_smoke.sh"
-        ).read_text(encoding="utf-8")
+        build_script = (ANDROID_ROOT / "emulator" / "build_smoke_apk.sh").read_text(encoding="utf-8")
+        run_script = (ANDROID_ROOT / "emulator" / "run_emulator_smoke.sh").read_text(encoding="utf-8")
         self.assertNotIn("self-hosted", workflow)
         self.assertIn("ubuntu-24.04", workflow)
         self.assertIn("30.0.16248370", workflow)
+        self.assertIn("modules/model_configuration/**", workflow)
         self.assertIn("system-images;android-", workflow)
         self.assertIn("google_apis;x86_64", workflow)
         self.assertIn("ANDROID_STL=c++_static", workflow)
@@ -206,15 +204,14 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
     def test_product_shell_workflow_builds_shared_ui_and_real_emulator_path(self) -> None:
         workflow = PRODUCT_SHELL_WORKFLOW.read_text(encoding="utf-8")
         build_script = (SHELL_ROOT / "build_product_shell.sh").read_text(encoding="utf-8")
-        run_script = (SHELL_ROOT / "run_product_shell_emulator.sh").read_text(
-            encoding="utf-8"
-        )
+        run_script = (SHELL_ROOT / "run_product_shell_emulator.sh").read_text(encoding="utf-8")
 
         self.assertNotIn("self-hosted", workflow)
         self.assertIn("ubuntu-24.04", workflow)
         self.assertIn("node-version: '24.21.0'", workflow)
         self.assertIn("CAPACITOR_VERSION: 8.5.2", workflow)
         self.assertIn("VITE_MPMC_ANDROID_PRODUCT_SHELL_SMOKE", workflow)
+        self.assertIn("modules/model_configuration/**", workflow)
         self.assertIn("platforms;android-36", workflow)
         self.assertIn("ANDROID_ABI=x86_64", workflow)
         self.assertIn("ANDROID_ABI=arm64-v8a", workflow)
@@ -231,13 +228,23 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
         self.assertIn("universal-debug.apk", workflow)
         self.assertIn("ANDROID_PRODUCT_SHELL_DISCOVERY_OK backends=3", run_script)
         self.assertIn("ANDROID_PRODUCT_SHELL_SOLVE_OK", run_script)
+        self.assertIn("ANDROID_CLASSIC_PR_APPLY_OK", run_script)
+        self.assertIn("ANDROID_CLASSIC_PR_SOLVE_OK", run_script)
+        self.assertIn("ANDROID_CLASSIC_PR_RELEASE_OK", run_script)
         self.assertIn("webview_devtools_remote", run_script)
         self.assertIn("Runtime.evaluate", run_script)
         self.assertIn("ANDROID_PRODUCT_SHELL_DOM_OK", run_script)
         self.assertNotIn('"$adb" shell uiautomator', run_script)
-        self.assertIn("Model-neutral PT Flash", run_script)
+        self.assertIn("Classic PR", run_script)
         self.assertIn("ANDROID_PRODUCT_SHELL_V1_OK", run_script)
         self.assertIn("dom.json", workflow)
+        for symbol in (
+            "Java_org_mpmc_ptandroid_NativeBridge_modelApplyRecords",
+            "Java_org_mpmc_ptandroid_NativeBridge_modelSolveRecords",
+            "Java_org_mpmc_ptandroid_NativeBridge_modelReleaseRecords",
+            "Java_org_mpmc_ptandroid_NativeBridge_modelCancel",
+        ):
+            self.assertIn(symbol, workflow)
 
 
 if __name__ == "__main__":
