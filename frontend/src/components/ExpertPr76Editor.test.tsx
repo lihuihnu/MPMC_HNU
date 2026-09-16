@@ -75,8 +75,8 @@ describe('PR76 fluid editor presentation and create boundary', () => {
       <ExpertPr76Editor owner={fakeOwner()} seedSnapshot={snapshot} onCreated={() => {}} />,
     );
     expect(html).toContain('Edit PR fluid');
-    expect(html).toContain('<summary>methane</summary>');
-    expect(html).toContain('<summary>ethane</summary>');
+    expect(html).toContain('<summary>Methane</summary>');
+    expect(html).toContain('<summary>Ethane</summary>');
     expect(html).toContain('kij methane ↔ ethane');
     expect(html).toContain('<option value="custom">Custom settings</option>');
     expect(html).toContain('<option value="preset" selected="">Validated preset</option>');
