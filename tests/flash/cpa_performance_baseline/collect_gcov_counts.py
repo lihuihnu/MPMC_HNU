@@ -3,6 +3,9 @@
 
 This script does not infer scientific work from timing. It reads line execution
 counts from an instrumented Release build of the unmodified production headers.
+Stability and split provider-call counts are deliberately taken from the existing
+solver result counters in benchmark.cpp instead of fragile gcov lines in inlined
+adapter wrappers.
 """
 
 from __future__ import annotations
@@ -46,16 +49,6 @@ SPECS = {
     "association_iteration_sweeps": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_association.hpp",
         "        result.iterations = iteration;",
-        False,
-    ),
-    "stability_adapter_evaluations": (
-        "modules/flash/include/mpmc/flash/cpa_stability.hpp",
-        "        const auto roots = model_.roots(",
-        False,
-    ),
-    "split_adapter_evaluations": (
-        "modules/flash/include/mpmc/flash/cpa_split.hpp",
-        "    const auto roots = model.roots(",
         False,
     ),
 }
@@ -168,12 +161,6 @@ def main() -> int:
     if counts["phase_evaluations"] != counts["association_solve_calls"]:
         raise RuntimeError(
             "each CPA density-state phase evaluation should invoke exactly one association solve"
-        )
-    if counts["root_search_calls"] != (
-        counts["stability_adapter_evaluations"] + counts["split_adapter_evaluations"]
-    ):
-        raise RuntimeError(
-            "root-search calls no longer equal stability plus split adapter evaluations"
         )
     if counts["association_iteration_sweeps"] < counts["association_solve_calls"]:
         raise RuntimeError("association iteration sweep count is inconsistent")
