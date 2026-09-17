@@ -2,6 +2,7 @@
 
 #include "cpa_thermopack_oracle_generated.hpp"
 #include "cpa_thermopack_parameter_snapshot.hpp"
+#include "cpa_thermopack_parity_thresholds.hpp"
 #include "test_support.hpp"
 
 #include <algorithm>
@@ -15,6 +16,7 @@ namespace {
 namespace fl = mpmc::flash;
 namespace th = mpmc::thermodynamics;
 namespace parity = cpa_thermopack_snapshot;
+namespace gate = cpa_thermopack_parity_thresholds;
 
 void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
@@ -211,6 +213,17 @@ int main() {
 
         require(accepted == cpa_thermopack_oracle::states.size(),
                 "not every frozen ThermoPack state completed the read-only delta regression");
+
+        // These gates were frozen from independent hosted-runner evidence before
+        // any production CPA implementation change. Do not loosen them merely to
+        // make a later production change pass.
+        require(parity_max_abs_dbeta_v <= gate::flash_max_abs_beta_vapor,
+                "ThermoPack parity vapor-fraction envelope exceeded");
+        require(parity_max_abs_dx <= gate::flash_max_abs_liquid_methanol,
+                "ThermoPack parity liquid-composition envelope exceeded");
+        require(parity_max_abs_dy <= gate::flash_max_abs_vapor_methanol,
+                "ThermoPack parity vapor-composition envelope exceeded");
+
         const double count = static_cast<double>(accepted);
         std::cout
             << "CPA_THERMOPACK_LITERATURE_SNAPSHOT_DELTA_SUMMARY"
@@ -229,14 +242,18 @@ int main() {
             << " states=" << accepted
             << " dataset=" << parity_parameters.dataset_id()
             << " revision=" << parity_parameters.revision()
+            << " threshold_contract=" << gate::contract
             << " initialization=preexisting_Kurihara_xy_not_ThermoPack"
             << " mean_abs_d_betaV=" << parity_sum_abs_dbeta_v / count
             << " max_abs_d_betaV=" << parity_max_abs_dbeta_v
+            << " threshold_max_abs_d_betaV=" << gate::flash_max_abs_beta_vapor
             << " mean_abs_d_xMeOH=" << parity_sum_abs_dx / count
             << " max_abs_d_xMeOH=" << parity_max_abs_dx
+            << " threshold_max_abs_d_xMeOH=" << gate::flash_max_abs_liquid_methanol
             << " mean_abs_d_yMeOH=" << parity_sum_abs_dy / count
             << " max_abs_d_yMeOH=" << parity_max_abs_dy
-            << " magnitude_gate=none_parity_threshold_not_frozen"
+            << " threshold_max_abs_d_yMeOH=" << gate::flash_max_abs_vapor_methanol
+            << " magnitude_gate=frozen_v1"
             << '\n';
         return 0;
     } catch (const std::exception& error) {
