@@ -18,47 +18,61 @@ import tempfile
 
 # Use side-effecting executable statements as line-count anchors. Pure
 # declarations can disappear from Release gcov line maps after optimization.
+# The third tuple element indicates whether all source occurrences contribute to
+# one logical counter. CpaPtPhase::roots increments result.evaluations both for
+# reduced-density evaluations and for final accepted-root property evaluation;
+# the production counter includes both, so the audit must sum both sites too.
 SPECS = {
     "phase_evaluations": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_phase.hpp",
         "    result.temperature_k = temperature_k;",
+        False,
     ),
     "root_search_calls": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_pt_phase.hpp",
         "        result.pressure_pa = pressure_pa;",
+        False,
     ),
     "root_density_evaluations": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_pt_phase.hpp",
         "            ++result.evaluations;",
+        True,
     ),
     "association_solve_calls": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_association.hpp",
         "    result.temperature_k = temperature_k;",
+        False,
     ),
     "association_iteration_sweeps": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_association.hpp",
         "        result.iterations = iteration;",
+        False,
     ),
     "stability_adapter_evaluations": (
         "modules/flash/include/mpmc/flash/cpa_stability.hpp",
         "        const auto roots = model_.roots(",
+        False,
     ),
     "split_adapter_evaluations": (
         "modules/flash/include/mpmc/flash/cpa_split.hpp",
         "    const auto roots = model.roots(",
+        False,
     ),
 }
 
 
-def unique_line(path: pathlib.Path, needle: str) -> int:
+def matching_lines(path: pathlib.Path, needle: str, aggregate_all: bool) -> list[int]:
     matches = [
         index
         for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
         if line == needle
     ]
-    if len(matches) != 1:
+    if aggregate_all:
+        if not matches:
+            raise RuntimeError(f"expected at least one match for {needle!r} in {path}")
+    elif len(matches) != 1:
         raise RuntimeError(f"expected one match for {needle!r} in {path}, found {matches}")
-    return matches[0]
+    return matches
 
 
 def normalize(path: str) -> str:
@@ -138,13 +152,18 @@ def main() -> int:
     files = document.get("files", [])
     counts: dict[str, int] = {}
     evidence: dict[str, dict[str, object]] = {}
-    for name, (relative, needle) in SPECS.items():
+    for name, (relative, needle, aggregate_all) in SPECS.items():
         source_path = source_root / relative
-        line = unique_line(source_path, needle)
+        lines = matching_lines(source_path, needle, aggregate_all)
         file_record = find_file(files, relative)
-        count = line_count(file_record, line)
+        count = sum(line_count(file_record, line) for line in lines)
         counts[name] = count
-        evidence[name] = {"source": relative, "line": line, "needle": needle}
+        evidence[name] = {
+            "source": relative,
+            "lines": lines,
+            "needle": needle,
+            "aggregation": "sum_all_matches" if aggregate_all else "single",
+        }
 
     if counts["phase_evaluations"] != counts["association_solve_calls"]:
         raise RuntimeError(
