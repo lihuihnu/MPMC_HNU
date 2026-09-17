@@ -5,7 +5,10 @@ on:
     branches: [main]
     paths:
       - 'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_pt_flash.hpp'
+      - 'modules/flash/include/mpmc/flash/sw92_profile_c_pt_flash_backend.hpp'
       - 'modules/flash/sw92_profile_c_phase_set.md'
+      - 'modules/flash/sw92_pt_flash_correctness.md'
       - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
       - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_boundary.hpp'
       - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_pt.hpp'
