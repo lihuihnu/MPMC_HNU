@@ -266,7 +266,7 @@ void run_temperature_derivative_regression() {
 
     double max_abs_order_delta = 0.0;
     for (const auto* values : {&ad_by_order, &fd_by_order}) {
-        for (const auto pair : std::array<std::pair<double, double>, 3>{{
+        for (const auto& pair : std::array<std::pair<double, double>, 3>{{
                  {(*values)[0].cubic, (*values)[1].cubic},
                  {(*values)[0].association, (*values)[1].association},
                  {(*values)[0].total, (*values)[1].total}}}) {
