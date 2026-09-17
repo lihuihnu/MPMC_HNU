@@ -49,6 +49,9 @@ function build_model()
     epsilon_water_k = 16655.0 / R_MPMC
 
     parameters = (;
+        # Constructor metadata from the pinned Clapeyron molar-mass database.
+        # Mw is not used by the CPA residual Helmholtz observables in this oracle.
+        Mw = [32.042, 18.015],
         Tc = [512.6, 647.3],
         a = [0.40531, 0.12277],
         b = [3.0978e-5, 1.4515e-5],
@@ -113,11 +116,13 @@ function audit_model(model)
     require(rgas == R_MPMC,
             "gas constant mismatch: Clapeyron=$rgas MPMC=$R_MPMC")
 
+    expected_mw = (32.042, 18.015)
     expected_tc = (512.6, 647.3)
     expected_a = (0.40531, 0.12277)
     expected_b = (3.0978e-5, 1.4515e-5)
     expected_c1 = (0.43102, 0.67359)
     for i in 1:2
+        update(model.params.Mw.values[i], expected_mw[i], "Mw[$i]")
         update(model.params.Tc.values[i], expected_tc[i], "Tc[$i]")
         update(model.params.a.values[i, i], expected_a[i], "a0[$i]")
         update(model.params.b.values[i, i], expected_b[i], "b[$i]")
@@ -183,6 +188,7 @@ function audit_model(model)
         "translation" => string(nameof(typeof(model.cubicmodel.translation))),
         "association_combining" => string(model.assoc_options.combining),
         "gas_constant_j_per_mol_k" => rgas,
+        "molar_mass_g_per_mol_constructor_metadata" => collect(expected_mw),
         "kij" => derived_kij,
         "methanol_sites" => Dict("H" => 1, "e" => 1),
         "water_sites" => Dict("H" => 2, "e" => 2),
