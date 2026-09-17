@@ -71,11 +71,12 @@ int main() {
         require_common_max3_contract(cpa_backend.capability());
 
         require(pr_backend.capability().phase_metadata_namespace.empty() &&
+                    sw_backend.capability().phase_metadata_namespace.empty() &&
                     cpa_backend.capability().phase_metadata_namespace.empty(),
-                "generic freeze invented PR/CPA provider morphology metadata");
-        require(sw_backend.capability().phase_metadata_namespace ==
-                    fl::sw92_profile_c_phase_metadata_namespace,
-                "SW provider-specific phase metadata namespace changed");
+                "role-neutral backend freeze exposed provider phase identities");
+        require(sw_backend.capability().publication_profile ==
+                    fl::sw92_pt_flash_publication_convention,
+                "SW role-neutral publication profile changed");
         require(pr_backend.capability().scalar_settings.empty() &&
                     cpa_backend.capability().scalar_settings.empty(),
                 "generic freeze invented PR/CPA scalar configuration");

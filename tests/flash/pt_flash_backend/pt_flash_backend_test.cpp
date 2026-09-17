@@ -1,5 +1,6 @@
 #include <mpmc/flash/pr76_pt_flash_backend.hpp>
 #include <mpmc/flash/sw92_profile_c_pt_flash_backend.hpp>
+#include <mpmc/flash/sw92_pt_flash.hpp>
 
 #include "../sw92_phase_assigned_pt/physical_sample6.hpp"
 #include "test_support.hpp"
@@ -130,26 +131,6 @@ void require_phase_set_equal(const fl::PtPhaseSetResult& actual,
     }
 }
 
-std::string expected_role_id(fl::Sw92PhaseAssignedPtPhysicalRole role) {
-    switch (role) {
-    case fl::Sw92PhaseAssignedPtPhysicalRole::aqueous:
-        return "aqueous";
-    case fl::Sw92PhaseAssignedPtPhysicalRole::nonaqueous_unclassified:
-        return "nonaqueous_unclassified";
-    }
-    return "unknown";
-}
-
-std::string expected_family_id(th::SwPhaseFamily family) {
-    switch (family) {
-    case th::SwPhaseFamily::aqueous:
-        return "aqueous";
-    case th::SwPhaseFamily::nonaqueous:
-        return "nonaqueous";
-    }
-    return "unknown";
-}
-
 Vec edge_feed(const Vec& first, const Vec& second, double second_fraction) {
     require(first.size() == second.size() && second_fraction > 0.0 &&
                 second_fraction < 1.0,
@@ -217,7 +198,7 @@ void sw92_direct_equivalence() {
     const fl::PtFlashRequest request{3.0e6, 340.0, Vec{0.7, 0.3}};
     constexpr double molality = 0.0;
 
-    const auto direct = fl::solve_sw92_profile_c_pt_phase_set(
+    const auto direct = fl::solve_sw92_pt_flash(
         request.pressure_pa, request.temperature_k, request.feed,
         model, molality);
     fl::Sw92ProfileCPtFlashBackendOptions options;
@@ -233,7 +214,7 @@ void sw92_direct_equivalence() {
                 capability.algorithm_profile ==
                     fl::sw92_phase_assigned_pt_convention &&
                 capability.publication_profile ==
-                    fl::sw92_profile_c_phase_set_publication_convention &&
+                    fl::sw92_pt_flash_publication_convention &&
                 capability.configuration_profile ==
                     fl::sw92_profile_c_pt_flash_backend_configuration_profile &&
                 capability.scalar_settings.size() == 1U &&
@@ -258,55 +239,39 @@ void sw92_direct_equivalence() {
                 capability.performs_final_phase_set_review &&
                 capability.performs_boundary_neighbor_resolve &&
                 !capability.global_stability_proven &&
-                capability.phase_metadata_namespace ==
-                    fl::sw92_profile_c_phase_metadata_namespace,
+                capability.phase_metadata_namespace.empty(),
             "SW92 capability semantics changed");
     require(adapted.structurally_valid(), "SW92 backend result invalid");
-    require(!adapted.morphology_resolved,
-            "SW92 backend invented resolved H morphology");
+    require(!adapted.morphology_resolved && adapted.phase_metadata.empty(),
+            "SW92 backend assigned a provider phase identity");
+    require(adapted.provider_result_convention ==
+                fl::sw92_pt_flash_publication_convention,
+            "SW92 role-neutral publication convention changed");
     require(adapted.transition_report.structurally_valid(
                 capability.transition_capability,
                 capability.maximum_phase_count()),
             "SW92 transition report invalid");
-    require_phase_set_equal(adapted.solution, direct.solution);
-    require(adapted.phase_metadata.size() == direct.phase_metadata.size(),
-            "SW92 phase metadata count changed");
-    for (std::size_t phase = 0; phase < direct.phase_metadata.size(); ++phase) {
-        require(adapted.phase_metadata[phase].role_id ==
-                    expected_role_id(direct.phase_metadata[phase].physical_role) &&
-                    adapted.phase_metadata[phase].family_id ==
-                    expected_family_id(
-                        direct.phase_metadata[phase].thermodynamic_family),
-                "SW92 opaque phase metadata changed");
-    }
+    require_phase_set_equal(adapted.solution, direct);
 }
 
 void sw92_three_phase_capability() {
     const auto model = sample6::model();
     fl::Sw92ProfileCPtFlashBackend backend(model);
     const fl::PtFlashRequest request{1.0e7, 350.0, sample6::feed()};
-    const auto direct = fl::solve_sw92_profile_c_pt_phase_set(
+    const auto direct = fl::solve_sw92_pt_flash(
         request.pressure_pa, request.temperature_k, request.feed,
         model, 0.0);
     const auto adapted = backend.solve(request);
 
-    require(direct.accepted_phase_set_published() &&
-                direct.solution.accepted_phase_count() == 3U,
+    require(direct.accepted_phase_set() != nullptr &&
+                direct.accepted_phase_count() == 3U,
             "Sample-6 direct fixture is no longer authoritative three phase");
     require(adapted.structurally_valid() && adapted.accepted_phase_set() != nullptr &&
                 adapted.accepted_phase_set()->phases.size() == 3U,
             "unified SW backend failed to publish Sample-6 three phase");
-    require_phase_set_equal(adapted.solution, direct.solution);
-    require(adapted.phase_metadata.size() == 3U &&
-                adapted.phase_metadata[0].role_id == "aqueous" &&
-                adapted.phase_metadata[0].family_id == "aqueous" &&
-                adapted.phase_metadata[1].role_id ==
-                    "nonaqueous_unclassified" &&
-                adapted.phase_metadata[1].family_id == "nonaqueous" &&
-                adapted.phase_metadata[2].role_id ==
-                    "nonaqueous_unclassified" &&
-                adapted.phase_metadata[2].family_id == "nonaqueous",
-            "Sample-6 backend metadata invented hydrocarbon morphology");
+    require_phase_set_equal(adapted.solution, direct);
+    require(adapted.phase_metadata.empty() && !adapted.morphology_resolved,
+            "Sample-6 backend assigned phase identities");
     require(adapted.transition_report.evidence.size() == 1U,
             "Sample-6 transition trail changed");
     const auto& transition = adapted.transition_report.evidence.front();
