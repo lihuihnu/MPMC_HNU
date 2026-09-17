@@ -146,13 +146,22 @@ target_include_directories(mpmc_cpa_residual_helmholtz_ad_tests PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(mpmc_cpa_residual_helmholtz_ad_tests PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_cpa_residual_helmholtz_limits_tests
+    cpa_residual_helmholtz_limits_test.cpp)
+target_link_libraries(mpmc_cpa_residual_helmholtz_limits_tests PRIVATE
+    mpmc::flash mpmc::ad)
+target_include_directories(mpmc_cpa_residual_helmholtz_limits_tests PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(mpmc_cpa_residual_helmholtz_limits_tests PROPERTIES CXX_EXTENSIONS OFF)
+
 set(all_targets
     mpmc_cpa_physical_validation_tests
     mpmc_cpa_physical_validation_headers
     mpmc_cpa_thermopack_delta_tests
     mpmc_cpa_thermopack_phase_kernel_audit_tests
     mpmc_cpa_thermopack_parameter_identity_tests
-    mpmc_cpa_residual_helmholtz_ad_tests)
+    mpmc_cpa_residual_helmholtz_ad_tests
+    mpmc_cpa_residual_helmholtz_limits_tests)
 
 if(MSVC)
     foreach(target IN LISTS all_targets)
@@ -222,6 +231,12 @@ add_test(NAME flash.cpa_physical_validation.residual_helmholtz_ad
 set_tests_properties(flash.cpa_physical_validation.residual_helmholtz_ad PROPERTIES
     LABELS "flash;cpa;physical_validation;helmholtz;ad;thermopack;full_physical;sanitizer_safety"
     TIMEOUT 180)
+
+add_test(NAME flash.cpa_physical_validation.residual_helmholtz_limits
+         COMMAND mpmc_cpa_residual_helmholtz_limits_tests)
+set_tests_properties(flash.cpa_physical_validation.residual_helmholtz_limits PROPERTIES
+    LABELS "flash;cpa;physical_validation;helmholtz;ad;limits;full_physical;sanitizer_safety"
+    TIMEOUT 60)
 
 add_test(NAME flash.cpa_physical_validation.headers
          COMMAND mpmc_cpa_physical_validation_headers)
