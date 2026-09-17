@@ -493,7 +493,7 @@ void compare_permuted_state(
         phase.molar_density_mol_per_m3, swapped_composition,
         swapped_parameters, swapped_state.association);
 
-    for (const auto values : std::array<std::pair<double, double>, 3>{{
+    for (const auto& values : std::array<std::pair<double, double>, 3>{{
              {normal.cubic_value, swapped.cubic_value},
              {normal.association_q_value, swapped.association_q_value},
              {normal.total_value, swapped.total_value}}}) {
@@ -505,7 +505,7 @@ void compare_permuted_state(
             "component permutation changed residual Helmholtz value");
     }
 
-    for (const auto values : std::array<std::pair<double, double>, 3>{{
+    for (const auto& values : std::array<std::pair<double, double>, 3>{{
              {normal.pressure_physical_pa, swapped.pressure_physical_pa},
              {normal.pressure_association_pa, swapped.pressure_association_pa},
              {normal.pressure_total_pa, swapped.pressure_total_pa}}}) {
@@ -519,7 +519,7 @@ void compare_permuted_state(
 
     for (std::size_t normal_index = 0U; normal_index < 2U; ++normal_index) {
         const std::size_t swapped_index = 1U - normal_index;
-        for (const auto values : std::array<std::pair<double, double>, 3>{{
+        for (const auto& values : std::array<std::pair<double, double>, 3>{{
                  {normal.mu_cubic[normal_index], swapped.mu_cubic[swapped_index]},
                  {normal.mu_association[normal_index],
                   swapped.mu_association[swapped_index]},
