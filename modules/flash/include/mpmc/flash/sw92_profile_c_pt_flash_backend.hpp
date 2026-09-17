@@ -2,7 +2,7 @@
 #define MPMC_FLASH_SW92_PROFILE_C_PT_FLASH_BACKEND_HPP
 
 #include <mpmc/flash/pt_flash_backend.hpp>
-#include <mpmc/flash/sw92_profile_c_phase_set.hpp>
+#include <mpmc/flash/sw92_pt_flash.hpp>
 
 #include <optional>
 #include <string>
@@ -15,6 +15,9 @@ inline constexpr std::string_view sw92_profile_c_pt_flash_backend_id =
     "SW92/Profile-C/PT/phase-set-backend/v1";
 inline constexpr std::string_view sw92_profile_c_pt_flash_backend_configuration_profile =
     "SW92/Profile-C/fixed-molality/backend-configuration/v1";
+// Legacy provider-side namespace retained for source compatibility only.  The
+// role-neutral PT backend deliberately publishes no per-phase role/family
+// metadata and therefore advertises an empty metadata namespace.
 inline constexpr std::string_view sw92_profile_c_phase_metadata_namespace =
     "SW92/Profile-C/phase-metadata/v1";
 inline constexpr std::string_view sw92_profile_c_transition_evidence_profile =
@@ -27,6 +30,8 @@ struct Sw92ProfileCPtFlashBackendOptions {
 
 // Pure projection of already-owned Profile-C topology/boundary evidence. It does
 // not rerun EOS properties, TPD, joint equations, or neighboring-topology solves.
+// Diagnostics describe solver-family/topology evidence only; they do not assign
+// oil/gas/water identities to published phases.
 [[nodiscard]] inline PtPhaseTransitionReport
 project_sw92_profile_c_transition_report(
     const Sw92PhaseAssignedBoundaryAwareResult& source) {
@@ -86,19 +91,19 @@ project_sw92_profile_c_transition_report(
         add(1U, 2U, PtPhaseTransitionTrigger::initial_stability_witness,
             PtPhaseTransitionResolution::accepted_target,
             true, true,
-            "fixed-NA feed instability was followed by a fresh two-phase solve and final review");
+            "NA-family feed instability was followed by a fresh two-phase solve and final review");
         break;
     case Sw92PhaseAssignedPtStatus::w_h_locally_closed:
         add(1U, 2U, PtPhaseTransitionTrigger::provider_topology_witness,
             PtPhaseTransitionResolution::accepted_target,
             true, true,
-            "an aqueous-appearance witness was followed by a fresh W(AQ)+H(NA) joint solve and H-side review");
+            "an AQ-family water-enriched branch witness was followed by a fresh AQ/NA joint solve and finite topology review");
         break;
     case Sw92PhaseAssignedPtStatus::w_h0_h1_locally_closed:
         add(2U, 3U, PtPhaseTransitionTrigger::provider_topology_witness,
             PtPhaseTransitionResolution::accepted_target,
             true, true,
-            "an additional-H witness was followed by a fresh W(AQ)+H0(NA)+H1(NA) solve and final multiplicity review");
+            "an additional NA-family branch witness was followed by a fresh AQ/NA/NA solve and final multiplicity review");
         break;
     case Sw92PhaseAssignedPtStatus::higher_phase_count_or_wrong_candidate: {
         const bool three_phase_under_review =
@@ -160,35 +165,34 @@ public:
     [[nodiscard]] PtFlashBackendResult solve(
         const PtFlashRequest& request) override {
         // Run the established boundary-aware Profile-C driver exactly once and
-        // retain its owned topology chain for transition evidence. Publication is
-        // still the existing pure projection used by solve_sw92_profile_c_pt_phase_set.
+        // retain its owned topology chain for transition evidence.  The public
+        // phase-set projection intentionally strips provider role/family labels.
         const auto source = solve_sw92_phase_assigned_pt_boundary_aware(
             request.pressure_pa, request.temperature_k, request.feed, model_,
             options_.nacl_molality_mol_per_kg_water, options_.flash);
-        const auto published = project_sw92_profile_c_pt_phase_set(source);
+        const auto published = project_sw92_pt_flash_phase_set(source);
+        const auto& provider = source.base;
 
         PtFlashBackendResult result;
         result.capability = capability_;
-        result.solution = published.solution;
+        result.solution = published;
         result.transition_report =
             project_sw92_profile_c_transition_report(source);
-        result.provider_result_convention = published.publication_convention;
-        result.morphology_resolved =
-            Sw92ProfileCPtPhaseSetResult::morphology_resolved;
-        result.phase_metadata.reserve(published.phase_metadata.size());
-        for (const auto& metadata : published.phase_metadata) {
-            result.phase_metadata.push_back({
-                physical_role_id(metadata.physical_role),
-                thermodynamic_family_id(metadata.thermodynamic_family)});
-        }
+        result.provider_result_convention =
+            std::string(sw92_pt_flash_publication_convention);
+        result.morphology_resolved = false;
+        // Deliberately empty: no flash phase receives an aqueous/non-aqueous,
+        // oil/gas/water, root, or family identity at the public backend boundary.
+        result.phase_metadata.clear();
 
-        if (published.dataset_id != capability_.dataset_id ||
-            published.revision != capability_.revision ||
-            published.component_ids != capability_.component_ids ||
-            published.model_profile != capability_.model_profile ||
-            published.orchestration_convention != capability_.algorithm_profile ||
-            published.publication_convention != capability_.publication_profile ||
-            published.nacl_molality_mol_per_kg_water !=
+        if (provider.dataset_id != capability_.dataset_id ||
+            provider.revision != capability_.revision ||
+            provider.component_ids != capability_.component_ids ||
+            provider.model_profile != capability_.model_profile ||
+            provider.orchestration_convention != capability_.algorithm_profile ||
+            capability_.publication_profile !=
+                sw92_pt_flash_publication_convention ||
+            provider.nacl_molality_mol_per_kg_water !=
                 options_.nacl_molality_mol_per_kg_water) {
             reject_adapter_result(
                 result, "SW92 Profile-C backend: provider/model provenance mismatch");
@@ -215,7 +219,7 @@ private:
         capability.algorithm_profile =
             std::string(sw92_phase_assigned_pt_convention);
         capability.publication_profile =
-            std::string(sw92_profile_c_phase_set_publication_convention);
+            std::string(sw92_pt_flash_publication_convention);
         capability.configuration_profile =
             std::string(sw92_profile_c_pt_flash_backend_configuration_profile);
         capability.scalar_settings.push_back({
@@ -239,31 +243,8 @@ private:
         capability.performs_final_phase_set_review = true;
         capability.performs_boundary_neighbor_resolve = true;
         capability.global_stability_proven = false;
-        capability.phase_metadata_namespace =
-            std::string(sw92_profile_c_phase_metadata_namespace);
+        capability.phase_metadata_namespace.clear();
         return capability;
-    }
-
-    [[nodiscard]] static std::string physical_role_id(
-        Sw92PhaseAssignedPtPhysicalRole role) {
-        switch (role) {
-        case Sw92PhaseAssignedPtPhysicalRole::aqueous:
-            return "aqueous";
-        case Sw92PhaseAssignedPtPhysicalRole::nonaqueous_unclassified:
-            return "nonaqueous_unclassified";
-        }
-        return "unknown";
-    }
-
-    [[nodiscard]] static std::string thermodynamic_family_id(
-        thermodynamics::SwPhaseFamily family) {
-        switch (family) {
-        case thermodynamics::SwPhaseFamily::aqueous:
-            return "aqueous";
-        case thermodynamics::SwPhaseFamily::nonaqueous:
-            return "nonaqueous";
-        }
-        return "unknown";
     }
 
     static void reject_adapter_result(
