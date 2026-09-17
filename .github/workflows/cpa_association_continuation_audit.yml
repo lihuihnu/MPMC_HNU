@@ -84,7 +84,7 @@ jobs:
       - name: Validate no-cold-reference observable certificate
         run: |
           set -euo pipefail
-          build/cpa-association-continuation-audit/mpmc_cpa_association_certificate_audit \
+          build/cpa-association-continuation-audit/mpmc_cpa_association_certificate_roundoff_audit \
             | tee build/cpa-association-continuation-audit/certificate.log
           summary="$(grep 'CPA_ASSOC_NO_COLD_CERTIFICATE_SUMMARY' build/cpa-association-continuation-audit/certificate.log)"
           test -n "${summary}"
