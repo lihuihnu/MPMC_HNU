@@ -26,10 +26,19 @@ target_include_directories(mpmc_cpa_association_certificate_audit PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../cpa_physical_validation")
 set_target_properties(mpmc_cpa_association_certificate_audit PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_cpa_association_certificate_roundoff_audit
+    certificate_roundoff_audit.cpp)
+target_link_libraries(mpmc_cpa_association_certificate_roundoff_audit PRIVATE mpmc::flash)
+target_include_directories(mpmc_cpa_association_certificate_roundoff_audit PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../cpa_physical_validation")
+set_target_properties(mpmc_cpa_association_certificate_roundoff_audit
+    PROPERTIES CXX_EXTENSIONS OFF)
+
 foreach(target IN ITEMS
         mpmc_cpa_association_continuation_contract
         mpmc_cpa_association_continuation_audit
-        mpmc_cpa_association_certificate_audit)
+        mpmc_cpa_association_certificate_audit
+        mpmc_cpa_association_certificate_roundoff_audit)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
