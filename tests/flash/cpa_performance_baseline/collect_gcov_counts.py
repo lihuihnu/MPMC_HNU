@@ -101,16 +101,26 @@ def main() -> int:
     benchmark_source = pathlib.Path(args.benchmark_source).resolve()
     source_root = pathlib.Path(args.source_root).resolve()
     output = pathlib.Path(args.output).resolve()
+    object_file = object_dir / f"{benchmark_source.name}.o"
+    notes_file = object_dir / f"{benchmark_source.name}.gcno"
+    data_file = object_dir / f"{benchmark_source.name}.gcda"
+    for required in (object_file, notes_file, data_file):
+        if not required.exists():
+            raise RuntimeError(f"expected gcov build product is missing: {required}")
 
     with tempfile.TemporaryDirectory(prefix="cpa-gcov-") as temporary:
         temp = pathlib.Path(temporary)
+        # CMake retains the source extension in coverage basenames
+        # (benchmark.cpp.gcno/.gcda). Passing benchmark.cpp as a gcov source
+        # incorrectly asks for benchmark.gcno, so drive gcov with the actual
+        # benchmark.cpp.o object and its object directory.
         command = [
             "gcov",
             "--json-format",
             "--preserve-paths",
             "-o",
             str(object_dir),
-            str(benchmark_source),
+            str(object_file),
         ]
         completed = subprocess.run(command, cwd=temp, text=True, capture_output=True)
         if completed.returncode != 0:
