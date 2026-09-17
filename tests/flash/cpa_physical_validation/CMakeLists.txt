@@ -57,9 +57,13 @@ file(READ "${thermopack_phase_kernel_file}" thermopack_phase_kernel_json)
 string(JSON thermopack_phase_kernel_schema GET "${thermopack_phase_kernel_json}" schema)
 string(JSON thermopack_phase_kernel_commit GET "${thermopack_phase_kernel_json}" source commit)
 string(JSON thermopack_phase_kernel_rgas GET "${thermopack_phase_kernel_json}" gas_constant_j_per_mol_k)
+string(JSON thermopack_phase_kernel_tc_meoh
+       GET "${thermopack_phase_kernel_json}" alpha_critical_temperature_source MEOH temperature_k)
+string(JSON thermopack_phase_kernel_tc_h2o
+       GET "${thermopack_phase_kernel_json}" alpha_critical_temperature_source H2O temperature_k)
 string(JSON thermopack_phase_kernel_state_count LENGTH "${thermopack_phase_kernel_json}" states)
 if(NOT thermopack_phase_kernel_schema STREQUAL
-       "MPMC_HNU/CPA/ThermoPack-phase-kernel-reference/v1")
+       "MPMC_HNU/CPA/ThermoPack-phase-kernel-reference/v2")
     message(FATAL_ERROR "unexpected frozen ThermoPack CPA phase-kernel schema")
 endif()
 if(NOT thermopack_phase_kernel_commit STREQUAL
@@ -100,7 +104,7 @@ endforeach()
 set(thermopack_phase_kernel_generated_header
     "${CMAKE_CURRENT_BINARY_DIR}/cpa_thermopack_phase_kernel_generated.hpp")
 file(GENERATE OUTPUT "${thermopack_phase_kernel_generated_header}" CONTENT
-"#ifndef MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n#define MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n\n#include <array>\n\nnamespace cpa_thermopack_phase_kernel {\nstruct PhaseReference {\n    double composition_methanol;\n    double molar_density_mol_per_m3;\n    double compressibility_factor;\n    double ln_phi_methanol;\n    double ln_phi_water;\n    double pressure_physical_pa;\n    double pressure_association_pa;\n    double mu_cubic_over_rt_methanol;\n    double mu_cubic_over_rt_water;\n    double mu_association_over_rt_methanol;\n    double mu_association_over_rt_water;\n};\n\nstruct ThermoPackPhaseKernelState {\n    double temperature_k;\n    double pressure_pa;\n    PhaseReference liquid;\n    PhaseReference vapor;\n};\n\ninline constexpr double gas_constant_j_per_mol_k = ${thermopack_phase_kernel_rgas};\ninline constexpr std::array<ThermoPackPhaseKernelState, ${thermopack_phase_kernel_state_count}> states{{\n${thermopack_phase_kernel_initializers}}};\n\n} // namespace cpa_thermopack_phase_kernel\n\n#endif // MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n")
+"#ifndef MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n#define MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n\n#include <array>\n\nnamespace cpa_thermopack_phase_kernel {\nstruct PhaseReference {\n    double composition_methanol;\n    double molar_density_mol_per_m3;\n    double compressibility_factor;\n    double ln_phi_methanol;\n    double ln_phi_water;\n    double pressure_physical_pa;\n    double pressure_association_pa;\n    double mu_cubic_over_rt_methanol;\n    double mu_cubic_over_rt_water;\n    double mu_association_over_rt_methanol;\n    double mu_association_over_rt_water;\n};\n\nstruct ThermoPackPhaseKernelState {\n    double temperature_k;\n    double pressure_pa;\n    PhaseReference liquid;\n    PhaseReference vapor;\n};\n\ninline constexpr double gas_constant_j_per_mol_k = ${thermopack_phase_kernel_rgas};\ninline constexpr double methanol_alpha_critical_temperature_k = ${thermopack_phase_kernel_tc_meoh};\ninline constexpr double water_alpha_critical_temperature_k = ${thermopack_phase_kernel_tc_h2o};\ninline constexpr std::array<ThermoPackPhaseKernelState, ${thermopack_phase_kernel_state_count}> states{{\n${thermopack_phase_kernel_initializers}}};\n\n} // namespace cpa_thermopack_phase_kernel\n\n#endif // MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n")
 
 add_executable(mpmc_cpa_physical_validation_tests
     cpa_physical_validation_test.cpp)
