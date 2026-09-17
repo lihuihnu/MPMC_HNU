@@ -174,6 +174,15 @@ th::CpaParameterSet pure_parameters(std::string_view component_id) {
     return th::CpaParameterSet::create(catalog, order, input);
 }
 
+std::size_t component_index(
+    const th::CpaParameterSet& parameters,
+    std::string_view component_id) {
+    for (std::size_t i = 0U; i < parameters.size(); ++i) {
+        if (parameters.components().at(i).id == component_id) { return i; }
+    }
+    throw std::runtime_error("unknown binary endpoint component id");
+}
+
 enum class AssociationLimitVariant {
     no_sites,
     no_pairs
@@ -291,6 +300,165 @@ void run_pure_component_limit() {
               << " densities=2"
               << " max_abs_assoc_Q=" << max_abs_association_q
               << " max_abs_dQ=" << max_q_value_delta
+              << " max_abs_dP_pa=" << max_pressure_delta
+              << " max_abs_dmu_over_rt=" << max_mu_delta
+              << " max_abs_dlnphi=" << max_lnphi_delta
+              << '\n';
+}
+
+void compare_binary_pure_endpoint(
+    std::string_view component_id,
+    bool swapped,
+    double rho,
+    double& max_value_delta,
+    double& max_pressure_delta,
+    double& max_mu_delta,
+    double& max_lnphi_delta) {
+    constexpr double endpoint_value_tolerance = 1.0e-10;
+    constexpr double endpoint_pressure_tolerance_pa = 5.0e-6;
+    constexpr double endpoint_mu_tolerance = 1.0e-10;
+    constexpr double endpoint_lnphi_tolerance = 1.0e-10;
+    constexpr double temperature_k = cpa_physical_test::temperature_k;
+
+    const auto binary_parameters = cpa_physical_test::parameters(swapped);
+    const auto pure = pure_parameters(component_id);
+    require(binary_parameters.size() == 2U,
+            "binary endpoint regression requires full two-component parameters");
+    require(pure.size() == 1U,
+            "binary endpoint pure projection must contain one component");
+
+    const std::size_t present_index = component_index(
+        binary_parameters, component_id);
+    std::vector<double> binary_composition(binary_parameters.size(), 0.0);
+    binary_composition[present_index] = 1.0;
+    const std::array<double, 1> pure_composition{{1.0}};
+
+    const auto binary_state = th::evaluate_cpa_phase_at_density(
+        temperature_k, rho, binary_composition, binary_parameters);
+    const auto pure_state = th::evaluate_cpa_phase_at_density(
+        temperature_k, rho, pure_composition, pure);
+    require(binary_state.association.converged(),
+            "binary pure endpoint association did not converge");
+    require(pure_state.association.converged(),
+            "pure projection endpoint association did not converge");
+    require(std::any_of(
+                binary_state.association.sites.begin(),
+                binary_state.association.sites.end(),
+                [&](const auto& site) {
+                    return site.component_index != present_index;
+                }),
+            "binary endpoint regression did not retain absent-component site classes");
+
+    const auto binary = derive(
+        binary_state.pressure_pa, temperature_k, rho,
+        binary_composition, binary_parameters, binary_state.association);
+    const auto pure_derived = derive(
+        pure_state.pressure_pa, temperature_k, rho,
+        pure_composition, pure, pure_state.association);
+
+    const auto compare_value = [&](double actual, double expected,
+                                   double tolerance,
+                                   const std::string& message) {
+        max_value_delta = std::max(
+            max_value_delta, std::abs(actual - expected));
+        require_abs(actual, expected, tolerance, message);
+    };
+    compare_value(
+        binary.cubic_value, pure_derived.cubic_value,
+        roundoff(binary.cubic_value) + roundoff(pure_derived.cubic_value),
+        "binary pure endpoint changed cubic Helmholtz value");
+    compare_value(
+        binary.association_q_value, pure_derived.association_q_value,
+        endpoint_value_tolerance + roundoff(binary.association_q_value) +
+            roundoff(pure_derived.association_q_value),
+        "binary pure endpoint changed association Helmholtz value");
+    compare_value(
+        binary.total_value, pure_derived.total_value,
+        endpoint_value_tolerance + roundoff(binary.total_value) +
+            roundoff(pure_derived.total_value),
+        "binary pure endpoint changed total residual Helmholtz value");
+
+    const auto compare_pressure = [&](double actual, double expected,
+                                      double tolerance,
+                                      const std::string& message) {
+        max_pressure_delta = std::max(
+            max_pressure_delta, std::abs(actual - expected));
+        require_abs(actual, expected, tolerance, message);
+    };
+    compare_pressure(
+        binary.pressure_physical_pa, pure_derived.pressure_physical_pa,
+        roundoff(binary.pressure_physical_pa) +
+            roundoff(pure_derived.pressure_physical_pa),
+        "binary pure endpoint changed cubic pressure");
+    compare_pressure(
+        binary.pressure_association_pa, pure_derived.pressure_association_pa,
+        endpoint_pressure_tolerance_pa,
+        "binary pure endpoint changed association pressure");
+    compare_pressure(
+        binary.pressure_total_pa, pure_derived.pressure_total_pa,
+        endpoint_pressure_tolerance_pa,
+        "binary pure endpoint changed total Helmholtz pressure");
+    compare_pressure(
+        binary_state.pressure_pa, pure_state.pressure_pa,
+        endpoint_pressure_tolerance_pa,
+        "binary pure endpoint changed analytic CPA pressure");
+
+    const auto compare_mu = [&](double actual, double expected,
+                                double tolerance,
+                                const std::string& message) {
+        max_mu_delta = std::max(max_mu_delta, std::abs(actual - expected));
+        require_abs(actual, expected, tolerance, message);
+    };
+    compare_mu(
+        binary.mu_cubic[present_index], pure_derived.mu_cubic.front(),
+        roundoff(binary.mu_cubic[present_index]) +
+            roundoff(pure_derived.mu_cubic.front()),
+        "binary pure endpoint changed present-component cubic mu");
+    compare_mu(
+        binary.mu_association[present_index],
+        pure_derived.mu_association.front(), endpoint_mu_tolerance,
+        "binary pure endpoint changed present-component association mu");
+    compare_mu(
+        binary.mu_total[present_index], pure_derived.mu_total.front(),
+        endpoint_mu_tolerance,
+        "binary pure endpoint changed present-component total mu");
+
+    const double lnphi_delta = std::abs(
+        binary.ln_phi[present_index] - pure_derived.ln_phi.front());
+    max_lnphi_delta = std::max(max_lnphi_delta, lnphi_delta);
+    require_abs(
+        binary.ln_phi[present_index], pure_derived.ln_phi.front(),
+        endpoint_lnphi_tolerance,
+        "binary pure endpoint changed present-component ln(phi)");
+}
+
+void run_binary_pure_endpoint_limit() {
+    constexpr std::array<double, 2> densities{{20.0, 200.0}};
+    constexpr std::array<std::string_view, 2> components{{
+        "METHANOL", "WATER"}};
+    constexpr std::array<bool, 2> swapped_orders{{false, true}};
+    double max_value_delta = 0.0;
+    double max_pressure_delta = 0.0;
+    double max_mu_delta = 0.0;
+    double max_lnphi_delta = 0.0;
+
+    for (const bool swapped : swapped_orders) {
+        for (const std::string_view component_id : components) {
+            for (const double rho : densities) {
+                compare_binary_pure_endpoint(
+                    component_id, swapped, rho,
+                    max_value_delta, max_pressure_delta,
+                    max_mu_delta, max_lnphi_delta);
+            }
+        }
+    }
+
+    std::cout << std::setprecision(17)
+              << "CPA_HELMHOLTZ_BINARY_PURE_ENDPOINT_OK"
+              << " endpoints=2"
+              << " component_orders=2"
+              << " densities=2"
+              << " max_abs_dF=" << max_value_delta
               << " max_abs_dP_pa=" << max_pressure_delta
               << " max_abs_dmu_over_rt=" << max_mu_delta
               << " max_abs_dlnphi=" << max_lnphi_delta
@@ -570,6 +738,7 @@ void run_component_permutation_limit() {
 int main() {
     try {
         run_pure_component_limit();
+        run_binary_pure_endpoint_limit();
         run_zero_association_limits();
         run_dilute_gas_limit();
         run_component_permutation_limit();
