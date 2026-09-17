@@ -132,6 +132,36 @@ It requires, for both component orders:
 - the parity snapshot cannot silently collapse back into the literature
   snapshot or into ThermoPack's default `kij=-0.09` dataset.
 
+## Canonical parity consumers
+
+The named snapshot above is now the **single parameter-construction source** for
+both external parity paths:
+
+```text
+tests/flash/cpa_physical_validation/cpa_thermopack_delta_test.cpp
+tests/flash/cpa_physical_validation/cpa_thermopack_phase_kernel_audit_test.cpp
+```
+
+Both call:
+
+```text
+cpa_thermopack_snapshot::parameters(false)
+```
+
+and require the returned `dataset_id` and `revision` to match the named parity
+snapshot before evaluating ThermoPack deltas. Neither test independently copies
+CPA records, manufactures a temporary `Tc-only` parameter set, nor carries a
+second copy of ThermoPack `Tc` provenance.
+
+The literature snapshot may still be evaluated alongside parity as a diagnostic
+to show the consequence of using a scientifically distinct dataset. Such output
+is explicitly labeled `LITERATURE_*`; it is not part of the formulation-matched
+parity path.
+
+This single-source rule is important before numerical parity thresholds are
+frozen: future tolerance evidence must refer to this named snapshot identity,
+not to an anonymous counterfactual whose fields could drift independently.
+
 ## Scientific interpretation
 
 The two snapshots answer different questions:
