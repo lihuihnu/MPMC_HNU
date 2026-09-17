@@ -1,6 +1,7 @@
 #include <mpmc/flash/cpa_split.hpp>
 
 #include "cpa_thermopack_parameter_snapshot.hpp"
+#include "cpa_thermopack_parity_thresholds.hpp"
 #include "cpa_thermopack_phase_kernel_generated.hpp"
 #include "test_support.hpp"
 
@@ -20,6 +21,7 @@ namespace fl = mpmc::flash;
 namespace th = mpmc::thermodynamics;
 namespace ref = cpa_thermopack_phase_kernel;
 namespace parity = cpa_thermopack_snapshot;
+namespace gate = cpa_thermopack_parity_thresholds;
 
 void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
@@ -364,6 +366,31 @@ int main() {
                         literature_summary, parity_summary);
         }
 
+        // Frozen v1 cross-implementation numerical-parity gates. These were
+        // selected from independent hosted-runner evidence before production CPA
+        // changes and must not be relaxed merely to make such a change pass.
+        require(parity_summary.max_root_rho_relative <= gate::phase_max_relative_density,
+                "ThermoPack parity density envelope exceeded");
+        require(parity_summary.max_root_z_absolute <= gate::phase_max_abs_z,
+                "ThermoPack parity compressibility-factor envelope exceeded");
+        require(parity_summary.max_root_ln_phi_absolute <= gate::phase_max_abs_ln_phi,
+                "ThermoPack parity ln-phi envelope exceeded");
+        require(parity_summary.max_common_tv_physical_pressure_absolute <=
+                    gate::phase_max_abs_pressure_physical_pa,
+                "ThermoPack parity physical-pressure envelope exceeded");
+        require(parity_summary.max_common_tv_association_pressure_absolute <=
+                    gate::phase_max_abs_pressure_association_pa,
+                "ThermoPack parity association-pressure envelope exceeded");
+        require(parity_summary.max_common_tv_total_pressure_absolute <=
+                    gate::phase_max_abs_pressure_total_pa,
+                "ThermoPack parity total-pressure envelope exceeded");
+        require(parity_summary.max_common_tv_mu_cubic_absolute <=
+                    gate::phase_max_abs_mu_cubic_over_rt,
+                "ThermoPack parity cubic chemical-potential envelope exceeded");
+        require(parity_summary.max_common_tv_mu_association_absolute <=
+                    gate::phase_max_abs_mu_association_over_rt,
+                "ThermoPack parity association chemical-potential envelope exceeded");
+
         std::cout << "CPA_THERMOPACK_LITERATURE_PHASE_KERNEL_SUMMARY"
                   << " states=" << ref::states.size()
                   << " phase_states=" << 2U * ref::states.size()
@@ -386,22 +413,36 @@ int main() {
         std::cout << "CPA_THERMOPACK_PARITY_PHASE_KERNEL_SUMMARY"
                   << " dataset=" << parity_parameters.dataset_id()
                   << " revision=" << parity_parameters.revision()
+                  << " threshold_contract=" << gate::contract
                   << " states=" << ref::states.size()
                   << " phase_states=" << 2U * ref::states.size()
                   << " max_common_tv_abs_d_Pphysical="
                   << parity_summary.max_common_tv_physical_pressure_absolute
+                  << " threshold_max_abs_d_Pphysical="
+                  << gate::phase_max_abs_pressure_physical_pa
                   << " max_common_tv_abs_d_Passoc="
                   << parity_summary.max_common_tv_association_pressure_absolute
+                  << " threshold_max_abs_d_Passoc="
+                  << gate::phase_max_abs_pressure_association_pa
                   << " max_common_tv_abs_d_Ptotal="
                   << parity_summary.max_common_tv_total_pressure_absolute
+                  << " threshold_max_abs_d_Ptotal="
+                  << gate::phase_max_abs_pressure_total_pa
                   << " max_common_tv_abs_d_mu_cubic="
                   << parity_summary.max_common_tv_mu_cubic_absolute
+                  << " threshold_max_abs_d_mu_cubic="
+                  << gate::phase_max_abs_mu_cubic_over_rt
                   << " max_common_tv_abs_d_mu_assoc="
                   << parity_summary.max_common_tv_mu_association_absolute
+                  << " threshold_max_abs_d_mu_assoc="
+                  << gate::phase_max_abs_mu_association_over_rt
                   << " max_root_d_rho_rel=" << parity_summary.max_root_rho_relative
+                  << " threshold_max_root_d_rho_rel=" << gate::phase_max_relative_density
                   << " max_root_abs_d_Z=" << parity_summary.max_root_z_absolute
+                  << " threshold_max_root_abs_d_Z=" << gate::phase_max_abs_z
                   << " max_root_abs_d_lnphi=" << parity_summary.max_root_ln_phi_absolute
-                  << " magnitude_gate=none_parity_threshold_not_frozen"
+                  << " threshold_max_root_abs_d_lnphi=" << gate::phase_max_abs_ln_phi
+                  << " magnitude_gate=frozen_v1"
                   << '\n';
         return 0;
     } catch (const std::exception& error) {
