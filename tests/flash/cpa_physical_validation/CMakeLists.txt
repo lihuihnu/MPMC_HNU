@@ -51,6 +51,57 @@ set(thermopack_generated_header
 file(GENERATE OUTPUT "${thermopack_generated_header}" CONTENT
 "#ifndef MPMC_TEST_CPA_THERMOPACK_ORACLE_GENERATED_HPP\n#define MPMC_TEST_CPA_THERMOPACK_ORACLE_GENERATED_HPP\n\n#include <array>\n\nnamespace cpa_thermopack_oracle {\nstruct ThermoPackState {\n    double temperature_k;\n    double pressure_pa;\n    double feed_methanol;\n    int phase_code;\n    double beta_vapor;\n    double beta_liquid;\n    double liquid_methanol;\n    double vapor_methanol;\n};\n\ninline constexpr std::array<ThermoPackState, ${thermopack_oracle_state_count}> states{{\n${thermopack_state_initializers}}};\n\n} // namespace cpa_thermopack_oracle\n\n#endif // MPMC_TEST_CPA_THERMOPACK_ORACLE_GENERATED_HPP\n")
 
+set(thermopack_phase_kernel_file
+    "${CMAKE_CURRENT_LIST_DIR}/../cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json")
+file(READ "${thermopack_phase_kernel_file}" thermopack_phase_kernel_json)
+string(JSON thermopack_phase_kernel_schema GET "${thermopack_phase_kernel_json}" schema)
+string(JSON thermopack_phase_kernel_commit GET "${thermopack_phase_kernel_json}" source commit)
+string(JSON thermopack_phase_kernel_rgas GET "${thermopack_phase_kernel_json}" gas_constant_j_per_mol_k)
+string(JSON thermopack_phase_kernel_state_count LENGTH "${thermopack_phase_kernel_json}" states)
+if(NOT thermopack_phase_kernel_schema STREQUAL
+       "MPMC_HNU/CPA/ThermoPack-phase-kernel-reference/v1")
+    message(FATAL_ERROR "unexpected frozen ThermoPack CPA phase-kernel schema")
+endif()
+if(NOT thermopack_phase_kernel_commit STREQUAL
+       "d68c794c7342bfc6938eb424a1fbb88b7780b738")
+    message(FATAL_ERROR "unexpected ThermoPack phase-kernel revision")
+endif()
+if(NOT thermopack_phase_kernel_state_count EQUAL 5)
+    message(FATAL_ERROR "ThermoPack CPA phase-kernel reference must contain five states")
+endif()
+
+function(read_phase_reference json index phase output_var)
+    string(JSON phase_meoh GET "${json}" states ${index} ${phase} composition MEOH)
+    string(JSON phase_rho GET "${json}" states ${index} ${phase} molar_density_mol_per_m3)
+    string(JSON phase_z GET "${json}" states ${index} ${phase} compressibility_factor)
+    string(JSON phase_lnphi_meoh GET "${json}" states ${index} ${phase} ln_phi MEOH)
+    string(JSON phase_lnphi_h2o GET "${json}" states ${index} ${phase} ln_phi H2O)
+    string(JSON phase_p_physical GET "${json}" states ${index} ${phase} pressure_physical_pa)
+    string(JSON phase_p_association GET "${json}" states ${index} ${phase} pressure_association_pa)
+    string(JSON phase_mu_cubic_meoh GET "${json}" states ${index} ${phase} mu_cubic_over_rt MEOH)
+    string(JSON phase_mu_cubic_h2o GET "${json}" states ${index} ${phase} mu_cubic_over_rt H2O)
+    string(JSON phase_mu_assoc_meoh GET "${json}" states ${index} ${phase} mu_association_over_rt MEOH)
+    string(JSON phase_mu_assoc_h2o GET "${json}" states ${index} ${phase} mu_association_over_rt H2O)
+    set(${output_var}
+        "PhaseReference{${phase_meoh}, ${phase_rho}, ${phase_z}, ${phase_lnphi_meoh}, ${phase_lnphi_h2o}, ${phase_p_physical}, ${phase_p_association}, ${phase_mu_cubic_meoh}, ${phase_mu_cubic_h2o}, ${phase_mu_assoc_meoh}, ${phase_mu_assoc_h2o}}"
+        PARENT_SCOPE)
+endfunction()
+
+set(thermopack_phase_kernel_initializers "")
+foreach(index RANGE 0 4)
+    string(JSON state_temperature GET "${thermopack_phase_kernel_json}" states ${index} temperature_k)
+    string(JSON state_pressure GET "${thermopack_phase_kernel_json}" states ${index} pressure_pa)
+    read_phase_reference("${thermopack_phase_kernel_json}" ${index} liquid liquid_initializer)
+    read_phase_reference("${thermopack_phase_kernel_json}" ${index} vapor vapor_initializer)
+    string(APPEND thermopack_phase_kernel_initializers
+        "    ThermoPackPhaseKernelState{${state_temperature}, ${state_pressure}, ${liquid_initializer}, ${vapor_initializer}},\n")
+endforeach()
+
+set(thermopack_phase_kernel_generated_header
+    "${CMAKE_CURRENT_BINARY_DIR}/cpa_thermopack_phase_kernel_generated.hpp")
+file(GENERATE OUTPUT "${thermopack_phase_kernel_generated_header}" CONTENT
+"#ifndef MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n#define MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n\n#include <array>\n\nnamespace cpa_thermopack_phase_kernel {\nstruct PhaseReference {\n    double composition_methanol;\n    double molar_density_mol_per_m3;\n    double compressibility_factor;\n    double ln_phi_methanol;\n    double ln_phi_water;\n    double pressure_physical_pa;\n    double pressure_association_pa;\n    double mu_cubic_over_rt_methanol;\n    double mu_cubic_over_rt_water;\n    double mu_association_over_rt_methanol;\n    double mu_association_over_rt_water;\n};\n\nstruct ThermoPackPhaseKernelState {\n    double temperature_k;\n    double pressure_pa;\n    PhaseReference liquid;\n    PhaseReference vapor;\n};\n\ninline constexpr double gas_constant_j_per_mol_k = ${thermopack_phase_kernel_rgas};\ninline constexpr std::array<ThermoPackPhaseKernelState, ${thermopack_phase_kernel_state_count}> states{{\n${thermopack_phase_kernel_initializers}}};\n\n} // namespace cpa_thermopack_phase_kernel\n\n#endif // MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n")
+
 add_executable(mpmc_cpa_physical_validation_tests
     cpa_physical_validation_test.cpp)
 target_link_libraries(mpmc_cpa_physical_validation_tests PRIVATE mpmc::flash)
@@ -68,10 +119,18 @@ target_include_directories(mpmc_cpa_thermopack_delta_tests PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(mpmc_cpa_thermopack_delta_tests PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_cpa_thermopack_phase_kernel_audit_tests
+    cpa_thermopack_phase_kernel_audit_test.cpp)
+target_link_libraries(mpmc_cpa_thermopack_phase_kernel_audit_tests PRIVATE mpmc::flash)
+target_include_directories(mpmc_cpa_thermopack_phase_kernel_audit_tests PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(mpmc_cpa_thermopack_phase_kernel_audit_tests PROPERTIES CXX_EXTENSIONS OFF)
+
 set(all_targets
     mpmc_cpa_physical_validation_tests
     mpmc_cpa_physical_validation_headers
-    mpmc_cpa_thermopack_delta_tests)
+    mpmc_cpa_thermopack_delta_tests
+    mpmc_cpa_thermopack_phase_kernel_audit_tests)
 
 if(MSVC)
     foreach(target IN LISTS all_targets)
@@ -123,6 +182,12 @@ add_test(NAME flash.cpa_physical_validation.thermopack_five_state_delta
 set_tests_properties(flash.cpa_physical_validation.thermopack_five_state_delta PROPERTIES
     LABELS "flash;cpa;physical_validation;thermopack;external_oracle;full_physical"
     TIMEOUT 300)
+
+add_test(NAME flash.cpa_physical_validation.thermopack_phase_kernel_audit
+         COMMAND mpmc_cpa_thermopack_phase_kernel_audit_tests)
+set_tests_properties(flash.cpa_physical_validation.thermopack_phase_kernel_audit PROPERTIES
+    LABELS "flash;cpa;physical_validation;thermopack;phase_kernel;diagnostic;full_physical"
+    TIMEOUT 180)
 
 add_test(NAME flash.cpa_physical_validation.headers
          COMMAND mpmc_cpa_physical_validation_headers)
