@@ -127,3 +127,62 @@ jobs:
           python3 tests/flash/cpa_thermopack_oracle/generate_phase_kernel_audit.py \
             --out build/cpa-thermopack-phase-kernel-audit.json
           test -s build/cpa-thermopack-phase-kernel-audit.json
+
+      - name: Verify frozen phase-kernel reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import math
+          from pathlib import Path
+
+          actual = json.loads(Path(
+              "build/cpa-thermopack-phase-kernel-audit.json").read_text())
+          frozen = json.loads(Path(
+              "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json"
+          ).read_text())
+
+          if actual["schema"] != frozen["source"]["generated_schema"]:
+              raise SystemExit("phase-kernel generated schema drifted")
+          if actual["generator"]["commit"] != frozen["source"]["commit"]:
+              raise SystemExit("phase-kernel ThermoPack revision drifted")
+          if actual["generator"]["software"] != frozen["source"]["software"]:
+              raise SystemExit("phase-kernel software identity drifted")
+          if len(actual["states"]) != len(frozen["states"]):
+              raise SystemExit("phase-kernel state count drifted")
+
+          def close(got, ref, where):
+              if not math.isclose(float(got), float(ref), rel_tol=2e-12, abs_tol=2e-12):
+                  raise SystemExit(f"phase-kernel frozen reference drifted at {where}: {got} vs {ref}")
+
+          close(actual["gas_constant_j_per_mol_k"],
+                frozen["gas_constant_j_per_mol_k"], "R")
+          rgas = float(actual["gas_constant_j_per_mol_k"])
+
+          for index, (got_state, ref_state) in enumerate(zip(actual["states"], frozen["states"])):
+              close(got_state["temperature_k"], ref_state["temperature_k"], f"{index}/T")
+              close(got_state["pressure_pa"], ref_state["pressure_pa"], f"{index}/P")
+              rt = rgas * float(got_state["temperature_k"])
+              for phase in ("liquid", "vapor"):
+                  got = got_state[phase]
+                  ref = ref_state[phase]
+                  close(got["composition"]["MEOH"], ref["composition"]["MEOH"], f"{index}/{phase}/xMeOH")
+                  close(got["composition"]["H2O"], ref["composition"]["H2O"], f"{index}/{phase}/xH2O")
+                  close(got["molar_density_mol_per_m3"], ref["molar_density_mol_per_m3"], f"{index}/{phase}/rho")
+                  close(got["compressibility_factor"], ref["compressibility_factor"], f"{index}/{phase}/Z")
+                  close(got["ln_phi"]["MEOH"], ref["ln_phi"]["MEOH"], f"{index}/{phase}/lnphiMeOH")
+                  close(got["ln_phi"]["H2O"], ref["ln_phi"]["H2O"], f"{index}/{phase}/lnphiH2O")
+                  close(got["pressure_cubic_shadow_tv_pa"], ref["pressure_physical_pa"], f"{index}/{phase}/Pphysical")
+                  close(got["pressure_association_effect_pa"], ref["pressure_association_pa"], f"{index}/{phase}/Passoc")
+                  close(got["mu_residual_cubic_shadow_j_per_mol"]["MEOH"] / rt,
+                        ref["mu_cubic_over_rt"]["MEOH"], f"{index}/{phase}/muCubicMeOH")
+                  close(got["mu_residual_cubic_shadow_j_per_mol"]["H2O"] / rt,
+                        ref["mu_cubic_over_rt"]["H2O"], f"{index}/{phase}/muCubicH2O")
+                  close(got["mu_association_over_rt"]["MEOH"],
+                        ref["mu_association_over_rt"]["MEOH"], f"{index}/{phase}/muAssocMeOH")
+                  close(got["mu_association_over_rt"]["H2O"],
+                        ref["mu_association_over_rt"]["H2O"], f"{index}/{phase}/muAssocH2O")
+
+          print("THERMOPACK_CPA_PHASE_KERNEL_REFERENCE_OK states=5 phase_states=10 tolerance=2e-12")
+          PY
