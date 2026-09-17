@@ -17,7 +17,10 @@ permissions:
 
 concurrency:
   group: cpa-performance-audit-${{ github.ref }}
-  cancel-in-progress: true
+  # A paired run records exact main/head SHAs at start. Do not discard an
+  # expensive, internally consistent baseline merely because an unrelated
+  # test-only commit lands on the same PR branch while it is running.
+  cancel-in-progress: false
 
 jobs:
   paired-baseline:
