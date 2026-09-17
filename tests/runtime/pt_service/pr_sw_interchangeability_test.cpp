@@ -4,7 +4,12 @@
 
 #include "../../thermodynamics/sw92/test_support.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <iomanip>
+#include <iostream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -26,8 +31,8 @@ th::Provenance synthetic_pr_binary_source() {
             "test://runtime/pt-service/pr-sw-interchangeability",
             "v1",
             "Classic PR binary interaction fixture",
-            "Zero binary interaction is used only for interface conformance; "
-            "no physical-accuracy claim is made",
+            "Zero binary interaction is used only for interface conformance and "
+            "trend comparison; no physical-accuracy claim is made",
             "tests/runtime/pt_service/pr_sw_interchangeability_test.cpp",
             "Synthetic test datum; not experimental or fitted data"};
 }
@@ -119,6 +124,174 @@ void require_same_inventory(const rt::PtRuntimeComponentInventory& first,
     }
 }
 
+std::string_view outcome_name(rt::PtServiceOutcome outcome) {
+    switch (outcome) {
+    case rt::PtServiceOutcome::accepted: return "accepted";
+    case rt::PtServiceOutcome::phase_set_unstable: return "phase_set_unstable";
+    case rt::PtServiceOutcome::indeterminate: return "indeterminate";
+    case rt::PtServiceOutcome::error: return "error";
+    }
+    return "unknown";
+}
+
+struct TrendSummary {
+    std::size_t phase_count{};
+    double min_water_x{std::numeric_limits<double>::quiet_NaN()};
+    double max_water_x{std::numeric_limits<double>::quiet_NaN()};
+    double beta_at_min_water{std::numeric_limits<double>::quiet_NaN()};
+    double beta_at_max_water{std::numeric_limits<double>::quiet_NaN()};
+    double min_z{std::numeric_limits<double>::quiet_NaN()};
+    double max_z{std::numeric_limits<double>::quiet_NaN()};
+    double material_balance_residual{std::numeric_limits<double>::quiet_NaN()};
+    double fugacity_log_residual{std::numeric_limits<double>::quiet_NaN()};
+};
+
+TrendSummary summarize_accepted(const rt::PtServiceComputationResult& result) {
+    TrendSummary summary;
+    summary.phase_count = result.phases.size();
+    if (result.phases.empty()) { return summary; }
+
+    std::size_t water_index = result.feed.size();
+    for (std::size_t i = 0; i < result.feed.size(); ++i) {
+        if (result.feed[i].component_id == sw92_test::water.id) {
+            water_index = i;
+            break;
+        }
+    }
+    require(water_index < result.feed.size(), "trend audit lost water component");
+
+    summary.min_water_x = std::numeric_limits<double>::infinity();
+    summary.max_water_x = -std::numeric_limits<double>::infinity();
+    summary.min_z = std::numeric_limits<double>::infinity();
+    summary.max_z = -std::numeric_limits<double>::infinity();
+    bool all_z = true;
+    for (const auto& phase : result.phases) {
+        const double xw = phase.components.at(water_index).mole_fraction;
+        if (xw < summary.min_water_x) {
+            summary.min_water_x = xw;
+            summary.beta_at_min_water = phase.mole_phase_fraction;
+        }
+        if (xw > summary.max_water_x) {
+            summary.max_water_x = xw;
+            summary.beta_at_max_water = phase.mole_phase_fraction;
+        }
+        if (phase.compressibility_factor.has_value()) {
+            summary.min_z = std::min(summary.min_z, *phase.compressibility_factor);
+            summary.max_z = std::max(summary.max_z, *phase.compressibility_factor);
+        } else {
+            all_z = false;
+        }
+    }
+    if (!all_z) {
+        summary.min_z = std::numeric_limits<double>::quiet_NaN();
+        summary.max_z = std::numeric_limits<double>::quiet_NaN();
+    }
+
+    summary.material_balance_residual = 0.0;
+    for (std::size_t component = 0; component < result.feed.size(); ++component) {
+        double reconstructed = 0.0;
+        for (const auto& phase : result.phases) {
+            reconstructed += phase.mole_phase_fraction *
+                             phase.components.at(component).mole_fraction;
+        }
+        summary.material_balance_residual = std::max(
+            summary.material_balance_residual,
+            std::abs(reconstructed - result.feed[component].mole_fraction));
+    }
+
+    summary.fugacity_log_residual = 0.0;
+    if (result.phases.size() > 1U) {
+        for (std::size_t component = 0; component < result.feed.size(); ++component) {
+            double minimum = std::numeric_limits<double>::infinity();
+            double maximum = -std::numeric_limits<double>::infinity();
+            bool comparable = true;
+            for (const auto& phase : result.phases) {
+                const double x = phase.components.at(component).mole_fraction;
+                if (!(x > 1.0e-14)) {
+                    comparable = false;
+                    break;
+                }
+                const double log_f_over_p =
+                    std::log(x) + phase.components.at(component).ln_fugacity_coefficient;
+                minimum = std::min(minimum, log_f_over_p);
+                maximum = std::max(maximum, log_f_over_p);
+            }
+            if (comparable) {
+                summary.fugacity_log_residual = std::max(
+                    summary.fugacity_log_residual, maximum - minimum);
+            }
+        }
+    }
+    return summary;
+}
+
+void emit_trend_row(rt::PtService& service, std::string_view axis,
+                    std::string_view backend_id, double pressure_pa,
+                    double temperature_k, double z_co2, double z_water) {
+    rt::PtServiceRequest request;
+    request.configured_backend_id = std::string(backend_id);
+    request.pressure_pa = pressure_pa;
+    request.temperature_k = temperature_k;
+    request.feed = {{sw92_test::water.id, z_water},
+                    {sw92_test::co2.id, z_co2}};
+    const auto response = service.solve(request);
+    require(response.structurally_valid(),
+            "trend audit received structurally invalid service response");
+
+    std::cout << std::setprecision(17)
+              << "PR_SW_TREND axis=" << axis
+              << " backend=" << backend_id
+              << " p_pa=" << pressure_pa
+              << " t_k=" << temperature_k
+              << " z_co2=" << z_co2
+              << " z_water=" << z_water
+              << " outcome=" << outcome_name(response.outcome);
+    if (response.result.has_value() &&
+        response.outcome == rt::PtServiceOutcome::accepted) {
+        const auto summary = summarize_accepted(*response.result);
+        std::cout << " phases=" << summary.phase_count
+                  << " min_x_water=" << summary.min_water_x
+                  << " max_x_water=" << summary.max_water_x
+                  << " beta_min_x_water=" << summary.beta_at_min_water
+                  << " beta_max_x_water=" << summary.beta_at_max_water
+                  << " min_z=" << summary.min_z
+                  << " max_z=" << summary.max_z
+                  << " mb_residual=" << summary.material_balance_residual
+                  << " fug_log_residual=" << summary.fugacity_log_residual;
+    }
+    std::cout << '\n';
+}
+
+void emit_trend_audit(rt::PtService& service) {
+    // Common PR foundation: with zero water in the feed, the SW-specific water
+    // alpha/BIP terms must not alter the non-water pure-component phase behavior.
+    const std::array<std::pair<double, double>, 4> pure_co2_states{{
+        {1.0e6, 300.0}, {5.0e6, 340.0}, {10.0e6, 400.0}, {20.0e6, 450.0}}};
+    for (const auto [pressure_pa, temperature_k] : pure_co2_states) {
+        emit_trend_row(service, "pure-co2", "classic-pr", pressure_pa,
+                       temperature_k, 1.0, 0.0);
+        emit_trend_row(service, "pure-co2", "sw92", pressure_pa,
+                       temperature_k, 1.0, 0.0);
+    }
+
+    // Same binary feed and state grid. Classic PR intentionally uses kij=0 and is
+    // a structural/trend comparator only; SW92 is the water-specific model.
+    for (const double pressure_mpa :
+         std::array{1.0, 2.0, 5.0, 10.0, 15.0, 20.0}) {
+        emit_trend_row(service, "pressure", "classic-pr", pressure_mpa * 1.0e6,
+                       350.0, 0.5, 0.5);
+        emit_trend_row(service, "pressure", "sw92", pressure_mpa * 1.0e6,
+                       350.0, 0.5, 0.5);
+    }
+    for (const double temperature_k :
+         std::array{300.0, 325.0, 350.0, 375.0, 400.0, 425.0, 450.0}) {
+        emit_trend_row(service, "temperature", "classic-pr", 10.0e6,
+                       temperature_k, 0.5, 0.5);
+        emit_trend_row(service, "temperature", "sw92", 10.0e6,
+                       temperature_k, 0.5, 0.5);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -163,8 +336,11 @@ int main() {
         require_same_inventory(
             pr_response.result->provenance.backend.component_inventory,
             sw_response.result->provenance.backend.component_inventory);
+
+        emit_trend_audit(service);
         return 0;
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        std::cerr << "PR_SW_TREND_FAIL " << error.what() << '\n';
         return 1;
     }
 }
