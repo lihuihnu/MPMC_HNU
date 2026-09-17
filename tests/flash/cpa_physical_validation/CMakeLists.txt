@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(mpmc_cpa_physical_validation_tests LANGUAGES CXX)
 
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad" ad-library)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash" flash-library)
 enable_testing()
 
@@ -137,12 +138,21 @@ target_include_directories(mpmc_cpa_thermopack_parameter_identity_tests PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(mpmc_cpa_thermopack_parameter_identity_tests PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_cpa_residual_helmholtz_ad_tests
+    cpa_residual_helmholtz_ad_test.cpp)
+target_link_libraries(mpmc_cpa_residual_helmholtz_ad_tests PRIVATE
+    mpmc::flash mpmc::ad)
+target_include_directories(mpmc_cpa_residual_helmholtz_ad_tests PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(mpmc_cpa_residual_helmholtz_ad_tests PROPERTIES CXX_EXTENSIONS OFF)
+
 set(all_targets
     mpmc_cpa_physical_validation_tests
     mpmc_cpa_physical_validation_headers
     mpmc_cpa_thermopack_delta_tests
     mpmc_cpa_thermopack_phase_kernel_audit_tests
-    mpmc_cpa_thermopack_parameter_identity_tests)
+    mpmc_cpa_thermopack_parameter_identity_tests
+    mpmc_cpa_residual_helmholtz_ad_tests)
 
 if(MSVC)
     foreach(target IN LISTS all_targets)
@@ -206,6 +216,12 @@ add_test(NAME flash.cpa_physical_validation.thermopack_parameter_identity
 set_tests_properties(flash.cpa_physical_validation.thermopack_parameter_identity PROPERTIES
     LABELS "flash;cpa;physical_validation;thermopack;parameters;provenance;full_physical;sanitizer_safety"
     TIMEOUT 60)
+
+add_test(NAME flash.cpa_physical_validation.residual_helmholtz_ad
+         COMMAND mpmc_cpa_residual_helmholtz_ad_tests)
+set_tests_properties(flash.cpa_physical_validation.residual_helmholtz_ad PROPERTIES
+    LABELS "flash;cpa;physical_validation;helmholtz;ad;thermopack;full_physical;sanitizer_safety"
+    TIMEOUT 180)
 
 add_test(NAME flash.cpa_physical_validation.headers
          COMMAND mpmc_cpa_physical_validation_headers)
