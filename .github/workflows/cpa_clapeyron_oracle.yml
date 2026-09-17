@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cpa-clapeyron-oracle-\${{ github.event.pull_request.number || github.ref }}
+  group: cpa-clapeyron-oracle-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,9 +45,9 @@ jobs:
           set -euo pipefail
           actual="$(git -C _external/Clapeyron.jl rev-parse HEAD)"
           expected="229b09452f36c2f812486150df0bb43b197bb4e5"
-          test "\${actual}" = "\${expected}"
+          test "${actual}" = "${expected}"
           test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
-          echo "CLAPEYRON_PIN_OK commit=\${actual}"
+          echo "CLAPEYRON_PIN_OK commit=${actual}"
 
       - name: Instantiate pinned Clapeyron
         shell: bash
