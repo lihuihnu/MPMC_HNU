@@ -29,21 +29,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify hosted build prerequisites
+      - name: Prepare hosted ThermoPack build prerequisites
         shell: bash
         run: |
           set -euo pipefail
           gfortran --version | head -n 1
           cmake --version | head -n 1
           python3 --version
-          python3 - <<'PY'
-          import ctypes.util
-          for name in ("lapack", "blas"):
-              resolved = ctypes.util.find_library(name)
-              if resolved is None:
-                  raise SystemExit(f"hosted runner cannot resolve {name}")
-              print(f"{name}: {resolved}")
-          PY
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends liblapack-dev libblas-dev
 
       - name: Fetch pinned ThermoPack source
         shell: bash
