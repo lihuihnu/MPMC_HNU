@@ -76,8 +76,8 @@ th::CpaParameterSet with_thermopack_alpha_tc(
         baseline.components().items(), order, input);
 }
 
-const fl::PtSplitPoint& require_closed_two_phase(
-    const fl::CpaPtVleResult& result, const char* message) {
+const fl::PtSplitState& require_closed_two_phase(
+    const fl::CpaPtSplitResult& result, const char* message) {
     require(result.solution.status ==
                 fl::PtSplitStatus::two_phase_no_instability_found &&
             result.solution.candidate() != nullptr &&
