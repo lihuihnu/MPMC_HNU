@@ -560,6 +560,156 @@ Only after A-E pass on GCC/Clang/MSVC should pressure and `ln(phi)` be redirecte
 new Helmholtz-derived path. The old analytic expressions can then remain as focused
 cross-check tests or be removed in a later cleanup after a separate review.
 
+### 12.1 Gate-F readiness audit — PR #115 head `bf519bb40aa1d70fe09ab5b7a315c56909034373`
+
+This audit maps the original A-E prerequisites to concrete current-head evidence. A gate
+is marked `PASS` only when the requirement as written above is directly exercised; later
+or stronger evidence does not waive an explicitly missing prerequisite.
+
+| Gate | Status | Current-head evidence | Remaining blocker |
+| --- | --- | --- | --- |
+| A — scalar Helmholtz value | **PARTIAL / BLOCKED** | `cpa_residual_helmholtz_ad_test.cpp` checks stationary `Q` against the direct association Helmholtz expression and checks `F_res = F_cubic + Q`; `cpa_residual_helmholtz_limits_test.cpp` adds pure, full-binary pure endpoints, zero-association, dilute, permutation and extensivity limits. | There is no test-only scalar oracle that evaluates the SRK `F_cubic` analytic expression independently of `cpa_cubic_residual_helmholtz_reduced`. Derivative agreement does not substitute for the scalar-value gate. |
+| B — pressure | **PASS** | The AD regression compares physical, association and total pressure against the current analytic density-state path over all ten frozen liquid/vapor phase states, both literature and ThermoPack-parity parameter snapshots, and normal/swapped component order. Limits additionally cover pure components, binary pure endpoints, zero association, dilute states and homogeneous scaling. | None for the frozen profile. |
+| C — residual chemical potentials | **PASS** | Every component's cubic, association and total `mu^res/(RT)` is compared with the independent hand-written analytic path over the same ten-state/two-snapshot/two-order matrix; endpoint and extensivity limits add independent edge coverage. | None for the frozen profile. |
+| D — `ln(phi)` | **PASS** | At the same density and target pressure, Helmholtz-derived `F_ni - ln Z` is checked against `cpa_fill_ln_phi`; the matched ThermoPack phase-kernel oracle additionally checks all ten phase states under the frozen external thresholds. | None for the frozen profile. |
+| E — independent implementations | **PARTIAL / BLOCKED** | The pinned ThermoPack `d68c794...` phase-kernel oracle is frozen and reproduced; the Helmholtz AD test compares pressure decomposition, residual-chemical-potential decomposition and `ln(phi)` against it. The literature parameter/VLE fixture is source-traceable to Kontogeorgis/Folas/Kurihara and the design algebra is tied to the published CPA formulas. | The design explicitly requires a numeric comparison with pinned `ClapeyronThermo/Clapeyron.jl@229b09452f36c2f812486150df0bb43b197bb4e5`. No frozen Clapeyron oracle or current-head regression exists. `teqp` formula cross-checks do not satisfy this named implementation requirement. |
+
+Supplemental first-derivative evidence is already stronger than the original A-D minimum:
+`cpa_residual_helmholtz_temperature_test.cpp` independently re-solves association at
+`T +/- 0.005 K` and confirms the stationary-Q temperature derivative from vapor-like,
+moderate-density and liquid-like states. This supports the first-derivative architecture
+but does not change the two blockers above.
+
+**Readiness verdict:** Gate F is **NOT READY** at this head. The only open prerequisites
+identified by this audit are (1) the missing independent scalar `F_cubic` value oracle in
+Gate A and (2) the missing pinned Clapeyron numeric comparison in Gate E. Pressure,
+chemical-potential and `ln(phi)` equivalence do not need additional formula work before
+those two blockers are closed.
+
+### 12.2 Frozen Gate-F production-switchover acceptance contract
+
+The following contract must be satisfied **before** any production source-of-truth switch.
+It applies only to
+`CPA/SRK-physical/simplified-rdf-1.9eta/explicit-site-pairs/v1`; it must not be silently
+reused as acceptance for PR-CPA, another RDF or another association rule.
+
+#### A. Close the scalar-value blocker without changing production code
+
+Add a test-only independent SRK scalar reference that evaluates
+
+```text
+F_cubic,ref = -n ln(1-B/V)
+              - A(T,n)/(B R T) ln(1+B/V)
+```
+
+without calling `cpa_cubic_residual_helmholtz_reduced`. Exercise at minimum the ten frozen
+ThermoPack liquid/vapor phase states in normal and swapped component order, plus the
+existing full-binary pure endpoints. Freeze the scalar acceptance at the existing
+roundoff convention
+
+```text
+roundoff(s) = 4096 * eps(double) * max(1, abs(s))
+
+abs(F_cubic - F_cubic,ref)
+  <= roundoff(F_cubic) + roundoff(F_cubic,ref).
+```
+
+The already-frozen association scalar gate remains unchanged:
+
+```text
+abs(Q_assoc - F_assoc,direct)
+  <= 1e-10 + 1e-12 * max(abs(Q_assoc), abs(F_assoc,direct)).
+```
+
+No result obtained after implementation may be used to widen either contract.
+
+#### B. Close the named Clapeyron leg of Gate E
+
+Create a reproducible test oracle from the **unmodified** pinned revision
+`ClapeyronThermo/Clapeyron.jl@229b09452f36c2f812486150df0bb43b197bb4e5`.
+The generator must record the exact revision and explicitly align the same SRK physical
+term, simplified CPA radial-distribution formulation, 2B methanol / 4C water association
+topology, CR-1 cross association, pure parameters, `kij=-0.055`, units, gas constant and
+component ordering. If the pinned implementation cannot represent the current MPMC_HNU
+profile exactly, Gate E remains blocked; an approximately similar Clapeyron model must not
+be accepted as a substitute.
+
+Use the same ten frozen phase states `(T,V,n)` already carried by the ThermoPack
+phase-kernel oracle. At `n=1 mol`, the predeclared cross-implementation envelope is:
+
+```text
+abs(F_res_MPMC - F_res_Clapeyron) <= 1e-10
+abs(P_MPMC - P_Clapeyron)         <= 5e-6 Pa
+abs(mu_i^res/(RT)_MPMC - mu_i^res/(RT)_Clapeyron) <= 1e-10
+abs(ln(phi_i)_MPMC - ln(phi_i)_Clapeyron)          <= 1e-10
+```
+
+If Clapeyron does not expose one of these quantities directly, the oracle may derive it
+from its own public residual-Helmholtz API, but it must not call MPMC_HNU code to create the
+reference. Pressure comparison requires an explicitly reconciled gas constant; otherwise
+that pressure row is not considered passed and the threshold is not relaxed.
+
+The existing ThermoPack threshold contract remains independently frozen as
+`MPMC_HNU/CPA/ThermoPack-parity-thresholds/v1` and is not replaced by the Clapeyron gate.
+
+#### C. Production switch points and invariants
+
+After A and E are fully green, one focused production change may redirect only these
+existing observables:
+
+1. `evaluate_cpa_phase_at_density(...)`:
+   - retain the existing primal association solve and its failure semantics;
+   - obtain `pressure_physical_pa`, `pressure_association_pa` and `pressure_pa` from
+     derivatives of the canonical residual Helmholtz terms at the same `(T,V,n)` state.
+2. `cpa_fill_ln_phi(...)`:
+   - obtain every component's residual chemical potential from `F_ni`;
+   - keep `Z = target_pressure/(rho R T)` and compute `ln(phi_i)=F_ni-ln(Z)`;
+   - preserve `compressibility_factor`, `reduced_gibbs_offset` and all validation/error
+     semantics.
+
+Association must still be solved once at the primal state and `X*` held stationary during
+first differentiation. The switch must not alter association convergence tolerance,
+density-root scan or tolerances, root identity/status, parameter data, stability search,
+flash algorithms, material-balance/fugacity/TPD acceptance, `global_stability_proven`
+semantics, or introduce a silent fallback to the old hand-written formulas.
+
+The old analytic pressure and chemical-potential expressions must remain available as
+**test oracles** for the switchover regression. Removing them is a later cleanup task and
+must not be bundled into the source-of-truth switch.
+
+#### D. Required verification on the switchover commit
+
+The switchover commit is acceptable only if all of the following hold without widening any
+frozen threshold:
+
+- Gate A through Gate E are all `PASS` on the exact switchover head;
+- `CPA associating physical validation` passes on GCC, Clang and MSVC, including the
+  residual-Helmholtz AD, limits and temperature regressions;
+- the frozen ThermoPack phase and flash parity thresholds remain green;
+- affected downstream CPA workflows pass: density-root/fugacity, stability, vapor-liquid
+  split, max-three-phase orchestration and model-neutral PT-backend conformance;
+- the existing pure/endpoints/zero-association/dilute/permutation/extensivity regressions
+  remain green;
+- no new fallback changes an association/root/property failure into success;
+- for the fixed five-state performance workload, deterministic root-search calls,
+  density-state phase evaluations, association-solve calls and association fixed-point
+  sweep counts remain identical unless a separately reviewed algorithmic change explicitly
+  changes them.
+
+Performance remains a separate acceptance dimension. Re-run the existing same-runner
+`main`/head CPA performance audit on the switchover head. The audit must use its current
+interpretation rules: hosted timing is descriptive rather than a newly invented hard
+wall-time threshold, but a reproducible regression signal must be investigated before the
+switch is accepted. No speedup claim is implied by Gate F.
+
+#### E. What Gate F does not authorize
+
+Passing this contract authorizes only the pressure / residual-chemical-potential / `ln(phi)`
+single-source-of-truth switch for the frozen SRK+sCPA profile. It does **not** authorize
+second temperature derivatives, caloric-property APIs, association continuation/caching,
+new formulations, new parameters, wider applicability claims, three-phase physical-oracle
+claims or deletion of the analytic regression path.
+
 ## 13. Second derivatives are explicitly later
 
 The stationarity trick removes `dX/dz` only for **first derivatives**. Second derivatives
@@ -589,19 +739,20 @@ The first implementation must not:
 - claim a performance improvement;
 - fit external-software output.
 
-## 15. Audit conclusion and recommended next increment
+## 15. Current audit conclusion and recommended next increment
 
-The current sCPA `pressure` and `ln(phi)` formulas are scientifically consistent with the
-same CPA residual Helmholtz model. The issue to solve is **single-source thermodynamic
-architecture**, not a discovered formula defect.
+The scalar-generic extensive Helmholtz kernel and its first-derivative regression path now
+exist, and Gates B-D are already satisfied for the frozen SRK+sCPA profile. Gate F must
+**not** be entered yet because Gate A is missing an independent scalar cubic-value oracle
+and Gate E is missing the explicitly required pinned Clapeyron numeric comparison.
 
-The next small production increment should therefore be:
+The next small increment should therefore be:
 
-> Implement a scalar-generic, extensive `F_res=A_res/(RT)` density-state kernel consisting
-> of SRK residual Helmholtz plus the stationary association `Q` contribution, and add a
-> test-only AD derivative adapter that cross-checks `P`, component residual chemical
-> potentials and `ln(phi)` against the existing hand-written formulas. Do not redirect the
-> production root/flash path yet.
+> Add the test-only independent analytic `F_cubic` scalar-value regression required by
+> Gate A, over the already frozen ten phase states plus the full-binary pure endpoints,
+> normal and swapped component order, using the roundoff contract frozen in section 12.2.
+> Do not modify the production Helmholtz kernel or begin the source-of-truth switch in the
+> same increment.
 
-That increment is small, scientifically auditable and directly reusable by later CPA
-variants.
+After that focused Gate-A closure, the remaining readiness blocker is the pinned Clapeyron
+numeric oracle required by Gate E.
