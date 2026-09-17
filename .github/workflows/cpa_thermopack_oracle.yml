@@ -36,8 +36,14 @@ jobs:
           gfortran --version | head -n 1
           cmake --version | head -n 1
           python3 --version
-          test -e /usr/lib/x86_64-linux-gnu/liblapack.so || ldconfig -p | grep -F liblapack
-          test -e /usr/lib/x86_64-linux-gnu/libblas.so || ldconfig -p | grep -F libblas
+          python3 - <<'PY'
+          import ctypes.util
+          for name in ("lapack", "blas"):
+              resolved = ctypes.util.find_library(name)
+              if resolved is None:
+                  raise SystemExit(f"hosted runner cannot resolve {name}")
+              print(f"{name}: {resolved}")
+          PY
 
       - name: Fetch pinned ThermoPack source
         shell: bash
