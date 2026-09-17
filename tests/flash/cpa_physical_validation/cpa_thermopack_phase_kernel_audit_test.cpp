@@ -11,6 +11,7 @@
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -85,6 +86,54 @@ MuDecomposition decompose_mpmc_mu(
     return result;
 }
 
+th::Provenance thermopack_tc_source(std::string locator) {
+    return {
+        th::SourceKind::database,
+        "thermotools/thermopack pinned source tree",
+        "d68c794c7342bfc6938eb424a1fbb88b7780b738",
+        std::move(locator),
+        "Test-only critical-temperature substitution used to isolate the Classic-alpha input delta; production CPA parameters are unchanged.",
+        "Read from the pinned ThermoPack component JSON used to initialize cbeos%single(i)%tc.",
+        "ThermoPack source metadata used only for repository numerical audit."};
+}
+
+th::CpaParameterSet with_thermopack_alpha_tc(
+    const th::CpaParameterSet& baseline) {
+    th::CpaParameterInput input;
+    input.dataset_id = baseline.dataset_id() + "__thermopack-alpha-tc-causal-audit";
+    input.revision = baseline.revision() + "__test-only-Tc-substitution";
+    input.applicability = baseline.applicability();
+    input.pure.assign(baseline.pure_records().begin(), baseline.pure_records().end());
+    input.binary.assign(baseline.binary_records().begin(), baseline.binary_records().end());
+    input.association_pairs.assign(
+        baseline.association_records().begin(), baseline.association_records().end());
+
+    for (auto& pure : input.pure) {
+        if (pure.component_id == "METHANOL") {
+            pure.critical_temperature_k.value =
+                ref::methanol_alpha_critical_temperature_k;
+            pure.critical_temperature_k.source = thermopack_tc_source(
+                "fluids/Methanol.json critical.temperature = 512.6 K");
+        } else if (pure.component_id == "WATER") {
+            pure.critical_temperature_k.value =
+                ref::water_alpha_critical_temperature_k;
+            pure.critical_temperature_k.source = thermopack_tc_source(
+                "fluids/Water.json critical.temperature = 647.3 K");
+        } else {
+            throw std::runtime_error(
+                "unexpected component in methanol-water ThermoPack Tc audit");
+        }
+    }
+
+    std::vector<std::string> order;
+    order.reserve(baseline.components().size());
+    for (const auto& component : baseline.components().items()) {
+        order.push_back(component.id);
+    }
+    return th::CpaParameterSet::create(
+        baseline.components().items(), order, input);
+}
+
 const th::CpaPtRoot& select_root(
     const th::CpaPtRootSet& roots, bool liquid_side) {
     require(roots.status == th::CpaPtRootStatus::success,
@@ -121,20 +170,32 @@ struct Summary {
     double max_common_tv_mu_association_absolute{};
 };
 
+struct TcCausalSummary {
+    double max_common_tv_total_pressure_absolute{};
+    double max_common_tv_physical_pressure_absolute{};
+    double max_common_tv_association_pressure_absolute{};
+    double max_common_tv_mu_cubic_absolute{};
+    double max_common_tv_mu_association_absolute{};
+    double max_root_rho_relative{};
+    double max_root_z_absolute{};
+    double max_root_ln_phi_absolute{};
+};
+
 void audit_phase(
     const th::CpaPtPhase& model,
+    const th::CpaPtPhase& tc_aligned_model,
     const th::CpaPtOptions& pt_options,
     double pressure_pa,
     double temperature_k,
     const ref::PhaseReference& external,
     bool liquid_side,
     std::string_view phase_name,
-    Summary& summary) {
+    Summary& summary,
+    TcCausalSummary& causal) {
     const std::vector<double> composition{
         external.composition_methanol, 1.0 - external.composition_methanol};
 
-    // First isolate the EOS kernel at the exact ThermoPack density.  This removes
-    // density-root search and flash orchestration from the comparison.
+    // Baseline: isolate the current MPMC EOS kernel at the exact ThermoPack density.
     const auto state = th::evaluate_cpa_phase_at_density(
         temperature_k, external.molar_density_mol_per_m3,
         composition, model.parameters(), pt_options.phase);
@@ -172,9 +233,6 @@ void audit_phase(
         summary.max_common_tv_mu_association_absolute,
         std::max(std::abs(d_mu_assoc_meoh), std::abs(d_mu_assoc_h2o)));
 
-    // Then include the independent p,T,x density-root search.  If common-TV
-    // properties agree but these values do not, the discrepancy is root solving
-    // rather than the EOS pressure/chemical-potential formulation itself.
     const auto roots = model.roots(
         pressure_pa, temperature_k, composition, pt_options);
     const auto& root = select_root(roots, liquid_side);
@@ -194,6 +252,72 @@ void audit_phase(
     summary.max_root_ln_phi_absolute = std::max(
         summary.max_root_ln_phi_absolute,
         std::max(std::abs(d_ln_phi_meoh), std::abs(d_ln_phi_h2o)));
+
+    // Causal counterfactual: use the exact same MPMC parameter snapshot except
+    // for the two component critical temperatures consumed by Classic alpha.
+    const auto aligned_state = th::evaluate_cpa_phase_at_density(
+        temperature_k, external.molar_density_mol_per_m3,
+        composition, tc_aligned_model.parameters(), pt_options.phase);
+    require(aligned_state.association.converged(),
+            "Tc-aligned MPMC common-TV association state did not converge");
+    const auto aligned_mu = decompose_mpmc_mu(
+        temperature_k, composition, tc_aligned_model.parameters(), aligned_state);
+
+    const double aligned_d_p_physical =
+        aligned_state.pressure_physical_pa - external.pressure_physical_pa;
+    const double aligned_d_p_association =
+        aligned_state.pressure_association_pa - external.pressure_association_pa;
+    const double aligned_d_p_total = aligned_state.pressure_pa - pressure_pa;
+    const double aligned_d_mu_cubic_meoh =
+        aligned_mu.cubic_over_rt[0] - external.mu_cubic_over_rt_methanol;
+    const double aligned_d_mu_cubic_h2o =
+        aligned_mu.cubic_over_rt[1] - external.mu_cubic_over_rt_water;
+    const double aligned_d_mu_assoc_meoh =
+        aligned_mu.association_over_rt[0] - external.mu_association_over_rt_methanol;
+    const double aligned_d_mu_assoc_h2o =
+        aligned_mu.association_over_rt[1] - external.mu_association_over_rt_water;
+
+    causal.max_common_tv_total_pressure_absolute = std::max(
+        causal.max_common_tv_total_pressure_absolute, std::abs(aligned_d_p_total));
+    causal.max_common_tv_physical_pressure_absolute = std::max(
+        causal.max_common_tv_physical_pressure_absolute,
+        std::abs(aligned_d_p_physical));
+    causal.max_common_tv_association_pressure_absolute = std::max(
+        causal.max_common_tv_association_pressure_absolute,
+        std::abs(aligned_d_p_association));
+    causal.max_common_tv_mu_cubic_absolute = std::max(
+        causal.max_common_tv_mu_cubic_absolute,
+        std::max(std::abs(aligned_d_mu_cubic_meoh),
+                 std::abs(aligned_d_mu_cubic_h2o)));
+    causal.max_common_tv_mu_association_absolute = std::max(
+        causal.max_common_tv_mu_association_absolute,
+        std::max(std::abs(aligned_d_mu_assoc_meoh),
+                 std::abs(aligned_d_mu_assoc_h2o)));
+
+    const auto aligned_roots = tc_aligned_model.roots(
+        pressure_pa, temperature_k, composition, pt_options);
+    const auto& aligned_root = select_root(aligned_roots, liquid_side);
+    require(aligned_root.ln_phi.size() == 2U,
+            "Tc-aligned MPMC root lost component fugacity coefficients");
+    const double aligned_rho_relative =
+        std::abs(aligned_root.molar_density_mol_per_m3 -
+                 external.molar_density_mol_per_m3) /
+        external.molar_density_mol_per_m3;
+    const double aligned_d_z =
+        aligned_root.compressibility_factor - external.compressibility_factor;
+    const double aligned_d_ln_phi_meoh =
+        aligned_root.ln_phi[0] - external.ln_phi_methanol;
+    const double aligned_d_ln_phi_h2o =
+        aligned_root.ln_phi[1] - external.ln_phi_water;
+
+    causal.max_root_rho_relative = std::max(
+        causal.max_root_rho_relative, aligned_rho_relative);
+    causal.max_root_z_absolute = std::max(
+        causal.max_root_z_absolute, std::abs(aligned_d_z));
+    causal.max_root_ln_phi_absolute = std::max(
+        causal.max_root_ln_phi_absolute,
+        std::max(std::abs(aligned_d_ln_phi_meoh),
+                 std::abs(aligned_d_ln_phi_h2o)));
 
     std::cout << "CPA_THERMOPACK_PHASE_KERNEL"
               << " PPa=" << pressure_pa
@@ -215,6 +339,24 @@ void audit_phase(
               << " d_mu_assoc_MeOH=" << d_mu_assoc_meoh
               << " d_mu_assoc_H2O=" << d_mu_assoc_h2o
               << '\n';
+
+    std::cout << "CPA_THERMOPACK_TC_CAUSAL"
+              << " PPa=" << pressure_pa
+              << " phase=" << phase_name
+              << " Tc_MeOH=" << ref::methanol_alpha_critical_temperature_k
+              << " Tc_H2O=" << ref::water_alpha_critical_temperature_k
+              << " d_Pphysical=" << aligned_d_p_physical
+              << " d_Passoc=" << aligned_d_p_association
+              << " d_Ptotal_at_tp_rho=" << aligned_d_p_total
+              << " d_mu_cubic_MeOH=" << aligned_d_mu_cubic_meoh
+              << " d_mu_cubic_H2O=" << aligned_d_mu_cubic_h2o
+              << " d_mu_assoc_MeOH=" << aligned_d_mu_assoc_meoh
+              << " d_mu_assoc_H2O=" << aligned_d_mu_assoc_h2o
+              << " d_rho_rel=" << aligned_rho_relative
+              << " d_Z=" << aligned_d_z
+              << " d_lnphi_MeOH=" << aligned_d_ln_phi_meoh
+              << " d_lnphi_H2O=" << aligned_d_ln_phi_h2o
+              << '\n';
 }
 
 } // namespace
@@ -222,7 +364,10 @@ void audit_phase(
 int main() {
     try {
         const auto parameters = cpa_physical_test::parameters(false);
+        const auto tc_aligned_parameters = with_thermopack_alpha_tc(parameters);
         const auto model = th::CpaPtPhase::from_parameters(parameters);
+        const auto tc_aligned_model =
+            th::CpaPtPhase::from_parameters(tc_aligned_parameters);
         const auto pt_options = fl::cpa_pt_vle_default_phase_options();
         require(std::abs(ref::gas_constant_j_per_mol_k -
                          th::cpa_gas_constant_j_per_mol_k) <=
@@ -230,15 +375,27 @@ int main() {
                         th::cpa_gas_constant_j_per_mol_k,
                 "MPMC/ThermoPack gas constants differ in phase-kernel audit");
 
+        require(std::abs(parameters.pure(0).critical_temperature_k -
+                         ref::methanol_alpha_critical_temperature_k) > 0.0 &&
+                    std::abs(parameters.pure(1).critical_temperature_k -
+                             ref::water_alpha_critical_temperature_k) > 0.0,
+                "baseline and ThermoPack alpha Tc unexpectedly became identical");
+        require(tc_aligned_parameters.pure(0).critical_temperature_k ==
+                    ref::methanol_alpha_critical_temperature_k &&
+                    tc_aligned_parameters.pure(1).critical_temperature_k ==
+                    ref::water_alpha_critical_temperature_k,
+                "test-only ThermoPack alpha Tc substitution did not take effect");
+
         Summary summary;
+        TcCausalSummary causal;
         std::cout << std::setprecision(17);
         for (const auto& external : ref::states) {
-            audit_phase(model, pt_options, external.pressure_pa,
-                        external.temperature_k, external.liquid,
-                        true, "liquid", summary);
-            audit_phase(model, pt_options, external.pressure_pa,
-                        external.temperature_k, external.vapor,
-                        false, "vapor", summary);
+            audit_phase(model, tc_aligned_model, pt_options,
+                        external.pressure_pa, external.temperature_k,
+                        external.liquid, true, "liquid", summary, causal);
+            audit_phase(model, tc_aligned_model, pt_options,
+                        external.pressure_pa, external.temperature_k,
+                        external.vapor, false, "vapor", summary, causal);
         }
 
         std::cout << "CPA_THERMOPACK_PHASE_KERNEL_SUMMARY"
@@ -258,6 +415,30 @@ int main() {
                   << " max_common_tv_abs_d_mu_assoc="
                   << summary.max_common_tv_mu_association_absolute
                   << " magnitude_gate=none_diagnostic"
+                  << '\n';
+
+        std::cout << "CPA_THERMOPACK_TC_CAUSAL_SUMMARY"
+                  << " changed_fields=critical_temperature_k_only"
+                  << " Tc_MeOH_baseline=" << parameters.pure(0).critical_temperature_k
+                  << " Tc_MeOH_thermopack="
+                  << ref::methanol_alpha_critical_temperature_k
+                  << " Tc_H2O_baseline=" << parameters.pure(1).critical_temperature_k
+                  << " Tc_H2O_thermopack="
+                  << ref::water_alpha_critical_temperature_k
+                  << " max_common_tv_abs_d_Pphysical="
+                  << causal.max_common_tv_physical_pressure_absolute
+                  << " max_common_tv_abs_d_Passoc="
+                  << causal.max_common_tv_association_pressure_absolute
+                  << " max_common_tv_abs_d_Ptotal="
+                  << causal.max_common_tv_total_pressure_absolute
+                  << " max_common_tv_abs_d_mu_cubic="
+                  << causal.max_common_tv_mu_cubic_absolute
+                  << " max_common_tv_abs_d_mu_assoc="
+                  << causal.max_common_tv_mu_association_absolute
+                  << " max_root_d_rho_rel=" << causal.max_root_rho_relative
+                  << " max_root_abs_d_Z=" << causal.max_root_z_absolute
+                  << " max_root_abs_d_lnphi=" << causal.max_root_ln_phi_absolute
+                  << " magnitude_gate=none_causal_audit"
                   << '\n';
         return 0;
     } catch (const std::exception& error) {
