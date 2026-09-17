@@ -62,10 +62,18 @@ function build_model()
         epsilon_assoc = Dict(
             (("methanol", "e"), ("methanol", "H")) => epsilon_methanol_k,
             (("water", "e"), ("water", "H")) => epsilon_water_k,
+            # Explicit CR-1 cross pairs. The pinned revision's native :cr1
+            # recombination path fails to retain the mixed epsilon in the model,
+            # so the source-complete CR-1 values are injected without modifying
+            # Clapeyron itself.
+            (("methanol", "H"), ("water", "e")) => 20623.0 / R_MPMC,
+            (("methanol", "e"), ("water", "H")) => 20623.0 / R_MPMC,
         ),
         bondvol = Dict(
             (("methanol", "e"), ("methanol", "H")) => 0.0161,
             (("water", "e"), ("water", "H")) => 0.0692,
+            (("methanol", "H"), ("water", "e")) => 0.03337843615270194,
+            (("methanol", "e"), ("water", "H")) => 0.03337843615270194,
         ),
     )
 
@@ -74,7 +82,9 @@ function build_model()
         atol = 1.0e-12,
         max_iters = 512,
         dampingfactor = 0.5,
-        combining = :cr1,
+        # Explicit CR-1 pairs are already supplied above. :nocombining ensures
+        # the pinned implementation cannot silently rewrite them.
+        combining = :nocombining,
         implicit_ad = false,
     )
 
@@ -103,8 +113,8 @@ function audit_model(model)
             "Clapeyron mixing rule is not vdW1f: $(typeof(model.cubicmodel.mixing))")
     require(nameof(typeof(model.cubicmodel.translation)) == :NoTranslation,
             "Clapeyron volume translation is not disabled: $(typeof(model.cubicmodel.translation))")
-    require(model.assoc_options.combining == :cr1,
-            "Clapeyron association combining rule is not CR-1")
+    require(model.assoc_options.combining == :nocombining,
+            "Clapeyron explicit CR-1 oracle must disable runtime combining")
     require(model.assoc_options.rtol == 1.0e-12 &&
             model.assoc_options.atol == 1.0e-12 &&
             model.assoc_options.dampingfactor == 0.5 &&
@@ -186,7 +196,8 @@ function audit_model(model)
         "alpha" => string(nameof(typeof(model.cubicmodel.alpha))),
         "mixing" => string(nameof(typeof(model.cubicmodel.mixing))),
         "translation" => string(nameof(typeof(model.cubicmodel.translation))),
-        "association_combining" => string(model.assoc_options.combining),
+        "association_combining" =>
+            "explicit CR-1 cross pairs; runtime combining=:nocombining",
         "gas_constant_j_per_mol_k" => rgas,
         "molar_mass_g_per_mol_constructor_metadata" => collect(expected_mw),
         "kij" => derived_kij,
@@ -194,6 +205,8 @@ function audit_model(model)
         "water_sites" => Dict("H" => 2, "e" => 2),
         "cr1_cross_epsilon_j_per_mol" => expected_cross_eps_j,
         "cr1_cross_beta" => expected_cross_beta,
+        "pinned_native_cr1_note" =>
+            "Pinned assoc_mix! does not retain epsilon_assoc_mix return in recombine_assoc!; explicit source-complete CR-1 pairs are therefore injected.",
     )
 end
 
