@@ -1,0 +1,72 @@
+name: CPA ThermoPack external oracle
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/cpa_thermopack_oracle.yml'
+      - 'tests/flash/cpa_thermopack_oracle/**'
+      - 'modules/flash/cpa_thermopack_mapping.md'
+      - 'modules/flash/cpa_flash.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-thermopack-oracle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-thermopack-oracle:
+    name: Pinned ThermoPack SRK-CPA oracle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout MPMC_HNU
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Verify hosted build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          gfortran --version | head -n 1
+          cmake --version | head -n 1
+          python3 --version
+          test -e /usr/lib/x86_64-linux-gnu/liblapack.so || ldconfig -p | grep -F liblapack
+          test -e /usr/lib/x86_64-linux-gnu/libblas.so || ldconfig -p | grep -F libblas
+
+      - name: Fetch pinned ThermoPack source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/thermotools/thermopack.git build/thermopack
+          git -C build/thermopack checkout --detach d68c794c7342bfc6938eb424a1fbb88b7780b738
+          test "$(git -C build/thermopack rev-parse HEAD)" = "d68c794c7342bfc6938eb424a1fbb88b7780b738"
+
+      - name: Build pinned ThermoPack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S build/thermopack -B build/thermopack-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/thermopack-build --parallel 2
+          cmake --install build/thermopack-build
+
+      - name: Configure ThermoPack Python wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --user numpy
+          python3 build/thermopack/addon/pycThermopack/map_platform_specifics.py --diffs=v3
+          python3 -m pip install --disable-pip-version-check --user --no-deps build/thermopack/addon/pycThermopack/
+
+      - name: Generate formulation-matched CPA oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/flash/cpa_thermopack_oracle/generate_oracle.py \
+            --out build/cpa-thermopack-oracle.json
+          test -s build/cpa-thermopack-oracle.json
