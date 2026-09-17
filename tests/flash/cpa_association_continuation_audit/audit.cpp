@@ -4,13 +4,14 @@
 #include "test_support.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -23,6 +24,9 @@ namespace fl = mpmc::flash;
 namespace th = mpmc::thermodynamics;
 namespace parity_gate = cpa_thermopack_parity_thresholds;
 
+// Audit-only guard for the internal site fractions. Pressure and ln(phi) reuse
+// the already-frozen ThermoPack parity v1 envelopes. None of these values are
+// production solver tolerances.
 constexpr double site_fraction_audit_guard = 1.0e-10;
 constexpr double replay_relative_density_guard = 2.0e-12;
 constexpr double replay_abs_ln_phi_guard = 2.0e-12;
@@ -49,6 +53,10 @@ struct ShadowAssociationSolve {
     std::size_t sweeps{};
 };
 
+// Test-only reproduction of the current fixed-point equations. The only
+// deliberate difference from production solve_cpa_association is that the
+// initial X vector can be supplied by the nearest previously converged density
+// state in the same root search.
 ShadowAssociationSolve solve_association_shadow(
     double temperature_k,
     double molar_density_mol_per_m3,
@@ -237,10 +245,9 @@ struct ContinuationStats {
 };
 
 struct AuditEvaluation {
-    double pressure_residual_pa{};
+    double cold_pressure_residual_pa{};
     th::CpaPhaseState cold;
     th::CpaPhaseState effective;
-    bool had_seed{};
     bool accepted_continuation{};
     std::size_t cold_sweeps{};
 };
@@ -257,7 +264,7 @@ AuditEvaluation audit_density_state(
     ContinuationStats& stats) {
     ++stats.density_evaluations;
     const double rho = reduced_density / b_mix;
-    const auto cold = th::evaluate_cpa_phase_at_density(
+    auto cold = th::evaluate_cpa_phase_at_density(
         temperature_k, rho, composition, parameters, options);
     const std::size_t cold_sweep_count = association_sweeps(cold.association);
     stats.cold_sweeps += cold_sweep_count;
@@ -313,14 +320,13 @@ AuditEvaluation audit_density_state(
     const bool site_ok = warm_converged && max_site_diff <= site_fraction_audit_guard;
     const bool pressure_ok = warm_converged &&
         pressure_diff <= parity_gate::phase_max_abs_pressure_total_pa;
-    const bool accepted = !seed || (site_ok && pressure_ok);
+    const bool accepted = seed.has_value() && site_ok && pressure_ok;
 
     th::CpaPhaseState effective = cold;
     if (!seed) {
         require(warm_converged, "cold-equivalent shadow association failed on first density state");
         require(site_ok && pressure_ok,
                 "cold-equivalent shadow association disagreed with production cold solve");
-        effective = std::move(warm_phase);
         stats.effective_sweeps_with_fallback += cold_sweep_count;
     } else if (accepted) {
         ++stats.accepted_continuations;
@@ -342,12 +348,12 @@ AuditEvaluation audit_density_state(
     }
 
     cache[reduced_density] = site_fractions(effective.association);
+    const double cold_residual = cold.pressure_pa - target_pressure_pa;
     return {
-        effective.pressure_pa - target_pressure_pa,
-        std::move(const_cast<th::CpaPhaseState&>(cold)),
+        cold_residual,
+        std::move(cold),
         std::move(effective),
-        seed.has_value(),
-        seed.has_value() && accepted,
+        accepted,
         cold_sweep_count};
 }
 
@@ -370,7 +376,8 @@ public:
         double pressure_pa, double temperature_k,
         std::span<const double> composition) {
         const auto& roots = record_roots(pressure_pa, temperature_k, composition);
-        fl::detail::cpa_flash_require_root_success(roots, "CPA continuation recording stability");
+        fl::detail::cpa_flash_require_root_success(
+            roots, "CPA continuation recording stability");
         const auto admissible = fl::detail::cpa_flash_admissible_roots(roots);
 
         const auto gibbs_offset = [&](std::size_t root_index) {
@@ -420,7 +427,8 @@ public:
         std::span<const double> composition,
         fl::PtPhaseRole role) {
         const auto& roots = record_roots(pressure_pa, temperature_k, composition);
-        fl::detail::cpa_flash_require_root_success(roots, "CPA continuation recording split");
+        fl::detail::cpa_flash_require_root_success(
+            roots, "CPA continuation recording split");
         const auto admissible = fl::detail::cpa_flash_admissible_roots(roots);
         const auto side = role == fl::PtPhaseRole::liquid_candidate
             ? fl::CpaRootSide::upper_density_admissible
@@ -470,12 +478,14 @@ void compare_outer_solution(
     }
     const auto* first = production.candidate();
     const auto* second = recording.candidate();
-    require((first != nullptr) == (second != nullptr),
-            "recording provider changed candidate availability");
-    if (first == nullptr || second == nullptr) { return; }
+    require(first != nullptr && second != nullptr,
+            "physical continuation audit lost the two-phase candidate");
     require(std::abs(first->fractions.vapor_fraction -
                      second->fractions.vapor_fraction) <= 1.0e-14,
             "recording provider changed vapor fraction");
+    require(first->fractions.liquid.size() == second->fractions.liquid.size() &&
+                first->fractions.vapor.size() == second->fractions.vapor.size(),
+            "recording provider changed composition dimension");
     for (std::size_t i = 0U; i < first->fractions.liquid.size(); ++i) {
         require(std::abs(first->fractions.liquid[i] -
                          second->fractions.liquid[i]) <= 1.0e-14,
@@ -508,6 +518,8 @@ th::CpaPtRootSet replay_root_search(
     const double u_max = 1.0 - endpoint_guard;
     std::map<double, std::vector<double>> cache;
 
+    // Root topology is driven only by the production cold state. The shadow
+    // continuation is measured beside it and cannot alter signs/brackets.
     auto evaluate_reduced_density = [&](double u, double& residual) -> bool {
         if (result.evaluations >= options.max_evaluations) {
             result.status = th::CpaPtRootStatus::evaluation_limit;
@@ -517,7 +529,7 @@ th::CpaPtRootSet replay_root_search(
         const auto evaluated = audit_density_state(
             record.pressure_pa, record.temperature_k, u, b,
             composition, parameters, options.phase, cache, stats);
-        residual = evaluated.pressure_residual_pa;
+        residual = evaluated.cold_pressure_residual_pa;
         return true;
     };
 
@@ -669,11 +681,10 @@ th::CpaPtRootSet replay_root_search(
             record.pressure_pa, record.temperature_k,
             candidate.reduced_density, b, composition,
             parameters, options.phase, cache, stats);
+
         th::CpaPtRoot cold_root;
-        cold_root.molar_density_mol_per_m3 =
-            candidate.reduced_density / b;
-        cold_root.pressure_residual_pa =
-            evaluated.cold.pressure_pa - record.pressure_pa;
+        cold_root.molar_density_mol_per_m3 = candidate.reduced_density / b;
+        cold_root.pressure_residual_pa = evaluated.cold.pressure_pa - record.pressure_pa;
         cold_root.pressure_slope_sign = candidate.slope_sign;
         th::cpa_detail::cpa_fill_ln_phi(
             record.pressure_pa, record.temperature_k, composition,
@@ -681,8 +692,7 @@ th::CpaPtRootSet replay_root_search(
 
         th::CpaPtRoot warm_root;
         warm_root.molar_density_mol_per_m3 = cold_root.molar_density_mol_per_m3;
-        warm_root.pressure_residual_pa =
-            evaluated.effective.pressure_pa - record.pressure_pa;
+        warm_root.pressure_residual_pa = evaluated.effective.pressure_pa - record.pressure_pa;
         warm_root.pressure_slope_sign = candidate.slope_sign;
         th::cpa_detail::cpa_fill_ln_phi(
             record.pressure_pa, record.temperature_k, composition,
@@ -699,7 +709,6 @@ th::CpaPtRootSet replay_root_search(
             ln_phi_diff > parity_gate::phase_max_abs_ln_phi) {
             ++stats.root_lnphi_fallbacks;
             stats.effective_sweeps_with_fallback += evaluated.cold_sweeps;
-            warm_root = cold_root;
         }
         result.roots.push_back(std::move(cold_root));
     }
@@ -804,13 +813,11 @@ int main() {
         require(stats.seeded_evaluations + stats.unseeded_evaluations ==
                     stats.density_evaluations,
                 "seeded/unseeded accounting mismatch");
-        require(stats.max_raw_root_ln_phi_diff <= parity_gate::phase_max_abs_ln_phi ||
-                    stats.root_lnphi_fallbacks > 0U,
-                "root ln(phi) guard exceeded without fallback accounting");
 
         const double seeded = static_cast<double>(stats.seeded_evaluations);
         const double fallback_rate = seeded > 0.0
-            ? static_cast<double>(stats.fallback_evaluations + stats.root_lnphi_fallbacks) / seeded
+            ? static_cast<double>(stats.fallback_evaluations + stats.root_lnphi_fallbacks) /
+                seeded
             : 0.0;
         const double sweep_reduction = stats.cold_sweeps > 0U
             ? 1.0 - static_cast<double>(stats.effective_sweeps_with_fallback) /
