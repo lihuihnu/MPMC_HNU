@@ -1,0 +1,79 @@
+name: CPA Clapeyron external oracle
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cpa_clapeyron_oracle.yml"
+      - "tests/flash/cpa_clapeyron_oracle/**"
+      - "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-clapeyron-oracle-\${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-clapeyron-oracle:
+    name: Pinned Clapeyron sCPA oracle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout MPMC_HNU
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
+        with:
+          version: "1.10.12"
+
+      - name: Checkout pinned Clapeyron
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ClapeyronThermo/Clapeyron.jl
+          ref: 229b09452f36c2f812486150df0bb43b197bb4e5
+          path: _external/Clapeyron.jl
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C _external/Clapeyron.jl rev-parse HEAD)"
+          expected="229b09452f36c2f812486150df0bb43b197bb4e5"
+          test "\${actual}" = "\${expected}"
+          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
+          echo "CLAPEYRON_PIN_OK commit=\${actual}"
+
+      - name: Instantiate pinned Clapeyron
+        shell: bash
+        run: |
+          set -euo pipefail
+          julia --project=_external/Clapeyron.jl \
+            -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+
+      - name: Audit formulation and generate ten-state oracle
+        env:
+          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/cpa-clapeyron-oracle
+          julia --project=_external/Clapeyron.jl \
+            tests/flash/cpa_clapeyron_oracle/generate_oracle.jl \
+            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
+            --out build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
+          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
+          cat build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
+
+      - name: Upload generated oracle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cpa-clapeyron-oracle
+          path: build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
+          if-no-files-found: error
+          retention-days: 7
