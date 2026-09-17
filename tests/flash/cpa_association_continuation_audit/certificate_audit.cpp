@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <sstream>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -286,21 +287,56 @@ void validate_empirical_bounds(
             warm.sites[i].unbonded_fraction - cold.sites[i].unbonded_fraction);
         const double bound = warm_certificate.site_error_bounds[i] +
             cold_certificate.site_error_bounds[i];
-        require(actual <= bound + 1.0e-15,
-                "warm/cold site difference exceeded combined certificate bounds");
+        if (!(actual <= bound + 1.0e-15)) {
+            std::ostringstream message;
+            message << std::setprecision(17)
+                    << "warm/cold site difference exceeded combined certificate bounds"
+                    << " site=" << i
+                    << " actual=" << actual
+                    << " bound=" << bound
+                    << " warm_radius=" << warm_certificate.site_error_bounds[i]
+                    << " cold_radius=" << cold_certificate.site_error_bounds[i]
+                    << " warm_residual=" << warm_certificate.fresh_fixed_point_residual_inf
+                    << " cold_residual=" << cold_certificate.fresh_fixed_point_residual_inf
+                    << " warm_ratio=" << warm_certificate.krawczyk_max_inclusion_ratio
+                    << " cold_ratio=" << cold_certificate.krawczyk_max_inclusion_ratio;
+            throw std::runtime_error(message.str());
+        }
     }
     ++stats.empirical_site_bound_checks;
 
     const double pressure_bound = warm_certificate.pressure_error_bound_pa +
         cold_certificate.pressure_error_bound_pa;
-    require(actual_pressure_diff <= pressure_bound + 1.0e-9,
-            "warm/cold pressure difference exceeded combined certificate bounds");
+    if (!(actual_pressure_diff <= pressure_bound + 1.0e-9)) {
+        std::ostringstream message;
+        message << std::setprecision(17)
+                << "warm/cold pressure difference exceeded combined certificate bounds"
+                << " actual=" << actual_pressure_diff
+                << " bound=" << pressure_bound
+                << " warm_bound=" << warm_certificate.pressure_error_bound_pa
+                << " cold_bound=" << cold_certificate.pressure_error_bound_pa
+                << " warm_max_site_radius=" << warm_certificate.max_site_error_bound
+                << " cold_max_site_radius=" << cold_certificate.max_site_error_bound
+                << " warm_residual=" << warm_certificate.fresh_fixed_point_residual_inf
+                << " cold_residual=" << cold_certificate.fresh_fixed_point_residual_inf
+                << " warm_ratio=" << warm_certificate.krawczyk_max_inclusion_ratio
+                << " cold_ratio=" << cold_certificate.krawczyk_max_inclusion_ratio;
+        throw std::runtime_error(message.str());
+    }
     ++stats.empirical_pressure_bound_checks;
 
     const double ln_phi_bound = warm_certificate.max_ln_phi_error_bound +
         cold_certificate.max_ln_phi_error_bound;
-    require(actual_ln_phi_diff <= ln_phi_bound + 1.0e-13,
-            "warm/cold ln(phi) difference exceeded combined certificate bounds");
+    if (!(actual_ln_phi_diff <= ln_phi_bound + 1.0e-13)) {
+        std::ostringstream message;
+        message << std::setprecision(17)
+                << "warm/cold ln(phi) difference exceeded combined certificate bounds"
+                << " actual=" << actual_ln_phi_diff
+                << " bound=" << ln_phi_bound
+                << " warm_bound=" << warm_certificate.max_ln_phi_error_bound
+                << " cold_bound=" << cold_certificate.max_ln_phi_error_bound;
+        throw std::runtime_error(message.str());
+    }
     ++stats.empirical_ln_phi_bound_checks;
 }
 
