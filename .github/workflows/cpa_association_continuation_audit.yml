@@ -11,6 +11,7 @@ on:
       - 'tests/flash/cpa_physical_validation/cpa_thermopack_parity_thresholds.hpp'
       - 'tests/flash/cpa_association_continuation_audit/**'
       - 'modules/flash/cpa_association_continuation_audit.md'
+      - 'modules/flash/cpa_association_continuation_contract.md'
       - '.github/workflows/cpa_association_continuation_audit.yml'
   workflow_dispatch:
 
@@ -55,6 +56,14 @@ jobs:
       - name: Build Release audit
         run: cmake --build build/cpa-association-continuation-audit --parallel 2
 
+      - name: Verify frozen continuation safety contract
+        run: |
+          set -euo pipefail
+          build/cpa-association-continuation-audit/mpmc_cpa_association_continuation_contract \
+            | tee build/cpa-association-continuation-audit/contract.log
+          grep 'CPA_ASSOC_CONTINUATION_CONTRACT_OK' \
+            build/cpa-association-continuation-audit/contract.log
+
       - name: Replay production density scans with shadow continuation
         run: |
           set -euo pipefail
@@ -66,6 +75,7 @@ jobs:
             echo '# CPA association continuity audit'
             echo
             echo '```text'
+            cat build/cpa-association-continuation-audit/contract.log
             echo "${summary}"
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
