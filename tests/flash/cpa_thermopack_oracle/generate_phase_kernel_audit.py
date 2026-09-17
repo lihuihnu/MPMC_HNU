@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Generate an independent ThermoPack CPA phase-kernel diagnostic oracle.
 
-The frozen TP-flash oracle owns the five equilibrium phase compositions.  This
+The frozen TP-flash oracle owns the five equilibrium phase compositions. This
 script evaluates ThermoPack single-phase properties at those same T/P/x states.
-The cubic contribution is reconstructed from ThermoPack's *actual read-back*
-critical temperatures plus its read-back CPA a0/b/c1/kij using the documented
-classic-alpha SRK equations.  Association is then full ThermoPack residual minus
-that cubic contribution at identical T,V,n.
+The cubic contribution is reconstructed from the pinned ThermoPack component
+source Tc plus its public CPA a0/b/c1/kij read-back using the documented classic
+alpha SRK equations. Association is then full ThermoPack residual minus that
+cubic contribution at identical T,V,n.
 
-This is deliberately independent of MPMC_HNU production/test C++ code.
+Why source Tc instead of get_critical_parameters(): the latter solves for the
+pure-fluid critical point of the active EOS. It is not the component Tc stored in
+cbeos%single(i)%Tc and used by cbCalcAlphaTerm. Pinned SelectCubicEOS initializes
+that alpha Tc from comp(i)%p_comp%tc before CPA overwrites a0/b/c1.
 """
 
 from __future__ import annotations
@@ -58,41 +61,44 @@ def _vector(obj, size: int) -> list[float]:
 
 
 def _require_tp_root_consistency(actual: float, expected: float, message: str) -> None:
-    """Use pinned ThermoPack's own TP volume-solver convergence scale."""
     scale = max(1.0, abs(actual), abs(expected))
     if not math.isfinite(actual) or abs(actual - expected) > 3.0e-8 * scale:
         raise RuntimeError(f"{message}: expected {expected!r}, got {actual!r}")
 
 
-def _critical_temperature_readback(eos) -> list[float]:
+def _source_alpha_tc(thermopack_source: Path) -> tuple[list[float], dict]:
+    files = {
+        "MEOH": thermopack_source / "fluids" / "Methanol.json",
+        "H2O": thermopack_source / "fluids" / "Water.json",
+    }
     values = []
-    for index in (1, 2):
-        tc, vc, pc = eos.get_critical_parameters(index)
-        tc = float(tc)
-        vc = float(vc)
-        pc = float(pc)
-        if not (math.isfinite(tc) and tc > 0.0 and
-                math.isfinite(vc) and vc > 0.0 and
-                math.isfinite(pc) and pc > 0.0):
-            raise RuntimeError("ThermoPack critical-parameter read-back became invalid")
+    provenance = {}
+    for component in COMPONENTS:
+        path = files[component]
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if record["ident"] != component:
+            raise RuntimeError(f"unexpected ThermoPack component file identity: {path}")
+        critical = record["critical"]
+        tc = float(critical["temperature"])
+        if not math.isfinite(tc) or not tc > 0.0:
+            raise RuntimeError(f"invalid source Tc for {component}")
         values.append(tc)
-    return values
+        provenance[component] = {
+            "temperature_k": tc,
+            "ref": str(critical.get("ref", "")),
+            "source_file": str(path.relative_to(thermopack_source)),
+        }
+    return values, provenance
 
 
 def _cubic_srkcpa_at_tv(eos, temperature_k: float, density: float,
                         composition: list[float], critical_t: list[float]) -> dict:
-    """Documented SRK-CPA cubic pressure and residual chemical potential / RT.
-
-    ThermoPack's CPA public pure vector is [a0,b,epsilon,beta,c1], but Tc remains
-    in the component/cubic state.  Read back both and evaluate the same classic
-    alpha and vdW one-fluid SRK equations documented by ThermoPack.
-    """
+    """Documented SRK-CPA cubic pressure and residual chemical potential / RT."""
     pure = [[float(v) for v in eos.get_pure_params(i)] for i in (1, 2)]
     kij = float(eos.get_kij(1, 2)[0])
     rgas = float(eos.Rgas)
     rt = rgas * temperature_k
 
-    # ThermoPack public units -> SI used by the equations below.
     a0 = [record[0] * 1.0e-6 for record in pure]  # Pa L^2 -> Pa m^6
     b = [record[1] * 1.0e-3 for record in pure]   # L/mol -> m^3/mol
     c1 = [record[4] for record in pure]
@@ -206,7 +212,7 @@ def phase_properties(full, pressure_pa: float, composition: list[float],
     }
 
 
-def generate() -> dict:
+def generate(thermopack_source: Path) -> dict:
     frozen = json.loads(BASE_ORACLE.read_text(encoding="utf-8"))
     if frozen["schema"] != "MPMC_HNU/CPA/ThermoPack-two-phase-TP-oracle/v1":
         raise RuntimeError("unexpected base ThermoPack oracle schema")
@@ -214,7 +220,7 @@ def generate() -> dict:
         raise RuntimeError("base ThermoPack oracle revision drifted")
 
     full = configure_matched_model()
-    critical_t = _critical_temperature_readback(full)
+    critical_t, critical_provenance = _source_alpha_tc(thermopack_source)
 
     states = []
     for source in frozen["states"]:
@@ -238,13 +244,14 @@ def generate() -> dict:
             "software": "thermotools/thermopack",
             "commit": THERMOPACK_COMMIT,
             "phase_property_api": [
-                "get_critical_parameters", "get_pure_params", "get_kij",
-                "specific_volume", "zfac", "thermo", "pressure_tv",
-                "chemical_potential_tv"
+                "get_pure_params", "get_kij", "specific_volume", "zfac",
+                "thermo", "pressure_tv", "chemical_potential_tv"
             ],
+            "alpha_tc_source": "pinned component JSON used by SelectCubicEOS/initCubicTcPcAcf",
             "decomposition": (
                 "full ThermoPack residual minus documented SRK cubic evaluated "
-                "from ThermoPack read-back Tc/a0/b/c1/kij at identical T,V,n"
+                "from pinned component Tc and ThermoPack read-back a0/b/c1/kij "
+                "at identical T,V,n"
             ),
             "tp_root_consistency_relative_tolerance": 3.0e-8,
             "tp_root_consistency_basis": (
@@ -253,18 +260,20 @@ def generate() -> dict:
         },
         "model": frozen["model"],
         "gas_constant_j_per_mol_k": float(full.Rgas),
-        "critical_temperature_readback_k": {
-            "MEOH": critical_t[0], "H2O": critical_t[1]
-        },
+        "alpha_critical_temperature_source": critical_provenance,
         "states": states,
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--thermopack-source", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
-    result = generate()
+    source = args.thermopack_source.resolve()
+    if not (source / ".git").exists():
+        raise RuntimeError("--thermopack-source must be the pinned ThermoPack checkout")
+    result = generate(source)
     rendered = json.dumps(result, indent=2, sort_keys=True)
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
