@@ -3,6 +3,7 @@
 
 #include "../../thermodynamics/sw92/test_support.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iomanip>
