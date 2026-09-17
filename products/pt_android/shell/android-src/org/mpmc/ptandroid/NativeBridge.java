@@ -15,4 +15,12 @@ final class NativeBridge {
             double temperatureK,
             String[] componentIds,
             double[] moleFractions);
+
+    static native String[] modelApplyRecords(String requestId, String[] records);
+
+    static native String[] modelSolveRecords(String requestId, String[] records);
+
+    static native String[] modelReleaseRecords(String requestId);
+
+    static native void modelCancel(String requestId);
 }

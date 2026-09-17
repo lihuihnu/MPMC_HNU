@@ -13,11 +13,16 @@ if(NOT TARGET mpmc::runtime)
     add_subdirectory("${mpmc_repository_root}/modules/runtime"
                      runtime-library)
 endif()
+if(NOT TARGET mpmc::pr76_solver_configuration)
+    add_subdirectory("${mpmc_repository_root}/modules/model_configuration/pr76_solver"
+                     pr76-solver-configuration-library)
+endif()
 
 # Reuse the canonical repository-curated parameter/backend assembly source
 # directly. The Android-private composition_root.hpp shim exposes only the
 # ownership primitive those translation units require, so runtime_grpc and the
-# process host never enter this target.
+# process host never enter this target. Editable Classic PR ownership separately
+# reuses the existing model_configuration/Pr76ExecutableModel implementation.
 set(mpmc_android_canonical_pt_sources
     "${mpmc_repository_root}/modules/pt_process/src/configured_backends.cpp"
     "${mpmc_repository_root}/modules/pt_process/src/parameter_snapshot_supplier.cpp")
@@ -26,6 +31,7 @@ add_library(mpmc_pt_android_core SHARED
     src/portability.cpp
     src/jni_smoke.cpp
     src/jni_product.cpp
+    src/jni_model.cpp
     ${mpmc_android_canonical_pt_sources})
 
 target_compile_features(mpmc_pt_android_core PRIVATE cxx_std_20)
@@ -35,7 +41,9 @@ target_include_directories(mpmc_pt_android_core
     PRIVATE
         "${CMAKE_CURRENT_LIST_DIR}/private_include"
         "${mpmc_repository_root}/modules/pt_process/include")
-target_link_libraries(mpmc_pt_android_core PRIVATE mpmc::runtime)
+target_link_libraries(mpmc_pt_android_core PRIVATE
+    mpmc::runtime
+    mpmc::pr76_solver_configuration)
 set_target_properties(mpmc_pt_android_core PROPERTIES
     CXX_EXTENSIONS OFF
     CXX_VISIBILITY_PRESET hidden

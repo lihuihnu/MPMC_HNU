@@ -74,6 +74,7 @@ export interface ExpertPr76WorkspaceViewProps {
   onCreated(model: ExpertOwnedModel): void;
   unapplied?: boolean;
   onDraftChanged?(): void;
+  accessLabel?: string;
 }
 
 export function ExpertPr76WorkspaceView({
@@ -84,36 +85,37 @@ export function ExpertPr76WorkspaceView({
   onCreated,
   unapplied = false,
   onDraftChanged,
+  accessLabel = 'Local calculation · no login',
 }: ExpertPr76WorkspaceViewProps) {
   return (
-    <div className="app-shell expert-pr76-workspace" data-expert-workspace="pr76">
+    <div className="app-shell expert-pr76-workspace pr-product-workspace" data-expert-workspace="pr76">
       <header className="app-header">
         <div>
-          <p className="brand-mark">MPMC_HNU · Expert</p>
-          <h1>PR76 model workspace</h1>
+          <p className="brand-mark">MPMC_HNU</p>
+          <h1>Peng–Robinson flash</h1>
           <p>
-            Edit component parameters and kij, apply the model, then enter P, T and z
-            for C++ phase-stability analysis and flash calculations up to three phases.
+            Define a fluid, set pressure, temperature and overall composition, then
+            calculate the equilibrium phase split with the classic PR76 equation of state.
           </p>
         </div>
         <div className="backend-state" data-configured="true">
           <span className="backend-dot" />
-          Local computation · no account or login required
+          {accessLabel}
         </div>
       </header>
 
       {retirementFailure ? (
         <div className="connection-banner connection-banner-error" role="alert">
-          <strong>Previous model cleanup was not confirmed.</strong>
-          <span>
-            Reason <code>{retirementFailure.reason}</code>
-            {retirementFailure.code === undefined ? null : (
-              <> · gRPC code <code>{retirementFailure.code}</code></>
-            )}
+          <strong>The previous model could not be fully released.</strong>
+          <span>Re-apply the fluid definition before running another calculation.</span>
+          <details className="inline-details">
+            <summary>Technical details</summary>
+            <code>{retirementFailure.reason}</code>
+            {retirementFailure.code === undefined ? null : <code> · {retirementFailure.code}</code>}
             {retirementFailure.validation?.field === undefined ? null : (
-              <> · field <code>{retirementFailure.validation.field}</code></>
+              <code> · {retirementFailure.validation.field}</code>
             )}
-          </span>
+          </details>
         </div>
       ) : null}
 
@@ -129,18 +131,25 @@ export function ExpertPr76WorkspaceView({
         </section>
         <section className="workspace-result">
           {current === null ? (
-            <section className="result-panel result-empty" aria-live="polite">
-              <p className="eyebrow">Live model</p>
-              <h2>No Expert model created yet</h2>
-              <p>
-                Complete and apply the explicit PR76 draft on the left. The calculation
-                panel will use that model, not a preconfigured example fluid.
-              </p>
+            <section className="result-panel result-empty pr-empty-state" aria-live="polite">
+              <p className="eyebrow">Ready to configure</p>
+              <h2>Create a PR fluid model</h2>
+              <ol className="workflow-steps">
+                <li>Add components and their critical properties.</li>
+                <li>Enter every required binary interaction coefficient.</li>
+                <li>Apply the model, then enter P, T and the initial composition.</li>
+              </ol>
+              <p>No example phase result is generated before a real calculation.</p>
             </section>
           ) : (
             <>
-              <ExpertPtSolvePanel key={generation} model={current} blocked={unapplied || retirementFailure !== null} />
-              <details className="contract-details"><summary>Applied model parameters and provenance</summary>
+              <ExpertPtSolvePanel
+                key={generation}
+                model={current}
+                blocked={unapplied || retirementFailure !== null}
+              />
+              <details className="contract-details advanced-details">
+                <summary>Advanced: applied model parameters and provenance</summary>
                 <ExpertModelSurface source={current.source} />
               </details>
             </>
@@ -149,8 +158,8 @@ export function ExpertPr76WorkspaceView({
       </main>
 
       <footer className="app-footer">
-        <span>Parameters are editable data; EOS and flash algorithms remain in C++</span>
-        <span>No implicit kij, feed normalization, model fallback or account setup</span>
+        <span>Classic Peng–Robinson (PR76) · configurable fluid definition</span>
+        <span>Thermodynamic and flash calculations remain in the native C++ backend</span>
       </footer>
     </div>
   );
@@ -158,10 +167,11 @@ export function ExpertPr76WorkspaceView({
 
 export interface ExpertPr76WorkspaceProps {
   owner: ExpertModelOwner;
+  accessLabel?: string;
 }
 
 /** Owns at most one current Expert model under normal successful cleanup. */
-export function ExpertPr76Workspace({ owner }: ExpertPr76WorkspaceProps) {
+export function ExpertPr76Workspace({ owner, accessLabel }: ExpertPr76WorkspaceProps) {
   const [current, setCurrent] = useState<ExpertOwnedModel | null>(null);
   const [generation, setGeneration] = useState(0);
   const [unapplied, setUnapplied] = useState(false);
@@ -205,6 +215,7 @@ export function ExpertPr76Workspace({ owner }: ExpertPr76WorkspaceProps) {
       onCreated={handleCreated}
       unapplied={unapplied}
       onDraftChanged={() => setUnapplied(true)}
+      {...(accessLabel === undefined ? {} : { accessLabel })}
     />
   );
 }

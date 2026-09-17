@@ -7,8 +7,10 @@
     "node": ">=24.0.0 <25.0.0"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "2.15.0",
     "@capacitor/android": "8.5.2",
     "@capacitor/core": "8.5.2",
+    "@connectrpc/connect": "2.2.0",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },

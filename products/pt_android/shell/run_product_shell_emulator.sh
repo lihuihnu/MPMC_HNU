@@ -153,7 +153,10 @@ for _ in $(seq 1 180); do
   if grep -Fq 'ANDROID_PRODUCT_SHELL_DISCOVERY_OK backends=3' <<<"$tagged" && \
      grep -Fq "ANDROID_PRODUCT_SHELL_SOLVE_OK backend=$pr76_id" <<<"$tagged" && \
      grep -Fq "ANDROID_PRODUCT_SHELL_SOLVE_OK backend=$sw92_id" <<<"$tagged" && \
-     grep -Fq "ANDROID_PRODUCT_SHELL_SOLVE_OK backend=$cpa_id" <<<"$tagged"; then
+     grep -Fq "ANDROID_PRODUCT_SHELL_SOLVE_OK backend=$cpa_id" <<<"$tagged" && \
+     grep -Fq 'ANDROID_CLASSIC_PR_APPLY_OK' <<<"$tagged" && \
+     grep -Fq 'ANDROID_CLASSIC_PR_SOLVE_OK' <<<"$tagged" && \
+     grep -Fq 'ANDROID_CLASSIC_PR_RELEASE_OK' <<<"$tagged"; then
     printf '%s\n' "$tagged"
     success=1
     break
@@ -163,16 +166,15 @@ done
 
 "$adb" logcat -d -v threadtime >"$logcat_file" || true
 if [[ $success -ne 1 ]]; then
-  echo 'Android Product Shell did not complete discovery and three JS->Capacitor->JNI solves.' >&2
+  echo 'Android Product Shell did not complete configured PT regression plus Classic PR apply/solve/release.' >&2
   show_diagnostics
   exit 1
 fi
 
 # Android's accessibility hierarchy intentionally treats WebView as one native
-# node, so uiautomator cannot prove which React text rendered. Product Shell v1
-# is a debuggable engineering APK; MainActivity enables WebView DevTools only
-# when FLAG_DEBUGGABLE is set. Audit the live DOM through that local-only CDP
-# endpoint instead of weakening the UI-render requirement or using OCR.
+# node. Product Shell engineering APKs expose DevTools only while debuggable, so
+# audit the live React DOM over the adb-forwarded local CDP endpoint instead of
+# weakening UI verification or using OCR.
 webview_socket=""
 for _ in $(seq 1 40); do
   webview_socket="$(
@@ -198,7 +200,6 @@ fi
 node --input-type=module - "$dom_file" <<'NODE'
 import fs from 'node:fs';
 const output = process.argv[2];
-
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function findPage() {
@@ -208,9 +209,7 @@ async function findPage() {
       const response = await fetch('http://127.0.0.1:9222/json');
       if (response.ok) {
         const pages = await response.json();
-        const page = pages.find(
-          (candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl,
-        );
+        const page = pages.find((candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl);
         if (page) return page;
       }
     } catch {
@@ -228,19 +227,15 @@ async function evaluate(page) {
       socket.close();
       reject(new Error('Timed out evaluating the Product Shell WebView DOM.'));
     }, 10_000);
-
     socket.addEventListener('open', () => {
-      socket.send(
-        JSON.stringify({
-          id: 1,
-          method: 'Runtime.evaluate',
-          params: {
-            expression:
-              '({text: document.body?.innerText ?? "", smoke: document.documentElement.dataset.mpmcAndroidProductShellSmoke ?? "", rootChildren: document.getElementById("root")?.childElementCount ?? 0})',
-            returnByValue: true,
-          },
-        }),
-      );
+      socket.send(JSON.stringify({
+        id: 1,
+        method: 'Runtime.evaluate',
+        params: {
+          expression: '({text: document.body?.innerText ?? "", smoke: document.documentElement.dataset.mpmcAndroidProductShellSmoke ?? "", classicSmoke: document.documentElement.dataset.mpmcAndroidClassicPrSmoke ?? "", rootChildren: document.getElementById("root")?.childElementCount ?? 0})',
+          returnByValue: true,
+        },
+      }));
     });
     socket.addEventListener('message', (event) => {
       const message = JSON.parse(String(event.data));
@@ -267,25 +262,22 @@ async function evaluate(page) {
 
 const page = await findPage();
 const value = await evaluate(page);
-fs.writeFileSync(
-  output,
-  `${JSON.stringify({ pageUrl: page.url, pageTitle: page.title, ...value }, null, 2)}\n`,
-  'utf8',
-);
-if (value.smoke !== 'ok') {
-  throw new Error(`React Product Shell smoke marker is ${JSON.stringify(value.smoke)}.`);
+fs.writeFileSync(output, `${JSON.stringify({ pageUrl: page.url, pageTitle: page.title, ...value }, null, 2)}\n`, 'utf8');
+if (value.smoke !== 'ok' || value.classicSmoke !== 'ok') {
+  throw new Error(`React Product Shell smoke markers are ${JSON.stringify([value.smoke, value.classicSmoke])}.`);
 }
 if (!Number.isInteger(value.rootChildren) || value.rootChildren < 1) {
   throw new Error('React Product Shell root has no rendered child elements.');
 }
 if (
   typeof value.text !== 'string' ||
-  !value.text.includes('MPMC_HNU') ||
-  !value.text.includes('Model-neutral PT Flash')
+  !value.text.includes('Flash workspace') ||
+  !value.text.includes('Classic PR') ||
+  !value.text.includes('Define PR fluid')
 ) {
-  throw new Error('Rendered Product Shell DOM is missing the shared React PT UI text.');
+  throw new Error('Rendered Product Shell DOM is missing the shared Classic PR UI text.');
 }
-console.log('ANDROID_PRODUCT_SHELL_DOM_OK shared_react_ui=true');
+console.log('ANDROID_PRODUCT_SHELL_DOM_OK shared_classic_pr_ui=true');
 NODE
 
 "$adb" uninstall org.mpmc.ptandroid >/dev/null
@@ -294,4 +286,4 @@ if "$adb" shell pm path org.mpmc.ptandroid 2>/dev/null | grep -Fq 'package:'; th
   exit 1
 fi
 
-echo 'ANDROID_PRODUCT_SHELL_V1_OK abi=x86_64 backends=3'
+echo 'ANDROID_PRODUCT_SHELL_V1_OK abi=x86_64 backends=3 classic_pr=true'

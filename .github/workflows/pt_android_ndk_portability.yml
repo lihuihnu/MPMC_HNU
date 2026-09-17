@@ -8,6 +8,7 @@ on:
       - 'modules/thermodynamics/**'
       - 'modules/flash/**'
       - 'modules/runtime/**'
+      - 'modules/model_configuration/**'
       - 'modules/pt_process/src/configured_backends.cpp'
       - 'modules/pt_process/src/parameter_snapshot_supplier.cpp'
       - 'modules/pt_process/include/mpmc/pt_process/configured_backends.hpp'
@@ -21,6 +22,7 @@ on:
       - 'modules/thermodynamics/**'
       - 'modules/flash/**'
       - 'modules/runtime/**'
+      - 'modules/model_configuration/**'
       - 'modules/pt_process/src/configured_backends.cpp'
       - 'modules/pt_process/src/parameter_snapshot_supplier.cpp'
       - 'modules/pt_process/include/mpmc/pt_process/configured_backends.hpp'
@@ -134,6 +136,10 @@ jobs:
           "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_runSmoke'
           "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_discoverJson'
           "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_solveJson'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelApplyRecords'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelSolveRecords'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelReleaseRecords'
+          "$toolchain/llvm-nm" -D --defined-only "$library" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelCancel'
           cp "$library" "build/libmpmc_pt_android_core-${{ matrix.abi }}.so"
           echo 'ANDROID_NDK_PT_CORE_PORTABILITY_OK abi=${{ matrix.abi }}'
 

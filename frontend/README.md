@@ -1,19 +1,59 @@
-# MPMC_HNU model-neutral PT frontend
+# MPMC_HNU PT frontend
 
 This React + TypeScript + Vite application consumes the versioned
 [`mpmc.runtime.v1.PtFlashService`](../api/README.md) contract. A hosted browser
-uses gRPC-Web; the Electron desktop shell reuses the same React renderer through
-a versioned context-isolated preload bridge and native gRPC. Both first discover
-configured PT backends and their exact component inventories, then build the
-solve form from the selected immutable capability snapshot.
+uses gRPC-Web; product shells reuse the same React product components through
+platform-specific typed ownership adapters. The generic configured-PT path first
+discovers configured backends and their exact component inventories, then builds
+the solve form from the selected immutable capability snapshot.
 
-The [Android Product Shell](../products/pt_android/README.md) also reuses this
-React UI through its app-local Capacitor/JNI `FlashClient`. Its build and
-lifecycle contract is maintained in that product directory.
+The [Android Product Shell](../products/pt_android/README.md) reuses the same
+Classic PR workspace and configured-PT compatibility surface through app-local
+Capacitor/JNI adapters. Its packaging and native lifecycle contract remains in
+that product directory.
+
+## Classic PR product workspace
+
+Classic PR is the shared editable PR76 product workflow. Electron, Android and an
+explicitly authorized hosted-Web integration render the same React shell and
+`ExpertPr76Workspace`; they differ only in the typed adapter that owns the model.
+Electron and Android are local no-login products. Hosted Web instead requires an
+authoritative browser identity provider and an authenticated model-session route:
+
+1. define the ordered component set and each component's molar mass, critical
+   temperature, critical pressure, and acentric factor;
+2. provide every required binary interaction coefficient `kij` and, when needed,
+   select the already-supported explicit PT solver settings;
+3. apply the immutable PR76 model snapshot;
+4. enter pressure, temperature, and the initial overall mole fractions;
+5. run the native PR76 PT flash and view the accepted phase count, mole phase
+   fractions, and component mole fractions in every accepted phase.
+
+Accepted phase fractions and phase compositions are presented with responsive
+bar charts plus an exact numerical table. Phase labels remain role-neutral
+(`Phase 1`, `Phase 2`, ...): the frontend does not infer liquid, vapor, aqueous,
+or other morphology from phase order, density, branch, or compressibility.
+Native diagnostics, stability declarations, complete result JSON, and model
+provenance remain available only under advanced disclosure sections.
+
+The charts are presentation only. They do not normalize, clip, fit, or otherwise
+change returned values. PR76 EOS evaluation, stability search, phase splitting,
+final phase-set review, parameter validation and model lifetime remain native C++
+backend responsibilities.
+
+The shared CSS and React presentation are responsive so supported products retain
+one visual language. Transport parity is platform-specific: Electron uses its
+context-isolated model-workbench/IPC path; Android uses the app-local
+Capacitor/JNI typed ownership adapter backed by the same native
+`Pr76ExecutableModel`; hosted Web uses the existing same-origin authenticated
+`webModelSession` connector, `ModelSessionClient` and `bindExpertModelOwner`.
+Hosted ownership is fail-closed: without the exact trusted runtime capability,
+the browser remains on its existing configured-PT product and does not open a
+model session.
 
 ## Scientific and service boundary
 
-The browser is not an EOS or flash implementation. It does not:
+The frontend is not an EOS or flash implementation. It does not:
 
 - evaluate thermodynamic properties or roots;
 - decide phase count, stability, common tangency or acceptance;
@@ -21,23 +61,24 @@ The browser is not an EOS or flash implementation. It does not:
 - infer morphology from phase order, branch, `Z`, role or family IDs;
 - retry an indeterminate solve or fall back to another backend.
 
-The selected backend determines the component IDs and canonical order. Users edit
-only `p`, `T`, and one mole fraction per discovered component. Configured scalar
-settings such as a backend-owned salinity value are discovery provenance and are
-read-only; they are not model-neutral solve inputs.
+On the generic configured-PT path, the selected backend determines the component
+IDs and canonical order. Users edit only `p`, `T`, and one mole fraction per
+discovered component. Configured scalar settings such as a backend-owned salinity
+value are discovery provenance and are read-only; they are not model-neutral
+solve inputs.
 
 Provider role/family metadata is shown verbatim with its declared namespace. It is
 not relabeled as liquid, vapor or aqueous by generic frontend code.
 
 ## Connection
 
-Set the gRPC-Web base URL when building or serving the application:
+Set the gRPC-Web base URL when building or serving the generic hosted application:
 
 ```bash
 VITE_MPMC_GRPC_WEB_BASE_URL=https://example.test/pt-api npm run dev
 ```
 
-The client sends binary gRPC-Web requests to:
+The configured-PT client sends binary gRPC-Web requests to:
 
 ```text
 <base-url>/mpmc.runtime.v1.PtFlashService/DiscoverPtCapabilities
@@ -48,13 +89,54 @@ The endpoint or proxy must provide the required browser CORS response. The
 repository includes an audited [development/CI Envoy edge](../deploy/pt-grpc-web/README.md),
 a thin [native C++ adapter](../modules/runtime_grpc/README.md), and a
 repository-curated three-backend process host, but no deployed endpoint. If the
-variable is absent outside Electron, the frontend remains explicitly
-unconfigured and sends no request.
+variable is absent outside a local product shell, the generic hosted frontend
+remains explicitly unconfigured and sends no request.
 
-Startup discovery must complete before solve is enabled. Switching the configured
-backend switches the inventory; component IDs cannot be added, removed or edited
-in the browser. A result provenance snapshot must exactly match the selected
-discovery descriptor or the response is rejected as a wire-contract failure.
+Hosted Classic PR is deliberately **not** enabled by a build-time bearer or a
+`VITE_*` token. A trusted hosting shell may provide this runtime capability only
+after its deployment has authoritative end-user identity mapping and the required
+same-origin model routes:
+
+```ts
+window.mpmcHostedWebModelOwnership = {
+  convention: 'MPMC/model/hosted-web-ownership/v1',
+  baseUrl: '/model-api',
+  identity: authoritativeIdentityProvider,
+};
+```
+
+`identity` is a `WebIdentityProvider` function object, not a token value. The
+same-origin connector obtains the bearer only when the first model is applied,
+opens one `ModelSessionClient` lease, and keeps that identity snapshot for the
+session epoch. The token is not put in DOM state, browser storage, generated HTML
+or user-facing errors. Page teardown disposes the session. There is no automatic
+Create retry, reconnect or principal change.
+
+Production model ownership is an explicit deployment opt-in. The production edge
+renderer remains PT-only when `model_authz_loopback_port` is absent. When an
+operator provides that loopback external-authorization endpoint, the renderer
+adds only the versioned model-session/configuration prefixes under `/model-api/`.
+The edge validates the browser bearer through that authorization service, accepts
+one stable internal principal result, and forwards it to the native host over the
+existing verified edge-client mTLS channel. The native host must be started with
+model sessions enabled; it accepts the internal principal only from an
+authenticated edge peer and binds session ownership to that principal. Duplicate,
+invalid or cross-principal use fails closed.
+
+The repository does not provide a production JWT issuer, JWKS URL, account store
+or role policy. Its test authorization sidecar is only a contract fixture. A real
+deployment must supply its own authoritative external identity policy before its
+hosting code publishes `mpmcHostedWebModelOwnership`. The versioned deployment
+bundle carries the same opt-in through `network.model_authz_loopback_port`; an old
+manifest without that field remains PT-only. See
+[`webModelSession.md`](src/api/webModelSession.md) and the
+[edge deployment contract](../deploy/pt-grpc-web/README.md).
+
+Startup discovery must complete before generic PT solve is enabled. Switching the
+configured backend switches the inventory; component IDs cannot be added, removed
+or edited through that generic path. A result provenance snapshot must exactly
+match the selected discovery descriptor or the response is rejected as a
+wire-contract failure.
 
 ## Result states
 
@@ -62,50 +144,55 @@ The presentation keeps four boundaries visible:
 
 | State | Source | Presentation |
 | --- | --- | --- |
-| `accepted` | Protobuf result arm | Variable 1..N accepted phase cards and provenance |
-| `phase_set_unstable` | Protobuf result arm | Scientific rejection, zero phase cards |
-| `indeterminate` | Protobuf result arm | Scientific uncertainty with diagnostic/provenance, zero phase cards |
+| `accepted` | Protobuf result arm | Accepted phase count/fractions/compositions and provenance |
+| `phase_set_unstable` | Protobuf result arm | Scientific rejection, no accepted phase presentation |
+| `indeterminate` | Protobuf result arm | Scientific uncertainty with diagnostic/provenance, no accepted phases |
 | `PtServiceError` | Protobuf error arm | Service error code, field and diagnostic |
 | gRPC or wire failure | RPC / client adapter | Connection/deadline/cancel/contract failure |
 
 An indeterminate computation is therefore never displayed as “service unavailable,”
 and an RPC/service error is never presented as a thermodynamic decision.
 
-The form allows one in-flight solve. Discovery has a 10-second client deadline,
-solve has a 120-second deadline, both accept cancellation, and neither is retried
-automatically.
+The generic form allows one in-flight solve. Discovery has a 10-second client
+deadline, solve has a 120-second deadline, both accept cancellation, and neither
+is retried automatically. The shared Classic PR owner similarly invalidates stale
+model generations rather than publishing late results; the hosted owner opens its
+authenticated session before dispatching the first Create.
 
-## Electron desktop vertical slice v1
+## Product adapters
 
 Electron embeds the built React files without giving the renderer Node access.
-The sandboxed preload exposes only discovery, solve, and cancel under
-`MPMC/PT/desktop-bridge/v1`. Main-process IPC enforces sender identity, 64 KiB
-request shape, at most four active bridge calls, exact request IDs, deadlines,
-and cancellation. The main process alone starts the staged
-`mpmc_pt_service_host`, connects using native HTTP/2 gRPC, and maps the existing
-Protobuf contract. It contains no EOS, flash, parameter, retry, fallback, or
-scientific acceptance logic.
+Its sandboxed preload exposes the configured-PT bridge plus the typed local
+model-workbench capabilities used by Classic PR. Main-process IPC enforces sender
+identity, bounded request shapes, exact request IDs, deadlines, cancellation and
+lifecycle cleanup; native process/session transport remains outside React.
 
-Each launch creates a 256-bit random bearer, sends it to the child only through
-stdin, and accepts readiness only from an ephemeral `127.0.0.1` port reporting
-exactly three configured backends. Parent shutdown or stdin EOF gracefully stops
-the child. Production mTLS and deployed gRPC-Web remain separate modes; desktop
-does not need Envoy, CORS, a deployment domain, or production certificates for
-its same-device child session.
+Android uses the same `DesktopProductShell`/`ExpertPr76Workspace` component tree
+(the component name is historical, not a platform restriction). Its
+`ModelWorkbenchBridge` implementation is app-local Capacitor/JNI transport. Java
+only serializes work onto the native executor and transports bounded fields;
+`Pr76ExecutableModel` remains authoritative for model preparation, settings,
+solve and result semantics. No gRPC C++ runtime is added to the APK.
 
-The hosted product gate loads the actual React page in Electron, waits for its
-three-backend discovery state, and then traverses preload/IPC/native gRPC to ask
-the real repository-curated PR76, SW92, and CPA backends for one solve each. The
-smoke requires a scientific result arm and exact backend provenance but does not
-require `accepted`; it is integration evidence, not a replacement for physical
-regression or a license to reinterpret `indeterminate`.
+Hosted Web uses the same product component tree only when the trusted runtime
+capability described above is present and valid. `hostedWebModelOwner.ts` lazily
+connects the existing authenticated `ModelSessionClient` and adapts it with
+`bindExpertModelOwner`; it does not expose handles, reproduce model lifecycle or
+interpret scientific results. Missing or malformed capability falls back to the
+existing configured-PT hosted application without attempting anonymous model
+access.
 
-The resulting Linux x64, Windows x64, and macOS arm64 directories are unsigned
-engineering previews with `release_eligible=false`. Downstream packaging is
-documented in the [product index](../products/pt/README.md): Windows has a
-[desktop MSI and protected signed RC gate](../products/pt/desktop_installer/README.md).
-Public-release signing/notarization, licensing, update and publisher requirements
-remain governed by those product contracts.
+The configured compatibility path remains available and continues to exercise
+repository-curated PR76, SW92 and CPA backends. Editable Classic PR remains
+PR76-only; this frontend work does not change those backend implementations or
+add editable SW92/CPA semantics.
+
+The resulting desktop directories and Android APK are engineering products with
+separate release/signing gates. Windows downstream packaging is documented in the
+[product index](../products/pt/README.md) and
+[desktop installer README](../products/pt/desktop_installer/README.md). Android
+packaging/lifecycle evidence is documented in the
+[Android README](../products/pt_android/README.md).
 
 ## Development
 
@@ -125,10 +212,12 @@ npm run build
 ```
 
 The generated `src/gen/mpmc/runtime/v1/pt_service_pb.ts` is committed and must not
-be hand-edited. Tests cover binary Protobuf discovery round-trip, request value/order
-preservation, capability/inventory integrity, variable accepted phases, distinct
-indeterminate/service-error oneof arms, malformed-response rejection, gRPC timeout
-options and no automatic retry.
+be hand-edited. Model-configuration TypeScript is generated from the dedicated
+versioned model-service proto before typecheck/test/build. Tests cover the generic
+PT wire contract as well as Classic PR model editing, P/T/z input, local/hosted
+product presentation, phase-count/fraction/composition output, chart values,
+non-accepted candidate isolation, hosted runtime-capability gating and structured
+error handling.
 
 An additional cross-language golden starts a synthetic C++ `PtService`, maps it
 through the native gRPC adapter and Envoy, and exercises discovery, accepted,
@@ -136,6 +225,12 @@ indeterminate, service-error, provenance, variable-phase, and CORS behavior with
 this generated TypeScript client. It has software-contract meaning only and is
 not a physical regression.
 
-The frontend remains independent of the C++ build. The browser dependencies are
-confined here and do not become prerequisites of `runtime`, `flash` or
-`thermodynamics`.
+The `Hosted Web model product` workflow separately validates the production
+hosted-model path: it builds the native model-session host and shared Vite frontend,
+validates the model-enabled production Envoy configuration, then drives real
+Chrome through the trusted-edge contract. The regression requires the shared
+Classic PR UI, cross-principal session denial and release cleanup; its test authz
+service is synthetic and is not a production identity provider.
+
+Browser dependencies remain confined to the frontend/product shells and do not
+become prerequisites of `runtime`, `flash` or `thermodynamics`.

@@ -129,14 +129,15 @@ export function installedSmokeRequested(argv: readonly string[]): boolean {
   return argv.includes('--mpmc-install-smoke');
 }
 
-async function waitForReactDiscovery(window: BrowserWindow): Promise<void> {
+async function waitForReactProduct(window: BrowserWindow): Promise<void> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const ready = await window.webContents.executeJavaScript(
       `(() => {
-        const state = document.querySelector('.backend-state');
-        return state?.getAttribute('data-configured') === 'true' &&
-          state.textContent?.includes('backends discovered') === true;
+        const shell = document.querySelector('[data-desktop-product-shell="true"]');
+        const workspace = document.querySelector('[data-expert-workbench="ready"]');
+        return shell !== null && workspace !== null &&
+          shell.textContent?.includes('Classic PR') === true;
       })()`,
       true,
     );
@@ -145,7 +146,7 @@ async function waitForReactDiscovery(window: BrowserWindow): Promise<void> {
     }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   }
-  throw new Error('The installed React renderer did not publish backend discovery.');
+  throw new Error('The installed React renderer did not publish the Classic PR product shell.');
 }
 
 function backendFor(
@@ -177,7 +178,7 @@ export async function runInstalledDesktopSmoke(
   const plan = parseInstalledSmokePlan(
     JSON.parse(await readFile(planPath, 'utf8')) as unknown,
   );
-  await waitForReactDiscovery(window);
+  await waitForReactProduct(window);
 
   const discoveryReply = (await window.webContents.executeJavaScript(
     `globalThis.mpmcPtDesktop.discoverPtCapabilities('installed-desktop-smoke-discovery')`,

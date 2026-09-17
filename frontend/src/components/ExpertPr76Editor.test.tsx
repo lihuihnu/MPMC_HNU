@@ -53,16 +53,19 @@ function fakeOwner(): ExpertModelOwner {
   };
 }
 
-describe('PR76 Expert editor presentation and create boundary', () => {
-  it('renders a blank explicit editor without inventing components or kij', () => {
+describe('PR76 fluid editor presentation and create boundary', () => {
+  it('renders a blank product editor without inventing components or kij', () => {
     const html = renderToStaticMarkup(
       <ExpertPr76Editor owner={fakeOwner()} onCreated={() => {}} />,
     );
-    expect(html).toContain('Create custom PR76 model');
+    expect(html).toContain('Define PR fluid');
+    expect(html).toContain('Classic PR');
+    expect(html).toContain('Data source and model record (required)');
     expect(html).toContain('mpmc-balanced-default/v1');
     expect(html).toContain('Add component');
-    expect(html).toContain('No unordered component pair exists yet');
-    expect(html).toContain('Create once with the preset to obtain a complete resolved snapshot');
+    expect(html).toContain('Add at least two components to define a binary interaction coefficient');
+    expect(html).toContain('Apply once with the preset to obtain the complete editable settings snapshot');
+    expect(html).toContain('Apply fluid model');
     expect(html).not.toContain('kij methane');
   });
 
@@ -71,12 +74,13 @@ describe('PR76 Expert editor presentation and create boundary', () => {
     const html = renderToStaticMarkup(
       <ExpertPr76Editor owner={fakeOwner()} seedSnapshot={snapshot} onCreated={() => {}} />,
     );
-    expect(html).toContain('Create immutable revision');
-    expect(html).toContain('0: methane');
-    expect(html).toContain('1: ethane');
+    expect(html).toContain('Edit PR fluid');
+    expect(html).toContain('<summary>Methane</summary>');
+    expect(html).toContain('<summary>Ethane</summary>');
     expect(html).toContain('kij methane ↔ ethane');
-    expect(html).toContain('<option value="custom">Complete custom snapshot</option>');
-    expect(html).toContain('<option value="preset" selected="">Frozen preset</option>');
+    expect(html).toContain('<option value="custom">Custom settings</option>');
+    expect(html).toContain('<option value="preset" selected="">Validated preset</option>');
+    expect(html).toContain('Advanced: numerical solver settings');
     expect(html).not.toContain('EOS root');
     expect(html.match(/readOnly=""/gu)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
