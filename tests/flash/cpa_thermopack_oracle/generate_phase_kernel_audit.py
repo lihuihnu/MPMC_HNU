@@ -2,11 +2,13 @@
 """Generate an independent ThermoPack CPA phase-kernel diagnostic oracle.
 
 The frozen TP-flash oracle owns the five equilibrium phase compositions.  This
-script evaluates ThermoPack single-phase properties at those same T/P/x states
-and constructs an association-off *shadow* CPA model with identical SRK
-parameters.  At the full-model phase volume, full minus shadow residual
-properties isolate the association contribution without importing MPMC_HNU code
-or copying ThermoPack's association implementation.
+script evaluates ThermoPack single-phase properties at those same T/P/x states.
+The cubic contribution is reconstructed from ThermoPack's *actual read-back*
+critical temperatures plus its read-back CPA a0/b/c1/kij using the documented
+classic-alpha SRK equations.  Association is then full ThermoPack residual minus
+that cubic contribution at identical T,V,n.
+
+This is deliberately independent of MPMC_HNU production/test C++ code.
 """
 
 from __future__ import annotations
@@ -18,32 +20,24 @@ from pathlib import Path
 import sys
 
 import numpy as np
-from thermopack.cpa import SRK_CPA
 
-# Import only the sibling external-oracle configuration.  It imports ThermoPack
-# and standard-library modules, never MPMC_HNU production/test C++ code.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from generate_oracle import (  # noqa: E402
-    Kij_METHANOL_WATER,
-    PURE,
     TEMPERATURE_K,
     THERMOPACK_COMMIT,
-    _require_close,
-    _set_pinned_cpa_formulation,
     configure_matched_model,
 )
 
 BASE_ORACLE = Path(__file__).resolve().parent / "thermopack_d68c794_meoh_h2o_33315k.json"
+COMPONENTS = ("MEOH", "H2O")
 
 
 def _value(obj):
-    """Unwrap ThermoPack v3 Property while remaining compatible with scalars."""
     return obj.val if hasattr(obj, "val") else obj
 
 
 def _scalar(obj) -> float:
-    value = _value(obj)
-    array = np.asarray(value)
+    array = np.asarray(_value(obj))
     if array.size != 1:
         raise RuntimeError(f"expected scalar ThermoPack property, got shape {array.shape}")
     result = float(array.reshape(-1)[0])
@@ -53,8 +47,7 @@ def _scalar(obj) -> float:
 
 
 def _vector(obj, size: int) -> list[float]:
-    value = _value(obj)
-    array = np.asarray(value, dtype=float).reshape(-1)
+    array = np.asarray(_value(obj), dtype=float).reshape(-1)
     if array.size != size:
         raise RuntimeError(
             f"expected ThermoPack vector of length {size}, got shape {array.shape}")
@@ -65,84 +58,129 @@ def _vector(obj, size: int) -> list[float]:
 
 
 def _require_tp_root_consistency(actual: float, expected: float, message: str) -> None:
-    """Check a value at ThermoPack's own TP volume using its root-solver scale.
-
-    Pinned `saft_volume_solver` accepts pressure closure at
-    `1e8 * machine_prec * P`, about 2.22e-8 relative for binary64.  The audit
-    uses 3e-8 relative as a direct representation of that upstream convergence
-    contract.  This is NOT an MPMC/ThermoPack parity tolerance.
-    """
+    """Use pinned ThermoPack's own TP volume-solver convergence scale."""
     scale = max(1.0, abs(actual), abs(expected))
     if not math.isfinite(actual) or abs(actual - expected) > 3.0e-8 * scale:
         raise RuntimeError(f"{message}: expected {expected!r}, got {actual!r}")
 
 
-def configure_nonassociating_shadow() -> SRK_CPA:
-    """Build an SRK-identical CPA model with association Delta forced to zero."""
-    eos = SRK_CPA("MEOH,H2O", mixing="vdW", alpha="Classic",
-                  parameter_reference="Default")
-    _set_pinned_cpa_formulation(eos)
-
-    for index, record in PURE.items():
-        params = list(record["params"])
-        # beta multiplies Delta directly. beta=0 leaves a0/b/c1/epsilon and the
-        # cubic mixing model untouched while making every association Delta zero.
-        params[3] = 0.0
-        eos.set_pure_params(index, params)
-        observed = [float(v) for v in eos.get_pure_params(index)]
-        for position, (actual, expected) in enumerate(zip(observed, params)):
-            _require_close(
-                actual, float(expected),
-                f"nonassociating shadow pure parameter mismatch component={index} field={position}")
-
-    eos.set_kij(1, 2, Kij_METHANOL_WATER, 0.0)
-    observed_kij = [float(v) for v in eos.get_kij(1, 2)]
-    _require_close(observed_kij[0], Kij_METHANOL_WATER,
-                   "shadow cubic kij mismatch")
-    _require_close(observed_kij[1], 0.0,
-                   "shadow association-energy kij mismatch")
-    return eos
+def _critical_temperature_readback(eos) -> list[float]:
+    values = []
+    for index in (1, 2):
+        tc, vc, pc = eos.get_critical_parameters(index)
+        tc = float(tc)
+        vc = float(vc)
+        pc = float(pc)
+        if not (math.isfinite(tc) and tc > 0.0 and
+                math.isfinite(vc) and vc > 0.0 and
+                math.isfinite(pc) and pc > 0.0):
+            raise RuntimeError("ThermoPack critical-parameter read-back became invalid")
+        values.append(tc)
+    return values
 
 
-def phase_properties(full: SRK_CPA, shadow: SRK_CPA,
-                     pressure_pa: float, composition: list[float],
-                     phase_flag: int, phase_name: str) -> dict:
-    volume = _scalar(full.specific_volume(TEMPERATURE_K, pressure_pa,
-                                          composition, phase_flag))
+def _cubic_srkcpa_at_tv(eos, temperature_k: float, density: float,
+                        composition: list[float], critical_t: list[float]) -> dict:
+    """Documented SRK-CPA cubic pressure and residual chemical potential / RT.
+
+    ThermoPack's CPA public pure vector is [a0,b,epsilon,beta,c1], but Tc remains
+    in the component/cubic state.  Read back both and evaluate the same classic
+    alpha and vdW one-fluid SRK equations documented by ThermoPack.
+    """
+    pure = [[float(v) for v in eos.get_pure_params(i)] for i in (1, 2)]
+    kij = float(eos.get_kij(1, 2)[0])
+    rgas = float(eos.Rgas)
+    rt = rgas * temperature_k
+
+    # ThermoPack public units -> SI used by the equations below.
+    a0 = [record[0] * 1.0e-6 for record in pure]  # Pa L^2 -> Pa m^6
+    b = [record[1] * 1.0e-3 for record in pure]   # L/mol -> m^3/mol
+    c1 = [record[4] for record in pure]
+    ai = [
+        a0[i] * (1.0 + c1[i] *
+                 (1.0 - math.sqrt(temperature_k / critical_t[i]))) ** 2
+        for i in range(2)
+    ]
+    aij = [[0.0, 0.0], [0.0, 0.0]]
+    for i in range(2):
+        for j in range(2):
+            kij_ij = kij if i != j else 0.0
+            aij[i][j] = math.sqrt(ai[i] * ai[j]) * (1.0 - kij_ij)
+
+    a_mix = sum(
+        composition[i] * composition[j] * aij[i][j]
+        for i in range(2) for j in range(2)
+    )
+    b_mix = sum(composition[i] * b[i] for i in range(2))
+    b_rho = b_mix * density
+    if not 0.0 < b_rho < 1.0:
+        raise RuntimeError("ThermoPack audit cubic state crossed SRK covolume singularity")
+
+    p_cubic = (
+        rt * density / (1.0 - b_rho)
+        - a_mix * density * density / (1.0 + b_rho)
+    )
+    z_cubic = p_cubic / (density * rt)
+    sums = [
+        sum(composition[j] * aij[i][j] for j in range(2))
+        for i in range(2)
+    ]
+    a_over_brt = a_mix / (b_mix * rt)
+    log_free = math.log1p(-b_rho)
+    log_attr = math.log1p(b_rho)
+    mu_cubic_over_rt = []
+    for i in range(2):
+        b_ratio = b[i] / b_mix
+        attraction_ratio = 2.0 * sums[i] / a_mix - b_ratio
+        mu_cubic_over_rt.append(
+            b_ratio * (z_cubic - 1.0)
+            - log_free
+            - a_over_brt * attraction_ratio * log_attr
+        )
+
+    return {
+        "a_i_pa_m6_per_mol2": {COMPONENTS[i]: ai[i] for i in range(2)},
+        "a_mix_pa_m6_per_mol2": a_mix,
+        "b_mix_m3_per_mol": b_mix,
+        "pressure_pa": p_cubic,
+        "mu_residual_over_rt": {
+            COMPONENTS[i]: mu_cubic_over_rt[i] for i in range(2)
+        },
+    }
+
+
+def phase_properties(full, pressure_pa: float, composition: list[float],
+                     phase_flag: int, phase_name: str,
+                     critical_t: list[float]) -> dict:
+    volume = _scalar(full.specific_volume(
+        TEMPERATURE_K, pressure_pa, composition, phase_flag))
     if not volume > 0.0:
         raise RuntimeError("ThermoPack returned non-positive phase volume")
     density = 1.0 / volume
     z = _scalar(full.zfac(TEMPERATURE_K, pressure_pa, composition, phase_flag))
-    ln_phi = _vector(full.thermo(TEMPERATURE_K, pressure_pa,
-                                 composition, phase_flag), 2)
-
-    # Re-evaluate at exactly the returned full-model TV state so the
-    # association decomposition is independent of root-finding differences.
+    ln_phi = _vector(full.thermo(
+        TEMPERATURE_K, pressure_pa, composition, phase_flag), 2)
     pressure_total_tv = _scalar(full.pressure_tv(
         TEMPERATURE_K, volume, composition, property_flag="IR"))
-    pressure_shadow_tv = _scalar(shadow.pressure_tv(
-        TEMPERATURE_K, volume, composition, property_flag="IR"))
-
     mu_res_total = _vector(full.chemical_potential_tv(
-        TEMPERATURE_K, volume, composition, property_flag="R"), 2)
-    mu_res_shadow = _vector(shadow.chemical_potential_tv(
         TEMPERATURE_K, volume, composition, property_flag="R"), 2)
 
     rgas = float(full.Rgas)
-    if not math.isfinite(rgas) or not rgas > 0.0:
-        raise RuntimeError("ThermoPack returned invalid gas constant")
     rt = rgas * TEMPERATURE_K
+    cubic = _cubic_srkcpa_at_tv(
+        full, TEMPERATURE_K, density, composition, critical_t)
+    association_pressure = pressure_total_tv - cubic["pressure_pa"]
+    total_mu_over_rt = [value / rt for value in mu_res_total]
     association_mu_over_rt = [
-        (mu_res_total[i] - mu_res_shadow[i]) / rt for i in range(2)
+        total_mu_over_rt[i] - cubic["mu_residual_over_rt"][COMPONENTS[i]]
+        for i in range(2)
     ]
-    association_pressure = pressure_total_tv - pressure_shadow_tv
 
     _require_tp_root_consistency(
         pressure_total_tv, pressure_pa,
         f"ThermoPack {phase_name} TP/TV pressure mismatch")
-    z_from_volume = pressure_pa * volume / rt
     _require_tp_root_consistency(
-        z, z_from_volume,
+        z, pressure_pa * volume / rt,
         f"ThermoPack {phase_name} Z/volume inconsistency")
 
     return {
@@ -153,18 +191,18 @@ def phase_properties(full: SRK_CPA, shadow: SRK_CPA,
         "compressibility_factor": z,
         "ln_phi": {"MEOH": ln_phi[0], "H2O": ln_phi[1]},
         "pressure_total_tv_pa": pressure_total_tv,
-        "pressure_cubic_shadow_tv_pa": pressure_shadow_tv,
-        "pressure_association_effect_pa": association_pressure,
-        "mu_residual_total_j_per_mol": {
-            "MEOH": mu_res_total[0], "H2O": mu_res_total[1]
+        "pressure_physical_pa": cubic["pressure_pa"],
+        "pressure_association_pa": association_pressure,
+        "mu_residual_total_over_rt": {
+            COMPONENTS[i]: total_mu_over_rt[i] for i in range(2)
         },
-        "mu_residual_cubic_shadow_j_per_mol": {
-            "MEOH": mu_res_shadow[0], "H2O": mu_res_shadow[1]
-        },
+        "mu_cubic_over_rt": cubic["mu_residual_over_rt"],
         "mu_association_over_rt": {
-            "MEOH": association_mu_over_rt[0],
-            "H2O": association_mu_over_rt[1],
+            COMPONENTS[i]: association_mu_over_rt[i] for i in range(2)
         },
+        "a_i_pa_m6_per_mol2": cubic["a_i_pa_m6_per_mol2"],
+        "a_mix_pa_m6_per_mol2": cubic["a_mix_pa_m6_per_mol2"],
+        "b_mix_m3_per_mol": cubic["b_mix_m3_per_mol"],
     }
 
 
@@ -176,7 +214,7 @@ def generate() -> dict:
         raise RuntimeError("base ThermoPack oracle revision drifted")
 
     full = configure_matched_model()
-    shadow = configure_nonassociating_shadow()
+    critical_t = _critical_temperature_readback(full)
 
     states = []
     for source in frozen["states"]:
@@ -188,23 +226,25 @@ def generate() -> dict:
         states.append({
             "temperature_k": float(source["temperature_k"]),
             "pressure_pa": pressure_pa,
-            "liquid": phase_properties(full, shadow, pressure_pa, liquid,
-                                        int(full.LIQPH), "liquid"),
-            "vapor": phase_properties(full, shadow, pressure_pa, vapor,
-                                       int(full.VAPPH), "vapor"),
+            "liquid": phase_properties(
+                full, pressure_pa, liquid, int(full.LIQPH), "liquid", critical_t),
+            "vapor": phase_properties(
+                full, pressure_pa, vapor, int(full.VAPPH), "vapor", critical_t),
         })
 
     return {
-        "schema": "MPMC_HNU/CPA/ThermoPack-phase-kernel-audit/v1",
+        "schema": "MPMC_HNU/CPA/ThermoPack-phase-kernel-audit/v2",
         "generator": {
             "software": "thermotools/thermopack",
             "commit": THERMOPACK_COMMIT,
             "phase_property_api": [
+                "get_critical_parameters", "get_pure_params", "get_kij",
                 "specific_volume", "zfac", "thermo", "pressure_tv",
                 "chemical_potential_tv"
             ],
             "decomposition": (
-                "full SRK-CPA minus association-Delta-zero shadow at identical T,V,n"
+                "full ThermoPack residual minus documented SRK cubic evaluated "
+                "from ThermoPack read-back Tc/a0/b/c1/kij at identical T,V,n"
             ),
             "tp_root_consistency_relative_tolerance": 3.0e-8,
             "tp_root_consistency_basis": (
@@ -213,6 +253,9 @@ def generate() -> dict:
         },
         "model": frozen["model"],
         "gas_constant_j_per_mol_k": float(full.Rgas),
+        "critical_temperature_readback_k": {
+            "MEOH": critical_t[0], "H2O": critical_t[1]
+        },
         "states": states,
     }
 
@@ -221,7 +264,6 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
-
     result = generate()
     rendered = json.dumps(result, indent=2, sort_keys=True)
     if args.out is not None:
