@@ -63,8 +63,38 @@ eta = b_mix rho / 4
 ```
 
 which is the same radial-distribution expression frozen by the MPMC_HNU profile.
-The oracle generator explicitly calls `set_cpa_formulation(True, False)`; it does
-not rely on an implicit formulation default.
+The oracle generator explicitly forces simplified CPA and the STANDARD
+association-Delta rule before any flash; it does not rely on an implicit
+formulation default.
+
+### Pinned Python formulation-binding defect
+
+The pinned `thermopack/cpa.py` method `set_cpa_formulation(...)` constructs
+Fortran logical values as `c_int`, but declares that routine's ctypes arguments
+as `POINTER(c_bool)`. On the hosted run this fails in ctypes before the call
+reaches ThermoPack:
+
+```text
+TypeError: expected LP_c_bool instance instead of pointer to c_int
+```
+
+This is a Python binding defect in the pinned external reference, not a CPA
+thermodynamic failure. The underlying pinned Fortran routine
+`setCPAformulation(simplified, elliotrule)` declares ordinary Fortran `logical`
+arguments, and other pinned ThermoPack Python bindings pass such logicals as
+`c_int`.
+
+The oracle generator therefore does **not** patch ThermoPack source or reimplement
+this logic. It calls the same already-loaded pinned `setCPAformulation` symbol
+with `POINTER(c_int)` arguments, setting:
+
+```text
+simplified = true
+elliotrule = false
+```
+
+All EOS, association and TP-flash calculations remain inside the unmodified
+pinned `libthermopack.so` built by the hosted workflow.
 
 ### Association equations and CR-1
 
@@ -89,8 +119,8 @@ beta_cross    = sqrt(beta_i beta_j)
 ```
 
 The pinned `MEOH/H2O` CPA binary record uses `ARITHMETIC` epsilon and
-`GEOMETRIC` beta combining rules. Setting the optional Elliott formulation flag
-to `False` retains ThermoPack's STANDARD association-Delta rule, i.e. this CR-1
+`GEOMETRIC` beta combining rules. Setting the Elliott formulation flag to
+`False` retains ThermoPack's STANDARD association-Delta rule, i.e. this CR-1
 route rather than Elliott's rule.
 
 ## Pure-parameter mapping
@@ -124,8 +154,16 @@ volume unit gives an exact numerical mapping to ThermoPack's public API:
 
 The pinned ThermoPack `fluids/Methanol.json` and `fluids/Water.json` contain the
 same numerical CPA pure parameters and 2B/4C association schemes. The generator
-still calls `set_pure_params(...)` explicitly and verifies `get_pure_params(...)`
-read-back, so future database-default drift cannot silently change the oracle.
+also writes those exact vectors through `set_pure_params(...)` and verifies
+`get_pure_params(...)` read-back, so future database-default drift cannot
+silently change the oracle.
+
+The successful hosted run read back exactly:
+
+```text
+MEOH: [405310, 0.030978, 24591, 0.0161, 0.43102]
+H2O:  [122770, 0.014515, 16655, 0.0692, 0.67359]
+```
 
 ## Binary-parameter mismatch that must be corrected before comparison
 
@@ -151,8 +189,10 @@ set_kij(1, 2, -0.055, 0.0)
 ```
 
 and requires `get_kij(1,2)` to return that exact matched pair before any flash is
-run. This is parameter alignment, not fitting: `-0.055` is the existing
-literature parameter already frozen by the repository before this comparison.
+run. The successful hosted run read back `[-0.055, 0.0]`.
+
+This is parameter alignment, not fitting: `-0.055` is the existing literature
+parameter already frozen by the repository before this comparison.
 
 ## Oracle state construction
 
@@ -184,22 +224,51 @@ The generator is
 Python standard-library modules only; it does not import MPMC_HNU production or
 test code.
 
+## First hosted ThermoPack oracle
+
+GitHub Actions run `35199029126`, job `Pinned ThermoPack SRK-CPA oracle`, built
+ThermoPack from the pinned source on `ubuntu-24.04` with GNU Fortran 13.3.0,
+found the explicitly installed system BLAS/LAPACK, installed the just-built
+library into the pinned Python wrapper, and completed the independent generator
+successfully.
+
+All five states returned ThermoPack's `TWOPH` code. The authoritative first
+external oracle is frozen in:
+
+`tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json`
+
+For review convenience, the methanol coordinates are:
+
+| T / K | P / Pa | z(MeOH) | beta vapor | x(MeOH), ThermoPack liquid | y(MeOH), ThermoPack vapor |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 333.15 | 39223 | 0.20888 | 0.10738223215342646 | 0.16639651180346363 | 0.5620251679095918 |
+| 333.15 | 48852 | 0.34294 | 0.09581684497724538 | 0.30650048190367624 | 0.6868043638043740 |
+| 333.15 | 56652 | 0.47891 | 0.08146237011395754 | 0.45339273376877043 | 0.7666326529551806 |
+| 333.15 | 63998 | 0.6277900000000001 | 0.09959028077373185 | 0.6049928945339633 | 0.8339018331263911 |
+| 333.15 | 72832 | 0.79125 | 0.05296937300010204 | 0.7846347841230040 | 0.9095223465448451 |
+
+For every row, reconstructing the supplied binary feed from ThermoPack's own
+`beta_liquid`, `beta_vapor`, liquid composition and vapor composition produced a
+maximum absolute material-balance residual printed as `0.0` at Python double
+precision. This validates extraction of the external result; it is not yet an
+MPMC_HNU parity test.
+
 ## Reproduction gate
 
 `.github/workflows/cpa_thermopack_oracle.yml` runs on an official
 `ubuntu-24.04` hosted runner and:
 
 1. checks out the MPMC_HNU PR;
-2. clones `thermotools/thermopack`;
-3. detaches exactly at `d68c794c7342bfc6938eb424a1fbb88b7780b738`;
-4. builds the pinned ThermoPack source in Release mode with its documented CMake
-   path;
-5. configures the upstream Python wrapper;
-6. runs the independent generator.
+2. installs the open-source BLAS/LAPACK development prerequisites required by
+   ThermoPack's documented CMake path;
+3. clones `thermotools/thermopack`;
+4. detaches exactly at `d68c794c7342bfc6938eb424a1fbb88b7780b738`;
+5. builds the pinned ThermoPack source in Release mode;
+6. configures the Python wrapper around that just-built `libthermopack.so`;
+7. runs the independent generator.
 
-The numerical oracle is frozen into the repository only after this hosted run
-succeeds. A failed external build, parameter read-back, two-phase classification,
-or material-balance extraction is a blocker; no MPMC_HNU production change is
+A failed external build, parameter read-back, two-phase classification, or
+material-balance extraction is a blocker; no MPMC_HNU production change is
 permitted in this slice to work around it.
 
 ## Source chain
@@ -207,13 +276,18 @@ permitted in this slice to work around it.
 ThermoPack pinned sources used by the mapping audit:
 
 - `addon/pycThermopack/thermopack/cpa.py` — SRK-CPA initialization,
-  `set_pure_params`, `get_pure_params`, `set_kij`, `get_kij`, formulation switch;
+  `set_pure_params`, `get_pure_params`, `set_kij`, `get_kij`, and the pinned
+  formulation-binding defect;
+- `src/saft_interface.f90` — `setCPAformulation` Fortran logical signature and
+  CPA database-to-runtime setup;
 - `src/saft_rdf.f90` — simplified `1/(1-1.9 eta)` RDF;
 - `docs/memo/CPA/cpa.tex` — CPA association equation and CR-1 rules;
 - `fluids/Methanol.json` — methanol CPA pure parameters / 2B scheme;
 - `fluids/Water.json` — water CPA pure parameters / 4C scheme;
 - `binaries/CPA.json` — MEOH/H2O default binary record and combining rules;
-- `addon/pycThermopack/thermopack/utils.py` — TP `FlashResult` fields.
+- `addon/pycThermopack/thermopack/utils.py` — TP `FlashResult` fields;
+- root and `src/CMakeLists.txt` — source build and installation of the built
+  shared library into the Python wrapper directory.
 
 MPMC_HNU source chain remains the already documented Kontogeorgis/Folas/Kurihara
 chain in `cpa_physical_validation.md` and
@@ -221,8 +295,8 @@ chain in `cpa_physical_validation.md` and
 
 ## Explicit non-claims
 
-This mapping proves only that a formulation-matched **two-phase** external oracle
-can be generated without changing the production CPA implementation. It does not
-yet prove MPMC_HNU/ThermoPack numerical parity, does not establish CPA VLLE
-accuracy, does not promote a numerical root side to physical morphology, and does
-not alter `global_stability_proven=false`.
+This mapping and frozen oracle establish a reproducible, formulation-matched
+**two-phase external reference** without changing the production CPA
+implementation. They do **not** yet prove MPMC_HNU/ThermoPack numerical parity,
+do not establish CPA VLLE accuracy, do not promote a numerical root side to
+physical morphology, and do not alter `global_stability_proven=false`.
