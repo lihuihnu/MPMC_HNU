@@ -49,12 +49,12 @@ constexpr std::array<ExperimentalPoint, 9> experimental_points{{
     {373.15, 45.60, 0.0076},
 }};
 
-// These are deliberately absolute mole-fraction budgets. They are wide enough
-// to test the published corrected-original SW92 model rather than refit it to
-// this independent 1981 dataset, but tight enough to catch coefficient/routing,
-// unit-conversion, phase-selection, or order-of-magnitude regressions.
-constexpr double max_absolute_error_budget = 0.0025;
-constexpr double mean_absolute_error_budget = 0.0015;
+// Absolute mole-fraction regression budgets frozen after the independent-data
+// audit. No SW92 coefficient or solver tolerance is fitted to these measurements.
+// The max gate is 0.15 mol% absolute composition and the mean gate is 0.10 mol%.
+// These are model-regression envelopes, not claims about experimental uncertainty.
+constexpr double max_absolute_error_budget = 0.0015;
+constexpr double mean_absolute_error_budget = 0.0010;
 
 void require(bool condition, std::string_view message) {
     if (!condition) { throw std::runtime_error(std::string(message)); }
