@@ -2,6 +2,7 @@
 #include <mpmc/ad/runtime_differentiate.hpp>
 #include <mpmc/thermodynamics/cpa_residual_helmholtz.hpp>
 
+#include "cpa_thermopack_phase_kernel_generated.hpp"
 #include "test_support.hpp"
 
 #include <algorithm>
@@ -16,11 +17,13 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
 namespace ad = mpmc::ad;
 namespace th = mpmc::thermodynamics;
+namespace external = cpa_thermopack_phase_kernel;
 
 void require(bool condition, const std::string& message) {
     if (!condition) { throw std::runtime_error(message); }
@@ -55,6 +58,23 @@ struct TemperatureDerivatives {
     double cubic{};
     double association{};
     double total{};
+};
+
+struct TemperatureCase {
+    const char* label{};
+    double temperature_k{};
+    double rho{};
+    double methanol_fraction{};
+};
+
+struct TemperatureCaseResult {
+    TemperatureDerivatives ad_normal{};
+    TemperatureDerivatives fd_normal{};
+    double max_abs_association_value{};
+    double max_abs_cubic_delta{};
+    double max_abs_association_delta{};
+    double max_abs_total_delta{};
+    double max_abs_order_delta{};
 };
 
 double direct_association_value(
@@ -172,16 +192,21 @@ TemperatureDerivatives central_difference(
         (plus.total - minus.total) / denominator};
 }
 
-void run_temperature_derivative_regression() {
-    constexpr double temperature_k = cpa_physical_test::temperature_k;
-    constexpr double rho = 200.0;
-    constexpr double methanol_fraction = 0.35;
-    constexpr double step_k = 0.005;
-    constexpr double cubic_tolerance_per_k = 1.0e-10;
-    constexpr double association_tolerance_per_k = 1.0e-9;
-    constexpr double total_tolerance_per_k = 1.0e-9;
-    constexpr double order_tolerance_per_k = 1.0e-12;
+TemperatureCaseResult verify_temperature_case(
+    const TemperatureCase& test_case,
+    double step_k,
+    double cubic_tolerance_per_k,
+    double association_tolerance_per_k,
+    double total_tolerance_per_k,
+    double order_tolerance_per_k) {
     constexpr std::array<bool, 2> swapped_orders{{false, true}};
+    require(test_case.temperature_k > step_k,
+            "temperature-derivative case requires T > h");
+    require(test_case.rho > 0.0 && std::isfinite(test_case.rho),
+            "temperature-derivative case requires positive finite density");
+    require(test_case.methanol_fraction >= 0.0 &&
+                test_case.methanol_fraction <= 1.0,
+            "temperature-derivative case requires valid methanol fraction");
 
     std::array<TemperatureDerivatives, 2> ad_by_order{};
     std::array<TemperatureDerivatives, 2> fd_by_order{};
@@ -195,13 +220,13 @@ void run_temperature_derivative_regression() {
         const bool swapped = swapped_orders[order_index];
         const auto parameters = cpa_physical_test::parameters(swapped);
         const auto composition = cpa_physical_test::composition(
-            methanol_fraction, swapped);
+            test_case.methanol_fraction, swapped);
         const std::vector<double> mole_numbers(
             composition.begin(), composition.end());
-        const double volume_m3 = 1.0 / rho;
+        const double volume_m3 = 1.0 / test_case.rho;
 
         const auto base_association = th::solve_cpa_association(
-            temperature_k, rho, composition, parameters);
+            test_case.temperature_k, test_case.rho, composition, parameters);
         require(base_association.converged(),
                 "temperature-derivative base association did not converge");
         max_abs_association_value = std::max(
@@ -210,12 +235,14 @@ void run_temperature_derivative_regression() {
                 mole_numbers, base_association)));
 
         const auto ad_values = ad_temperature_derivatives(
-            temperature_k, volume_m3, mole_numbers,
+            test_case.temperature_k, volume_m3, mole_numbers,
             parameters, base_association);
         const auto plus = direct_values_at_temperature(
-            temperature_k + step_k, volume_m3, mole_numbers, parameters);
+            test_case.temperature_k + step_k,
+            volume_m3, mole_numbers, parameters);
         const auto minus = direct_values_at_temperature(
-            temperature_k - step_k, volume_m3, mole_numbers, parameters);
+            test_case.temperature_k - step_k,
+            volume_m3, mole_numbers, parameters);
         const auto fd_values = central_difference(plus, minus, step_k);
 
         ad_by_order[order_index] = ad_values;
@@ -281,13 +308,92 @@ void run_temperature_derivative_regression() {
     }
 
     std::cout << std::setprecision(17)
-              << "CPA_HELMHOLTZ_TEMPERATURE_DERIVATIVE_OK"
-              << " component_orders=2"
-              << " rho=" << rho
+              << "CPA_HELMHOLTZ_TEMPERATURE_CASE_OK"
+              << " label=" << test_case.label
+              << " rho=" << test_case.rho
+              << " xMeOH=" << test_case.methanol_fraction
               << " step_k=" << step_k
               << " max_abs_assoc_F=" << max_abs_association_value
               << " dF_dT_ad=" << ad_by_order[0].total
               << " dF_dT_fd=" << fd_by_order[0].total
+              << " max_abs_d_cubic=" << max_abs_cubic_delta
+              << " max_abs_d_assoc=" << max_abs_association_delta
+              << " max_abs_d_total=" << max_abs_total_delta
+              << " max_abs_order_delta=" << max_abs_order_delta
+              << '\n';
+
+    return {
+        ad_by_order[0],
+        fd_by_order[0],
+        max_abs_association_value,
+        max_abs_cubic_delta,
+        max_abs_association_delta,
+        max_abs_total_delta,
+        max_abs_order_delta};
+}
+
+void run_temperature_derivative_regression() {
+    constexpr double step_k = 0.005;
+    constexpr double cubic_tolerance_per_k = 1.0e-10;
+    constexpr double association_tolerance_per_k = 1.0e-9;
+    constexpr double total_tolerance_per_k = 1.0e-9;
+    constexpr double order_tolerance_per_k = 1.0e-12;
+
+    const auto& oracle_state = external::states[2];
+    require_abs(
+        oracle_state.pressure_pa, 56652.0, 0.0,
+        "temperature-derivative oracle row is no longer the frozen 56.652 kPa state");
+
+    const std::array<TemperatureCase, 3> cases{{
+        {"moderate", cpa_physical_test::temperature_k, 200.0, 0.35},
+        {"oracle_liquid_56652",
+         oracle_state.temperature_k,
+         oracle_state.liquid.molar_density_mol_per_m3,
+         oracle_state.liquid.composition_methanol},
+        {"oracle_vapor_56652",
+         oracle_state.temperature_k,
+         oracle_state.vapor.molar_density_mol_per_m3,
+         oracle_state.vapor.composition_methanol}}};
+
+    double max_abs_association_value = 0.0;
+    double max_abs_cubic_delta = 0.0;
+    double max_abs_association_delta = 0.0;
+    double max_abs_total_delta = 0.0;
+    double max_abs_order_delta = 0.0;
+    double min_rho = std::numeric_limits<double>::infinity();
+    double max_rho = 0.0;
+
+    for (const auto& test_case : cases) {
+        const auto result = verify_temperature_case(
+            test_case,
+            step_k,
+            cubic_tolerance_per_k,
+            association_tolerance_per_k,
+            total_tolerance_per_k,
+            order_tolerance_per_k);
+        max_abs_association_value = std::max(
+            max_abs_association_value, result.max_abs_association_value);
+        max_abs_cubic_delta = std::max(
+            max_abs_cubic_delta, result.max_abs_cubic_delta);
+        max_abs_association_delta = std::max(
+            max_abs_association_delta, result.max_abs_association_delta);
+        max_abs_total_delta = std::max(
+            max_abs_total_delta, result.max_abs_total_delta);
+        max_abs_order_delta = std::max(
+            max_abs_order_delta, result.max_abs_order_delta);
+        min_rho = std::min(min_rho, test_case.rho);
+        max_rho = std::max(max_rho, test_case.rho);
+    }
+
+    std::cout << std::setprecision(17)
+              << "CPA_HELMHOLTZ_TEMPERATURE_DERIVATIVE_OK"
+              << " states=" << cases.size()
+              << " component_orders=2"
+              << " step_k=" << step_k
+              << " oracle_pressure_pa=" << oracle_state.pressure_pa
+              << " rho_min=" << min_rho
+              << " rho_max=" << max_rho
+              << " max_abs_assoc_F=" << max_abs_association_value
               << " max_abs_d_cubic=" << max_abs_cubic_delta
               << " max_abs_d_assoc=" << max_abs_association_delta
               << " max_abs_d_total=" << max_abs_total_delta
