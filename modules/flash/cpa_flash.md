@@ -13,6 +13,71 @@ This increment connects the existing CPA PT phase-property and stability kernels
 
 It does **not** add morphology classification, mathematical global-stability certification, frontend/service transport, flash sensitivities, or physics behavior.
 
+## External-reference completion contract
+
+The current CPA completion work uses **ThermoPack** as the primary independent
+open-source reference for the part of the problem that ThermoPack actually
+implements: CPA two-phase TP flash. The reference is pinned to
+`thermotools/thermopack` commit
+`d68c794c7342bfc6938eb424a1fbb88b7780b738` (2026-02-26), rather than to an
+unversioned installation. ThermoPack exposes SRK-CPA/PR-CPA and a
+`two_phase_tpflash` interface; its maintainers have separately stated that a
+three-phase VLLE flash routine is not currently provided.
+
+External parity therefore means **formulation-matched numerical agreement**, not
+bitwise identity and not a claim that two programs with different default
+parameters are interchangeable. Before a ThermoPack point is accepted as an
+oracle, the comparison must freeze and record all of the following on both sides:
+
+- SRK-CPA rather than PR-CPA or another cubic physical contribution;
+- the same CPA formulation/radial-distribution choice, including simplified CPA
+  where required to match the repository profile;
+- identical component identities and ordering;
+- identical pure `a0`, `b`, `c1`, association energies/volumes and site schemes;
+- identical physical `kij` values and every cross-association rule or explicit
+  cross-association parameter used to construct the model;
+- identical SI state, normalized overall composition and TP-flash specification;
+- the pinned ThermoPack revision, parameter reference and any non-default model
+  switches needed to reproduce the calculation.
+
+For matched two-phase states the authoritative parity evidence must compare, at
+minimum, accepted/single-phase status, phase count, mole phase fraction and both
+phase compositions. Where the external interface exposes the needed quantities,
+density/compressibility and fugacity-related observables should also be compared
+so that matching phase fractions cannot hide a thermodynamic-kernel error.
+Scientific tolerances must be declared from independent numerical/experimental
+accuracy evidence **before** changing production code to satisfy them; they may
+not be widened after seeing a failing result merely to make CI green.
+
+ThermoPack is not a three-phase oracle for this PR. The existing CPA max3 path may
+only acquire a physical VLLE correctness claim from a separate, source-complete
+literature or experimental reference that supplies a compatible CPA formulation,
+all required parameters and the three equilibrium phases. Until such an oracle
+exists, synthetic max3 tests remain structural evidence only.
+
+Performance is subordinate to correctness but is an explicit completion
+condition. Any hot-path optimization must preserve the same scientific results
+and conservative failure semantics. Performance claims require a pinned workload,
+compiler/build mode and repeated measurements against the current `main`
+baseline; no speedup is claimed from a single hosted-runner timing. The final CPA
+backend must avoid unnecessary per-iteration model reconstruction, unbounded
+allocation/retry behavior and duplicate phase-property work that can be removed
+without changing the model or acceptance gates.
+
+This completion work must not obtain parity by copying ThermoPack implementation
+code, fitting CPA parameters to ThermoPack outputs, silently changing the
+repository CPA profile, relaxing material-balance/fugacity/TPD gates, converting
+`indeterminate` states to success, or assigning physical phase identities from a
+numerical density-root side.
+
+Reference entry points:
+
+- ThermoPack repository: <https://github.com/thermotools/thermopack>
+- pinned reference commit: <https://github.com/thermotools/thermopack/commit/d68c794c7342bfc6938eb424a1fbb88b7780b738>
+- CPA API documentation: <https://thermotools.github.io/thermopack/vcurrent/cpa_methods.html>
+- TP-flash API documentation: <https://thermotools.github.io/thermopack/vcurrent/thermo_methods.html>
+- ThermoPack three-phase VLLE scope statement: <https://github.com/thermotools/thermopack/discussions/203>
+
 ## CPA phase/root semantics
 
 CPA pressure roots are obtained from the existing finite density-root scan. Stability always evaluates the minimum-Gibbs mechanically admissible root at the current composition.
