@@ -44,9 +44,7 @@ th::Pr76Phase<double> classic_pr_model_with_sw_inventory() {
     input.model_id = std::string(th::pr76_profile);
     input.dataset_id = "pt-service-pr-sw-interface-fixture";
     input.revision = "v1";
-    input.applicability = {
-        std::nullopt, std::nullopt,
-        binary_source};
+    input.applicability = {std::nullopt, std::nullopt, binary_source};
 
     for (const auto* spec : specs) {
         catalog.push_back({spec->id, spec->display, th::ComponentKind::pure,
@@ -110,6 +108,17 @@ void require_role_neutral_response(
     }
 }
 
+void require_same_inventory(const rt::PtRuntimeComponentInventory& first,
+                            const rt::PtRuntimeComponentInventory& second) {
+    require(first.components.size() == second.components.size(),
+            "switching EOS backend changed component inventory size");
+    for (std::size_t i = 0; i < first.components.size(); ++i) {
+        require(first.components[i].component_id == second.components[i].component_id &&
+                    first.components[i].feed_index == second.components[i].feed_index,
+                "switching EOS backend changed the public component inventory");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -151,9 +160,9 @@ int main() {
         const auto sw_response = service.solve(request);
         require_role_neutral_response(sw_response, "sw92");
 
-        require(pr_response.result->provenance.backend.component_inventory.components ==
-                    sw_response.result->provenance.backend.component_inventory.components,
-                "switching EOS backend changed the public component inventory");
+        require_same_inventory(
+            pr_response.result->provenance.backend.component_inventory,
+            sw_response.result->provenance.backend.component_inventory);
         return 0;
     } catch (const std::exception&) {
         return 1;
