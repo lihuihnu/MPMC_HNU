@@ -62,6 +62,81 @@ struct Derived {
     std::vector<double> ln_phi;
 };
 
+Derived derive_extensive(
+    double temperature_k,
+    double volume_m3,
+    std::span<const double> mole_numbers,
+    const th::CpaParameterSet& parameters,
+    const th::CpaAssociationResult& association) {
+    require(mole_numbers.size() == parameters.size(),
+            "Helmholtz extensive adapter mole-number dimension mismatch");
+    require(volume_m3 > 0.0 && std::isfinite(volume_m3),
+            "Helmholtz extensive adapter requires positive finite volume");
+
+    const double total_moles = std::accumulate(
+        mole_numbers.begin(), mole_numbers.end(), 0.0);
+    require(total_moles > 0.0 && std::isfinite(total_moles),
+            "Helmholtz extensive adapter requires positive finite total moles");
+
+    std::vector<double> inputs;
+    inputs.reserve(mole_numbers.size() + 1U);
+    inputs.push_back(volume_m3);
+    inputs.insert(inputs.end(), mole_numbers.begin(), mole_numbers.end());
+
+    using Number = ad::Dual<double, 4>;
+    ad::RuntimeJacobianWorkspace<double, 4> workspace;
+    const auto callback = [&](std::span<const Number> variables,
+                              std::span<Number> outputs) {
+        const Number temperature{temperature_k};
+        const Number& volume = variables.front();
+        const auto active_mole_numbers = variables.subspan(1U);
+        outputs[0] = th::cpa_cubic_residual_helmholtz_reduced(
+            temperature, volume, active_mole_numbers, parameters);
+        outputs[1] = th::cpa_association_q_reduced(
+            temperature, volume, active_mole_numbers,
+            parameters, association);
+        outputs[2] = th::cpa_residual_helmholtz_reduced(
+            temperature, volume, active_mole_numbers,
+            parameters, association);
+    };
+
+    const auto result = ad::value_and_jacobian_runtime<4>(
+        callback, std::span<const double>{inputs}, 3U, workspace,
+        {1024U, 8U, 8192U});
+    const std::size_t input_count = result.input_count;
+    const auto derivative = [&](std::size_t output, std::size_t input) {
+        return result.jacobian[output * input_count + input];
+    };
+
+    const double rt = th::cpa_gas_constant_j_per_mol_k * temperature_k;
+    const double ideal_pressure = total_moles * rt / volume_m3;
+
+    Derived derived;
+    derived.cubic_value = result.values[0];
+    derived.association_q_value = result.values[1];
+    derived.total_value = result.values[2];
+    derived.pressure_physical_pa = ideal_pressure - rt * derivative(0U, 0U);
+    derived.pressure_association_pa = -rt * derivative(1U, 0U);
+    derived.pressure_total_pa = ideal_pressure - rt * derivative(2U, 0U);
+    derived.mu_cubic.resize(parameters.size());
+    derived.mu_association.resize(parameters.size());
+    derived.mu_total.resize(parameters.size());
+    derived.ln_phi.resize(parameters.size());
+
+    const double z = derived.pressure_total_pa * volume_m3 /
+                     (total_moles * rt);
+    require(z > 0.0 && std::isfinite(z),
+            "Helmholtz extensive adapter produced invalid Z");
+    const double log_z = std::log(z);
+    for (std::size_t i = 0U; i < parameters.size(); ++i) {
+        derived.mu_cubic[i] = derivative(0U, i + 1U);
+        derived.mu_association[i] = derivative(1U, i + 1U);
+        derived.mu_total[i] = derivative(2U, i + 1U);
+        derived.ln_phi[i] = derived.mu_total[i] - log_z;
+    }
+    return derived;
+}
+
 Derived derive(
     double target_pressure_pa,
     double temperature_k,
@@ -465,6 +540,118 @@ void run_binary_pure_endpoint_limit() {
               << '\n';
 }
 
+void run_homogeneous_scaling_limit() {
+    constexpr double temperature_k = cpa_physical_test::temperature_k;
+    constexpr double rho = 200.0;
+    constexpr double methanol_fraction = 0.35;
+    constexpr std::array<double, 2> scales{{0.125, 8.0}};
+    constexpr std::array<bool, 2> swapped_orders{{false, true}};
+    constexpr double value_tolerance = 1.0e-10;
+    constexpr double pressure_tolerance_pa = 5.0e-6;
+    constexpr double mu_tolerance = 1.0e-10;
+    constexpr double lnphi_tolerance = 1.0e-10;
+
+    double max_value_delta = 0.0;
+    double max_pressure_delta = 0.0;
+    double max_mu_delta = 0.0;
+    double max_lnphi_delta = 0.0;
+    double max_abs_association_q = 0.0;
+
+    for (const bool swapped : swapped_orders) {
+        const auto parameters = cpa_physical_test::parameters(swapped);
+        const auto composition = cpa_physical_test::composition(
+            methanol_fraction, swapped);
+        const auto state = th::evaluate_cpa_phase_at_density(
+            temperature_k, rho, composition, parameters);
+        require(state.pressure_pa > 0.0,
+                "homogeneous-scaling base state must have positive pressure");
+        require(state.association.converged(),
+                "homogeneous-scaling association did not converge");
+
+        const std::vector<double> base_moles(
+            composition.begin(), composition.end());
+        const double base_volume = 1.0 / rho;
+        const auto base = derive_extensive(
+            temperature_k, base_volume, base_moles,
+            parameters, state.association);
+        max_abs_association_q = std::max(
+            max_abs_association_q, std::abs(base.association_q_value));
+
+        for (const double scale : scales) {
+            std::vector<double> scaled_moles = base_moles;
+            for (auto& value : scaled_moles) { value *= scale; }
+            const auto scaled = derive_extensive(
+                temperature_k, scale * base_volume, scaled_moles,
+                parameters, state.association);
+
+            for (const auto& values : std::array<std::pair<double, double>, 3>{{
+                     {scaled.cubic_value, scale * base.cubic_value},
+                     {scaled.association_q_value,
+                      scale * base.association_q_value},
+                     {scaled.total_value, scale * base.total_value}}}) {
+                const double delta = std::abs(values.first - values.second);
+                max_value_delta = std::max(max_value_delta, delta);
+                require_abs(
+                    values.first, values.second,
+                    value_tolerance + roundoff(values.first) +
+                        roundoff(values.second),
+                    "homogeneous scaling changed first-degree Helmholtz behavior");
+            }
+
+            for (const auto& values : std::array<std::pair<double, double>, 3>{{
+                     {scaled.pressure_physical_pa, base.pressure_physical_pa},
+                     {scaled.pressure_association_pa,
+                      base.pressure_association_pa},
+                     {scaled.pressure_total_pa, base.pressure_total_pa}}}) {
+                const double delta = std::abs(values.first - values.second);
+                max_pressure_delta = std::max(max_pressure_delta, delta);
+                require_abs(
+                    values.first, values.second,
+                    pressure_tolerance_pa + roundoff(values.first) +
+                        roundoff(values.second),
+                    "homogeneous scaling changed intensive pressure");
+            }
+
+            for (std::size_t i = 0U; i < parameters.size(); ++i) {
+                for (const auto& values : std::array<std::pair<double, double>, 3>{{
+                         {scaled.mu_cubic[i], base.mu_cubic[i]},
+                         {scaled.mu_association[i], base.mu_association[i]},
+                         {scaled.mu_total[i], base.mu_total[i]}}}) {
+                    const double delta = std::abs(values.first - values.second);
+                    max_mu_delta = std::max(max_mu_delta, delta);
+                    require_abs(
+                        values.first, values.second,
+                        mu_tolerance + roundoff(values.first) +
+                            roundoff(values.second),
+                        "homogeneous scaling changed intensive residual chemical potential");
+                }
+                const double lnphi_delta = std::abs(
+                    scaled.ln_phi[i] - base.ln_phi[i]);
+                max_lnphi_delta = std::max(max_lnphi_delta, lnphi_delta);
+                require_abs(
+                    scaled.ln_phi[i], base.ln_phi[i],
+                    lnphi_tolerance + roundoff(scaled.ln_phi[i]) +
+                        roundoff(base.ln_phi[i]),
+                    "homogeneous scaling changed intensive ln(phi)");
+            }
+        }
+    }
+
+    require(max_abs_association_q > 1.0e-8,
+            "homogeneous-scaling regression did not exercise association");
+    std::cout << std::setprecision(17)
+              << "CPA_HELMHOLTZ_EXTENSIVITY_OK"
+              << " component_orders=2"
+              << " scales=2"
+              << " rho=" << rho
+              << " max_abs_assoc_Q=" << max_abs_association_q
+              << " max_abs_dF_homogeneity=" << max_value_delta
+              << " max_abs_dP_pa=" << max_pressure_delta
+              << " max_abs_dmu_over_rt=" << max_mu_delta
+              << " max_abs_dlnphi=" << max_lnphi_delta
+              << '\n';
+}
+
 void run_zero_association_limits() {
     constexpr double temperature_k = cpa_physical_test::temperature_k;
     const auto& phase = external::states[2].vapor;
@@ -739,6 +926,7 @@ int main() {
     try {
         run_pure_component_limit();
         run_binary_pure_endpoint_limit();
+        run_homogeneous_scaling_limit();
         run_zero_association_limits();
         run_dilute_gas_limit();
         run_component_permutation_limit();
