@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 namespace fl = mpmc::flash;
@@ -15,6 +16,13 @@ namespace th = mpmc::thermodynamics;
 
 void require(bool value, const char* message) {
     if (!value) { throw std::runtime_error(message); }
+}
+
+fl::PtSplitOptions literature_initialized_options() {
+    fl::PtSplitOptions options;
+    options.initial_stability.automatic_starts = false;
+    options.final_stability.automatic_starts = false;
+    return options;
 }
 
 } // namespace
@@ -34,21 +42,34 @@ int main() {
         std::size_t accepted = 0U;
 
         std::cout << std::setprecision(17);
-        for (const auto& oracle : cpa_thermopack_oracle::states) {
+        for (std::size_t index = 0U;
+             index < cpa_thermopack_oracle::states.size(); ++index) {
+            const auto& oracle = cpa_thermopack_oracle::states[index];
+            const auto& experimental = cpa_physical_test::points()[index];
             require(oracle.phase_code == 0,
                     "frozen ThermoPack state no longer records a two-phase result");
             require(std::abs(oracle.temperature_k -
                              cpa_physical_test::temperature_k) <= 1.0e-12,
                     "frozen ThermoPack state temperature no longer matches the CPA fixture");
+            require(std::abs(oracle.pressure_pa - experimental.pressure_pa) <= 1.0e-9,
+                    "frozen ThermoPack pressure no longer matches the literature fixture");
 
             const auto feed = cpa_physical_test::composition(oracle.feed_methanol);
+            const auto fixture_feed = cpa_physical_test::feed(experimental, false);
+            require(std::abs(feed.at(0) - fixture_feed.at(0)) <= 1.0e-14 &&
+                        std::abs(feed.at(1) - fixture_feed.at(1)) <= 1.0e-14,
+                    "frozen ThermoPack feed no longer matches the pre-existing physical fixture");
 
-            // This is deliberately an independent MPMC_HNU solve.  The frozen
-            // ThermoPack liquid/vapour compositions and phase fractions are not
-            // supplied as starts or solver hints.  Only the shared T/P/z state is
-            // passed to the current production two-phase CPA path.
+            // ThermoPack outputs remain comparison-only.  MPMC_HNU is initialized
+            // with the pre-existing Kurihara experimental x/y starts used by the
+            // repository's physical-validation regression, never with ThermoPack
+            // x/y/beta.  This keeps the comparison independent while avoiding the
+            // known >300 s five-state cost of the current no-supplied-start path.
+            const auto starts = cpa_physical_test::starts(experimental, false);
+            const std::vector<std::vector<double>> final_starts{feed};
             const auto result = fl::solve_cpa_pt_vle(
-                oracle.pressure_pa, oracle.temperature_k, feed, evaluator);
+                oracle.pressure_pa, oracle.temperature_k, feed, evaluator,
+                literature_initialized_options(), starts, final_starts);
 
             require(result.solution.status ==
                         fl::PtSplitStatus::two_phase_no_instability_found &&
@@ -56,7 +77,7 @@ int main() {
                     result.solution.final_stability.has_value() &&
                     result.solution.final_stability->status ==
                         fl::StabilityStatus::no_instability_found,
-                    "MPMC_HNU did not independently close the frozen ThermoPack state as two phase");
+                    "MPMC_HNU did not close the frozen ThermoPack state as two phase");
 
             const auto& point = *result.solution.candidate();
             require(point.fugacity_norm <=
@@ -121,6 +142,7 @@ int main() {
         std::cout
             << "CPA_THERMOPACK_DELTA_SUMMARY"
             << " states=" << accepted
+            << " initialization=preexisting_Kurihara_xy_not_ThermoPack"
             << " mean_abs_d_betaV=" << sum_abs_dbeta_v / count
             << " max_abs_d_betaV=" << max_abs_dbeta_v
             << " mean_abs_d_xMeOH=" << sum_abs_dx / count
