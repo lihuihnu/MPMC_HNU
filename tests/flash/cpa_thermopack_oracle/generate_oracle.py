@@ -2,7 +2,7 @@
 """Generate an independent ThermoPack CPA TP-flash oracle.
 
 This script intentionally imports only ThermoPack and Python standard-library
-modules.  It does not import MPMC_HNU production or test code, so the generated
+modules. It does not import MPMC_HNU production or test code, so the generated
 values cannot be circularly derived from the implementation under test.
 
 The caller must provide ThermoPack built from the pinned revision recorded in
@@ -12,6 +12,7 @@ PR #115 / cpa_thermopack_mapping.md on PYTHONPATH / the active environment.
 from __future__ import annotations
 
 import argparse
+from ctypes import POINTER, byref, c_int
 import json
 import math
 from pathlib import Path
@@ -62,6 +63,27 @@ def _require_close(actual: float, expected: float, message: str) -> None:
         raise RuntimeError(f"{message}: expected {expected!r}, got {actual!r}")
 
 
+def _set_pinned_cpa_formulation(eos: SRK_CPA) -> None:
+    """Call pinned ThermoPack's formulation symbol with its Fortran logical ABI.
+
+    The pinned Python cpa.py creates c_int logical values but declares this one
+    routine's ctypes arguments as POINTER(c_bool), causing ctypes to reject the
+    call before entering ThermoPack. Other pinned ThermoPack Python interfaces
+    pass default Fortran LOGICAL values as c_int. The Fortran implementation of
+    setCPAformulation itself declares ordinary LOGICAL arguments.
+
+    We therefore call the *same loaded pinned ThermoPack symbol* directly with
+    c_int pointers. No upstream source is patched and no CPA computation is
+    reimplemented here.
+    """
+    eos.activate()
+    simplified_c = c_int(eos._true_int_value)
+    elliot_c = c_int(0)
+    eos.s_set_cpa_formulation.argtypes = [POINTER(c_int), POINTER(c_int)]
+    eos.s_set_cpa_formulation.restype = None
+    eos.s_set_cpa_formulation(byref(simplified_c), byref(elliot_c))
+
+
 def configure_matched_model() -> SRK_CPA:
     # Start from the pinned ThermoPack component records because they also own
     # the 2B/4C association topology and CR-1 combining-rule structure.
@@ -70,7 +92,7 @@ def configure_matched_model() -> SRK_CPA:
 
     # Freeze the same formulation as MPMC_HNU: simplified RDF and STANDARD
     # association mixing (CR-1), not Elliott's Delta combining rule.
-    eos.set_cpa_formulation(True, False)
+    _set_pinned_cpa_formulation(eos)
 
     # Do not rely on database defaults even when the current values match.
     # Explicitly install and then read back the exact pure parameter vector.
@@ -83,8 +105,8 @@ def configure_matched_model() -> SRK_CPA:
             _require_close(float(actual), float(expected),
                            f"pure parameter mismatch for {record['component']}")
 
-    # ThermoPack's DEFAULT MEOH/H2O binary record uses kij_a=-0.09.  The MPMC
-    # literature fixture at 333.15 K uses Folas CR-1 kij_a=-0.055.  Override the
+    # ThermoPack's DEFAULT MEOH/H2O binary record uses kij_a=-0.09. The MPMC
+    # literature fixture at 333.15 K uses Folas CR-1 kij_a=-0.055. Override the
     # cubic interaction explicitly; kij_eps=0 preserves the CR-1 arithmetic
     # epsilon combination. The database beta combining rule remains GEOMETRIC.
     eos.set_kij(1, 2, Kij_METHANOL_WATER, 0.0)
@@ -151,6 +173,7 @@ def generate() -> dict:
             "software": "thermotools/thermopack",
             "commit": THERMOPACK_COMMIT,
             "api": "SRK_CPA + two_phase_tpflash",
+            "formulation_binding": "pinned setCPAformulation symbol via c_int Fortran LOGICAL ABI",
         },
         "model": {
             "components": ["MEOH", "H2O"],
