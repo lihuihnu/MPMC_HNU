@@ -64,6 +64,19 @@ def _vector(obj, size: int) -> list[float]:
     return result
 
 
+def _require_tp_root_consistency(actual: float, expected: float, message: str) -> None:
+    """Check a value at ThermoPack's own TP volume using its root-solver scale.
+
+    Pinned `saft_volume_solver` accepts pressure closure at
+    `1e8 * machine_prec * P`, about 2.22e-8 relative for binary64.  The audit
+    uses 3e-8 relative as a direct representation of that upstream convergence
+    contract.  This is NOT an MPMC/ThermoPack parity tolerance.
+    """
+    scale = max(1.0, abs(actual), abs(expected))
+    if not math.isfinite(actual) or abs(actual - expected) > 3.0e-8 * scale:
+        raise RuntimeError(f"{message}: expected {expected!r}, got {actual!r}")
+
+
 def configure_nonassociating_shadow() -> SRK_CPA:
     """Build an SRK-identical CPA model with association Delta forced to zero."""
     eos = SRK_CPA("MEOH,H2O", mixing="vdW", alpha="Classic",
@@ -124,11 +137,13 @@ def phase_properties(full: SRK_CPA, shadow: SRK_CPA,
     ]
     association_pressure = pressure_total_tv - pressure_shadow_tv
 
-    _require_close(pressure_total_tv, pressure_pa,
-                   f"ThermoPack {phase_name} TP/TV pressure mismatch")
+    _require_tp_root_consistency(
+        pressure_total_tv, pressure_pa,
+        f"ThermoPack {phase_name} TP/TV pressure mismatch")
     z_from_volume = pressure_pa * volume / rt
-    _require_close(z, z_from_volume,
-                   f"ThermoPack {phase_name} Z/volume inconsistency")
+    _require_tp_root_consistency(
+        z, z_from_volume,
+        f"ThermoPack {phase_name} Z/volume inconsistency")
 
     return {
         "phase": phase_name,
@@ -190,6 +205,10 @@ def generate() -> dict:
             ],
             "decomposition": (
                 "full SRK-CPA minus association-Delta-zero shadow at identical T,V,n"
+            ),
+            "tp_root_consistency_relative_tolerance": 3.0e-8,
+            "tp_root_consistency_basis": (
+                "pinned saft_volume_solver pressure convergence: 1e8*machine_prec*P"
             ),
         },
         "model": frozen["model"],
