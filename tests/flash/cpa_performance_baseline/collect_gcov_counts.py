@@ -64,10 +64,18 @@ def normalize(path: str) -> str:
 
 
 def find_file(files: list[dict], relative: str) -> dict:
-    suffix = "/" + relative.replace("\\", "/")
-    matches = [item for item in files if normalize(item["file"]).endswith(suffix)]
+    normalized_relative = relative.replace("\\", "/")
+    suffix = "/" + normalized_relative
+    matches = []
+    for item in files:
+        candidate = normalize(item["file"])
+        if candidate == normalized_relative or candidate.endswith(suffix):
+            matches.append(item)
     if len(matches) != 1:
-        raise RuntimeError(f"expected one gcov file ending {suffix}, found {len(matches)}")
+        raise RuntimeError(
+            f"expected one gcov file matching {normalized_relative}, found "
+            f"{[item.get('file') for item in matches]}"
+        )
     return matches[0]
 
 
