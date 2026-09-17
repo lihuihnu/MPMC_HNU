@@ -1,0 +1,167 @@
+name: CPA flash performance audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
+      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
+      - 'tests/flash/cpa_physical_validation/test_support.hpp'
+      - 'tests/flash/cpa_performance_baseline/**'
+      - '.github/workflows/cpa_performance_audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-performance-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  paired-baseline:
+    name: main vs PR head / ubuntu-24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Record compared revisions and create main worktree
+        run: |
+          set -euo pipefail
+          git fetch origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse origin/main)"
+          main_root="${RUNNER_TEMP}/mpmc-main"
+          git worktree add --detach "${main_root}" "${main_sha}"
+          {
+            echo "CPA_PERF_HEAD_SHA=${head_sha}"
+            echo "CPA_PERF_MAIN_SHA=${main_sha}"
+            echo "CPA_PERF_MAIN_ROOT=${main_root}"
+          } >> "${GITHUB_ENV}"
+          echo "head=${head_sha}"
+          echo "main=${main_sha}"
+          clang++ --version | head -n 1
+          g++ --version | head -n 1
+          cmake --version | head -n 1
+
+      - name: Configure paired Clang Release binaries
+        run: |
+          set -euo pipefail
+          cmake -S tests/flash/cpa_performance_baseline \
+            -B build/cpa-perf-head \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DMPMC_SOURCE_ROOT="${GITHUB_WORKSPACE}"
+          cmake -S tests/flash/cpa_performance_baseline \
+            -B build/cpa-perf-main \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DMPMC_SOURCE_ROOT="${CPA_PERF_MAIN_ROOT}"
+
+      - name: Build paired Clang Release binaries
+        run: |
+          cmake --build build/cpa-perf-head --parallel 2
+          cmake --build build/cpa-perf-main --parallel 2
+
+      - name: Capture deterministic high-level solver counts
+        run: |
+          set -euo pipefail
+          mkdir -p build/cpa-perf-results
+          build/cpa-perf-main/mpmc_cpa_performance_baseline structure \
+            | tee build/cpa-perf-results/structure-main.log
+          build/cpa-perf-head/mpmc_cpa_performance_baseline structure \
+            | tee build/cpa-perf-results/structure-head.log
+
+      - name: Measure repeated micro hot-path timings
+        run: |
+          set -euo pipefail
+          log=build/cpa-perf-results/micro.log
+          : > "${log}"
+          for sample in 1 2 3 4 5; do
+            if (( sample % 2 == 1 )); then refs=(main head); else refs=(head main); fi
+            for ref in "${refs[@]}"; do
+              exe="build/cpa-perf-${ref}/mpmc_cpa_performance_baseline"
+              line="$("${exe}" micro)"
+              echo "ref=${ref} sample=${sample} ${line}" | tee -a "${log}"
+            done
+          done
+
+      - name: Measure repeated five-state full-flash timings
+        run: |
+          set -euo pipefail
+          log=build/cpa-perf-results/full.log
+          : > "${log}"
+          for sample in 1 2 3; do
+            if (( sample % 2 == 1 )); then refs=(main head); else refs=(head main); fi
+            for ref in "${refs[@]}"; do
+              exe="build/cpa-perf-${ref}/mpmc_cpa_performance_baseline"
+              line="$("${exe}" full)"
+              echo "ref=${ref} sample=${sample} ${line}" | tee -a "${log}"
+            done
+          done
+
+      - name: Configure paired GCC Release coverage counters
+        run: |
+          set -euo pipefail
+          cmake -S tests/flash/cpa_performance_baseline \
+            -B build/cpa-perf-head-coverage \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DMPMC_CPA_PERF_ENABLE_COVERAGE=ON \
+            -DMPMC_SOURCE_ROOT="${GITHUB_WORKSPACE}"
+          cmake -S tests/flash/cpa_performance_baseline \
+            -B build/cpa-perf-main-coverage \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DMPMC_CPA_PERF_ENABLE_COVERAGE=ON \
+            -DMPMC_SOURCE_ROOT="${CPA_PERF_MAIN_ROOT}"
+          cmake --build build/cpa-perf-head-coverage --parallel 2
+          cmake --build build/cpa-perf-main-coverage --parallel 2
+
+      - name: Count exact production hot-path executions with gcov
+        run: |
+          set -euo pipefail
+          build/cpa-perf-main-coverage/mpmc_cpa_performance_baseline structure \
+            > build/cpa-perf-results/coverage-workload-main.log
+          python3 tests/flash/cpa_performance_baseline/collect_gcov_counts.py \
+            --object-dir build/cpa-perf-main-coverage/CMakeFiles/mpmc_cpa_performance_baseline.dir \
+            --benchmark-source tests/flash/cpa_performance_baseline/benchmark.cpp \
+            --source-root "${CPA_PERF_MAIN_ROOT}" \
+            --label main \
+            --output build/cpa-perf-results/coverage-main.json
+
+          build/cpa-perf-head-coverage/mpmc_cpa_performance_baseline structure \
+            > build/cpa-perf-results/coverage-workload-head.log
+          python3 tests/flash/cpa_performance_baseline/collect_gcov_counts.py \
+            --object-dir build/cpa-perf-head-coverage/CMakeFiles/mpmc_cpa_performance_baseline.dir \
+            --benchmark-source tests/flash/cpa_performance_baseline/benchmark.cpp \
+            --source-root "${GITHUB_WORKSPACE}" \
+            --label head \
+            --output build/cpa-perf-results/coverage-head.json
+
+      - name: Summarize baseline without creating a performance gate
+        run: |
+          set -euo pipefail
+          python3 tests/flash/cpa_performance_baseline/summarize.py \
+            --full-log build/cpa-perf-results/full.log \
+            --micro-log build/cpa-perf-results/micro.log \
+            --main-structure build/cpa-perf-results/structure-main.log \
+            --head-structure build/cpa-perf-results/structure-head.log \
+            --main-coverage build/cpa-perf-results/coverage-main.json \
+            --head-coverage build/cpa-perf-results/coverage-head.json \
+            --main-sha "${CPA_PERF_MAIN_SHA}" \
+            --head-sha "${CPA_PERF_HEAD_SHA}" \
+            --markdown build/cpa-perf-results/report.md \
+            --json build/cpa-perf-results/report.json \
+            | tee build/cpa-perf-results/summary.log
+          cat build/cpa-perf-results/report.md >> "${GITHUB_STEP_SUMMARY}"
