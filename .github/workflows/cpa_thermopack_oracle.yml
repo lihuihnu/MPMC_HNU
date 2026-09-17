@@ -119,3 +119,11 @@ jobs:
 
           print("THERMOPACK_CPA_FROZEN_ORACLE_OK states=5 tolerance=2e-12")
           PY
+
+      - name: Generate phase-kernel decomposition audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/flash/cpa_thermopack_oracle/generate_phase_kernel_audit.py \
+            --out build/cpa-thermopack-phase-kernel-audit.json
+          test -s build/cpa-thermopack-phase-kernel-audit.json
