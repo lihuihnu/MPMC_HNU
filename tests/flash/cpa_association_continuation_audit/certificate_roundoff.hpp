@@ -29,12 +29,10 @@ inline Result certify_with_pressure_roundoff(
         return result;
     }
 
-    // Reproduce the current production association-pressure arithmetic in
-    // double, while evaluating the same expression from the same stored input
-    // doubles in long double.  The observed gap is candidate-local and requires
-    // no cold reference.  It captures the ULP-scale loss caused by forming a
-    // very large association pressure before cancellation with the physical
-    // contribution at dense states.
+    // Reproduce the current production association arithmetic in double while
+    // evaluating the same expressions from the same stored input doubles in
+    // long double. These candidate-local gaps require no cold reference and
+    // account for ULP-scale loss caused by dense-state association terms.
     double association_sum_double = 0.0;
     Real association_sum_real = 0.0L;
     for (const auto& site : association.sites) {
@@ -51,6 +49,13 @@ inline Result certify_with_pressure_roundoff(
             1.0L - static_cast<Real>(site.unbonded_fraction);
         association_sum_real += weight_real * one_minus_x_real;
     }
+
+    const Real unit_roundoff =
+        0.5L * std::numeric_limits<Real>::epsilon();
+    constexpr Real operation_budget = 64.0L;
+    const Real gamma =
+        (operation_budget * unit_roundoff) /
+        (1.0L - operation_budget * unit_roundoff);
 
     const double rt_double = th::cpa_gas_constant_j_per_mol_k * temperature_k;
     const double association_pressure_double =
@@ -73,26 +78,16 @@ inline Result certify_with_pressure_roundoff(
         return Result{};
     }
 
-    const Real observed_double_gap = std::abs(
+    const Real observed_pressure_gap = std::abs(
         static_cast<Real>(total_pressure_double) - total_pressure_real);
-
-    // Standard floating-point model pad for the long-double diagnostic path.
-    // The pressure expression contains far fewer than 64 elementary arithmetic
-    // operations for the current bounded site count.  gamma_64 is applied to
-    // the large association-pressure magnitude, so cancellation in the final
-    // total cannot make the absolute pad artificially small.
-    const Real unit_roundoff =
-        0.5L * std::numeric_limits<Real>::epsilon();
-    constexpr Real operation_budget = 64.0L;
-    const Real gamma =
-        (operation_budget * unit_roundoff) /
-        (1.0L - operation_budget * unit_roundoff);
-    const Real diagnostic_pad = gamma *
+    const Real pressure_diagnostic_pad = gamma *
         std::max(1.0L, std::abs(association_pressure_real));
-    const Real floating_allowance = observed_double_gap + diagnostic_pad;
+    const Real pressure_floating_allowance =
+        observed_pressure_gap + pressure_diagnostic_pad;
 
     const Real augmented_pressure_bound =
-        static_cast<Real>(result.pressure_error_bound_pa) + floating_allowance;
+        static_cast<Real>(result.pressure_error_bound_pa) +
+        pressure_floating_allowance;
     if (!finite(augmented_pressure_bound) || augmented_pressure_bound < 0.0L) {
         return Result{};
     }
@@ -101,6 +96,61 @@ inline Result certify_with_pressure_roundoff(
     result.pressure_scale_certified =
         augmented_pressure_bound <=
         static_cast<Real>(contract::pressure_error_guard_pa);
+
+    // The association chemical-potential term is the only X-dependent part of
+    // ln(phi) at fixed T, rho and composition. Add a candidate-local arithmetic
+    // allowance to the analytic site-box propagation bound for each component.
+    if (result.ln_phi_error_bounds.size() != parameters.size()) {
+        return Result{};
+    }
+    Real max_augmented_ln_phi = 0.0L;
+    for (std::size_t component = 0U;
+         component < parameters.size(); ++component) {
+        double mu_assoc_double = 0.0;
+        Real mu_assoc_real = 0.0L;
+        for (const auto& site : association.sites) {
+            if (site.component_index != component) { continue; }
+            const double multiplicity_double =
+                static_cast<double>(site.multiplicity);
+            mu_assoc_double +=
+                multiplicity_double * std::log(site.unbonded_fraction);
+            mu_assoc_real +=
+                static_cast<Real>(site.multiplicity) *
+                std::log(static_cast<Real>(site.unbonded_fraction));
+        }
+
+        const double sensitivity_double =
+            (1.9 / 8.0) * molar_density_mol_per_m3 *
+            parameters.pure(component).b_m3_per_mol *
+            association.radial_distribution;
+        mu_assoc_double -= sensitivity_double * association_sum_double;
+
+        const Real sensitivity_real =
+            (1.9L / 8.0L) * static_cast<Real>(molar_density_mol_per_m3) *
+            static_cast<Real>(parameters.pure(component).b_m3_per_mol) *
+            static_cast<Real>(association.radial_distribution);
+        mu_assoc_real -= sensitivity_real * association_sum_real;
+        if (!std::isfinite(mu_assoc_double) || !finite(mu_assoc_real)) {
+            return Result{};
+        }
+
+        const Real observed_mu_gap = std::abs(
+            static_cast<Real>(mu_assoc_double) - mu_assoc_real);
+        const Real mu_diagnostic_pad = gamma *
+            std::max(1.0L, std::abs(mu_assoc_real));
+        const Real augmented =
+            static_cast<Real>(result.ln_phi_error_bounds[component]) +
+            observed_mu_gap + mu_diagnostic_pad;
+        if (!finite(augmented) || augmented < 0.0L) {
+            return Result{};
+        }
+        result.ln_phi_error_bounds[component] = static_cast<double>(augmented);
+        max_augmented_ln_phi = std::max(max_augmented_ln_phi, augmented);
+    }
+    result.max_ln_phi_error_bound =
+        static_cast<double>(max_augmented_ln_phi);
+    result.ln_phi_scale_certified =
+        max_augmented_ln_phi <= static_cast<Real>(contract::ln_phi_error_guard);
     return result;
 }
 
