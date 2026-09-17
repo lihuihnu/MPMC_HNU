@@ -50,11 +50,13 @@ jobs:
           echo "CLAPEYRON_PIN_OK commit=${actual}"
 
       - name: Instantiate pinned Clapeyron
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
         shell: bash
         run: |
           set -euo pipefail
           julia --project=_external/Clapeyron.jl \
-            -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+            -e 'using Pkg; Pkg.instantiate()'
 
       - name: Audit formulation and generate ten-state oracle
         env:
