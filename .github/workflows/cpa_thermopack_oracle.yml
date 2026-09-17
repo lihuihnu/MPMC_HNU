@@ -125,6 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tests/flash/cpa_thermopack_oracle/generate_phase_kernel_audit.py \
+            --thermopack-source build/thermopack \
             --out build/cpa-thermopack-phase-kernel-audit.json
           test -s build/cpa-thermopack-phase-kernel-audit.json
 
