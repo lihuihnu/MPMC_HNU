@@ -51,6 +51,147 @@ double roundoff(double scale) {
         std::max(1.0, std::abs(scale));
 }
 
+// Independent test-only scalar SRK residual Helmholtz reference for Gate A.
+// Deliberately recompute every pure/mixture quantity from the public parameter
+// contract instead of calling the production Helmholtz kernel or its helpers.
+double analytic_cubic_value(
+    double temperature_k,
+    double volume_m3,
+    std::span<const double> mole_numbers,
+    const th::CpaParameterSet& parameters) {
+    require(temperature_k > 0.0 && std::isfinite(temperature_k),
+            "analytic cubic Gate-A reference requires positive temperature");
+    require(volume_m3 > 0.0 && std::isfinite(volume_m3),
+            "analytic cubic Gate-A reference requires positive volume");
+    require(mole_numbers.size() == parameters.size() && !mole_numbers.empty(),
+            "analytic cubic Gate-A reference dimension mismatch");
+
+    double total_moles = 0.0;
+    double extensive_b = 0.0;
+    std::vector<double> pure_a(parameters.size(), 0.0);
+    for (std::size_t i = 0U; i < parameters.size(); ++i) {
+        const double ni = mole_numbers[i];
+        require(ni >= 0.0 && std::isfinite(ni),
+                "analytic cubic Gate-A reference requires finite nonnegative moles");
+        total_moles += ni;
+        extensive_b += ni * parameters.pure(i).b_m3_per_mol;
+
+        const auto& pure = parameters.pure(i);
+        const double tr = temperature_k / pure.critical_temperature_k;
+        const double alpha_base =
+            1.0 + pure.c1_dimensionless * (1.0 - std::sqrt(tr));
+        pure_a[i] = pure.a0_pa_m6_per_mol2 * alpha_base * alpha_base;
+    }
+    require(total_moles > 0.0 && std::isfinite(total_moles),
+            "analytic cubic Gate-A reference requires positive total moles");
+    require(extensive_b > 0.0 && std::isfinite(extensive_b),
+            "analytic cubic Gate-A reference requires positive extensive B");
+
+    double extensive_a = 0.0;
+    for (std::size_t i = 0U; i < parameters.size(); ++i) {
+        for (std::size_t j = 0U; j < parameters.size(); ++j) {
+            const double aij = std::sqrt(pure_a[i] * pure_a[j]) *
+                               (1.0 - parameters.kij(i, j));
+            extensive_a += mole_numbers[i] * mole_numbers[j] * aij;
+        }
+    }
+    require(extensive_a > 0.0 && std::isfinite(extensive_a),
+            "analytic cubic Gate-A reference requires positive extensive A");
+
+    const double reduced_covolume = extensive_b / volume_m3;
+    require(reduced_covolume >= 0.0 && reduced_covolume < 1.0 &&
+                std::isfinite(reduced_covolume),
+            "analytic cubic Gate-A reference crossed the SRK covolume singularity");
+    const double rt = th::cpa_gas_constant_j_per_mol_k * temperature_k;
+    const double value =
+        -total_moles * std::log1p(-reduced_covolume) -
+        (extensive_a / (extensive_b * rt)) * std::log1p(reduced_covolume);
+    require(std::isfinite(value),
+            "analytic cubic Gate-A reference produced nonfinite value");
+    return value;
+}
+
+void check_scalar_cubic_value(
+    double temperature_k,
+    double rho,
+    std::span<const double> mole_numbers,
+    const th::CpaParameterSet& parameters,
+    std::string_view label,
+    double& max_delta) {
+    const double volume_m3 =
+        std::accumulate(mole_numbers.begin(), mole_numbers.end(), 0.0) / rho;
+    const double actual = th::cpa_cubic_residual_helmholtz_reduced(
+        temperature_k, volume_m3, mole_numbers, parameters);
+    const double reference = analytic_cubic_value(
+        temperature_k, volume_m3, mole_numbers, parameters);
+    const double delta = std::abs(actual - reference);
+    max_delta = std::max(max_delta, delta);
+    require_abs(
+        actual, reference,
+        roundoff(actual) + roundoff(reference),
+        std::string(label) + ": independent analytic SRK scalar value mismatch");
+}
+
+void run_scalar_cubic_value_gate() {
+    constexpr std::array<bool, 2> swapped_orders{{false, true}};
+    constexpr std::array<double, 2> endpoint_densities{{20.0, 200.0}};
+    constexpr std::array<double, 2> endpoint_methanol_fractions{{0.0, 1.0}};
+
+    double max_delta = 0.0;
+    std::size_t phase_comparisons = 0U;
+    std::size_t endpoint_comparisons = 0U;
+
+    for (const bool swapped : swapped_orders) {
+        const auto literature = cpa_physical_test::parameters(swapped);
+        const auto parity = cpa_thermopack_snapshot::parameters(swapped);
+        for (std::size_t state_index = 0U;
+             state_index < external::states.size(); ++state_index) {
+            const auto& state = external::states[state_index];
+            for (const auto* phase : {&state.liquid, &state.vapor}) {
+                const auto composition = cpa_physical_test::composition(
+                    phase->composition_methanol, swapped);
+                const std::string suffix =
+                    " state=" + std::to_string(state_index) +
+                    (phase == &state.liquid ? " phase=liquid" : " phase=vapor") +
+                    (swapped ? " order=swapped" : " order=normal");
+                check_scalar_cubic_value(
+                    state.temperature_k, phase->molar_density_mol_per_m3,
+                    composition, literature, "literature" + suffix, max_delta);
+                ++phase_comparisons;
+                check_scalar_cubic_value(
+                    state.temperature_k, phase->molar_density_mol_per_m3,
+                    composition, parity, "parity" + suffix, max_delta);
+                ++phase_comparisons;
+            }
+        }
+
+        for (const double methanol_fraction : endpoint_methanol_fractions) {
+            const auto composition = cpa_physical_test::composition(
+                methanol_fraction, swapped);
+            for (const double rho : endpoint_densities) {
+                check_scalar_cubic_value(
+                    cpa_physical_test::temperature_k, rho,
+                    composition, literature, "full-binary pure endpoint", max_delta);
+                ++endpoint_comparisons;
+            }
+        }
+    }
+
+    require(phase_comparisons == 40U,
+            "Gate-A phase-state comparison count changed unexpectedly");
+    require(endpoint_comparisons == 8U,
+            "Gate-A endpoint comparison count changed unexpectedly");
+    std::cout << std::setprecision(17)
+              << "CPA_HELMHOLTZ_SCALAR_GATE_A_OK"
+              << " phase_comparisons=" << phase_comparisons
+              << " endpoint_comparisons=" << endpoint_comparisons
+              << " snapshots=literature,thermopack-parity"
+              << " component_orders=normal,swapped"
+              << " endpoint_densities=2"
+              << " max_abs_dF_cubic=" << max_delta
+              << '\n';
+}
+
 struct Derived {
     double cubic_value{};
     double association_q_value{};
@@ -408,6 +549,7 @@ void run_external_parity() {
 
 int main() {
     try {
+        run_scalar_cubic_value_gate();
         run_internal_equivalence();
         run_external_parity();
         return 0;
