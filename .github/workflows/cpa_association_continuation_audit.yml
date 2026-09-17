@@ -1,19 +1,10 @@
 name: CPA association continuity audit
 
+# Deferred optimization evidence only. The active CPA development line has
+# returned to thermodynamic-model correctness and the residual Helmholtz kernel.
+# Keep this workflow for explicit reproduction without running it on every CPA
+# model change.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
-      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
-      - 'tests/flash/cpa_physical_validation/test_support.hpp'
-      - 'tests/flash/cpa_physical_validation/cpa_thermopack_parity_thresholds.hpp'
-      - 'tests/flash/cpa_association_continuation_audit/**'
-      - 'modules/flash/cpa_association_continuation_audit.md'
-      - 'modules/flash/cpa_association_continuation_contract.md'
-      - 'modules/flash/cpa_association_observable_certificate.md'
-      - '.github/workflows/cpa_association_continuation_audit.yml'
   workflow_dispatch:
 
 permissions:
@@ -32,10 +23,10 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Checkout exact PR head
+      - name: Checkout exact requested head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
