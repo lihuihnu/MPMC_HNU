@@ -16,14 +16,16 @@ import sys
 import tempfile
 
 
+# Use side-effecting executable statements as line-count anchors. Pure
+# declarations can disappear from Release gcov line maps after optimization.
 SPECS = {
     "phase_evaluations": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_phase.hpp",
-        "    CpaPhaseState result;",
+        "    result.temperature_k = temperature_k;",
     ),
     "root_search_calls": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_pt_phase.hpp",
-        "        CpaPtRootSet result;",
+        "        result.pressure_pa = pressure_pa;",
     ),
     "root_density_evaluations": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_pt_phase.hpp",
@@ -31,11 +33,11 @@ SPECS = {
     ),
     "association_solve_calls": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_association.hpp",
-        "    CpaAssociationResult result;",
+        "    result.temperature_k = temperature_k;",
     ),
     "association_iteration_sweeps": (
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_association.hpp",
-        "        double residual = 0.0;",
+        "        result.iterations = iteration;",
     ),
     "stability_adapter_evaluations": (
         "modules/flash/include/mpmc/flash/cpa_stability.hpp",
