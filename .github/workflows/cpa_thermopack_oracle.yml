@@ -70,3 +70,52 @@ jobs:
           python3 tests/flash/cpa_thermopack_oracle/generate_oracle.py \
             --out build/cpa-thermopack-oracle.json
           test -s build/cpa-thermopack-oracle.json
+
+      - name: Verify frozen external oracle reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import math
+          from pathlib import Path
+
+          actual = json.loads(Path("build/cpa-thermopack-oracle.json").read_text())
+          frozen = json.loads(Path(
+              "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json"
+          ).read_text())
+
+          for key in ("schema", "generator", "model"):
+              if actual[key] != frozen[key]:
+                  raise SystemExit(f"frozen ThermoPack oracle metadata drifted at {key}")
+
+          if len(actual["states"]) != len(frozen["states"]):
+              raise SystemExit("frozen ThermoPack oracle state count drifted")
+
+          exact_keys = ("phase_code", "pressure_pa", "temperature_k")
+          scalar_keys = (
+              "beta_liquid", "beta_vapor",
+              "extraction_material_balance_max_abs",
+          )
+          maps = ("feed", "liquid", "vapor")
+
+          for index, (got, ref) in enumerate(zip(actual["states"], frozen["states"])):
+              for key in exact_keys:
+                  if got[key] != ref[key]:
+                      raise SystemExit(f"oracle state {index} exact field drifted: {key}")
+              for key in scalar_keys:
+                  if not math.isclose(got[key], ref[key], rel_tol=2e-12, abs_tol=2e-12):
+                      raise SystemExit(f"oracle state {index} scalar drifted: {key}")
+              for group in maps:
+                  if got[group].keys() != ref[group].keys():
+                      raise SystemExit(f"oracle state {index} component keys drifted: {group}")
+                  for component in got[group]:
+                      if not math.isclose(
+                          got[group][component], ref[group][component],
+                          rel_tol=2e-12, abs_tol=2e-12,
+                      ):
+                          raise SystemExit(
+                              f"oracle state {index} {group}/{component} drifted")
+
+          print("THERMOPACK_CPA_FROZEN_ORACLE_OK states=5 tolerance=2e-12")
+          PY
