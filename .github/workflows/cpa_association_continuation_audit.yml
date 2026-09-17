@@ -1,0 +1,71 @@
+name: CPA association continuity audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
+      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
+      - 'tests/flash/cpa_physical_validation/test_support.hpp'
+      - 'tests/flash/cpa_physical_validation/cpa_thermopack_parity_thresholds.hpp'
+      - 'tests/flash/cpa_association_continuation_audit/**'
+      - 'modules/flash/cpa_association_continuation_audit.md'
+      - '.github/workflows/cpa_association_continuation_audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpa-association-continuity-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: shadow continuation / ubuntu-24.04 / Clang Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Record environment
+        run: |
+          set -euo pipefail
+          echo "head=$(git rev-parse HEAD)"
+          clang++ --version | head -n 1
+          cmake --version | head -n 1
+
+      - name: Configure Release audit
+        run: |
+          cmake -S tests/flash/cpa_association_continuation_audit \
+            -B build/cpa-association-continuation-audit \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DMPMC_SOURCE_ROOT="${GITHUB_WORKSPACE}"
+
+      - name: Build Release audit
+        run: cmake --build build/cpa-association-continuation-audit --parallel 2
+
+      - name: Replay production density scans with shadow continuation
+        run: |
+          set -euo pipefail
+          build/cpa-association-continuation-audit/mpmc_cpa_association_continuation_audit \
+            | tee build/cpa-association-continuation-audit/audit.log
+          summary="$(grep 'CPA_ASSOC_CONTINUATION_SUMMARY' build/cpa-association-continuation-audit/audit.log)"
+          test -n "${summary}"
+          {
+            echo '# CPA association continuity audit'
+            echo
+            echo '```text'
+            echo "${summary}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
