@@ -107,6 +107,66 @@ set(thermopack_phase_kernel_generated_header
 file(GENERATE OUTPUT "${thermopack_phase_kernel_generated_header}" CONTENT
 "#ifndef MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n#define MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n\n#include <array>\n\nnamespace cpa_thermopack_phase_kernel {\nstruct PhaseReference {\n    double composition_methanol;\n    double molar_density_mol_per_m3;\n    double compressibility_factor;\n    double ln_phi_methanol;\n    double ln_phi_water;\n    double pressure_physical_pa;\n    double pressure_association_pa;\n    double mu_cubic_over_rt_methanol;\n    double mu_cubic_over_rt_water;\n    double mu_association_over_rt_methanol;\n    double mu_association_over_rt_water;\n};\n\nstruct ThermoPackPhaseKernelState {\n    double temperature_k;\n    double pressure_pa;\n    PhaseReference liquid;\n    PhaseReference vapor;\n};\n\ninline constexpr double gas_constant_j_per_mol_k = ${thermopack_phase_kernel_rgas};\ninline constexpr double methanol_alpha_critical_temperature_k = ${thermopack_phase_kernel_tc_meoh};\ninline constexpr double water_alpha_critical_temperature_k = ${thermopack_phase_kernel_tc_h2o};\ninline constexpr std::array<ThermoPackPhaseKernelState, ${thermopack_phase_kernel_state_count}> states{{\n${thermopack_phase_kernel_initializers}}};\n\n} // namespace cpa_thermopack_phase_kernel\n\n#endif // MPMC_TEST_CPA_THERMOPACK_PHASE_KERNEL_GENERATED_HPP\n")
 
+
+set(clapeyron_gate_e_file
+    "${CMAKE_CURRENT_LIST_DIR}/../cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json")
+file(READ "${clapeyron_gate_e_file}" clapeyron_gate_e_json)
+string(JSON clapeyron_gate_e_schema GET "${clapeyron_gate_e_json}" schema)
+string(JSON clapeyron_gate_e_commit GET "${clapeyron_gate_e_json}" source commit)
+string(JSON clapeyron_gate_e_profile GET "${clapeyron_gate_e_json}" model profile)
+string(JSON clapeyron_gate_e_status GET "${clapeyron_gate_e_json}" model audit status)
+string(JSON clapeyron_gate_e_rgas GET "${clapeyron_gate_e_json}" gas_constant_j_per_mol_k)
+string(JSON clapeyron_gate_e_state_count LENGTH "${clapeyron_gate_e_json}" states)
+if(NOT clapeyron_gate_e_schema STREQUAL
+       "MPMC_HNU/CPA/Clapeyron-phase-kernel-reference/v1")
+    message(FATAL_ERROR "unexpected frozen Clapeyron CPA oracle schema")
+endif()
+if(NOT clapeyron_gate_e_commit STREQUAL
+       "229b09452f36c2f812486150df0bb43b197bb4e5")
+    message(FATAL_ERROR "unexpected frozen Clapeyron revision")
+endif()
+if(NOT clapeyron_gate_e_profile STREQUAL
+       "CPA/SRK-physical/simplified-rdf-1.9eta/explicit-site-pairs/v1" OR
+   NOT clapeyron_gate_e_status STREQUAL "exactly_representable")
+    message(FATAL_ERROR "frozen Clapeyron oracle no longer matches the audited CPA profile")
+endif()
+if(NOT clapeyron_gate_e_rgas STREQUAL "8.31446261815324")
+    message(FATAL_ERROR "frozen Clapeyron gas constant drifted")
+endif()
+if(NOT clapeyron_gate_e_state_count EQUAL 10)
+    message(FATAL_ERROR "Clapeyron Gate-E oracle must contain exactly ten states")
+endif()
+
+function(read_clapeyron_gate_e_state json index output_var)
+    string(JSON state_temperature GET "${json}" states ${index} temperature_k)
+    string(JSON state_rho GET "${json}" states ${index} molar_density_mol_per_m3)
+    string(JSON state_meoh GET "${json}" states ${index} composition MEOH)
+    string(JSON state_f_res GET "${json}" states ${index} f_res_reduced_extensive)
+    string(JSON state_pressure GET "${json}" states ${index} pressure_pa)
+    string(JSON state_mu_meoh GET "${json}" states ${index} mu_residual_over_rt MEOH)
+    string(JSON state_mu_h2o GET "${json}" states ${index} mu_residual_over_rt H2O)
+    string(JSON state_lnphi_meoh GET "${json}" states ${index} ln_phi MEOH)
+    string(JSON state_lnphi_h2o GET "${json}" states ${index} ln_phi H2O)
+    string(JSON state_assoc_residual
+           GET "${json}" states ${index} association_equation_max_residual)
+    set(${output_var}
+        "ClapeyronState{${state_temperature}, ${state_rho}, ${state_meoh}, ${state_f_res}, ${state_pressure}, ${state_mu_meoh}, ${state_mu_h2o}, ${state_lnphi_meoh}, ${state_lnphi_h2o}, ${state_assoc_residual}}"
+        PARENT_SCOPE)
+endfunction()
+
+set(clapeyron_gate_e_initializers "")
+foreach(index RANGE 0 9)
+    read_clapeyron_gate_e_state(
+        "${clapeyron_gate_e_json}" ${index} clapeyron_state_initializer)
+    string(APPEND clapeyron_gate_e_initializers
+        "    ${clapeyron_state_initializer},\n")
+endforeach()
+
+set(clapeyron_gate_e_generated_header
+    "${CMAKE_CURRENT_BINARY_DIR}/cpa_clapeyron_gate_e_generated.hpp")
+file(GENERATE OUTPUT "${clapeyron_gate_e_generated_header}" CONTENT
+"#ifndef MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n#define MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n\n#include <array>\n#include <string_view>\n\nnamespace cpa_clapeyron_gate_e {\nstruct ClapeyronState {\n    double temperature_k;\n    double molar_density_mol_per_m3;\n    double composition_methanol;\n    double f_res;\n    double pressure_pa;\n    double mu_res_over_rt_methanol;\n    double mu_res_over_rt_water;\n    double ln_phi_methanol;\n    double ln_phi_water;\n    double association_equation_max_residual;\n};\n\ninline constexpr std::string_view source_commit = \"${clapeyron_gate_e_commit}\";\ninline constexpr std::array<ClapeyronState, ${clapeyron_gate_e_state_count}> states{{\n${clapeyron_gate_e_initializers}}};\n\n} // namespace cpa_clapeyron_gate_e\n\n#endif // MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n")
+
 add_executable(mpmc_cpa_physical_validation_tests
     cpa_physical_validation_test.cpp)
 target_link_libraries(mpmc_cpa_physical_validation_tests PRIVATE mpmc::flash)
@@ -138,6 +198,15 @@ target_include_directories(mpmc_cpa_thermopack_parameter_identity_tests PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(mpmc_cpa_thermopack_parameter_identity_tests PROPERTIES CXX_EXTENSIONS OFF)
 
+
+add_executable(mpmc_cpa_clapeyron_gate_e_tests
+    cpa_clapeyron_gate_e_test.cpp)
+target_link_libraries(mpmc_cpa_clapeyron_gate_e_tests PRIVATE
+    mpmc::flash mpmc::ad)
+target_include_directories(mpmc_cpa_clapeyron_gate_e_tests PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(mpmc_cpa_clapeyron_gate_e_tests PROPERTIES CXX_EXTENSIONS OFF)
+
 add_executable(mpmc_cpa_residual_helmholtz_ad_tests
     cpa_residual_helmholtz_ad_test.cpp)
 target_link_libraries(mpmc_cpa_residual_helmholtz_ad_tests PRIVATE
@@ -168,6 +237,7 @@ set(all_targets
     mpmc_cpa_thermopack_delta_tests
     mpmc_cpa_thermopack_phase_kernel_audit_tests
     mpmc_cpa_thermopack_parameter_identity_tests
+    mpmc_cpa_clapeyron_gate_e_tests
     mpmc_cpa_residual_helmholtz_ad_tests
     mpmc_cpa_residual_helmholtz_limits_tests
     mpmc_cpa_residual_helmholtz_temperature_tests)
@@ -233,6 +303,13 @@ add_test(NAME flash.cpa_physical_validation.thermopack_parameter_identity
          COMMAND mpmc_cpa_thermopack_parameter_identity_tests)
 set_tests_properties(flash.cpa_physical_validation.thermopack_parameter_identity PROPERTIES
     LABELS "flash;cpa;physical_validation;thermopack;parameters;provenance;full_physical;sanitizer_safety"
+    TIMEOUT 60)
+
+
+add_test(NAME flash.cpa_physical_validation.clapeyron_gate_e
+         COMMAND mpmc_cpa_clapeyron_gate_e_tests)
+set_tests_properties(flash.cpa_physical_validation.clapeyron_gate_e PROPERTIES
+    LABELS "flash;cpa;physical_validation;helmholtz;ad;clapeyron;external_oracle;full_physical;sanitizer_safety"
     TIMEOUT 60)
 
 add_test(NAME flash.cpa_physical_validation.residual_helmholtz_ad
