@@ -196,6 +196,31 @@ jobs:
                 "state=", audit["state"]["label"])
           PY
 
+      - name: Audit ten-state independent compressed association
+        env:
+          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+        shell: bash
+        run: |
+          set -euo pipefail
+          julia --project=_external/Clapeyron.jl \
+            tests/flash/cpa_clapeyron_oracle/ten_state_independent_compressed_diagnostic.jl \
+            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
+            --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \
+            --out build/cpa-clapeyron-oracle/clapeyron_ten_state_independent_compressed_diagnostic.json
+          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          audit = json.loads(Path(
+              "build/cpa-clapeyron-oracle/"
+              "clapeyron_ten_state_independent_compressed_diagnostic.json"
+          ).read_text(encoding="utf-8"))
+          print("CLAPEYRON_TEN_STATE_COMPRESSED_ARTIFACT",
+                "precisions=", audit["precision_bits"],
+                "summaries=", len(audit["summaries"]))
+          PY
+
       - name: Upload generated oracle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -233,5 +258,13 @@ jobs:
         with:
           name: cpa-clapeyron-independent-exact2-audit
           path: build/cpa-clapeyron-oracle/clapeyron_independent_exact2_audit.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload ten-state compressed diagnostic
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cpa-clapeyron-ten-state-compressed-diagnostic
+          path: build/cpa-clapeyron-oracle/clapeyron_ten_state_independent_compressed_diagnostic.json
           if-no-files-found: error
           retention-days: 7
