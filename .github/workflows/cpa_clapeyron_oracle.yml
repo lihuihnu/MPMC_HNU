@@ -72,6 +72,27 @@ jobs:
           test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
           cat build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
 
+      - name: Verify frozen oracle reproduction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          generated = json.loads(Path(
+              "build/cpa-clapeyron-oracle/"
+              "clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json"
+          ).read_text(encoding="utf-8"))
+          frozen = json.loads(Path(
+              "tests/flash/cpa_clapeyron_oracle/"
+              "clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json"
+          ).read_text(encoding="utf-8"))
+          if generated != frozen:
+              raise SystemExit("generated Clapeyron oracle differs from frozen reference")
+          print("CLAPEYRON_ORACLE_FREEZE_MATCH_OK states=", len(generated["states"]))
+          PY
+
       - name: Upload generated oracle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
