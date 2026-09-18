@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index 已形成不可变 `Topology` snapshot，并有最小 2D Cartesian topology builder。其上新增独立不可变 `Geometry2D` snapshot：对 canonical Cartesian `Topology` + 严格递增的 SI 米制 x/y 轴坐标，计算 vertex coordinates、cell centroid/area、face centroid/length、face owner 与 owner-relative unit normal；几何对象不修改也不持有 `Topology`。字段、I/O、DoF、partition 与 PETSc 仍未实现。
+> 当前状态：core topology/index、最小 2D Cartesian topology builder 与独立 `Geometry2D` snapshot 已建立；另有独立不可变 `FaceBoundarySnapshot`，根据 `face->cell` 基数区分 interior/boundary，并保存紧凑 `uint32` physical tag。tag 只表示稳定边界/physical-group 身份，`0` 表示未标注，不包含压力、流量、井或其他物理边界条件语义。字段、I/O、DoF、partition 与 PETSc 仍未实现。
 
 ## 1. 目标
 
@@ -43,7 +43,9 @@
 - boundary/interface 标识；
 - 非有限坐标、重复/越界 connectivity、零或负 measure、非法 orientation 的确定性错误。
 
-当前 2D Cartesian geometry 已实现前三项的最小基线：x/y 轴坐标必须是有限、严格递增的 SI 米值；cell area 以 m²、face length 以 m 保存。face owner 取 canonical `face->cell` relation 的首个 cell，unit normal 从 owner cell centroid 指向 face centroid，因此边界 face 为 owner 的外法向，内部 face 则从 owner 指向另一侧。builder 会逐项核对四类 Cartesian relation，而不是仅凭实体数量假定 topology 兼容。boundary/interface tag 仍未实现。
+当前 2D Cartesian geometry 已实现前三项的最小基线：x/y 轴坐标必须是有限、严格递增的 SI 米值；cell area 以 m²、face length 以 m 保存。face owner 取 canonical `face->cell` relation 的首个 cell，unit normal 从 owner cell centroid 指向 face centroid，因此边界 face 为 owner 的外法向，内部 face 则从 owner 指向另一侧。builder 会逐项核对四类 Cartesian relation，而不是仅凭实体数量假定 topology 兼容。
+
+`FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。首批标准科研字段：
 
