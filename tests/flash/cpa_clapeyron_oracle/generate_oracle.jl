@@ -78,14 +78,16 @@ function build_model()
     )
 
     options = Clapeyron.AssocOptions(
-        rtol = 1.0e-12,
-        atol = 1.0e-12,
-        max_iters = 512,
+        # Oracle-only numerical settings: tighter than the production association
+        # solve so external-reference derivative noise stays below Gate-E gates.
+        rtol = 1.0e-14,
+        atol = 1.0e-14,
+        max_iters = 2048,
         dampingfactor = 0.5,
         # Explicit CR-1 pairs are already supplied above. :nocombining ensures
         # the pinned implementation cannot silently rewrite them.
         combining = :nocombining,
-        implicit_ad = false,
+        implicit_ad = true,
     )
 
     return Clapeyron.sCPA(
@@ -115,11 +117,11 @@ function audit_model(model)
             "Clapeyron volume translation is not disabled: $(typeof(model.cubicmodel.translation))")
     require(model.assoc_options.combining == :nocombining,
             "Clapeyron explicit CR-1 oracle must disable runtime combining")
-    require(model.assoc_options.rtol == 1.0e-12 &&
-            model.assoc_options.atol == 1.0e-12 &&
+    require(model.assoc_options.rtol == 1.0e-14 &&
+            model.assoc_options.atol == 1.0e-14 &&
             model.assoc_options.dampingfactor == 0.5 &&
-            model.assoc_options.max_iters == 512 &&
-            !model.assoc_options.implicit_ad,
+            model.assoc_options.max_iters == 2048 &&
+            model.assoc_options.implicit_ad,
             "Clapeyron association numerical options drifted")
 
     rgas = Clapeyron.Rgas(model)
@@ -199,6 +201,13 @@ function audit_model(model)
         "association_combining" =>
             "explicit CR-1 cross pairs; runtime combining=:nocombining",
         "gas_constant_j_per_mol_k" => rgas,
+        "association_numerics" => Dict(
+            "atol" => model.assoc_options.atol,
+            "rtol" => model.assoc_options.rtol,
+            "max_iters" => model.assoc_options.max_iters,
+            "dampingfactor" => model.assoc_options.dampingfactor,
+            "implicit_ad" => model.assoc_options.implicit_ad,
+        ),
         "molar_mass_g_per_mol_constructor_metadata" => collect(expected_mw),
         "kij" => derived_kij,
         "methanol_sites" => Dict("H" => 1, "e" => 1),
