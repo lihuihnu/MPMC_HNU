@@ -18,14 +18,15 @@
 namespace mpmc::mesh {
 
 enum class FieldSourceKind : std::uint8_t {
-    file_import = 0,
-    user_supplied = 1,
-    generated = 2,
-    synthetic_test = 3,
+    unspecified = 0,
+    file_import = 1,
+    user_supplied = 2,
+    generated = 3,
+    synthetic_test = 4,
 };
 
 struct FieldSourceMetadata {
-    FieldSourceKind kind;
+    FieldSourceKind kind = FieldSourceKind::unspecified;
     std::string reference;
     std::string revision;
     std::string locator;
