@@ -333,11 +333,9 @@ private:
             const Pending& current = pending[i];
             if (previous.neighbor == current.neighbor &&
                 previous.entity.kind == current.entity.kind &&
-                previous.entity.global_id == current.entity.global_id &&
-                previous.entity.local == current.entity.local &&
-                previous.entity.remote_local == current.entity.remote_local) {
+                previous.entity.global_id == current.entity.global_id) {
                 throw std::invalid_argument(
-                    "mpmc::mesh::SharedEntityPlan: duplicate shared link endpoint");
+                    "mpmc::mesh::SharedEntityPlan: duplicate shared entity for one neighbor");
             }
         }
     }
