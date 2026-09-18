@@ -204,6 +204,14 @@ target_include_directories(mpmc_cpa_clapeyron_gate_e_tests PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(mpmc_cpa_clapeyron_gate_e_tests PROPERTIES CXX_EXTENSIONS OFF)
 
+add_executable(mpmc_cpa_gate_f_production_switch_tests
+    cpa_gate_f_production_switch_test.cpp)
+target_link_libraries(mpmc_cpa_gate_f_production_switch_tests PRIVATE
+    mpmc::flash mpmc::ad)
+target_include_directories(mpmc_cpa_gate_f_production_switch_tests PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(mpmc_cpa_gate_f_production_switch_tests PROPERTIES CXX_EXTENSIONS OFF)
+
 add_executable(mpmc_cpa_residual_helmholtz_ad_tests
     cpa_residual_helmholtz_ad_test.cpp)
 target_link_libraries(mpmc_cpa_residual_helmholtz_ad_tests PRIVATE
@@ -235,6 +243,7 @@ set(all_targets
     mpmc_cpa_thermopack_phase_kernel_audit_tests
     mpmc_cpa_thermopack_parameter_identity_tests
     mpmc_cpa_clapeyron_gate_e_tests
+    mpmc_cpa_gate_f_production_switch_tests
     mpmc_cpa_residual_helmholtz_ad_tests
     mpmc_cpa_residual_helmholtz_limits_tests
     mpmc_cpa_residual_helmholtz_temperature_tests)
@@ -308,6 +317,12 @@ add_test(NAME flash.cpa_physical_validation.clapeyron_gate_e
 set_tests_properties(flash.cpa_physical_validation.clapeyron_gate_e PROPERTIES
     LABELS "flash;cpa;physical_validation;helmholtz;ad;clapeyron;external_oracle;full_physical;sanitizer_safety"
     TIMEOUT 60)
+
+add_test(NAME flash.cpa_physical_validation.gate_f_production_switch
+         COMMAND mpmc_cpa_gate_f_production_switch_tests)
+set_tests_properties(flash.cpa_physical_validation.gate_f_production_switch PROPERTIES
+    LABELS "flash;cpa;physical_validation;helmholtz;gate_f;production_switch;full_physical;sanitizer_safety"
+    TIMEOUT 180)
 
 add_test(NAME flash.cpa_physical_validation.residual_helmholtz_ad
          COMMAND mpmc_cpa_residual_helmholtz_ad_tests)
