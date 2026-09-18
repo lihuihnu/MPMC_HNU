@@ -1,0 +1,136 @@
+{
+  "gas_constant_j_per_mol_k": 8.31446261815324,
+  "schema": "MPMC_HNU/CPA/ThermoPack-phase-kernel-reference/v2",
+  "source": {
+    "commit": "d68c794c7342bfc6938eb424a1fbb88b7780b738",
+    "decomposition": "full ThermoPack residual minus documented SRK cubic evaluated from pinned component Tc and ThermoPack read-back a0/b/c1/kij at identical T,V,n",
+    "generated_schema": "MPMC_HNU/CPA/ThermoPack-phase-kernel-audit/v2",
+    "software": "thermotools/thermopack"
+  },
+  "alpha_critical_temperature_source": {
+    "MEOH": {"temperature_k": 512.6, "ref": "Default", "source_file": "fluids/Methanol.json"},
+    "H2O": {"temperature_k": 647.3, "ref": "Default", "source_file": "fluids/Water.json"}
+  },
+  "states": [
+    {
+      "temperature_k": 333.15,
+      "pressure_pa": 39223.0,
+      "liquid": {
+        "composition": {"MEOH": 0.16639651180346363, "H2O": 0.8336034881965364},
+        "molar_density_mol_per_m3": 45279.44731624099,
+        "compressibility_factor": 0.00031272722280200184,
+        "ln_phi": {"MEOH": 1.165662020414552, "H2O": -0.6674807978741981},
+        "pressure_physical_pa": 322189297.51223063,
+        "pressure_association_pa": -322150074.5122313,
+        "mu_cubic_over_rt": {"MEOH": 1.0441914500012004, "H2O": 0.3340751829097539},
+        "mu_association_over_rt": {"MEOH": -7.948708669626624, "H2O": -9.071735220823927}
+      },
+      "vapor": {
+        "composition": {"MEOH": 0.5620251679095918, "H2O": 0.43797483209040816},
+        "molar_density_mol_per_m3": 14.733582434750156,
+        "compressibility_factor": 0.9610775839431968,
+        "ln_phi": {"MEOH": -0.05151104578434222, "H2O": -0.02388439013187002},
+        "pressure_physical_pa": 40753.491632472644,
+        "pressure_association_pa": -1530.4916325061495,
+        "mu_cubic_over_rt": {"MEOH": -0.0034513854628720328, "H2O": -0.0020604948590033398},
+        "mu_association_over_rt": {"MEOH": -0.08775980108087768, "H2O": -0.061524036032274174}
+      }
+    },
+    {
+      "temperature_k": 333.15,
+      "pressure_pa": 48852.0,
+      "liquid": {
+        "composition": {"MEOH": 0.30650048190367624, "H2O": 0.6934995180963238},
+        "molar_density_mol_per_m3": 39559.40111102041,
+        "compressibility_factor": 0.0004458190658785319,
+        "ln_phi": {"MEOH": 0.7429914580141856, "H2O": -0.8247468104918223},
+        "pressure_physical_pa": 257374006.90789214,
+        "pressure_association_pa": -257325154.907892,
+        "mu_cubic_over_rt": {"MEOH": 0.39553312629826687, "H2O": -0.012703320724617662},
+        "mu_association_over_rt": {"MEOH": -7.3681390384261505, "H2O": -8.527640859909273}
+      },
+      "vapor": {
+        "composition": {"MEOH": 0.686804363804374, "H2O": 0.31319563619562596},
+        "molar_density_mol_per_m3": 18.60785019291297,
+        "compressibility_factor": 0.9477900492097842,
+        "ln_phi": {"MEOH": -0.0638386971552806, "H2O": -0.02982429667899965},
+        "pressure_physical_pa": 51439.05615114658,
+        "pressure_association_pa": -2587.0561511465858,
+        "mu_cubic_over_rt": {"MEOH": -0.004608867619298021, "H2O": -0.00278088499544842},
+        "mu_association_over_rt": {"MEOH": -0.11285209786883937, "H2O": -0.08066568001640803}
+      }
+    },
+    {
+      "temperature_k": 333.15,
+      "pressure_pa": 56652.0,
+      "liquid": {
+        "composition": {"MEOH": 0.45339273376877043, "H2O": 0.5466072662312295},
+        "molar_density_mol_per_m3": 34836.01844290548,
+        "compressibility_factor": 0.0005871008809050631,
+        "ln_phi": {"MEOH": 0.45152538072721704, "H2O": -0.8858133917358684},
+        "pressure_physical_pa": 205426292.33693713,
+        "pressure_association_pa": -205369640.33693704,
+        "mu_cubic_over_rt": {"MEOH": -0.13442301198999074, "H2O": -0.2980472796269398},
+        "mu_association_over_rt": {"MEOH": -6.854365501743606, "H2O": -8.028080006569741}
+      },
+      "vapor": {
+        "composition": {"MEOH": 0.7666326529551806, "H2O": 0.23336734704481937},
+        "molar_density_mol_per_m3": 21.829966621275336,
+        "compressibility_factor": 0.9368890695014715,
+        "ln_phi": {"MEOH": -0.07372371186478917, "H2O": -0.0346965856069595},
+        "pressure_physical_pa": 60314.60752052298,
+        "pressure_association_pa": -3662.6075205230227,
+        "mu_cubic_over_rt": {"MEOH": -0.005594302030188051, "H2O": -0.0033963194861073385},
+        "mu_association_over_rt": {"MEOH": -0.13331980259274767, "H2O": -0.0964906588789987}
+      }
+    },
+    {
+      "temperature_k": 333.15,
+      "pressure_pa": 63998.0,
+      "liquid": {
+        "composition": {"MEOH": 0.6049928945339633, "H2O": 0.3950071054660368},
+        "molar_density_mol_per_m3": 30929.216486005495,
+        "compressibility_factor": 0.0007470049523357602,
+        "ln_phi": {"MEOH": 0.2379439662837779, "H2O": -0.9056728497304807},
+        "pressure_physical_pa": 163954885.62331298,
+        "pressure_association_pa": -163890887.62331158,
+        "mu_cubic_over_rt": {"MEOH": -0.5642454610702066, "H2O": -0.5314326485162058},
+        "mu_association_over_rt": {"MEOH": -6.39724931586657, "H2O": -7.573678944434829}
+      },
+      "vapor": {
+        "composition": {"MEOH": 0.8339018331263911, "H2O": 0.16609816687360887},
+        "molar_density_mol_per_m3": 24.939305465345576,
+        "compressibility_factor": 0.9264202613427029,
+        "ln_phi": {"MEOH": -0.08295500967331082, "H2O": -0.03934807674650445},
+        "pressure_physical_pa": 68868.7371737859,
+        "pressure_association_pa": -4870.737173785863,
+        "mu_cubic_over_rt": {"MEOH": -0.006571344076383403, "H2O": -0.0040088806399089455},
+        "mu_association_over_rt": {"MEOH": -0.15281096694736115, "H2O": -0.11176649745702924}
+      }
+    },
+    {
+      "temperature_k": 333.15,
+      "pressure_pa": 72832.0,
+      "liquid": {
+        "composition": {"MEOH": 0.784634784123004, "H2O": 0.21536521587699603},
+        "molar_density_mol_per_m3": 27211.43825697692,
+        "compressibility_factor": 0.0009662660848190444,
+        "ln_phi": {"MEOH": 0.05373961383423698, "H2O": -0.9122746584774619},
+        "pressure_physical_pa": 126184423.02941644,
+        "pressure_association_pa": -126111591.02941927,
+        "mu_cubic_over_rt": {"MEOH": -0.9610406150457154, "H2O": -0.7491043815740503},
+        "mu_association_over_rt": {"MEOH": -5.92729108267799, "H2O": -7.105241588461354}
+      },
+      "vapor": {
+        "composition": {"MEOH": 0.9095223465448451, "H2O": 0.09047765345515481},
+        "molar_density_mol_per_m3": 28.78201813183215,
+        "compressibility_factor": 0.9135387861417663,
+        "ln_phi": {"MEOH": -0.09396159864948224, "H2O": -0.04504224977546757},
+        "pressure_physical_pa": 79424.50551731967,
+        "pressure_association_pa": -6592.505517319631,
+        "mu_cubic_over_rt": {"MEOH": -0.007817482935206645, "H2O": -0.004793565239781639},
+        "mu_association_over_rt": {"MEOH": -0.17657356094908785, "H2O": -0.1306781297704982}
+      }
+    }
+  ]
+}

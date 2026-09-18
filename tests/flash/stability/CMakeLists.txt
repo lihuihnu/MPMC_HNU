@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(mpmc_flash_stability_tests LANGUAGES CXX)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash" flash-library)
-add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad" ad-library)
+if(NOT TARGET mpmc_ad)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad" ad-library)
+endif()
 enable_testing()
 
 add_executable(mpmc_flash_stability_tests stability_test.cpp generic_header.cpp pr_header.cpp)

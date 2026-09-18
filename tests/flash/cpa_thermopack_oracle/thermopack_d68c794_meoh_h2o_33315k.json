@@ -1,0 +1,154 @@
+{
+  "generator": {
+    "api": "SRK_CPA + two_phase_tpflash",
+    "commit": "d68c794c7342bfc6938eb424a1fbb88b7780b738",
+    "formulation_binding": "pinned setCPAformulation symbol via c_int Fortran LOGICAL ABI",
+    "software": "thermotools/thermopack"
+  },
+  "model": {
+    "alpha": "Classic",
+    "association_delta_rule": "STANDARD/CR-1",
+    "association_schemes": {
+      "H2O": "4C",
+      "MEOH": "2B"
+    },
+    "components": [
+      "MEOH",
+      "H2O"
+    ],
+    "cross_beta_rule": "GEOMETRIC from pinned ThermoPack CPA binary record",
+    "kij_readback": {
+      "kij_a": -0.055,
+      "kij_eps": 0.0
+    },
+    "mixing": "vdW",
+    "physical_eos": "SRK",
+    "pure_parameter_readback": {
+      "H2O": [
+        122770.0,
+        0.014515,
+        16655.0,
+        0.0692,
+        0.67359
+      ],
+      "MEOH": [
+        405310.0,
+        0.030978,
+        24591.0,
+        0.0161,
+        0.43102
+      ]
+    },
+    "pure_parameter_units": [
+      "Pa L^2 mol^-2",
+      "L mol^-1",
+      "J mol^-1",
+      "1",
+      "1"
+    ],
+    "simplified_cpa": true
+  },
+  "schema": "MPMC_HNU/CPA/ThermoPack-two-phase-TP-oracle/v1",
+  "states": [
+    {
+      "beta_liquid": 0.8926177678465737,
+      "beta_vapor": 0.10738223215342646,
+      "extraction_material_balance_max_abs": 0.0,
+      "feed": {
+        "H2O": 0.79112,
+        "MEOH": 0.20888
+      },
+      "liquid": {
+        "H2O": 0.8336034881965364,
+        "MEOH": 0.16639651180346363
+      },
+      "phase_code": 0,
+      "pressure_pa": 39223.0,
+      "temperature_k": 333.15,
+      "vapor": {
+        "H2O": 0.43797483209040816,
+        "MEOH": 0.5620251679095918
+      }
+    },
+    {
+      "beta_liquid": 0.9041831550227546,
+      "beta_vapor": 0.09581684497724538,
+      "extraction_material_balance_max_abs": 0.0,
+      "feed": {
+        "H2O": 0.65706,
+        "MEOH": 0.34294
+      },
+      "liquid": {
+        "H2O": 0.6934995180963238,
+        "MEOH": 0.30650048190367624
+      },
+      "phase_code": 0,
+      "pressure_pa": 48852.0,
+      "temperature_k": 333.15,
+      "vapor": {
+        "H2O": 0.31319563619562596,
+        "MEOH": 0.686804363804374
+      }
+    },
+    {
+      "beta_liquid": 0.9185376298860426,
+      "beta_vapor": 0.08146237011395754,
+      "extraction_material_balance_max_abs": 0.0,
+      "feed": {
+        "H2O": 0.52109,
+        "MEOH": 0.47891
+      },
+      "liquid": {
+        "H2O": 0.5466072662312295,
+        "MEOH": 0.45339273376877043
+      },
+      "phase_code": 0,
+      "pressure_pa": 56652.0,
+      "temperature_k": 333.15,
+      "vapor": {
+        "H2O": 0.23336734704481937,
+        "MEOH": 0.7666326529551806
+      }
+    },
+    {
+      "beta_liquid": 0.9004097192262681,
+      "beta_vapor": 0.09959028077373185,
+      "extraction_material_balance_max_abs": 0.0,
+      "feed": {
+        "H2O": 0.37220999999999993,
+        "MEOH": 0.6277900000000001
+      },
+      "liquid": {
+        "H2O": 0.3950071054660368,
+        "MEOH": 0.6049928945339633
+      },
+      "phase_code": 0,
+      "pressure_pa": 63998.0,
+      "temperature_k": 333.15,
+      "vapor": {
+        "H2O": 0.16609816687360887,
+        "MEOH": 0.8339018331263911
+      }
+    },
+    {
+      "beta_liquid": 0.9470306269998979,
+      "beta_vapor": 0.05296937300010204,
+      "extraction_material_balance_max_abs": 0.0,
+      "feed": {
+        "H2O": 0.20875,
+        "MEOH": 0.79125
+      },
+      "liquid": {
+        "H2O": 0.21536521587699603,
+        "MEOH": 0.784634784123004
+      },
+      "phase_code": 0,
+      "pressure_pa": 72832.0,
+      "temperature_k": 333.15,
+      "vapor": {
+        "H2O": 0.09047765345515481,
+        "MEOH": 0.9095223465448451
+      }
+    }
+  ]
+}

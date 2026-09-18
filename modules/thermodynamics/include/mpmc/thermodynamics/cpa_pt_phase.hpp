@@ -131,62 +131,30 @@ inline void cpa_fill_ln_phi(
     const double rho = state.molar_density_mol_per_m3;
     const double rt = cpa_gas_constant_j_per_mol_k * temperature_k;
     const double z = target_pressure_pa / (rho * rt);
-    const double b = state.b_mix_m3_per_mol;
-    const double a = state.a_mix_pa_m6_per_mol2;
-    const double b_rho = b * rho;
-    if (!std::isfinite(z) || !(z > 0.0) ||
-        !std::isfinite(b_rho) || !(b_rho > 0.0) || !(b_rho < 1.0)) {
-        throw std::range_error("CPA PT: nonrepresentable Z or reduced density");
+    if (!std::isfinite(z) || !(z > 0.0)) {
+        throw std::range_error("CPA PT: nonrepresentable Z");
     }
 
-    const auto pure_a = cpa_pure_a(temperature_k, parameters);
-    const auto sums = cpa_a_sums(composition, pure_a, parameters);
-    const double z_physical = state.pressure_physical_pa / (rho * rt);
-    const double a_over_brt = a / (b * rt);
-    const double log_free_volume = std::log1p(-b_rho);
-    const double log_attraction_volume = std::log1p(b_rho);
-    if (!std::isfinite(z_physical) || !std::isfinite(a_over_brt) ||
-        !std::isfinite(log_free_volume) ||
-        !std::isfinite(log_attraction_volume)) {
-        throw std::range_error("CPA PT: nonrepresentable SRK chemical potential state");
+    const auto chemical_potentials =
+        cpa_helmholtz_residual_chemical_potentials(
+            temperature_k,
+            rho,
+            composition,
+            parameters,
+            state.association);
+    if (chemical_potentials.total_over_rt.size() != parameters.size()) {
+        throw std::runtime_error(
+            "CPA PT: Helmholtz chemical-potential dimension mismatch");
     }
 
-    std::vector<double> association_log_x(parameters.size(), 0.0);
-    double association_sum = 0.0;
-    for (const auto& site : state.association.sites) {
-        if (!(site.unbonded_fraction > 0.0) ||
-            !std::isfinite(site.unbonded_fraction)) {
-            throw std::range_error("CPA PT: invalid converged association site fraction");
-        }
-        const double multiplicity = static_cast<double>(site.multiplicity);
-        association_log_x[site.component_index] +=
-            multiplicity * std::log(site.unbonded_fraction);
-        association_sum += composition[site.component_index] * multiplicity *
-            (1.0 - site.unbonded_fraction);
-    }
-
-    const double g = state.association.radial_distribution;
-    if (!std::isfinite(g) || !(g > 0.0) ||
-        !std::isfinite(association_sum) || association_sum < 0.0) {
-        throw std::range_error("CPA PT: nonrepresentable association chemical potential state");
-    }
-
+    const double log_z = std::log(z);
     root.compressibility_factor = z;
     root.ln_phi.assign(parameters.size(), 0.0);
     root.reduced_gibbs_offset = 0.0;
-    for (std::size_t i = 0; i < parameters.size(); ++i) {
-        const double b_i = parameters.pure(i).b_m3_per_mol;
-        const double b_ratio = b_i / b;
-        const double attraction_ratio = 2.0 * sums[i] / a - b_ratio;
-        const double mu_cubic =
-            b_ratio * (z_physical - 1.0) - log_free_volume -
-            a_over_brt * attraction_ratio * log_attraction_volume;
-        // For g=1/(1-1.9*eta), (1/g) dg/deta = 1.9*g.
-        const double mu_association = association_log_x[i] -
-            (1.9 / 8.0) * rho * b_i * g * association_sum;
-        const double value = mu_cubic + mu_association - std::log(z);
-        if (!std::isfinite(mu_cubic) || !std::isfinite(mu_association) ||
-            !std::isfinite(value)) {
+    for (std::size_t i = 0U; i < parameters.size(); ++i) {
+        const double value =
+            chemical_potentials.total_over_rt[i] - log_z;
+        if (!std::isfinite(value)) {
             throw std::range_error("CPA PT: nonrepresentable ln(phi)");
         }
         root.ln_phi[i] = value;
