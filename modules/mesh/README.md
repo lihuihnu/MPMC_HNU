@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index 已形成不可变 `Topology` snapshot：统一拥有按 entity kind 分组的 global-ID 数组与实际 `CsrAdjacency` relations；实体 count 直接由 ID 数组长度确定，构造时校验同类 global-ID 唯一性、relation source/target count 和 kind-pair 唯一性。`EntityKind`、64-bit `GlobalEntityId`、32-bit `LocalIndex` 与紧凑 CSR 仍是底层表示；几何、字段、I/O、DoF、partition 与 PETSc 仍未实现。
+> 当前状态：core topology/index 已形成不可变 `Topology` snapshot，并新增最小 `make_cartesian_topology_2d(nx, ny)`：可确定性生成 2D Cartesian 的 vertex/face/cell ID，以及 `cell->vertex`、`cell->face`、`face->vertex`、`face->cell` 四类紧凑 CSR relation。2D 的 `face` 表示 cell 的余维一接口，`edge` 暂不物化；几何坐标/度量、字段、I/O、DoF、partition 与 PETSc 仍未实现。
 
 ## 1. 目标
 
@@ -31,6 +31,8 @@
 
 `Topology` 是这一层的不可变 owning snapshot。`vertex/edge/face/cell` 的 global ID 分别连续保存；同一 `EntityKind` 内 ID 必须唯一，稳定实体身份定义为 `(EntityKind, GlobalEntityId)`，不同 kind 可保留各自来源编号。每个已物化 relation 只能占用一个 source-kind/target-kind 槽位，并且其 CSR 行数、目标计数必须与 snapshot 中对应实体数组严格一致。未物化的反向或派生 relation 不会自动生成。
 
+2D Cartesian builder 使用零基、确定性编号：vertex/cell 按 `(j,i)` row-major；所有竖向 face 先编号，再按 `(j,i)` 编号横向 face。`cell->vertex` 固定为 logical lower-left/lower-right/upper-right/upper-left，`cell->face` 固定为 left/right/bottom/top；这些只是拓扑顺序，不代表已经计算几何法向。
+
 ## 3. 几何与字段
 
 几何层至少提供：
@@ -54,7 +56,7 @@ I/O 遇到未知单位、缺少必要分量或数组长度不匹配时不得静�
 
 本 PR 合并前至少覆盖以下实用入口：
 
-1. 内建 Cartesian 生成：1D/2D/3D，支持 uniform 与按轴非均匀坐标；
+1. 内建 Cartesian 生成：当前已实现**仅拓扑**的 2D `nx × ny` builder；后续仍需 1D/3D，以及 uniform/非均匀坐标和几何层；
 2. Gmsh MSH：至少支持当前常用 4.1 网格的导入，并能导出仓库支持的实体、physical tags 与字段子集；
 3. VTK UnstructuredGrid：至少一种标准 VTK/VTU 路径可完成几何、拓扑和 cell/point fields 的 round-trip；
 4. reservoir corner-point：至少支持 Eclipse 风格 GRDECL 的核心 `SPECGRID/COORD/ZCORN/ACTNUM` 导入，并能读取常用 `PORO/PERMX/PERMY/PERMZ` 属性。
