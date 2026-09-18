@@ -1,5 +1,6 @@
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/entity.hpp>
+#include <mpmc/mesh/topology.hpp>
 
 #include <array>
 #include <cstdint>
@@ -132,6 +133,119 @@ void invalid_csr() {
             "empty relation rejected");
 }
 
+
+mesh::Topology two_cell_quad_topology() {
+    mesh::Topology::EntityIds ids;
+    ids.vertices = {
+        mesh::GlobalEntityId{100U}, mesh::GlobalEntityId{101U},
+        mesh::GlobalEntityId{102U}, mesh::GlobalEntityId{103U},
+        mesh::GlobalEntityId{104U}, mesh::GlobalEntityId{105U},
+    };
+    ids.cells = {mesh::GlobalEntityId{200U}, mesh::GlobalEntityId{201U}};
+    std::vector<mesh::CsrAdjacency> relations;
+    relations.push_back(two_cell_quad_cell_to_vertex());
+    return mesh::Topology{std::move(ids), std::move(relations)};
+}
+
+void topology_snapshot() {
+    const auto topology = two_cell_quad_topology();
+    require(topology.entity_count(mesh::EntityKind::vertex) == 6U, "vertex count");
+    require(topology.entity_count(mesh::EntityKind::edge) == 0U, "edge count");
+    require(topology.entity_count(mesh::EntityKind::face) == 0U, "face count");
+    require(topology.entity_count(mesh::EntityKind::cell) == 2U, "cell count");
+    require(topology.relation_count() == 1U, "relation count");
+
+    const auto vertex_ids = topology.global_ids(mesh::EntityKind::vertex);
+    require(vertex_ids.size() == 6U && vertex_ids.front().value() == 100U &&
+                vertex_ids.back().value() == 105U,
+            "global ID ordering changed");
+    require(topology.global_id(mesh::EntityKind::cell, mesh::LocalIndex{1U}).value() == 201U,
+            "local-to-global lookup mismatch");
+
+    require(topology.has_relation(mesh::EntityKind::cell, mesh::EntityKind::vertex),
+            "cell-to-vertex relation missing");
+    require(!topology.has_relation(mesh::EntityKind::vertex, mesh::EntityKind::cell),
+            "unexpected reverse relation materialized");
+    const auto& relation =
+        topology.relation(mesh::EntityKind::cell, mesh::EntityKind::vertex);
+    require(relation.adjacent(mesh::LocalIndex{0U})[2].value() == 4U,
+            "snapshot relation payload changed");
+
+    expect_throw<std::out_of_range>([&] {
+        (void)topology.global_id(mesh::EntityKind::cell, mesh::LocalIndex{2U});
+    });
+    expect_throw<std::out_of_range>([&] {
+        (void)topology.relation(mesh::EntityKind::vertex, mesh::EntityKind::cell);
+    });
+}
+
+void topology_invalid() {
+    {
+        mesh::Topology::EntityIds ids;
+        ids.vertices = {mesh::GlobalEntityId{10U}, mesh::GlobalEntityId{10U}};
+        expect_throw<std::invalid_argument>(
+            [&] { (void)mesh::Topology{std::move(ids), {}}; });
+    }
+    {
+        mesh::Topology::EntityIds ids;
+        ids.vertices = {
+            mesh::GlobalEntityId{100U}, mesh::GlobalEntityId{101U},
+            mesh::GlobalEntityId{102U}, mesh::GlobalEntityId{103U},
+            mesh::GlobalEntityId{104U}, mesh::GlobalEntityId{105U},
+        };
+        ids.cells = {mesh::GlobalEntityId{200U}, mesh::GlobalEntityId{201U}};
+        std::vector<mesh::CsrAdjacency> relations;
+        relations.emplace_back(
+            mesh::EntityKind::cell, mesh::EntityKind::vertex, 6U,
+            std::vector<mesh::CsrAdjacency::Offset>{0U, 4U},
+            std::vector<mesh::LocalIndex>{
+                mesh::LocalIndex{0U}, mesh::LocalIndex{1U},
+                mesh::LocalIndex{4U}, mesh::LocalIndex{3U}});
+        expect_throw<std::invalid_argument>(
+            [&] { (void)mesh::Topology{std::move(ids), std::move(relations)}; });
+    }
+    {
+        mesh::Topology::EntityIds ids;
+        ids.vertices = {
+            mesh::GlobalEntityId{100U}, mesh::GlobalEntityId{101U},
+            mesh::GlobalEntityId{102U}, mesh::GlobalEntityId{103U},
+            mesh::GlobalEntityId{104U}, mesh::GlobalEntityId{105U},
+        };
+        ids.cells = {mesh::GlobalEntityId{200U}, mesh::GlobalEntityId{201U}};
+        std::vector<mesh::CsrAdjacency> relations;
+        relations.emplace_back(
+            mesh::EntityKind::cell, mesh::EntityKind::vertex, 5U,
+            std::vector<mesh::CsrAdjacency::Offset>{0U, 4U, 8U},
+            std::vector<mesh::LocalIndex>{
+                mesh::LocalIndex{0U}, mesh::LocalIndex{1U},
+                mesh::LocalIndex{4U}, mesh::LocalIndex{3U},
+                mesh::LocalIndex{1U}, mesh::LocalIndex{2U},
+                mesh::LocalIndex{4U}, mesh::LocalIndex{3U}});
+        expect_throw<std::invalid_argument>(
+            [&] { (void)mesh::Topology{std::move(ids), std::move(relations)}; });
+    }
+    {
+        mesh::Topology::EntityIds ids;
+        ids.vertices = {
+            mesh::GlobalEntityId{100U}, mesh::GlobalEntityId{101U},
+            mesh::GlobalEntityId{102U}, mesh::GlobalEntityId{103U},
+            mesh::GlobalEntityId{104U}, mesh::GlobalEntityId{105U},
+        };
+        ids.cells = {mesh::GlobalEntityId{200U}, mesh::GlobalEntityId{201U}};
+        std::vector<mesh::CsrAdjacency> relations;
+        relations.push_back(two_cell_quad_cell_to_vertex());
+        relations.push_back(two_cell_quad_cell_to_vertex());
+        expect_throw<std::invalid_argument>(
+            [&] { (void)mesh::Topology{std::move(ids), std::move(relations)}; });
+    }
+
+    const auto topology = two_cell_quad_topology();
+    const auto invalid_kind = static_cast<mesh::EntityKind>(255U);
+    expect_throw<std::invalid_argument>([&] { (void)topology.entity_count(invalid_kind); });
+    expect_throw<std::invalid_argument>(
+        [&] { (void)topology.has_relation(invalid_kind, mesh::EntityKind::vertex); });
+}
+
 void headers() {
     static_assert(
         std::is_same_v<decltype(std::declval<const mesh::CsrAdjacency&>().indices()),
@@ -151,6 +265,8 @@ int main(int argc, char** argv) {
         if (name == "strong_indices") { strong_indices(); }
         else if (name == "two_cell_quad") { two_cell_quad(); }
         else if (name == "invalid_csr") { invalid_csr(); }
+        else if (name == "topology_snapshot") { topology_snapshot(); }
+        else if (name == "topology_invalid") { topology_invalid(); }
         else if (name == "headers") { headers(); }
         else { throw std::invalid_argument("unknown mesh core test"); }
         std::cout << "[PASS] " << name << '\n';
