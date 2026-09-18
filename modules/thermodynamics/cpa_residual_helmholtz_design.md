@@ -710,6 +710,83 @@ second temperature derivatives, caloric-property APIs, association continuation/
 new formulations, new parameters, wider applicability claims, three-phase physical-oracle
 claims or deletion of the analytic regression path.
 
+
+### 12.3 Gate A / Gate E follow-up — current PR #115 evidence
+
+This follow-up supersedes the readiness statuses recorded in section 12.1 while preserving
+that earlier audit as historical evidence.
+
+**Gate A is now PASS.** Commit
+`cc95923f2a0fbcf0ffb6c452bc6c8ce4e64c32b4` added the independent analytic SRK scalar
+reference required by the frozen contract. It exercises 40 frozen phase-state comparisons
+and 8 full-binary pure-endpoint comparisons with normal/swapped component order. The
+observed maximum scalar cubic difference is zero under the predeclared roundoff contract.
+
+**The pinned Clapeyron formulation is exactly representable, but Gate E remains BLOCKED by
+the frozen numerical envelope.** The external generator checks out the unmodified
+`ClapeyronThermo/Clapeyron.jl@229b09452f36c2f812486150df0bb43b197bb4e5`
+source and read-backs the instantiated model before producing any oracle values. The
+successful audit confirms:
+
+- RK/SRK cubic with `sCPAAlpha`;
+- simplified/Kontogeorgis `g=1/(1-1.9 eta)`;
+- `vdW1fRule` and no volume translation;
+- methanol 2B (`H=1,e=1`) and water 4C (`H=2,e=2`);
+- the frozen ThermoPack-parity `Tc/a0/b/c1` snapshot and `kij=-0.055`;
+- `R=8.31446261815324 J mol^-1 K^-1`;
+- source-complete CR-1 cross values
+  `epsilon_cross=20623 J/mol` and
+  `beta_cross=0.03337843615270194`.
+
+The pinned Clapeyron revision has a relevant implementation detail: its native
+`:cr1` recombination path calls the non-mutating `epsilon_assoc_mix` from
+`assoc_mix!` and `recombine_assoc!` discards that returned mixed epsilon object. A
+model constructed from pure association records alone therefore reads back zero
+cross-association epsilon. The oracle does **not** patch the pinned source. Instead it
+injects the already source-complete CR-1 cross records explicitly and uses
+`combining=:nocombining`, exactly matching MPMC_HNU's explicit-site-pair parameter
+contract. The read-back maximum parameter delta is
+`6.245004513516506e-17`.
+
+The final frozen ten-state oracle is
+`tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json`.
+The generator uses Julia 1.10.12 and, for diagnostic purposes only, tightens its own
+association numerics to `rtol=atol=1e-16`, `max_iters=4096`, and implicit AD. Even
+with those oracle-only settings, the maximum reported Clapeyron association-equation
+residual is `2.940869769929577e-12`.
+
+The C++ Gate-E regression evaluates the MPMC_HNU canonical residual Helmholtz kernel at
+the exact same ten `(T,V,n)` coordinates and applies the already-frozen thresholds
+without widening them. The complete ten-state audit reports:
+
+| Observable | Maximum absolute difference | Frozen threshold | Result |
+| --- | ---: | ---: | --- |
+| `F_res=A_res/(RT)` | `3.2996314014432926e-12` | `1e-10` | PASS |
+| pressure | `4.9072827096097171e-05 Pa` | `5e-6 Pa` | **FAIL** |
+| `mu_i^res/(RT)` | `2.6485480475457734e-11` | `1e-10` | PASS |
+| `ln(phi_i)` | `6.7808336723373941e-10` | `1e-10` | **FAIL** |
+
+This pattern is consistent with a pressure / `Z` derivative-level numerical floor in the
+pinned Clapeyron oracle rather than a scalar-potential or residual-chemical-potential
+formulation mismatch: the scalar `F_res` and `mu_i^res/(RT)` rows pass, while pressure
+fails and the resulting `-ln Z` contribution causes `ln(phi)` to fail. This is a
+diagnostic interpretation, not permission to relax the frozen envelope.
+
+Therefore the current readiness matrix is:
+
+| Gate | Status |
+| --- | --- |
+| A — scalar Helmholtz value | **PASS** |
+| B — pressure vs MPMC analytic path | **PASS** |
+| C — residual chemical potentials vs MPMC analytic path | **PASS** |
+| D — final `ln(phi)` + ThermoPack parity | **PASS** |
+| E — named independent implementations | **BLOCKED** |
+
+**Gate F remains NOT READY.** No production pressure or `ln(phi)` source-of-truth switch
+is authorized while the pinned Clapeyron leg exceeds the predeclared pressure and
+`ln(phi)` thresholds. The failing Gate-E regression is intentionally retained as audit
+evidence; the thresholds are not widened to make the gate green.
+
 ## 13. Second derivatives are explicitly later
 
 The stationarity trick removes `dX/dz` only for **first derivatives**. Second derivatives
