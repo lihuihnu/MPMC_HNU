@@ -690,9 +690,15 @@ void dense_field_invalid() {
     });
     expect_throw<std::length_error>([&] {
         (void)mesh::DenseFieldSnapshot::create(
-            topology, mesh::EntityKind::cell,
+            topology, mesh::EntityKind::face,
             std::numeric_limits<std::size_t>::max(), {},
             synthetic_field_metadata("test.overflow", "1"));
+    });
+
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::cell, 1U, {1.0},
+            mesh::DenseFieldMetadata{});
     });
 
     for (int invalid = 0; invalid < 4; ++invalid) {
