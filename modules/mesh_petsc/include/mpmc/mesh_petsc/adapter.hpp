@@ -9,6 +9,7 @@
 #include <petscsection.h>
 #include <petscsf.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
