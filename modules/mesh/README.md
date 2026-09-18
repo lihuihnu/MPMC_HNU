@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、最小 2D Cartesian topology builder、`Geometry2D`、`FaceBoundarySnapshot` 与通用 `DenseFieldSnapshot` 已建立；新增最小不可变 `DofLayout`，可将一个或多个仅含 stable ID、vertex/face/cell location 与 component count 的逻辑变量映射到连续 local scalar offsets。该层没有 pressure/saturation 等变量语义，也尚未处理 owned/ghost/global numbering；I/O、partition 与 PETSc adapter 仍未实现。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot` 与最小 `DofLayout` 已建立；新增不可变 `PartitionSnapshot` serial/local 契约，按 vertex/edge/face/cell 保存与 `Topology` local ordering 对齐的稳定 `GlobalEntityId` 与 `owner_rank`，并由 `owner_rank == local_rank` 唯一推导 owned/ghost，提供 local↔global 映射。单 rank 基线严格为 rank 0 全 owned、零 ghost；I/O、MPI/PETSc adapter 与跨 rank 通信仍未实现。
 
 ## 1. 目标
 
@@ -74,7 +74,9 @@
 
 ## 6. 并行与 PETSc 边界
 
-核心 `mpmc::mesh` 保持 MPI/PETSc 可选。并行语义必须先在仓库自己的数据结构中成立：partition vector、owner rank、local owned/ghost numbering、overlap/halo、跨 rank 共享实体和一致 global ID。
+核心 `mpmc::mesh` 保持 MPI/PETSc 可选。当前 `PartitionSnapshot` 已冻结 serial/local ownership 基线：snapshot 记录 `local_rank` 与 `rank_count`，每类 entity 复制 `Topology` 中的稳定 `GlobalEntityId` 并按同一 local ordering 保存 `owner_rank`。ownership 不重复存储，而由 `owner_rank == local_rank` 推导为 owned，否则为 ghost，从而不存在 owner/ownership 两份状态漂移。local→global 为 O(1) 连续数组访问；global→local 保存一份按 global ID 排序的 `LocalIndex` permutation 并二分查找，避免每实体树节点或哈希桶。global ID 只要求在同一 entity kind 内唯一，所以查询始终携带 `EntityKind`。
+
+严格 serial builder 固定 `rank_count=1`、`local_rank=0`，所有本地 vertex/edge/face/cell 都由 rank 0 拥有且 ghost count 必须为零。generic local snapshot 允许 owned/ghost 在 local ordering 中交错，不要求 owned-first；它只描述“本 rank 当前可见的 local topology”，不声称掌握全局所有实体，也尚未描述 halo depth、邻居 rank、send/receive plan、跨 rank shared-entity reconciliation 或 MPI communicator。
 
 可选 `mesh_petsc` 适配层负责：
 
