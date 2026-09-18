@@ -1,0 +1,89 @@
+name: Shared C++ CTest matrix
+
+on:
+  workflow_call:
+    inputs:
+      source_dir:
+        required: true
+        type: string
+      build_dir:
+        required: true
+        type: string
+      targets:
+        required: true
+        type: string
+      test_regex:
+        required: true
+        type: string
+      sanitizer_option:
+        required: true
+        type: string
+      timeout_minutes:
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+# Callers own trigger paths and concurrency; do not cancel a caller from here.
+jobs:
+  ctest:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOURCE_DIR: ${{ inputs.source_dir }}
+      BUILD_DIR: ${{ inputs.build_dir }}
+      BUILD_TARGETS: ${{ inputs.targets }}
+      TEST_REGEX: ${{ inputs.test_regex }}
+      SANITIZER_OPTION: ${{ inputs.sanitizer_option }}
+      SANITIZER: ${{ matrix.sanitizer }}
+      BUILD_CONFIG: ${{ matrix.config }}
+      COMPILER_ARG: ${{ matrix.compiler }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: |
+          config_arg=()
+          compiler_arg=()
+          if [ "$RUNNER_OS" != Windows ]; then
+            config_arg=("-DCMAKE_BUILD_TYPE=$BUILD_CONFIG")
+          fi
+          if [ -n "$COMPILER_ARG" ]; then
+            compiler_arg=("$COMPILER_ARG")
+          fi
+          cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" \
+            "${config_arg[@]}" "${compiler_arg[@]}" \
+            "-D${SANITIZER_OPTION}=${SANITIZER}"
+      - name: Build
+        run: |
+          read -r -a targets <<< "$BUILD_TARGETS"
+          test "${#targets[@]}" -gt 0
+          cmake --build "$BUILD_DIR" --target "${targets[@]}" \
+            --config "$BUILD_CONFIG" --parallel 2
+      - name: Run tests
+        run: ctest --test-dir "$BUILD_DIR" -C "$BUILD_CONFIG" -R "$TEST_REGEX" --verbose --no-tests=error

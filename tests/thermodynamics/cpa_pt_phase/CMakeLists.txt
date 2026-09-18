@@ -12,37 +12,12 @@ add_executable(mpmc_cpa_pt_phase_tests
 add_executable(mpmc_cpa_pt_phase_headers
     cpa_pt_phase_headers.cpp)
 
-set(all_targets
-    mpmc_cpa_pt_phase_tests
-    mpmc_cpa_pt_phase_headers)
-foreach(target IN LISTS all_targets)
+include("${CMAKE_CURRENT_LIST_DIR}/../../support/cmake/cpp_test_options.cmake")
+foreach(target IN ITEMS mpmc_cpa_pt_phase_tests mpmc_cpa_pt_phase_headers)
     target_link_libraries(${target} PRIVATE mpmc::thermodynamics)
-    set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+    mpmc_test_compile_options(${target} "${MPMC_CPA_PT_PHASE_ENABLE_SANITIZERS}"
+        "CPA PT phase sanitizers require Linux GCC/Clang")
 endforeach()
-
-if(MSVC)
-    foreach(target IN LISTS all_targets)
-        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
-    endforeach()
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    foreach(target IN LISTS all_targets)
-        target_compile_options(${target} PRIVATE
-            -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
-    endforeach()
-endif()
-
-if(MPMC_CPA_PT_PHASE_ENABLE_SANITIZERS)
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
-       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
-        message(FATAL_ERROR "CPA PT phase sanitizers require Linux GCC/Clang")
-    endif()
-    foreach(target IN LISTS all_targets)
-        target_compile_options(${target} PRIVATE
-            -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-        target_link_options(${target} PRIVATE
-            -fsanitize=address,undefined -fno-sanitize-recover=all)
-    endforeach()
-endif()
 
 foreach(case IN ITEMS
         nonassociating_three_roots
