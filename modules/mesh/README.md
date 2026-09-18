@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；新增可选 `mpmc::mesh_petsc` 基线适配层。它把 `DofLayout + DofNumberingSnapshot` 映射为 point-major `PetscSection` + PETSc-width local-to-global scalar map，并把 `SharedEntityPlan` 按单一 `EntityKind` 映射为 `PetscSF` root/leaf graph。core 模块仍不依赖 PETSc/MPI；当前适配层只验证 2-rank section/SF identity 与一次标量 broadcast，不含 DMPlex、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已能创建 point-major local `PetscSection`、PETSc-width local-to-global scalar map、按 kind 的 entity SF，以及与 `[cell][face][vertex]` chart 对齐的 combined point SF。2-rank gate 进一步用 `PetscSectionCreateGlobalSection()` 与 `PetscSFSetGraphSection()` 验证 PETSc owned/ghost global offset 编码可回映到同一个 core `GlobalDofIndex`，并完成多 DoF global-layout→local-layout broadcast。core 仍不依赖 PETSc/MPI；不含 DMPlex、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -86,14 +86,16 @@
 
 可选 `mpmc::mesh_petsc` 已建立第一条真实适配基线，但仍与 core 分离。当前 `create_section_mapping()` 使用连续 chart `[cell points][face points][vertex points]`，将 `DofVariable` 声明顺序映射为 `PetscSection` fields，并显式设置 point-major，使 PETSc point offset 与现有 `DofLayout::entity_offset()` 一致；`DofNumberingSnapshot` 同时转换为 PETSc `PetscInt` 宽度的 local-to-global scalar map，若全局编号超出当前 PETSc index 宽度则拒绝，而不是截断。
 
-`create_entity_sf()` 每次只为一个 `EntityKind` 建立 `PetscSF`：本 rank local entity index 是 root space，local ghost index 是 leaf location，`SharedEntityPlan` 中的 owner-local index 直接成为远端 root index。分 kind 建图是刻意的最小基线，因为当前 core halo contract 没有存远端 rank 的跨-kind point base；强行合成一个跨 kind SF 会引入无法从现有事实推导的远端编号。adapter 会核对 MPI communicator 的 rank/size 与 `PartitionSnapshot` 一致，并校验 leaf 的 ghost/owner/GlobalEntityId 后再创建 graph。
+`create_entity_sf()` 仍可按单一 `EntityKind` 建立 `PetscSF`，其 remote root index 直接等于 core `owner_local`。为服务完整 local `PetscSection`，新增 `create_point_sf()`：adapter 在真实 MPI communicator 上 `Allgather` 各 rank 的 cell/face/vertex local counts，据此把 `SharedEntityPlan` 的 kind-local `owner_local` 转换为远端 `[cell][face][vertex]` flattened point index，而不向 core contract 塞入 PETSc 专用 point base。adapter 会核对 communicator 的 rank/size、layout/partition entity counts，以及 leaf 的 ghost/owner/GlobalEntityId 后再创建 graph。
 
-当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6，并使用 synthetic 2-rank fixture 核对 `PetscSection` chart/fields/dofs/offsets、`PetscSF` root/leaf `(rank,index)` identity，以及一次 owner→ghost 标量 broadcast。尚未实现 DMPlex、`PetscSectionCreateGlobalSection()`、section-SF、真实 halo buffer、solver/Vec/Mat integration 或 PETSc partitioner；这些不得由当前最小 adapter 冒充完成。
+2-rank gate 现在进一步调用 `PetscSectionCreateGlobalSection(localSection, pointSF, ...)` 与 `PetscSFSetGraphSection(sectionSF, localSection, globalSection)`。PETSc global section 的 owned offset 使用 PETSc 自身的并行 ownership layout；ghost point 则保存负编码 `-(owner_offset+1)`，所以它的数值顺序并不强制等于 core 的 `[cell][face][vertex] + GlobalEntityOrdinal` 编号。回归先由 owned PETSc offsets 建立 `PETSc-global-offset -> DofNumberingSnapshot::GlobalDofIndex` 映射，再验证 owned 正 offset 与 ghost 负 offset 都解析到本地 `local_to_global` 指向的同一 core GlobalDofIndex。随后 section-SF 对完整 10-DoF local array 执行一次 global-layout→local-layout broadcast，包含 cell point 上的 2-component `cell.primary` 与额外 cell DoF。
+
+当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现 DMPlex、constraint DoF、真实 halo buffer abstraction、solver/Vec/Mat integration 或 PETSc partitioner；这些不得由当前 adapter 冒充完成。
 
 后续适配层仍可负责：
 
 - 从核心拓扑创建或填充 DMPlex；
-- 从 point SF/local section 派生 PETSc global section 与 section SF；
+- 在已有 point/global/section SF 基线之上加入 constraints 与稳定 Vec/Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
 
