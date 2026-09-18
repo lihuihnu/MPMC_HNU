@@ -1,7 +1,7 @@
 #include <mpmc/flash/sw92_profile_c_pt_flash_backend.hpp>
 #include <mpmc/runtime/pt_service.hpp>
 
-#include "../../thermodynamics/sw92/test_support.hpp"
+#include "test_support.hpp"
 
 #include <algorithm>
 #include <array>

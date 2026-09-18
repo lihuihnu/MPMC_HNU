@@ -1,6 +1,6 @@
 #include <mpmc/flash/sw92_stability.hpp>
 
-#include "../../thermodynamics/sw92/test_support.hpp"
+#include "test_support.hpp"
 
 #include <algorithm>
 #include <array>
