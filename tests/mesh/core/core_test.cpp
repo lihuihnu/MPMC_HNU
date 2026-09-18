@@ -5,6 +5,7 @@
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
+#include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/topology.hpp>
 
 #include <array>
@@ -880,6 +881,179 @@ void dof_layout_invalid() {
     });
 }
 
+
+void partition_serial_snapshot() {
+    const auto snapshot = [] {
+        const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
+        return mesh::make_serial_partition_snapshot(topology);
+    }();
+
+    require(snapshot.is_serial(), "serial partition flag");
+    require(snapshot.rank_count() == 1U, "serial rank count");
+    require(snapshot.local_rank().value() == 0U, "serial local rank");
+
+    for (const mesh::EntityKind kind :
+         {mesh::EntityKind::vertex, mesh::EntityKind::edge,
+          mesh::EntityKind::face, mesh::EntityKind::cell}) {
+        require(snapshot.owned_count(kind) == snapshot.entity_count(kind),
+                "serial snapshot must own every entity");
+        require(snapshot.ghost_count(kind) == 0U,
+                "serial snapshot cannot contain ghosts");
+        const auto ids = snapshot.global_ids(kind);
+        const auto owners = snapshot.owner_ranks(kind);
+        require(ids.size() == owners.size(), "serial owner/global alignment");
+        for (std::size_t local = 0; local < ids.size(); ++local) {
+            const auto index =
+                mesh::LocalIndex{static_cast<mesh::LocalIndex::value_type>(local)};
+            require(owners[local].value() == 0U, "serial owner must be rank zero");
+            require(snapshot.is_owned(kind, index), "serial entity must be owned");
+            require(!snapshot.is_ghost(kind, index), "serial entity cannot be ghost");
+            require(snapshot.ownership(kind, index) == mesh::EntityOwnership::owned,
+                    "serial ownership enum");
+            require(snapshot.local_index(kind, ids[local]) == index,
+                    "serial global-to-local roundtrip");
+            require(snapshot.global_id(kind, index) == ids[local],
+                    "serial local-to-global roundtrip");
+            require(snapshot.contains_global(kind, ids[local]),
+                    "serial global presence");
+        }
+    }
+}
+
+void partition_local_snapshot() {
+    mesh::Topology::EntityIds ids;
+    ids.vertices = {
+        mesh::GlobalEntityId{900U},
+        mesh::GlobalEntityId{100U},
+        mesh::GlobalEntityId{500U}};
+    ids.faces = {
+        mesh::GlobalEntityId{42U},
+        mesh::GlobalEntityId{5U}};
+    ids.cells = {
+        mesh::GlobalEntityId{77U},
+        mesh::GlobalEntityId{9U}};
+    const mesh::Topology topology{std::move(ids), {}};
+
+    mesh::EntityOwnerRanks owners;
+    owners.vertices = {
+        mesh::PartitionRank{1U}, mesh::PartitionRank{0U}, mesh::PartitionRank{2U}};
+    owners.faces = {
+        mesh::PartitionRank{1U}, mesh::PartitionRank{2U}};
+    owners.cells = {
+        mesh::PartitionRank{0U}, mesh::PartitionRank{1U}};
+
+    const auto snapshot = mesh::PartitionSnapshot::create(
+        topology, mesh::PartitionRank{1U}, 3U, std::move(owners));
+
+    require(!snapshot.is_serial(), "local multi-rank snapshot misclassified");
+    require(snapshot.local_rank().value() == 1U, "local rank");
+    require(snapshot.rank_count() == 3U, "rank count");
+
+    require(snapshot.owned_count(mesh::EntityKind::vertex) == 1U,
+            "vertex owned count");
+    require(snapshot.ghost_count(mesh::EntityKind::vertex) == 2U,
+            "vertex ghost count");
+    require(snapshot.owned_count(mesh::EntityKind::face) == 1U,
+            "face owned count");
+    require(snapshot.ghost_count(mesh::EntityKind::face) == 1U,
+            "face ghost count");
+    require(snapshot.owned_count(mesh::EntityKind::cell) == 1U,
+            "cell owned count");
+    require(snapshot.ghost_count(mesh::EntityKind::cell) == 1U,
+            "cell ghost count");
+
+    require(snapshot.global_id(mesh::EntityKind::vertex, mesh::LocalIndex{0U}).value() == 900U,
+            "local-to-global must preserve topology ordering");
+    require(snapshot.local_index(mesh::EntityKind::vertex, mesh::GlobalEntityId{100U}).value() == 1U,
+            "global-to-local must not assume numeric identity");
+    require(snapshot.local_index(mesh::EntityKind::vertex, mesh::GlobalEntityId{500U}).value() == 2U,
+            "global-to-local sorted lookup");
+    require(snapshot.local_index(mesh::EntityKind::face, mesh::GlobalEntityId{5U}).value() == 1U,
+            "face global-to-local lookup");
+    require(snapshot.local_index(mesh::EntityKind::cell, mesh::GlobalEntityId{77U}).value() == 0U,
+            "cell global-to-local lookup");
+
+    require(snapshot.owner_rank(mesh::EntityKind::vertex, mesh::LocalIndex{0U}).value() == 1U,
+            "owned vertex owner rank");
+    require(snapshot.owner_rank(mesh::EntityKind::vertex, mesh::LocalIndex{1U}).value() == 0U,
+            "ghost vertex owner rank");
+    require(snapshot.is_owned(mesh::EntityKind::vertex, mesh::LocalIndex{0U}),
+            "owned vertex classification");
+    require(snapshot.is_ghost(mesh::EntityKind::vertex, mesh::LocalIndex{1U}),
+            "ghost vertex classification");
+    require(snapshot.is_ghost(mesh::EntityKind::vertex, mesh::LocalIndex{2U}),
+            "second ghost vertex classification");
+    require(snapshot.is_owned(mesh::EntityKind::face, mesh::LocalIndex{0U}),
+            "owned face classification");
+    require(snapshot.is_ghost(mesh::EntityKind::face, mesh::LocalIndex{1U}),
+            "ghost face classification");
+    require(snapshot.is_ghost(mesh::EntityKind::cell, mesh::LocalIndex{0U}),
+            "ghost cell classification");
+    require(snapshot.is_owned(mesh::EntityKind::cell, mesh::LocalIndex{1U}),
+            "owned cell classification");
+
+    require(!snapshot.contains_global(
+                mesh::EntityKind::vertex, mesh::GlobalEntityId{12345U}),
+            "missing global ID reported present");
+    expect_throw<std::out_of_range>([&] {
+        (void)snapshot.local_index(
+            mesh::EntityKind::vertex, mesh::GlobalEntityId{12345U});
+    });
+}
+
+void partition_invalid() {
+    const auto topology = mesh::make_cartesian_topology_2d(1U, 1U);
+
+    mesh::EntityOwnerRanks serial_owners;
+    serial_owners.vertices.assign(4U, mesh::PartitionRank{0U});
+    serial_owners.faces.assign(4U, mesh::PartitionRank{0U});
+    serial_owners.cells.assign(1U, mesh::PartitionRank{0U});
+
+    expect_throw<std::invalid_argument>([&] {
+        auto owners = serial_owners;
+        (void)mesh::PartitionSnapshot::create(
+            topology, mesh::PartitionRank{0U}, 0U, std::move(owners));
+    });
+    expect_throw<std::out_of_range>([&] {
+        auto owners = serial_owners;
+        (void)mesh::PartitionSnapshot::create(
+            topology, mesh::PartitionRank{1U}, 1U, std::move(owners));
+    });
+    expect_throw<std::invalid_argument>([&] {
+        auto owners = serial_owners;
+        owners.faces.pop_back();
+        (void)mesh::PartitionSnapshot::create(
+            topology, mesh::PartitionRank{0U}, 1U, std::move(owners));
+    });
+    expect_throw<std::out_of_range>([&] {
+        auto owners = serial_owners;
+        owners.vertices[2] = mesh::PartitionRank{2U};
+        (void)mesh::PartitionSnapshot::create(
+            topology, mesh::PartitionRank{0U}, 2U, std::move(owners));
+    });
+
+    const auto snapshot = mesh::make_serial_partition_snapshot(topology);
+    expect_throw<std::out_of_range>([&] {
+        (void)snapshot.global_id(
+            mesh::EntityKind::cell, mesh::LocalIndex{1U});
+    });
+    expect_throw<std::out_of_range>([&] {
+        (void)snapshot.owner_rank(
+            mesh::EntityKind::face, mesh::LocalIndex{4U});
+    });
+    expect_throw<std::out_of_range>([&] {
+        (void)snapshot.local_index(
+            mesh::EntityKind::cell, mesh::GlobalEntityId{999U});
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)snapshot.entity_count(static_cast<mesh::EntityKind>(255U));
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)snapshot.contains_global(
+            static_cast<mesh::EntityKind>(255U), mesh::GlobalEntityId{0U});
+    });
+}
+
 void headers() {
     static_assert(
         std::is_same_v<decltype(std::declval<const mesh::CsrAdjacency&>().indices()),
@@ -911,6 +1085,9 @@ int main(int argc, char** argv) {
         else if (name == "dense_field_invalid") { dense_field_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
+        else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
+        else if (name == "partition_local_snapshot") { partition_local_snapshot(); }
+        else if (name == "partition_invalid") { partition_invalid(); }
         else if (name == "headers") { headers(); }
         else { throw std::invalid_argument("unknown mesh core test"); }
         std::cout << "[PASS] " << name << '\n';
