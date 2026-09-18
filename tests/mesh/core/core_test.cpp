@@ -1551,6 +1551,16 @@ void shared_entity_plan_invalid() {
         });
     }
     {
+        auto duplicate_identity = links;
+        auto repeated = links.front();
+        repeated.ghost_local = mesh::LocalIndex{0U};
+        duplicate_identity.push_back(repeated);
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::SharedEntityPlan::create(
+                rank0_partition, duplicate_identity);
+        });
+    }
+    {
         auto wrong_global = links;
         wrong_global.front().global_id = mesh::GlobalEntityId{999U};
         expect_throw<std::invalid_argument>([&] {
