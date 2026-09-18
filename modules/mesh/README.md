@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：本文件是 `feat/mesh-foundation` PR 的首个正式契约提交。生产实现、测试和 CI 必须在本 PR 后续增量中按本契约逐步完成；不能把本文件视为已经具备网格能力的证据。
+> 当前状态：core topology/index 首个增量已实现：`EntityKind`、64-bit `GlobalEntityId`、32-bit `LocalIndex` 与带 source/target kind、目标计数校验的紧凑 `CsrAdjacency`。其独立 CTest 覆盖强类型、两单元四边形 connectivity、CSR/索引错误和 header self-contained；几何、字段、I/O、DoF、partition 与 PETSc 仍未实现。
 
 ## 1. 目标
 
