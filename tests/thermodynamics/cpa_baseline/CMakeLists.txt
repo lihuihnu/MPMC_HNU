@@ -8,16 +8,27 @@ option(MPMC_CPA_BASELINE_ENABLE_SANITIZERS
        "Enable ASan/UBSan for CPA baseline tests" OFF)
 
 add_executable(mpmc_cpa_baseline_tests
-    cpa_baseline_test.cpp
+    cpa_baseline_test.cpp)
+add_executable(mpmc_cpa_baseline_headers
     cpa_headers.cpp)
-target_link_libraries(mpmc_cpa_baseline_tests PRIVATE mpmc::thermodynamics)
-set_target_properties(mpmc_cpa_baseline_tests PROPERTIES CXX_EXTENSIONS OFF)
+
+set(all_targets
+    mpmc_cpa_baseline_tests
+    mpmc_cpa_baseline_headers)
+foreach(target IN LISTS all_targets)
+    target_link_libraries(${target} PRIVATE mpmc::thermodynamics)
+    set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+endforeach()
 
 if(MSVC)
-    target_compile_options(mpmc_cpa_baseline_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    foreach(target IN LISTS all_targets)
+        target_compile_options(${target} PRIVATE /W4 /WX /permissive- /utf-8)
+    endforeach()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(mpmc_cpa_baseline_tests PRIVATE
-        -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+    foreach(target IN LISTS all_targets)
+        target_compile_options(${target} PRIVATE
+            -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+    endforeach()
 endif()
 
 if(MPMC_CPA_BASELINE_ENABLE_SANITIZERS)
@@ -25,10 +36,12 @@ if(MPMC_CPA_BASELINE_ENABLE_SANITIZERS)
        NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
         message(FATAL_ERROR "CPA baseline sanitizers require Linux GCC/Clang")
     endif()
-    target_compile_options(mpmc_cpa_baseline_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-    target_link_options(mpmc_cpa_baseline_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all)
+    foreach(target IN LISTS all_targets)
+        target_compile_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-sanitize-recover=all)
+    endforeach()
 endif()
 
 foreach(case IN ITEMS
@@ -45,3 +58,8 @@ foreach(case IN ITEMS
     set_tests_properties(thermodynamics.cpa_baseline.${case} PROPERTIES
         LABELS "thermodynamics;cpa;association;baseline" TIMEOUT 120)
 endforeach()
+
+add_test(NAME thermodynamics.cpa_baseline.headers
+         COMMAND mpmc_cpa_baseline_headers)
+set_tests_properties(thermodynamics.cpa_baseline.headers PROPERTIES
+    LABELS "thermodynamics;cpa;association;baseline;headers" TIMEOUT 30)
