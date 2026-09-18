@@ -367,4 +367,6 @@ function main()
     println("CLAPEYRON_CPA_ORACLE_OK states=", length(result["states"]))
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end
