@@ -11,7 +11,8 @@ add_executable(mpmc_mesh_core_tests
     topology_header_self_contained.cpp
     cartesian_2d_header_self_contained.cpp
     geometry_2d_header_self_contained.cpp
-    face_boundary_header_self_contained.cpp)
+    face_boundary_header_self_contained.cpp
+    dense_field_header_self_contained.cpp)
 target_link_libraries(mpmc_mesh_core_tests PRIVATE mpmc::mesh)
 set_target_properties(mpmc_mesh_core_tests PROPERTIES CXX_EXTENSIONS OFF)
 
@@ -35,7 +36,7 @@ if(MPMC_MESH_ENABLE_SANITIZERS)
         -fsanitize=address,undefined -fno-sanitize-recover=all)
 endif()
 
-foreach(case IN ITEMS strong_indices two_cell_quad invalid_csr topology_snapshot topology_invalid cartesian_2d_topology cartesian_2d_invalid cartesian_2d_geometry cartesian_2d_geometry_invalid face_boundary_snapshot face_boundary_invalid headers)
+foreach(case IN ITEMS strong_indices two_cell_quad invalid_csr topology_snapshot topology_invalid cartesian_2d_topology cartesian_2d_invalid cartesian_2d_geometry cartesian_2d_geometry_invalid face_boundary_snapshot face_boundary_invalid dense_field_snapshot dense_field_invalid headers)
     add_test(NAME mesh.core.${case} COMMAND mpmc_mesh_core_tests ${case})
     set_tests_properties(mesh.core.${case}
         PROPERTIES LABELS "mesh;mesh.core;unit" TIMEOUT 30)
