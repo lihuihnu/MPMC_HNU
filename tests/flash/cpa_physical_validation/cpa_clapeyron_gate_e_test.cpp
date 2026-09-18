@@ -1,3 +1,4 @@
+#include <mpmc/ad/math.hpp>
 #include <mpmc/ad/runtime_differentiate.hpp>
 #include <mpmc/thermodynamics/cpa_pt_phase.hpp>
 #include <mpmc/thermodynamics/cpa_residual_helmholtz.hpp>
