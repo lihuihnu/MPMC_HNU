@@ -1,5 +1,6 @@
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
+#include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
@@ -574,6 +575,156 @@ void face_boundary_invalid() {
     });
 }
 
+
+mesh::DenseFieldMetadata synthetic_field_metadata(std::string id, std::string unit) {
+    return {
+        std::move(id),
+        std::move(unit),
+        {mesh::FieldSourceKind::synthetic_test,
+         "test://mesh/dense-field",
+         "fixture-v1",
+         "core_test.cpp"}};
+}
+
+void dense_field_snapshot() {
+    const auto topology = mesh::make_cartesian_topology_2d(2U, 2U);
+
+    const auto cell_scalar = mesh::DenseFieldSnapshot::create(
+        topology,
+        mesh::EntityKind::cell,
+        1U,
+        {10.0, 20.0, 30.0, 40.0},
+        synthetic_field_metadata("test.cell.scalar", "1"));
+    require(cell_scalar.location() == mesh::EntityKind::cell, "cell field location");
+    require(cell_scalar.entity_count() == 4U, "cell field entity count");
+    require(cell_scalar.component_count() == 1U, "cell scalar component count");
+    require(cell_scalar.value_count() == 4U, "cell scalar value count");
+    require_close(cell_scalar.value(mesh::LocalIndex{2U}, 0U), 30.0, 0.0,
+                  "cell scalar lookup");
+    require(cell_scalar.metadata().id == "test.cell.scalar", "field id lost");
+    require(cell_scalar.metadata().unit == "1", "field unit lost");
+    require(cell_scalar.metadata().source.kind == mesh::FieldSourceKind::synthetic_test,
+            "field source kind lost");
+    require(cell_scalar.metadata().source.reference == "test://mesh/dense-field",
+            "field source reference lost");
+    require(cell_scalar.metadata().source.revision == "fixture-v1",
+            "field source revision lost");
+
+    std::vector<double> face_values;
+    face_values.reserve(24U);
+    for (std::size_t face = 0; face < 12U; ++face) {
+        face_values.push_back(static_cast<double>(100U + face));
+        face_values.push_back(static_cast<double>(200U + face));
+    }
+    const auto face_vector = mesh::DenseFieldSnapshot::create(
+        topology,
+        mesh::EntityKind::face,
+        2U,
+        std::move(face_values),
+        synthetic_field_metadata("test.face.vector", "m/s"));
+    const auto face3 = face_vector.entity_values(mesh::LocalIndex{3U});
+    require(face3.size() == 2U, "face vector width");
+    require_close(face3[0], 103.0, 0.0, "face vector component zero");
+    require_close(face3[1], 203.0, 0.0, "face vector component one");
+    require(face3.data() == face_vector.values().data() + 6,
+            "entity-major field storage must be contiguous");
+
+    std::vector<double> vertex_values;
+    vertex_values.reserve(27U);
+    for (std::size_t vertex = 0; vertex < 9U; ++vertex) {
+        vertex_values.push_back(static_cast<double>(vertex));
+        vertex_values.push_back(static_cast<double>(vertex + 10U));
+        vertex_values.push_back(static_cast<double>(vertex + 20U));
+    }
+    const auto vertex_vector = mesh::DenseFieldSnapshot::create(
+        topology,
+        mesh::EntityKind::vertex,
+        3U,
+        std::move(vertex_values),
+        synthetic_field_metadata("test.vertex.vector", "m"));
+    require(vertex_vector.entity_count() == 9U, "vertex field entity count");
+    require(vertex_vector.component_count() == 3U, "vertex field component count");
+    require_close(vertex_vector.value(mesh::LocalIndex{8U}, 2U), 28.0, 0.0,
+                  "vertex component lookup");
+
+    expect_throw<std::out_of_range>(
+        [&] { (void)cell_scalar.value(mesh::LocalIndex{4U}, 0U); });
+    expect_throw<std::out_of_range>(
+        [&] { (void)cell_scalar.value(mesh::LocalIndex{0U}, 1U); });
+}
+
+void dense_field_invalid() {
+    const auto topology = mesh::make_cartesian_topology_2d(1U, 1U);
+
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::cell, 0U, {},
+            synthetic_field_metadata("test.zero-components", "1"));
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::edge, 1U, {},
+            synthetic_field_metadata("test.edge", "1"));
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, static_cast<mesh::EntityKind>(255U), 1U, {},
+            synthetic_field_metadata("test.bad-location", "1"));
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::cell, 2U, {1.0},
+            synthetic_field_metadata("test.bad-size", "1"));
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::cell, 1U,
+            {std::numeric_limits<double>::quiet_NaN()},
+            synthetic_field_metadata("test.nan", "1"));
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::cell, 1U,
+            {std::numeric_limits<double>::infinity()},
+            synthetic_field_metadata("test.inf", "1"));
+    });
+    expect_throw<std::length_error>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::cell,
+            std::numeric_limits<std::size_t>::max(), {},
+            synthetic_field_metadata("test.overflow", "1"));
+    });
+
+    for (int invalid = 0; invalid < 4; ++invalid) {
+        auto metadata = synthetic_field_metadata("test.metadata", "Pa");
+        if (invalid == 0) metadata.id = " \t";
+        if (invalid == 1) metadata.unit.clear();
+        if (invalid == 2) metadata.source.reference.clear();
+        if (invalid == 3) metadata.source.revision.clear();
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::DenseFieldSnapshot::create(
+                topology, mesh::EntityKind::cell, 1U, {1.0},
+                std::move(metadata));
+        });
+    }
+
+    auto bad_kind = synthetic_field_metadata("test.bad-source-kind", "1");
+    bad_kind.source.kind = static_cast<mesh::FieldSourceKind>(255U);
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::cell, 1U, {1.0},
+            std::move(bad_kind));
+    });
+
+    auto bad_locator = synthetic_field_metadata("test.bad-locator", "1");
+    bad_locator.source.locator = std::string{"row\0hidden", 10U};
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DenseFieldSnapshot::create(
+            topology, mesh::EntityKind::cell, 1U, {1.0},
+            std::move(bad_locator));
+    });
+}
+
 void headers() {
     static_assert(
         std::is_same_v<decltype(std::declval<const mesh::CsrAdjacency&>().indices()),
@@ -601,6 +752,8 @@ int main(int argc, char** argv) {
         else if (name == "cartesian_2d_geometry_invalid") { cartesian_2d_geometry_invalid(); }
         else if (name == "face_boundary_snapshot") { face_boundary_snapshot(); }
         else if (name == "face_boundary_invalid") { face_boundary_invalid(); }
+        else if (name == "dense_field_snapshot") { dense_field_snapshot(); }
+        else if (name == "dense_field_invalid") { dense_field_invalid(); }
         else if (name == "headers") { headers(); }
         else { throw std::invalid_argument("unknown mesh core test"); }
         std::cout << "[PASS] " << name << '\n';
