@@ -7,6 +7,7 @@
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
+#include <mpmc/mesh/shared_entity_plan.hpp>
 #include <mpmc/mesh/topology.hpp>
 
 #include <array>
@@ -1374,6 +1375,249 @@ void dof_numbering_invalid() {
     });
 }
 
+
+mesh::PartitionSnapshot shared_fixture_partition(std::uint32_t rank) {
+    mesh::Topology::EntityIds ids;
+    if (rank == 0U) {
+        ids.vertices = {
+            mesh::GlobalEntityId{10U}, mesh::GlobalEntityId{20U}};
+        ids.faces = {
+            mesh::GlobalEntityId{100U}, mesh::GlobalEntityId{200U}};
+        ids.cells = {
+            mesh::GlobalEntityId{1000U}, mesh::GlobalEntityId{2000U}};
+    } else if (rank == 1U) {
+        ids.vertices = {
+            mesh::GlobalEntityId{20U}, mesh::GlobalEntityId{10U}};
+        ids.faces = {
+            mesh::GlobalEntityId{200U}, mesh::GlobalEntityId{100U}};
+        ids.cells = {
+            mesh::GlobalEntityId{2000U}, mesh::GlobalEntityId{1000U}};
+    } else {
+        throw std::invalid_argument("shared fixture rank must be 0 or 1");
+    }
+
+    const mesh::Topology topology{std::move(ids), {}};
+    mesh::EntityOwnerRanks owners;
+    if (rank == 0U) {
+        owners.vertices = {mesh::PartitionRank{0U}, mesh::PartitionRank{1U}};
+        owners.faces = {mesh::PartitionRank{0U}, mesh::PartitionRank{1U}};
+        owners.cells = {mesh::PartitionRank{0U}, mesh::PartitionRank{1U}};
+    } else {
+        owners.vertices = {mesh::PartitionRank{1U}, mesh::PartitionRank{0U}};
+        owners.faces = {mesh::PartitionRank{1U}, mesh::PartitionRank{0U}};
+        owners.cells = {mesh::PartitionRank{1U}, mesh::PartitionRank{0U}};
+    }
+    return mesh::PartitionSnapshot::create(
+        topology, mesh::PartitionRank{rank}, 2U, std::move(owners));
+}
+
+std::vector<mesh::SharedEntityLink> shared_fixture_links() {
+    return {
+        {mesh::EntityKind::vertex, mesh::GlobalEntityId{10U},
+         mesh::PartitionRank{0U}, mesh::LocalIndex{0U},
+         mesh::PartitionRank{1U}, mesh::LocalIndex{1U}},
+        {mesh::EntityKind::vertex, mesh::GlobalEntityId{20U},
+         mesh::PartitionRank{1U}, mesh::LocalIndex{0U},
+         mesh::PartitionRank{0U}, mesh::LocalIndex{1U}},
+        {mesh::EntityKind::face, mesh::GlobalEntityId{100U},
+         mesh::PartitionRank{0U}, mesh::LocalIndex{0U},
+         mesh::PartitionRank{1U}, mesh::LocalIndex{1U}},
+        {mesh::EntityKind::face, mesh::GlobalEntityId{200U},
+         mesh::PartitionRank{1U}, mesh::LocalIndex{0U},
+         mesh::PartitionRank{0U}, mesh::LocalIndex{1U}},
+        {mesh::EntityKind::cell, mesh::GlobalEntityId{1000U},
+         mesh::PartitionRank{0U}, mesh::LocalIndex{0U},
+         mesh::PartitionRank{1U}, mesh::LocalIndex{1U}},
+        {mesh::EntityKind::cell, mesh::GlobalEntityId{2000U},
+         mesh::PartitionRank{1U}, mesh::LocalIndex{0U},
+         mesh::PartitionRank{0U}, mesh::LocalIndex{1U}},
+    };
+}
+
+void shared_entity_plan_pair() {
+    const auto rank0_partition = shared_fixture_partition(0U);
+    const auto rank1_partition = shared_fixture_partition(1U);
+    const auto links = shared_fixture_links();
+
+    const auto rank0 = mesh::SharedEntityPlan::create(rank0_partition, links);
+    const auto rank1 = mesh::SharedEntityPlan::create(rank1_partition, links);
+
+    require(rank0.local_rank().value() == 0U, "rank0 plan local rank");
+    require(rank1.local_rank().value() == 1U, "rank1 plan local rank");
+    require(rank0.rank_count() == 2U && rank1.rank_count() == 2U,
+            "shared plan rank count");
+    require(!rank0.is_serial() && !rank1.is_serial(),
+            "2-rank plans cannot be serial");
+
+    require(rank0.neighbor_count() == 1U, "rank0 neighbor count");
+    require(rank1.neighbor_count() == 1U, "rank1 neighbor count");
+    require(rank0.contains_neighbor(mesh::PartitionRank{1U}),
+            "rank0 missing rank1 neighbor");
+    require(rank1.contains_neighbor(mesh::PartitionRank{0U}),
+            "rank1 missing rank0 neighbor");
+    require(!rank0.contains_neighbor(mesh::PartitionRank{0U}),
+            "rank0 cannot be its own neighbor");
+    require(!rank1.contains_neighbor(mesh::PartitionRank{1U}),
+            "rank1 cannot be its own neighbor");
+
+    const auto rank0_sends = rank0.send_entities_to(mesh::PartitionRank{1U});
+    const auto rank0_receives =
+        rank0.receive_entities_from(mesh::PartitionRank{1U});
+    const auto rank1_sends = rank1.send_entities_to(mesh::PartitionRank{0U});
+    const auto rank1_receives =
+        rank1.receive_entities_from(mesh::PartitionRank{0U});
+
+    require(rank0_sends.size() == 3U && rank0_receives.size() == 3U,
+            "rank0 send/receive counts");
+    require(rank1_sends.size() == 3U && rank1_receives.size() == 3U,
+            "rank1 send/receive counts");
+    require(rank0.send_count() == 3U && rank0.receive_count() == 3U,
+            "rank0 flat counts");
+    require(rank1.send_count() == 3U && rank1.receive_count() == 3U,
+            "rank1 flat counts");
+
+    const auto rank0_neighbor = rank0.neighbors().front();
+    require(rank0_neighbor.rank.value() == 1U, "rank0 neighbor rank");
+    require(rank0_neighbor.send_begin == 0U &&
+                rank0_neighbor.send_count == 3U &&
+                rank0_neighbor.receive_begin == 0U &&
+                rank0_neighbor.receive_count == 3U,
+            "rank0 compact neighbor ranges");
+
+    for (std::size_t i = 0; i < rank0_sends.size(); ++i) {
+        const auto& send = rank0_sends[i];
+        const auto& receive = rank1_receives[i];
+        require(send.kind == receive.kind, "rank0->rank1 kind symmetry");
+        require(send.global_id == receive.global_id,
+                "rank0->rank1 global ID symmetry");
+        require(send.local == receive.remote_local,
+                "rank0 owner-local must match rank1 remote owner-local");
+        require(send.remote_local == receive.local,
+                "rank0 remote ghost-local must match rank1 local ghost");
+    }
+    for (std::size_t i = 0; i < rank1_sends.size(); ++i) {
+        const auto& send = rank1_sends[i];
+        const auto& receive = rank0_receives[i];
+        require(send.kind == receive.kind, "rank1->rank0 kind symmetry");
+        require(send.global_id == receive.global_id,
+                "rank1->rank0 global ID symmetry");
+        require(send.local == receive.remote_local,
+                "rank1 owner-local must match rank0 remote owner-local");
+        require(send.remote_local == receive.local,
+                "rank1 remote ghost-local must match rank0 local ghost");
+    }
+
+    require(rank0_receives[0].kind == mesh::EntityKind::vertex &&
+                rank0_receives[0].global_id.value() == 20U &&
+                rank0_receives[0].local.value() == 1U &&
+                rank0_receives[0].remote_local.value() == 0U,
+            "rank0 vertex receive owner/ghost contract");
+    require(rank0_receives[1].kind == mesh::EntityKind::face &&
+                rank0_receives[1].global_id.value() == 200U,
+            "rank0 face receive ordering");
+    require(rank0_receives[2].kind == mesh::EntityKind::cell &&
+                rank0_receives[2].global_id.value() == 2000U,
+            "rank0 cell receive ordering");
+
+    const auto serial_topology = mesh::make_cartesian_topology_2d(1U, 1U);
+    const auto serial_partition =
+        mesh::make_serial_partition_snapshot(serial_topology);
+    const std::vector<mesh::SharedEntityLink> no_links;
+    const auto serial =
+        mesh::SharedEntityPlan::create(serial_partition, no_links);
+    require(serial.is_serial(), "empty serial halo plan");
+    require(serial.neighbor_count() == 0U &&
+                serial.send_count() == 0U &&
+                serial.receive_count() == 0U,
+            "serial halo plan must be empty");
+}
+
+void shared_entity_plan_invalid() {
+    const auto rank0_partition = shared_fixture_partition(0U);
+    const auto links = shared_fixture_links();
+
+    {
+        auto missing = links;
+        missing.erase(missing.begin() + 1);
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::SharedEntityPlan::create(rank0_partition, missing);
+        });
+    }
+    {
+        auto duplicate = links;
+        duplicate.push_back(links.front());
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::SharedEntityPlan::create(rank0_partition, duplicate);
+        });
+    }
+    {
+        auto wrong_global = links;
+        wrong_global.front().global_id = mesh::GlobalEntityId{999U};
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::SharedEntityPlan::create(rank0_partition, wrong_global);
+        });
+    }
+    {
+        auto wrong_owner_local = links;
+        wrong_owner_local.front().owner_local = mesh::LocalIndex{1U};
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::SharedEntityPlan::create(
+                rank0_partition, wrong_owner_local);
+        });
+    }
+    {
+        auto wrong_ghost_owner = links;
+        wrong_ghost_owner[1].owner_rank = mesh::PartitionRank{0U};
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::SharedEntityPlan::create(
+                rank0_partition, wrong_ghost_owner);
+        });
+    }
+    {
+        auto same_rank = links;
+        same_rank.front().ghost_rank = mesh::PartitionRank{0U};
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::SharedEntityPlan::create(rank0_partition, same_rank);
+        });
+    }
+    {
+        auto outside_rank = links;
+        outside_rank.front().ghost_rank = mesh::PartitionRank{2U};
+        expect_throw<std::out_of_range>([&] {
+            (void)mesh::SharedEntityPlan::create(
+                rank0_partition, outside_rank);
+        });
+    }
+    {
+        mesh::Topology::EntityIds ids;
+        ids.cells = {mesh::GlobalEntityId{1U}};
+        const mesh::Topology topology{std::move(ids), {}};
+        mesh::EntityOwnerRanks owners;
+        owners.cells = {mesh::PartitionRank{0U}};
+        const auto partition = mesh::PartitionSnapshot::create(
+            topology, mesh::PartitionRank{0U}, 3U, std::move(owners));
+        const std::array<mesh::SharedEntityLink, 1> unrelated{{
+            {mesh::EntityKind::cell, mesh::GlobalEntityId{20U},
+             mesh::PartitionRank{1U}, mesh::LocalIndex{0U},
+             mesh::PartitionRank{2U}, mesh::LocalIndex{0U}}}};
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::SharedEntityPlan::create(partition, unrelated);
+        });
+    }
+
+    const auto plan = mesh::SharedEntityPlan::create(rank0_partition, links);
+    require(!plan.contains_neighbor(mesh::PartitionRank{0U}),
+            "exact neighbor lookup regression");
+    require(!plan.contains_neighbor(mesh::PartitionRank{2U}),
+            "out-of-range rank must not alias a neighbor");
+    expect_throw<std::out_of_range>([&] {
+        (void)plan.send_entities_to(mesh::PartitionRank{0U});
+    });
+    expect_throw<std::out_of_range>([&] {
+        (void)plan.receive_entities_from(mesh::PartitionRank{2U});
+    });
+}
+
 void headers() {
     static_assert(
         std::is_same_v<decltype(std::declval<const mesh::CsrAdjacency&>().indices()),
@@ -1411,6 +1655,8 @@ int main(int argc, char** argv) {
         else if (name == "dof_numbering_serial") { dof_numbering_serial(); }
         else if (name == "dof_numbering_local") { dof_numbering_local(); }
         else if (name == "dof_numbering_invalid") { dof_numbering_invalid(); }
+        else if (name == "shared_entity_plan_pair") { shared_entity_plan_pair(); }
+        else if (name == "shared_entity_plan_invalid") { shared_entity_plan_invalid(); }
         else if (name == "headers") { headers(); }
         else { throw std::invalid_argument("unknown mesh core test"); }
         std::cout << "[PASS] " << name << '\n';
