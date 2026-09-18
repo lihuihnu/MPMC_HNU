@@ -14,7 +14,8 @@ add_executable(mpmc_mesh_core_tests
     face_boundary_header_self_contained.cpp
     dense_field_header_self_contained.cpp
     dof_layout_header_self_contained.cpp
-    partition_snapshot_header_self_contained.cpp)
+    partition_snapshot_header_self_contained.cpp
+    dof_numbering_header_self_contained.cpp)
 target_link_libraries(mpmc_mesh_core_tests PRIVATE mpmc::mesh)
 set_target_properties(mpmc_mesh_core_tests PROPERTIES CXX_EXTENSIONS OFF)
 
@@ -38,7 +39,7 @@ if(MPMC_MESH_ENABLE_SANITIZERS)
         -fsanitize=address,undefined -fno-sanitize-recover=all)
 endif()
 
-foreach(case IN ITEMS strong_indices two_cell_quad invalid_csr topology_snapshot topology_invalid cartesian_2d_topology cartesian_2d_invalid cartesian_2d_geometry cartesian_2d_geometry_invalid face_boundary_snapshot face_boundary_invalid dense_field_snapshot dense_field_invalid dof_layout_snapshot dof_layout_invalid partition_serial_snapshot partition_local_snapshot partition_invalid headers)
+foreach(case IN ITEMS strong_indices two_cell_quad invalid_csr topology_snapshot topology_invalid cartesian_2d_topology cartesian_2d_invalid cartesian_2d_geometry cartesian_2d_geometry_invalid face_boundary_snapshot face_boundary_invalid dense_field_snapshot dense_field_invalid dof_layout_snapshot dof_layout_invalid partition_serial_snapshot partition_local_snapshot partition_invalid dof_numbering_serial dof_numbering_local dof_numbering_invalid headers)
     add_test(NAME mesh.core.${case} COMMAND mpmc_mesh_core_tests ${case})
     set_tests_properties(mesh.core.${case}
         PROPERTIES LABELS "mesh;mesh.core;unit" TIMEOUT 30)
