@@ -36,24 +36,6 @@ void require(bool condition, const std::string& message) {
     }
 }
 
-void require_abs(
-    double actual,
-    double expected,
-    double tolerance,
-    const std::string& message) {
-    const double delta = std::abs(actual - expected);
-    if (!(delta <= tolerance)) {
-        std::ostringstream stream;
-        stream << std::setprecision(17)
-               << message
-               << " actual=" << actual
-               << " expected=" << expected
-               << " delta=" << delta
-               << " tolerance=" << tolerance;
-        throw std::runtime_error(stream.str());
-    }
-}
-
 struct Derived {
     double f_res{};
     double pressure_pa{};
@@ -144,6 +126,7 @@ void run_gate_e() {
     double max_mu_delta = 0.0;
     double max_lnphi_delta = 0.0;
     double max_external_assoc_residual = 0.0;
+    bool gate_pass = true;
 
     for (std::size_t state_index = 0U;
          state_index < external::states.size();
@@ -162,18 +145,9 @@ void run_gate_e() {
             max_external_assoc_residual,
             reference.association_equation_max_residual);
 
-        const std::string state_label =
-            "Clapeyron Gate-E state=" + std::to_string(state_index);
-        require_abs(
-            derived.f_res,
-            reference.f_res,
-            max_abs_f_res,
-            state_label + " residual Helmholtz mismatch");
-        require_abs(
-            derived.pressure_pa,
-            reference.pressure_pa,
-            max_abs_pressure_pa,
-            state_label + " pressure mismatch");
+        gate_pass = gate_pass &&
+            f_delta <= max_abs_f_res &&
+            pressure_delta <= max_abs_pressure_pa;
 
         const std::array<double, 2> ref_mu{{
             reference.mu_res_over_rt_methanol,
@@ -189,21 +163,14 @@ void run_gate_e() {
             max_mu_delta = std::max(max_mu_delta, mu_delta);
             max_lnphi_delta = std::max(max_lnphi_delta, lnphi_delta);
 
-            require_abs(
-                derived.mu_res_over_rt[component],
-                ref_mu[component],
-                max_abs_mu_res_over_rt,
-                state_label + " residual chemical potential mismatch");
-            require_abs(
-                derived.ln_phi[component],
-                ref_lnphi[component],
-                max_abs_ln_phi,
-                state_label + " ln(phi) mismatch");
+            gate_pass = gate_pass &&
+                mu_delta <= max_abs_mu_res_over_rt &&
+                lnphi_delta <= max_abs_ln_phi;
         }
     }
 
     std::cout << std::setprecision(17)
-              << "CPA_HELMHOLTZ_CLAPEYRON_GATE_E_OK"
+              << "CPA_HELMHOLTZ_CLAPEYRON_GATE_E_AUDIT"
               << " source_commit=" << external::source_commit
               << " states=" << external::states.size()
               << " max_abs_dF_res=" << max_f_delta
@@ -212,7 +179,17 @@ void run_gate_e() {
               << " max_abs_dlnphi=" << max_lnphi_delta
               << " max_external_assoc_equation_residual="
               << max_external_assoc_residual
+              << " threshold_dF_res=" << max_abs_f_res
+              << " threshold_dP_pa=" << max_abs_pressure_pa
+              << " threshold_dmu_over_rt=" << max_abs_mu_res_over_rt
+              << " threshold_dlnphi=" << max_abs_ln_phi
+              << " result=" << (gate_pass ? "PASS" : "FAIL")
               << '\n';
+
+    require(
+        gate_pass,
+        "Clapeyron Gate-E frozen acceptance contract exceeded; "
+        "see CPA_HELMHOLTZ_CLAPEYRON_GATE_E_AUDIT summary");
 }
 
 } // namespace
