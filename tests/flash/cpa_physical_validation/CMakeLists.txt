@@ -130,9 +130,6 @@ if(NOT clapeyron_gate_e_profile STREQUAL
    NOT clapeyron_gate_e_status STREQUAL "exactly_representable")
     message(FATAL_ERROR "frozen Clapeyron oracle no longer matches the audited CPA profile")
 endif()
-if(NOT clapeyron_gate_e_rgas STREQUAL "8.31446261815324")
-    message(FATAL_ERROR "frozen Clapeyron gas constant drifted")
-endif()
 if(NOT clapeyron_gate_e_state_count EQUAL 10)
     message(FATAL_ERROR "Clapeyron Gate-E oracle must contain exactly ten states")
 endif()
@@ -165,7 +162,7 @@ endforeach()
 set(clapeyron_gate_e_generated_header
     "${CMAKE_CURRENT_BINARY_DIR}/cpa_clapeyron_gate_e_generated.hpp")
 file(GENERATE OUTPUT "${clapeyron_gate_e_generated_header}" CONTENT
-"#ifndef MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n#define MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n\n#include <array>\n#include <string_view>\n\nnamespace cpa_clapeyron_gate_e {\nstruct ClapeyronState {\n    double temperature_k;\n    double molar_density_mol_per_m3;\n    double composition_methanol;\n    double f_res;\n    double pressure_pa;\n    double mu_res_over_rt_methanol;\n    double mu_res_over_rt_water;\n    double ln_phi_methanol;\n    double ln_phi_water;\n    double association_equation_max_residual;\n};\n\ninline constexpr std::string_view source_commit = \"${clapeyron_gate_e_commit}\";\ninline constexpr std::array<ClapeyronState, ${clapeyron_gate_e_state_count}> states{{\n${clapeyron_gate_e_initializers}}};\n\n} // namespace cpa_clapeyron_gate_e\n\n#endif // MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n")
+"#ifndef MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n#define MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n\n#include <array>\n#include <string_view>\n\nnamespace cpa_clapeyron_gate_e {\nstruct ClapeyronState {\n    double temperature_k;\n    double molar_density_mol_per_m3;\n    double composition_methanol;\n    double f_res;\n    double pressure_pa;\n    double mu_res_over_rt_methanol;\n    double mu_res_over_rt_water;\n    double ln_phi_methanol;\n    double ln_phi_water;\n    double association_equation_max_residual;\n};\n\ninline constexpr std::string_view source_commit = \"${clapeyron_gate_e_commit}\";\ninline constexpr double gas_constant_j_per_mol_k = ${clapeyron_gate_e_rgas};\ninline constexpr std::array<ClapeyronState, ${clapeyron_gate_e_state_count}> states{{\n${clapeyron_gate_e_initializers}}};\n\n} // namespace cpa_clapeyron_gate_e\n\n#endif // MPMC_TEST_CPA_CLAPEYRON_GATE_E_GENERATED_HPP\n")
 
 add_executable(mpmc_cpa_physical_validation_tests
     cpa_physical_validation_test.cpp)
