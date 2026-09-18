@@ -12,7 +12,7 @@ add_executable(mpmc_pt_flash_backend_tests
     pt_flash_backend_headers.cpp)
 target_link_libraries(mpmc_pt_flash_backend_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_pt_flash_backend_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_pt_flash_backend_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_pt_flash_backend_pr76_max3_tests
@@ -34,7 +34,7 @@ add_executable(mpmc_pt_flash_backend_freeze_tests
     three_backend_freeze_test.cpp)
 target_link_libraries(mpmc_pt_flash_backend_freeze_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_pt_flash_backend_freeze_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_pt_flash_backend_freeze_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_dependencies(mpmc_pt_flash_backend_tests

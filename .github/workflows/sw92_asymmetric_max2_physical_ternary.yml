@@ -10,7 +10,7 @@ on:
       - 'modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp'
       - 'modules/flash/sw92_asymmetric_max2_physical_ternary.md'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
-      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - 'tests/support/sw92/test_support.hpp'
       - 'tests/flash/sw92_asymmetric_max2/**'
       - 'tests/flash/sw92_asymmetric_max2_physical_ternary/**'
       - '.github/workflows/sw92_asymmetric_max2_physical_ternary.yml'

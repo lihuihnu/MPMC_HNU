@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'tests/support/sw92/test_support.hpp'
       - 'modules/ad/**'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
       - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'

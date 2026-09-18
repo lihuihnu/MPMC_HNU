@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - 'tests/support/sw92/test_support.hpp'
       - 'api/**'
       - 'deploy/pt-grpc-web/**'
       - 'modules/runtime/**'

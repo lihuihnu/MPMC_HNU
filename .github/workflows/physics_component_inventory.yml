@@ -13,7 +13,7 @@ on:
       - 'modules/ad/include/mpmc/ad/**'
       - 'tests/physics/component_inventory/**'
       - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
-      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - 'tests/support/sw92/test_support.hpp'
       - '.github/workflows/physics_component_inventory.yml'
   workflow_dispatch:
 

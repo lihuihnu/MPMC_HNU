@@ -13,7 +13,7 @@ add_executable(mpmc_sw92_profile_c_sensitivity_tests
 target_link_libraries(mpmc_sw92_profile_c_sensitivity_tests PRIVATE
     mpmc::flash_sensitivity)
 target_include_directories(mpmc_sw92_profile_c_sensitivity_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_sw92_profile_c_sensitivity_tests PROPERTIES
     CXX_EXTENSIONS OFF)
 

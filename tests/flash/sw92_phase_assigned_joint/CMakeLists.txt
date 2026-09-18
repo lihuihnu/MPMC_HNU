@@ -9,7 +9,7 @@ add_executable(mpmc_sw92_phase_assigned_joint_tests
     sw92_phase_assigned_joint_header.cpp)
 target_link_libraries(mpmc_sw92_phase_assigned_joint_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_sw92_phase_assigned_joint_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_sw92_phase_assigned_joint_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 if(MSVC)

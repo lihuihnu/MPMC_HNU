@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - 'tests/support/sw92/test_support.hpp'
       - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
       - 'modules/flash/include/mpmc/flash/pt_split.hpp'
       - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'

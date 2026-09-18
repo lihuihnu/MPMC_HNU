@@ -15,7 +15,7 @@ on:
       - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
       - 'tests/flash/cpa_max3/test_support.hpp'
       - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
-      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - 'tests/support/sw92/test_support.hpp'
       - '.github/workflows/pt_service.yml'
   workflow_dispatch:
 
