@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、最小 `DofLayout` 与 `PartitionSnapshot` 已建立；新增 partition-aware `DofNumberingSnapshot`。serial 基线可直接把 local scalar offsets 提升为连续 global scalar numbering；generic local 则组合 `DofLayout + PartitionSnapshot +` 显式 global entity ordinal，区分 owned/ghost DoF 并提供 local-scalar↔global-scalar 映射。仍未接 MPI/PETSc，也不伪造仅靠本 rank ownership 无法推导的跨 rank 连续编号。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot` 与 partition-aware `DofNumberingSnapshot` 已建立；新增 `SharedEntityPlan` 非 MPI halo contract，用 canonical shared-entity link 记录 `EntityKind + GlobalEntityId + owner_rank/owner_local + ghost_rank/ghost_local`，并派生按 neighbor rank 分组的连续 send/receive entity lists。每个 local ghost 必须恰有一条 owner link；owned entity 可被多个邻居 ghost。仍未接 MPI/PETSc。
 
 ## 1. 目标
 
@@ -78,7 +78,11 @@
 
 核心 `mpmc::mesh` 保持 MPI/PETSc 可选。当前 `PartitionSnapshot` 已冻结 serial/local ownership 基线：snapshot 记录 `local_rank` 与 `rank_count`，每类 entity 复制 `Topology` 中的稳定 `GlobalEntityId` 并按同一 local ordering 保存 `owner_rank`。ownership 不重复存储，而由 `owner_rank == local_rank` 推导为 owned，否则为 ghost，从而不存在 owner/ownership 两份状态漂移。local→global 为 O(1) 连续数组访问；global→local 保存一份按 global ID 排序的 `LocalIndex` permutation 并二分查找，避免每实体树节点或哈希桶。global ID 只要求在同一 entity kind 内唯一，所以查询始终携带 `EntityKind`。
 
-严格 serial builder 固定 `rank_count=1`、`local_rank=0`，所有本地 vertex/edge/face/cell 都由 rank 0 拥有且 ghost count 必须为零。generic local snapshot 允许 owned/ghost 在 local ordering 中交错，不要求 owned-first；它只描述“本 rank 当前可见的 local topology”，不声称掌握全局所有实体。`DofNumberingSnapshot` 也遵循这个边界：它可以消费外部提供的 global entity ordinal 来形成连续 global scalar IDs，但不会从 owner rank 猜测缺失的远端实体顺序。当前仍未描述 halo depth、邻居 rank、send/receive plan、跨 rank shared-entity reconciliation 或 MPI communicator。
+严格 serial builder 固定 `rank_count=1`、`local_rank=0`，所有本地 vertex/edge/face/cell 都由 rank 0 拥有且 ghost count 必须为零。generic local snapshot 允许 owned/ghost 在 local ordering 中交错，不要求 owned-first；它只描述“本 rank 当前可见的 local topology”，不声称掌握全局所有实体。`DofNumberingSnapshot` 也遵循这个边界：它可以消费外部提供的 global entity ordinal 来形成连续 global scalar IDs，但不会从 owner rank 猜测缺失的远端实体顺序。
+
+`SharedEntityPlan` 在这一 ownership 基础上冻结非 MPI halo exchange 元数据。输入 canonical `SharedEntityLink` 同时描述 owner 与 ghost 两端：`EntityKind`、稳定 `GlobalEntityId`、`owner_rank/owner_local`、`ghost_rank/ghost_local`。对本 rank 而言，若本地是 owner，则生成 send entry；若本地是 ghost，则生成 receive entry，并校验本地 stable ID、owned/ghost 状态以及 `PartitionSnapshot::owner_rank`。每个 local ghost 必须恰好出现一次；同一邻居上同一 `(EntityKind, GlobalEntityId)` 不得重复。owned entity 可以出现在多个不同 neighbor 的 send list 中，以支持一对多 halo mirror。
+
+存储采用 `NeighborExchangeRange[] + flat send[] + flat receive[]`：neighbor range 按 rank 排序，send/receive 条目按 entity kind、global ID、local index 确定性排序。对 receive range，range.rank 就是 owner rank，entry.remote_local 就是 owner-local index；对 send range，range.rank 是 ghost rank，entry.remote_local 是远端 ghost-local index。这样 owner rank 不需要在每个条目里重复存储。当前仍未实现 halo depth、真实 send/recv buffer、MPI communicator、collective symmetry check 或跨 rank 自动构造；synthetic 2-rank fixture 只验证两份本地 plan 在相同 canonical links 上的 owner/ghost 对称性。
 
 可选 `mesh_petsc` 适配层负责：
 
