@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、最小 2D Cartesian topology builder、`Geometry2D` 与 `FaceBoundarySnapshot` 已建立；新增通用不可变 `DenseFieldSnapshot`，可在 vertex/face/cell 上按固定 component count 连续保存 `double` 数值，并携带显式 unit 与 source metadata。字段层不解释 porosity/permeability/pressure 等物理意义，也不执行单位转换；I/O、DoF、partition 与 PETSc 仍未实现。
+> 当前状态：core topology/index、最小 2D Cartesian topology builder、`Geometry2D`、`FaceBoundarySnapshot` 与通用 `DenseFieldSnapshot` 已建立；新增最小不可变 `DofLayout`，可将一个或多个仅含 stable ID、vertex/face/cell location 与 component count 的逻辑变量映射到连续 local scalar offsets。该层没有 pressure/saturation 等变量语义，也尚未处理 owned/ghost/global numbering；I/O、partition 与 PETSc adapter 仍未实现。
 
 ## 1. 目标
 
@@ -66,16 +66,11 @@
 
 ## 5. 求解变量与拓扑索引
 
-`DofLayout`（最终名称可在实现审计时调整）必须能够把一个或多个变量绑定到 cell/face/edge/vertex，并给出：
+最小 `DofLayout` 已实现 local scalar indexing 基线。每个 `DofVariable` 只包含稳定 ID、location 与 component count；location 当前支持 cell/face/vertex，component count 必须大于零，变量 ID 必须唯一。布局固定为 `[cell block][face block][vertex block]`；每个 location 内按 `entity-major -> variable declaration order -> component` 排列。同一实体上的变量 DoF 因此连续，且 location block 也连续。
 
-- 每实体 DoF 数；
-- local contiguous offset；
-- owned/ghost 视图；
-- global DoF numbering；
-- field/component 到标量槽位的 O(1) 或摊还 O(1) 映射；
-- 只读 span/view 访问，避免热循环临时分配。
+布局提供每个 location 的 entity count、DoFs-per-entity、block offset、block scalar count，以及 `scalar_offset(variable_index, entity, component)` 的 O(1) 热路径映射；字符串 ID 到 variable index 的查询只用于控制路径。该顺序刻意接近后续 `PetscSection` 的 point/field 组织，但当前没有 PETSc 类型或依赖。
 
-该层只管理布局，不知道 pressure、saturation、composition 等具体物理意义。
+尚未实现 owned/ghost、本地到全局 DoF numbering、constraint DoF 或跨 rank section；这些必须等 partition/overlap 契约建立后再补。该层只管理布局，不知道 pressure、saturation、composition 等具体物理意义。
 
 ## 6. 并行与 PETSc 边界
 
