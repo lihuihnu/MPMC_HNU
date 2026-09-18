@@ -227,7 +227,8 @@ public:
     }
 
     [[nodiscard]] bool contains_neighbor(PartitionRank rank) const {
-        return find_neighbor(rank) != neighbors_.end();
+        const auto found = find_neighbor(rank);
+        return found != neighbors_.end() && found->rank == rank;
     }
 
     [[nodiscard]] std::span<const HaloEntityRef> send_entities_to(
