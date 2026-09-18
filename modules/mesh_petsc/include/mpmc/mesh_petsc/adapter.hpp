@@ -18,7 +18,7 @@ namespace mpmc::mesh_petsc {
 
 namespace detail {
 
-inline PetscErrorCode checked_petsc_int(std::size_t value, PetscInt* output) {
+inline PetscErrorCode checked_petsc_int_size(std::size_t value, PetscInt* output) {
     if (output == nullptr) return PETSC_ERR_ARG_NULL;
     if (value > static_cast<std::size_t>(std::numeric_limits<PetscInt>::max())) {
         return PETSC_ERR_ARG_OUTOFRANGE;
@@ -27,7 +27,7 @@ inline PetscErrorCode checked_petsc_int(std::size_t value, PetscInt* output) {
     return PETSC_SUCCESS;
 }
 
-inline PetscErrorCode checked_petsc_int(std::uint64_t value, PetscInt* output) {
+inline PetscErrorCode checked_petsc_int_u64(std::uint64_t value, PetscInt* output) {
     if (output == nullptr) return PETSC_ERR_ARG_NULL;
     const auto maximum =
         static_cast<std::uint64_t>(std::numeric_limits<PetscInt>::max());
@@ -142,7 +142,7 @@ inline PetscErrorCode create_section_mapping(
          local < numbering.local_dof_count();
          ++local) {
         PetscInt global = 0;
-        error = detail::checked_petsc_int(
+        error = detail::checked_petsc_int_u64(
             numbering.global_index(local).value(), &global);
         if (error != PETSC_SUCCESS) {
             local_to_global->clear();
@@ -157,9 +157,9 @@ inline PetscErrorCode create_section_mapping(
 
     PetscInt point_end = 0;
     PetscInt field_count = 0;
-    error = detail::checked_petsc_int(ranges.end, &point_end);
+    error = detail::checked_petsc_int_size(ranges.end, &point_end);
     if (error != PETSC_SUCCESS) return error;
-    error = detail::checked_petsc_int(layout.variable_count(), &field_count);
+    error = detail::checked_petsc_int_size(layout.variable_count(), &field_count);
     if (error != PETSC_SUCCESS) return error;
 
     PetscSection local_section = nullptr;
@@ -177,12 +177,12 @@ inline PetscErrorCode create_section_mapping(
          ++variable_index) {
         PetscInt field = 0;
         PetscInt components = 0;
-        error = detail::checked_petsc_int(variable_index, &field);
+        error = detail::checked_petsc_int_size(variable_index, &field);
         if (error != PETSC_SUCCESS) {
             PetscSectionDestroy(&local_section);
             return error;
         }
-        error = detail::checked_petsc_int(
+        error = detail::checked_petsc_int_size(
             layout.variable(variable_index).component_count, &components);
         if (error != PETSC_SUCCESS) {
             PetscSectionDestroy(&local_section);
@@ -217,7 +217,7 @@ inline PetscErrorCode create_section_mapping(
         const std::size_t entity_count = layout.entity_count(kind);
 
         PetscInt total_dof = 0;
-        error = detail::checked_petsc_int(
+        error = detail::checked_petsc_int_size(
             layout.dofs_per_entity(kind), &total_dof);
         if (error != PETSC_SUCCESS) {
             PetscSectionDestroy(&local_section);
@@ -228,7 +228,7 @@ inline PetscErrorCode create_section_mapping(
              entity < entity_count;
              ++entity) {
             PetscInt point = 0;
-            error = detail::checked_petsc_int(base + entity, &point);
+            error = detail::checked_petsc_int_size(base + entity, &point);
             if (error != PETSC_SUCCESS) {
                 PetscSectionDestroy(&local_section);
                 return error;
@@ -248,13 +248,13 @@ inline PetscErrorCode create_section_mapping(
 
                 PetscInt field = 0;
                 PetscInt field_dof = 0;
-                error = detail::checked_petsc_int(
+                error = detail::checked_petsc_int_size(
                     variable_index, &field);
                 if (error != PETSC_SUCCESS) {
                     PetscSectionDestroy(&local_section);
                     return error;
                 }
-                error = detail::checked_petsc_int(
+                error = detail::checked_petsc_int_size(
                     variable.component_count, &field_dof);
                 if (error != PETSC_SUCCESS) {
                     PetscSectionDestroy(&local_section);
@@ -283,7 +283,7 @@ inline PetscErrorCode create_section_mapping(
         return error;
     }
     PetscInt expected_storage = 0;
-    error = detail::checked_petsc_int(
+    error = detail::checked_petsc_int_size(
         layout.total_dof_count(), &expected_storage);
     if (error != PETSC_SUCCESS) {
         PetscSectionDestroy(&local_section);
@@ -317,7 +317,7 @@ inline PetscErrorCode create_entity_sf(
     if (error != PETSC_SUCCESS) return error;
 
     PetscInt nroots = 0;
-    error = detail::checked_petsc_int(
+    error = detail::checked_petsc_int_size(
         partition.entity_count(kind), &nroots);
     if (error != PETSC_SUCCESS) return error;
 
@@ -337,11 +337,11 @@ inline PetscErrorCode create_entity_sf(
 
             PetscInt local_leaf = 0;
             PetscInt remote_root = 0;
-            error = detail::checked_petsc_int(
+            error = detail::checked_petsc_int_size(
                 static_cast<std::size_t>(entity.local.value()),
                 &local_leaf);
             if (error != PETSC_SUCCESS) return error;
-            error = detail::checked_petsc_int(
+            error = detail::checked_petsc_int_size(
                 static_cast<std::size_t>(entity.remote_local.value()),
                 &remote_root);
             if (error != PETSC_SUCCESS) return error;
@@ -358,7 +358,7 @@ inline PetscErrorCode create_entity_sf(
     }
 
     PetscInt nleaves = 0;
-    error = detail::checked_petsc_int(
+    error = detail::checked_petsc_int_size(
         local_leaves.size(), &nleaves);
     if (error != PETSC_SUCCESS) return error;
 
