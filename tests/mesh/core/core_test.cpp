@@ -1,3 +1,4 @@
+#include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/topology.hpp>
@@ -6,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <source_location>
 #include <span>
 #include <stdexcept>
@@ -246,6 +248,89 @@ void topology_invalid() {
         [&] { (void)topology.has_relation(invalid_kind, mesh::EntityKind::vertex); });
 }
 
+
+void cartesian_2d_topology() {
+    const auto topology = mesh::make_cartesian_topology_2d(2U, 2U);
+    require(topology.entity_count(mesh::EntityKind::vertex) == 9U, "Cartesian vertex count");
+    require(topology.entity_count(mesh::EntityKind::edge) == 0U, "2D edge kind must remain empty");
+    require(topology.entity_count(mesh::EntityKind::face) == 12U, "Cartesian face count");
+    require(topology.entity_count(mesh::EntityKind::cell) == 4U, "Cartesian cell count");
+    require(topology.relation_count() == 4U, "Cartesian relation count");
+
+    for (mesh::EntityKind kind : {mesh::EntityKind::vertex, mesh::EntityKind::face,
+                                  mesh::EntityKind::cell}) {
+        const auto ids = topology.global_ids(kind);
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            require(ids[i].value() == static_cast<mesh::GlobalEntityId::value_type>(i),
+                    "Cartesian global IDs must be deterministic and zero-based");
+        }
+    }
+
+    const auto& cell_vertex =
+        topology.relation(mesh::EntityKind::cell, mesh::EntityKind::vertex);
+    const auto cell3_vertices = cell_vertex.adjacent(mesh::LocalIndex{3U});
+    const std::array<std::uint32_t, 4> expected_cell3_vertices{4U, 5U, 8U, 7U};
+    require(cell3_vertices.size() == expected_cell3_vertices.size(), "cell vertex arity");
+    for (std::size_t i = 0; i < expected_cell3_vertices.size(); ++i) {
+        require(cell3_vertices[i].value() == expected_cell3_vertices[i],
+                "Cartesian cell-to-vertex numbering mismatch");
+    }
+
+    const auto& cell_face =
+        topology.relation(mesh::EntityKind::cell, mesh::EntityKind::face);
+    const auto cell3_faces = cell_face.adjacent(mesh::LocalIndex{3U});
+    const std::array<std::uint32_t, 4> expected_cell3_faces{4U, 5U, 9U, 11U};
+    require(cell3_faces.size() == expected_cell3_faces.size(), "cell face arity");
+    for (std::size_t i = 0; i < expected_cell3_faces.size(); ++i) {
+        require(cell3_faces[i].value() == expected_cell3_faces[i],
+                "Cartesian cell-to-face numbering mismatch");
+    }
+
+    const auto& face_vertex =
+        topology.relation(mesh::EntityKind::face, mesh::EntityKind::vertex);
+    const auto horizontal_internal_vertices = face_vertex.adjacent(mesh::LocalIndex{8U});
+    require(horizontal_internal_vertices.size() == 2U &&
+                horizontal_internal_vertices[0].value() == 3U &&
+                horizontal_internal_vertices[1].value() == 4U,
+            "horizontal internal face vertices");
+
+    const auto& face_cell =
+        topology.relation(mesh::EntityKind::face, mesh::EntityKind::cell);
+    const auto vertical_internal_cells = face_cell.adjacent(mesh::LocalIndex{1U});
+    require(vertical_internal_cells.size() == 2U &&
+                vertical_internal_cells[0].value() == 0U &&
+                vertical_internal_cells[1].value() == 1U,
+            "vertical internal face sharing");
+    const auto horizontal_internal_cells = face_cell.adjacent(mesh::LocalIndex{8U});
+    require(horizontal_internal_cells.size() == 2U &&
+                horizontal_internal_cells[0].value() == 0U &&
+                horizontal_internal_cells[1].value() == 2U,
+            "horizontal internal face sharing");
+
+    for (mesh::LocalIndex face : {mesh::LocalIndex{0U}, mesh::LocalIndex{2U},
+                                  mesh::LocalIndex{6U}, mesh::LocalIndex{10U}}) {
+        require(face_cell.adjacent(face).size() == 1U,
+                "boundary face must have exactly one adjacent cell");
+    }
+}
+
+void cartesian_2d_invalid() {
+    expect_throw<std::invalid_argument>(
+        [] { (void)mesh::make_cartesian_topology_2d(0U, 1U); });
+    expect_throw<std::invalid_argument>(
+        [] { (void)mesh::make_cartesian_topology_2d(1U, 0U); });
+    expect_throw<std::length_error>([] {
+        (void)mesh::make_cartesian_topology_2d(
+            std::numeric_limits<std::size_t>::max(), 1U);
+    });
+    expect_throw<std::length_error>([] {
+        (void)mesh::make_cartesian_topology_2d(
+            static_cast<std::size_t>(
+                std::numeric_limits<mesh::LocalIndex::value_type>::max()),
+            1U);
+    });
+}
+
 void headers() {
     static_assert(
         std::is_same_v<decltype(std::declval<const mesh::CsrAdjacency&>().indices()),
@@ -267,6 +352,8 @@ int main(int argc, char** argv) {
         else if (name == "invalid_csr") { invalid_csr(); }
         else if (name == "topology_snapshot") { topology_snapshot(); }
         else if (name == "topology_invalid") { topology_invalid(); }
+        else if (name == "cartesian_2d_topology") { cartesian_2d_topology(); }
+        else if (name == "cartesian_2d_invalid") { cartesian_2d_invalid(); }
         else if (name == "headers") { headers(); }
         else { throw std::invalid_argument("unknown mesh core test"); }
         std::cout << "[PASS] " << name << '\n';
