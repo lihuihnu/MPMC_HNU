@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、最小 2D Cartesian topology builder 与独立 `Geometry2D` snapshot 已建立；另有独立不可变 `FaceBoundarySnapshot`，根据 `face->cell` 基数区分 interior/boundary，并保存紧凑 `uint32` physical tag。tag 只表示稳定边界/physical-group 身份，`0` 表示未标注，不包含压力、流量、井或其他物理边界条件语义。字段、I/O、DoF、partition 与 PETSc 仍未实现。
+> 当前状态：core topology/index、最小 2D Cartesian topology builder、`Geometry2D` 与 `FaceBoundarySnapshot` 已建立；新增通用不可变 `DenseFieldSnapshot`，可在 vertex/face/cell 上按固定 component count 连续保存 `double` 数值，并携带显式 unit 与 source metadata。字段层不解释 porosity/permeability/pressure 等物理意义，也不执行单位转换；I/O、DoF、partition 与 PETSc 仍未实现。
 
 ## 1. 目标
 
@@ -47,14 +47,11 @@
 
 `FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
-字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。首批标准科研字段：
+字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。
 
-- porosity：cell scalar，标准无量纲；
-- permeability：cell scalar/diagonal/symmetric tensor，标准 SI 为 m^2；
-- conductivity：cell/face 可配置 scalar 或 tensor，单位必须由调用方显式声明；
-- 用户自定义 cell/face/vertex field。
+当前通用 `DenseFieldSnapshot` 只冻结存储契约，不内置任何具体物理字段：location 目前支持 vertex/face/cell，数值类型固定为 `double`，component count 必须大于零；底层采用 entity-major / component-interleaved 连续布局 `values[entity * component_count + component]`。构建时使用 `Topology` 对齐实体数量，拒绝长度不匹配、size overflow、NaN/Inf 与未声明单位。metadata 保存稳定 field ID、原样 unit 字符串，以及 source kind/reference/revision/locator；本层不猜测单位、不做转换，也不把 source metadata 当成真实性证明。缺失值尚无契约，因此不能用 NaN 代替。
 
-I/O 遇到未知单位、缺少必要分量或数组长度不匹配时不得静默补值或重排。
+后续 porosity、permeability、conductivity 等科研属性应建立在该通用容器之上，再分别定义 location、component layout、单位和物理有效域；本增量尚未添加这些规则。I/O 遇到未知单位、缺少必要分量或数组长度不匹配时仍不得静默补值或重排。
 
 ## 4. 网格来源与文件 I/O
 
