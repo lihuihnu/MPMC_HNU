@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index 首个增量已实现：`EntityKind`、64-bit `GlobalEntityId`、32-bit `LocalIndex` 与带 source/target kind、目标计数校验的紧凑 `CsrAdjacency`。其独立 CTest 覆盖强类型、两单元四边形 connectivity、CSR/索引错误和 header self-contained；几何、字段、I/O、DoF、partition 与 PETSc 仍未实现。
+> 当前状态：core topology/index 已形成不可变 `Topology` snapshot：统一拥有按 entity kind 分组的 global-ID 数组与实际 `CsrAdjacency` relations；实体 count 直接由 ID 数组长度确定，构造时校验同类 global-ID 唯一性、relation source/target count 和 kind-pair 唯一性。`EntityKind`、64-bit `GlobalEntityId`、32-bit `LocalIndex` 与紧凑 CSR 仍是底层表示；几何、字段、I/O、DoF、partition 与 PETSc 仍未实现。
 
 ## 1. 目标
 
@@ -28,6 +28,8 @@
 - partition owner rank 与 global-to-local/local-to-global 映射。
 
 邻接使用连续 offset + index 数组（CSR 风格）或等价的紧凑结构，不允许把 `std::vector<std::vector<...>>`、链表或每实体多态对象作为生产热路径存储。常见邻接至少包括 cell->face、face->cell、face->vertex、cell->vertex；反向关系只能在确有消费方时物化，避免无条件重复存储。
+
+`Topology` 是这一层的不可变 owning snapshot。`vertex/edge/face/cell` 的 global ID 分别连续保存；同一 `EntityKind` 内 ID 必须唯一，稳定实体身份定义为 `(EntityKind, GlobalEntityId)`，不同 kind 可保留各自来源编号。每个已物化 relation 只能占用一个 source-kind/target-kind 槽位，并且其 CSR 行数、目标计数必须与 snapshot 中对应实体数组严格一致。未物化的反向或派生 relation 不会自动生成。
 
 ## 3. 几何与字段
 
