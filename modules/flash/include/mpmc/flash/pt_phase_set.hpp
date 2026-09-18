@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace mpmc::flash {
@@ -71,6 +72,84 @@ struct PtPhaseSetResult {
     }
 };
 
+namespace detail {
+
+// Pure copies of already-reviewed max3 payloads. Model adapters retain their
+// public types, provenance, two-phase projector and diagnostic wording. These
+// helpers never select roots, solve equilibrium or repeat scientific acceptance.
+template <class Phase>
+[[nodiscard]] PtCandidatePhase project_max3_owned_phase(const Phase& source) {
+    PtCandidatePhase phase;
+    phase.mole_phase_fraction = source.mole_phase_fraction;
+    phase.composition = source.composition;
+    phase.activity = source.activity;
+    phase.compressibility_factor = source.z;
+    return phase;
+}
+
+template <class Source, class ProjectTwoPhase>
+[[nodiscard]] PtPhaseSetResult project_max3_solution(
+    const Source& source, ProjectTwoPhase project_two_phase,
+    std::string_view missing_candidate_diagnostic) {
+    using Status = decltype(source.status);
+    PtPhaseSetResult result;
+    const auto copy_feed = [&] {
+        result.capability.maximum_phase_count = 3U;
+        result.pressure_pa = source.base.solution.initial_stability.pressure_pa;
+        result.temperature_k = source.base.solution.initial_stability.temperature_k;
+        result.feed = source.base.solution.initial_stability.feed;
+        result.global_stability_proven = false;
+    };
+    const auto project_two = [&](const auto& two_phase) {
+        auto projected = project_two_phase(two_phase);
+        projected.capability.maximum_phase_count = 3U;
+        return projected;
+    };
+    switch (source.status) {
+    case Status::single_phase:
+        result = project_two(source.base);
+        break;
+    case Status::two_phase:
+        if (const auto* neighbor = source.two_phase_neighbor()) {
+            result = project_two(*neighbor);
+        } else {
+            result = project_two(source.base);
+        }
+        break;
+    case Status::three_phase: {
+        copy_feed();
+        const auto* candidate = source.three_phase_candidate();
+        if (candidate == nullptr) {
+            result.status = PtPhaseSetStatus::indeterminate;
+            result.diagnostic = missing_candidate_diagnostic;
+            break;
+        }
+        PtCandidatePhaseSet set;
+        set.phases.reserve(3U);
+        for (const auto& phase : candidate->phases) {
+            set.phases.push_back(project_max3_owned_phase(phase));
+        }
+        result.candidate_phase_set = std::move(set);
+        result.status = PtPhaseSetStatus::accepted;
+        result.diagnostic = source.diagnostic;
+        break;
+    }
+    case Status::higher_phase_count_or_wrong_candidate:
+        result = project_two(source.base);
+        result.status = PtPhaseSetStatus::phase_set_unstable;
+        result.diagnostic = source.diagnostic;
+        break;
+    case Status::phase_boundary_unresolved:
+    case Status::indeterminate:
+        copy_feed();
+        result.status = PtPhaseSetStatus::indeterminate;
+        result.diagnostic = source.diagnostic;
+        break;
+    }
+    return result;
+}
+
+} // namespace detail
 } // namespace mpmc::flash
 
 #endif // MPMC_FLASH_PT_PHASE_SET_HPP
