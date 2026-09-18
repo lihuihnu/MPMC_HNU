@@ -3,9 +3,10 @@
 ## Status and scope
 
 This document resets the active CPA development line to the **thermodynamic model itself**.
-The association-continuation / certificate work remains preserved as audit evidence but is
-deferred and is not a prerequisite for completing CPA. No production continuation or
-certificate optimization is enabled by this design.
+The earlier association-continuation / certificate exploration is deferred and is not a
+prerequisite for completing CPA. Its transient audit scaffolding is intentionally excluded
+from the merge diff; no production continuation or certificate optimization is enabled by
+this design.
 
 This slice audits the current hand-written CPA pressure and fugacity-coefficient formulas
 and defines the next production thermodynamic kernel around one canonical residual
