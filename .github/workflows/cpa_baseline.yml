@@ -60,7 +60,7 @@ jobs:
             -DMPMC_CPA_BASELINE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
 
       - name: Build CPA baseline
-        run: cmake --build build/cpa-baseline --target mpmc_cpa_baseline_tests --config ${{ matrix.config }} --parallel 2
+        run: cmake --build build/cpa-baseline --target mpmc_cpa_baseline_tests mpmc_cpa_baseline_headers --config ${{ matrix.config }} --parallel 2
 
       - name: Run CPA baseline
         run: ctest --test-dir build/cpa-baseline -C ${{ matrix.config }} -R '^thermodynamics[.]cpa_baseline[.]' --verbose --no-tests=error
