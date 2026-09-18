@@ -154,6 +154,11 @@ it.skipIf(!binary || !fixture)('shared client reconnect/release against the real
     expect(closed.every(Boolean)).toBe(true);
     await expect(client.reconnect()).rejects.toMatchObject({ reason: 'client.disposed' });
 
+    // The observer is test-owned, not gateway-owned. Retire its idle HTTP/2
+    // connection after the last cleanup probe, before gateway.stop() shuts down
+    // the native host and can deliver GOAWAY to an otherwise unused transport.
+    observer.close();
+
     // Exercise the actual desktop gateway composition, still without renderer IPC/UI.
     await gateway.models.connect(); const made = await gateway.models.create(definition);
     expectHintedEquivalent(await gateway.models.solve(made.model, hintedState));
