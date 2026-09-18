@@ -251,6 +251,42 @@ function annotate_against_baseline!(records)
     end
 end
 
+function solver_path_probe(model, state)
+    return setprecision(BigFloat, 256) do
+        temperature = BigFloat(state.temperature_k)
+        z = BigFloat[state.x_meoh, 1.0 - state.x_meoh]
+        volume = sum(z) / BigFloat(state.rho)
+
+        delta = Clapeyron.delta_assoc(
+            model, volume, temperature, z, nothing)
+        matrix = Clapeyron.assoc_site_matrix(
+            model, volume, temperature, z, nothing, delta)
+        compress = Clapeyron.__maybe_compress(matrix)
+
+        reduced = matrix
+        mapping = collect(1:size(matrix, 1))
+        if compress
+            reduced, mapping =
+                Clapeyron.compress_assoc_matrix(matrix)
+        end
+
+        initial = Vector{eltype(reduced)}(
+            undef, size(reduced, 1))
+        initial, success =
+            Clapeyron.assoc_matrix_x0!(reduced, initial)
+
+        return Dict(
+            "original_dimension" => size(matrix, 1),
+            "compression_selected" => compress,
+            "reduced_dimension" => size(reduced, 1),
+            "mapping" => collect(mapping),
+            "initializer_success" => success,
+            "initializer_values" =>
+                [big_string(value) for value in initial],
+        )
+    end
+end
+
 function main_stationarity_floor()
     states_path = arg_value("--states")
     oracle_path = arg_value("--oracle")
@@ -275,6 +311,7 @@ function main_stationarity_floor()
 
     baseline_model = build_model()
     model_audit = audit_model(baseline_model)
+    solver_path = solver_path_probe(baseline_model, state)
 
     records = Any[]
     for precision_bits in STATIONARITY_PRECISIONS_BITS
@@ -320,6 +357,7 @@ function main_stationarity_floor()
             "stencil" => "central_7_o6",
             "relative_h" => DERIVATIVE_RELATIVE_H,
         ),
+        "solver_path" => solver_path,
         "records" => records,
     )
 
@@ -334,6 +372,15 @@ function main_stationarity_floor()
         " precisions=", join(STATIONARITY_PRECISIONS_BITS, ","),
         " settings=", length(STATIONARITY_SETTINGS),
         " derivative_r=", DERIVATIVE_RELATIVE_H,
+    )
+
+    println(
+        "CLAPEYRON_ASSOC_SOLVER_PATH",
+        " original_dimension=", solver_path["original_dimension"],
+        " compression_selected=", solver_path["compression_selected"],
+        " reduced_dimension=", solver_path["reduced_dimension"],
+        " initializer_success=", solver_path["initializer_success"],
+        " mapping=", join(solver_path["mapping"], ","),
     )
 
     for record in records
