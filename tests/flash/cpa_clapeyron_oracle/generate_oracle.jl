@@ -80,9 +80,9 @@ function build_model()
     options = Clapeyron.AssocOptions(
         # Oracle-only numerical settings: tighter than the production association
         # solve so external-reference derivative noise stays below Gate-E gates.
-        rtol = 1.0e-14,
-        atol = 1.0e-14,
-        max_iters = 2048,
+        rtol = 1.0e-16,
+        atol = 1.0e-16,
+        max_iters = 4096,
         dampingfactor = 0.5,
         # Explicit CR-1 pairs are already supplied above. :nocombining ensures
         # the pinned implementation cannot silently rewrite them.
@@ -117,10 +117,10 @@ function audit_model(model)
             "Clapeyron volume translation is not disabled: $(typeof(model.cubicmodel.translation))")
     require(model.assoc_options.combining == :nocombining,
             "Clapeyron explicit CR-1 oracle must disable runtime combining")
-    require(model.assoc_options.rtol == 1.0e-14 &&
-            model.assoc_options.atol == 1.0e-14 &&
+    require(model.assoc_options.rtol == 1.0e-16 &&
+            model.assoc_options.atol == 1.0e-16 &&
             model.assoc_options.dampingfactor == 0.5 &&
-            model.assoc_options.max_iters == 2048 &&
+            model.assoc_options.max_iters == 4096 &&
             model.assoc_options.implicit_ad,
             "Clapeyron association numerical options drifted")
 
@@ -262,6 +262,13 @@ function state_result(model, temperature_k::Float64, rho::Float64,
     x = Clapeyron.assoc_fractions(model, volume, temperature_k, z)
     require(all(v -> isfinite(v) && 0.0 < v <= 1.0, x.v),
             "$label invalid association site fraction")
+    association_matrix =
+        Clapeyron.assoc_site_matrix(model, volume, temperature_k, z)
+    association_residual =
+        x.v .* (1.0 .+ association_matrix * x.v) .- 1.0
+    max_association_residual = maximum(abs, association_residual)
+    require(isfinite(max_association_residual),
+            "$label nonfinite association equation residual")
 
     return Dict(
         "label" => label,
@@ -281,6 +288,8 @@ function state_result(model, temperature_k::Float64, rho::Float64,
             "H2O" => Float64(ln_phi[2]),
         ),
         "association_site_fractions" => [Float64(v) for v in x.v],
+        "association_equation_max_residual" =>
+            Float64(max_association_residual),
     )
 end
 
