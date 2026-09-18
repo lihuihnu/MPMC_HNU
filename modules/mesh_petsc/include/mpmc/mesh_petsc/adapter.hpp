@@ -203,6 +203,12 @@ inline PetscErrorCode create_section_mapping(
         }
     }
 
+    error = PetscSectionSetPointMajor(local_section, PETSC_TRUE);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&local_section);
+        return error;
+    }
+
     error = PetscSectionSetChart(local_section, 0, point_end);
     if (error != PETSC_SUCCESS) {
         PetscSectionDestroy(&local_section);
