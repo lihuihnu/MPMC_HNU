@@ -2,6 +2,7 @@
 #define MPMC_THERMODYNAMICS_CPA_PHASE_HPP
 
 #include <mpmc/thermodynamics/cpa_association.hpp>
+#include <mpmc/thermodynamics/cpa_helmholtz_derivatives.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -106,28 +107,15 @@ inline double cpa_a_mix(double temperature_k,
             "CPA phase: association state unavailable: " + result.association.diagnostic);
     }
 
-    const double rho = molar_density_mol_per_m3;
-    const double rt = cpa_gas_constant_j_per_mol_k * temperature_k;
-    result.pressure_physical_pa =
-        rt * rho / (1.0 - b_rho) -
-        result.a_mix_pa_m6_per_mol2 * rho * rho / (1.0 + b_rho);
-
-    double association_sum = 0.0;
-    for (const auto& site : result.association.sites) {
-        association_sum += composition[site.component_index] *
-            static_cast<double>(site.multiplicity) *
-            (1.0 - site.unbonded_fraction);
-    }
-    result.pressure_association_pa = -0.5 * rt * rho *
-        (1.0 + result.association.rho_dln_g_drho) * association_sum;
-    result.pressure_pa = result.pressure_physical_pa +
-                         result.pressure_association_pa;
-
-    if (!std::isfinite(result.pressure_physical_pa) ||
-        !std::isfinite(result.pressure_association_pa) ||
-        !std::isfinite(result.pressure_pa)) {
-        throw std::range_error("CPA phase: nonrepresentable pressure state");
-    }
+    const auto pressure = cpa_helmholtz_pressure(
+        temperature_k,
+        molar_density_mol_per_m3,
+        composition,
+        parameters,
+        result.association);
+    result.pressure_physical_pa = pressure.pressure_physical_pa;
+    result.pressure_association_pa = pressure.pressure_association_pa;
+    result.pressure_pa = pressure.pressure_pa;
     return result;
 }
 
