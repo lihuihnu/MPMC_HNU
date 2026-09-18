@@ -1,6 +1,7 @@
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/dense_field.hpp>
+#include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
@@ -731,6 +732,154 @@ void dense_field_invalid() {
     });
 }
 
+
+void dof_layout_snapshot() {
+    const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
+    const auto layout = mesh::DofLayout::create(
+        topology,
+        {
+            {"cell.primary", mesh::EntityKind::cell, 2U},
+            {"vertex.aux", mesh::EntityKind::vertex, 1U},
+            {"cell.secondary", mesh::EntityKind::cell, 1U},
+            {"face.trace", mesh::EntityKind::face, 2U},
+        });
+
+    require(layout.variable_count() == 4U, "DoF variable count");
+    require(layout.total_dof_count() == 26U, "total DoF count");
+
+    require(layout.entity_count(mesh::EntityKind::cell) == 2U, "cell entity count");
+    require(layout.entity_count(mesh::EntityKind::face) == 7U, "face entity count");
+    require(layout.entity_count(mesh::EntityKind::vertex) == 6U, "vertex entity count");
+
+    require(layout.dofs_per_entity(mesh::EntityKind::cell) == 3U,
+            "cell DoFs per entity");
+    require(layout.dofs_per_entity(mesh::EntityKind::face) == 2U,
+            "face DoFs per entity");
+    require(layout.dofs_per_entity(mesh::EntityKind::vertex) == 1U,
+            "vertex DoFs per entity");
+
+    require(layout.location_offset(mesh::EntityKind::cell) == 0U, "cell block offset");
+    require(layout.location_scalar_count(mesh::EntityKind::cell) == 6U,
+            "cell block size");
+    require(layout.location_offset(mesh::EntityKind::face) == 6U, "face block offset");
+    require(layout.location_scalar_count(mesh::EntityKind::face) == 14U,
+            "face block size");
+    require(layout.location_offset(mesh::EntityKind::vertex) == 20U,
+            "vertex block offset");
+    require(layout.location_scalar_count(mesh::EntityKind::vertex) == 6U,
+            "vertex block size");
+
+    require(layout.entity_offset(mesh::EntityKind::cell, mesh::LocalIndex{0U}) == 0U,
+            "cell zero entity offset");
+    require(layout.entity_offset(mesh::EntityKind::cell, mesh::LocalIndex{1U}) == 3U,
+            "cell one entity offset");
+    require(layout.entity_offset(mesh::EntityKind::face, mesh::LocalIndex{3U}) == 12U,
+            "face entity offset");
+    require(layout.entity_offset(mesh::EntityKind::vertex, mesh::LocalIndex{5U}) == 25U,
+            "vertex entity offset");
+
+    require(layout.variable(0U).id == "cell.primary", "variable order changed");
+    require(layout.variable(1U).id == "vertex.aux", "variable order changed");
+    require(layout.variable(2U).id == "cell.secondary", "variable order changed");
+    require(layout.variable(3U).id == "face.trace", "variable order changed");
+    require(layout.contains("cell.secondary"), "variable ID lookup");
+    require(layout.variable_index("cell.secondary") == 2U, "variable ID index");
+
+    require(layout.scalar_offset(0U, mesh::LocalIndex{0U}, 0U) == 0U,
+            "cell primary c0 component0");
+    require(layout.scalar_offset(0U, mesh::LocalIndex{0U}, 1U) == 1U,
+            "cell primary c0 component1");
+    require(layout.scalar_offset(2U, mesh::LocalIndex{0U}, 0U) == 2U,
+            "cell secondary c0");
+    require(layout.scalar_offset(0U, mesh::LocalIndex{1U}, 0U) == 3U,
+            "cell primary c1 component0");
+    require(layout.scalar_offset(2U, mesh::LocalIndex{1U}, 0U) == 5U,
+            "cell secondary c1");
+
+    require(layout.scalar_offset(3U, mesh::LocalIndex{0U}, 0U) == 6U,
+            "face trace first component");
+    require(layout.scalar_offset(3U, mesh::LocalIndex{6U}, 1U) == 19U,
+            "face trace final component");
+
+    require(layout.scalar_offset(1U, mesh::LocalIndex{0U}, 0U) == 20U,
+            "vertex block first");
+    require(layout.scalar_offset("vertex.aux", mesh::LocalIndex{5U}, 0U) == 25U,
+            "vertex block final");
+
+    // The snapshot owns its variable IDs and remains usable after input destruction.
+    require(layout.variables().front().id == "cell.primary", "owned variable metadata");
+}
+
+void dof_layout_invalid() {
+    const auto topology = mesh::make_cartesian_topology_2d(1U, 1U);
+
+    expect_throw<std::invalid_argument>(
+        [&] { (void)mesh::DofLayout::create(topology, {}); });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DofLayout::create(
+            topology, {{"", mesh::EntityKind::cell, 1U}});
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DofLayout::create(
+            topology, {{" \t", mesh::EntityKind::cell, 1U}});
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DofLayout::create(
+            topology,
+            {{std::string{"bad\0id", 6U}, mesh::EntityKind::cell, 1U}});
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DofLayout::create(
+            topology, {{"zero", mesh::EntityKind::cell, 0U}});
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DofLayout::create(
+            topology,
+            {{"same", mesh::EntityKind::cell, 1U},
+             {"same", mesh::EntityKind::face, 1U}});
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DofLayout::create(
+            topology, {{"edge", mesh::EntityKind::edge, 1U}});
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DofLayout::create(
+            topology,
+            {{"bad-kind", static_cast<mesh::EntityKind>(255U), 1U}});
+    });
+    expect_throw<std::length_error>([&] {
+        (void)mesh::DofLayout::create(
+            topology,
+            {{"huge", mesh::EntityKind::cell,
+              std::numeric_limits<std::size_t>::max()},
+             {"overflow", mesh::EntityKind::cell, 1U}});
+    });
+    expect_throw<std::length_error>([&] {
+        (void)mesh::DofLayout::create(
+            topology,
+            {{"face-huge", mesh::EntityKind::face,
+              std::numeric_limits<std::size_t>::max()}});
+    });
+
+    const auto layout = mesh::DofLayout::create(
+        topology, {{"cell.x", mesh::EntityKind::cell, 2U}});
+    expect_throw<std::out_of_range>(
+        [&] { (void)layout.variable(1U); });
+    expect_throw<std::out_of_range>(
+        [&] { (void)layout.variable_index("missing"); });
+    expect_throw<std::out_of_range>(
+        [&] { (void)layout.entity_offset(mesh::EntityKind::cell, mesh::LocalIndex{1U}); });
+    expect_throw<std::out_of_range>(
+        [&] { (void)layout.scalar_offset(0U, mesh::LocalIndex{0U}, 2U); });
+    expect_throw<std::out_of_range>(
+        [&] { (void)layout.scalar_offset(1U, mesh::LocalIndex{0U}, 0U); });
+    expect_throw<std::invalid_argument>(
+        [&] { (void)layout.dofs_per_entity(mesh::EntityKind::edge); });
+    expect_throw<std::invalid_argument>([&] {
+        (void)layout.location_offset(static_cast<mesh::EntityKind>(255U));
+    });
+}
+
 void headers() {
     static_assert(
         std::is_same_v<decltype(std::declval<const mesh::CsrAdjacency&>().indices()),
@@ -760,6 +909,8 @@ int main(int argc, char** argv) {
         else if (name == "face_boundary_invalid") { face_boundary_invalid(); }
         else if (name == "dense_field_snapshot") { dense_field_snapshot(); }
         else if (name == "dense_field_invalid") { dense_field_invalid(); }
+        else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
+        else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "headers") { headers(); }
         else { throw std::invalid_argument("unknown mesh core test"); }
         std::cout << "[PASS] " << name << '\n';
