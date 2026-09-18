@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot` 与 partition-aware `DofNumberingSnapshot` 已建立；新增 `SharedEntityPlan` 非 MPI halo contract，用 canonical shared-entity link 记录 `EntityKind + GlobalEntityId + owner_rank/owner_local + ghost_rank/ghost_local`，并派生按 neighbor rank 分组的连续 send/receive entity lists。每个 local ghost 必须恰有一条 owner link；owned entity 可被多个邻居 ghost。仍未接 MPI/PETSc。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；新增可选 `mpmc::mesh_petsc` 基线适配层。它把 `DofLayout + DofNumberingSnapshot` 映射为 point-major `PetscSection` + PETSc-width local-to-global scalar map，并把 `SharedEntityPlan` 按单一 `EntityKind` 映射为 `PetscSF` root/leaf graph。core 模块仍不依赖 PETSc/MPI；当前适配层只验证 2-rank section/SF identity 与一次标量 broadcast，不含 DMPlex、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -84,10 +84,16 @@
 
 存储采用 `NeighborExchangeRange[] + flat send[] + flat receive[]`：neighbor range 按 rank 排序，send/receive 条目按 entity kind、global ID、local index 确定性排序。对 receive range，range.rank 就是 owner rank，entry.remote_local 就是 owner-local index；对 send range，range.rank 是 ghost rank，entry.remote_local 是远端 ghost-local index。这样 owner rank 不需要在每个条目里重复存储。当前仍未实现 halo depth、真实 send/recv buffer、MPI communicator、collective symmetry check 或跨 rank 自动构造；synthetic 2-rank fixture 只验证两份本地 plan 在相同 canonical links 上的 owner/ghost 对称性。
 
-可选 `mesh_petsc` 适配层负责：
+可选 `mpmc::mesh_petsc` 已建立第一条真实适配基线，但仍与 core 分离。当前 `create_section_mapping()` 使用连续 chart `[cell points][face points][vertex points]`，将 `DofVariable` 声明顺序映射为 `PetscSection` fields，并显式设置 point-major，使 PETSc point offset 与现有 `DofLayout::entity_offset()` 一致；`DofNumberingSnapshot` 同时转换为 PETSc `PetscInt` 宽度的 local-to-global scalar map，若全局编号超出当前 PETSc index 宽度则拒绝，而不是截断。
+
+`create_entity_sf()` 每次只为一个 `EntityKind` 建立 `PetscSF`：本 rank local entity index 是 root space，local ghost index 是 leaf location，`SharedEntityPlan` 中的 owner-local index 直接成为远端 root index。分 kind 建图是刻意的最小基线，因为当前 core halo contract 没有存远端 rank 的跨-kind point base；强行合成一个跨 kind SF 会引入无法从现有事实推导的远端编号。adapter 会核对 MPI communicator 的 rank/size 与 `PartitionSnapshot` 一致，并校验 leaf 的 ghost/owner/GlobalEntityId 后再创建 graph。
+
+当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6，并使用 synthetic 2-rank fixture 核对 `PetscSection` chart/fields/dofs/offsets、`PetscSF` root/leaf `(rank,index)` identity，以及一次 owner→ghost 标量 broadcast。尚未实现 DMPlex、`PetscSectionCreateGlobalSection()`、section-SF、真实 halo buffer、solver/Vec/Mat integration 或 PETSc partitioner；这些不得由当前最小 adapter 冒充完成。
+
+后续适配层仍可负责：
 
 - 从核心拓扑创建或填充 DMPlex；
-- 把 DoF layout 映射到 PetscSection；
+- 从 point SF/local section 派生 PETSc global section 与 section SF；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
 
