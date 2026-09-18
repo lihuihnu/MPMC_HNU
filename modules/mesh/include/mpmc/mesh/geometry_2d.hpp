@@ -4,6 +4,7 @@
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/topology.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -412,7 +413,6 @@ inline void require_cartesian_topology_2d(const Topology& topology,
     const std::size_t cell_count = topology.entity_count(EntityKind::cell);
     const std::size_t face_count = topology.entity_count(EntityKind::face);
     const std::size_t nx_vertices = x_coordinates_m.size();
-    const std::size_t vertical_face_count = nx_vertices * ny;
 
     std::vector<double> dx;
     std::vector<double> dy;
@@ -514,7 +514,7 @@ inline void require_cartesian_topology_2d(const Topology& topology,
             ++face_index;
         }
     }
-    if (face_index != face_count || vertical_face_count > face_count) {
+    if (face_index != face_count) {
         throw std::logic_error(
             "mpmc::mesh::make_cartesian_geometry_2d: internal face enumeration mismatch");
     }
