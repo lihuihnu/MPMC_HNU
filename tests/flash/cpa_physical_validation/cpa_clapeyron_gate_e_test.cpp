@@ -132,6 +132,10 @@ Derived derive(
 
 void run_gate_e() {
     static_assert(external::states.size() == 10U);
+    require(
+        external::gas_constant_j_per_mol_k ==
+            th::cpa_gas_constant_j_per_mol_k,
+        "Gate-E Clapeyron/MPMC gas constant mismatch");
     const auto parameters = cpa_thermopack_snapshot::parameters(false);
 
     double max_f_delta = 0.0;
