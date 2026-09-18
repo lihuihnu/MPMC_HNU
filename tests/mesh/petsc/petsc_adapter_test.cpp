@@ -372,7 +372,6 @@ void verify_global_section_and_section_sf(
             point_sf,
             PETSC_FALSE,
             PETSC_FALSE,
-            PETSC_FALSE,
             &global_section),
         "PetscSectionCreateGlobalSection");
 
