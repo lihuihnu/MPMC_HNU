@@ -877,6 +877,53 @@ compressed exact-association numerical defect is fixed while the audited CPA for
 and parameter mapping remain unchanged, then declare that reference change explicitly
 before rerunning the same frozen ten-state numerical envelopes.
 
+### 12.5 Owner decision — Gate E is waived as a blocking prerequisite
+
+This section records the latest project-owner decision and **supersedes only the blocking
+effect of Gate E** for the current frozen profile and PR #115.
+
+The owner explicitly accepts the completed evidence chain showing that:
+
+- the MPMC_HNU CPA formulation and parameter mapping are aligned with the audited external
+  implementations;
+- the raw pinned Clapeyron pressure / `ln(phi)` mismatch is attributable to the pinned
+  compressed `X_exact2!` numerical path;
+- when the same compressed association equations are solved independently to high
+  stationarity, the complete ten-state diagnostic satisfies the original numerical
+  envelopes without changing the model or thresholds:
+  - `max |Delta P| = 5.323330668403745e-7 Pa`;
+  - `max |Delta ln(phi)_Z-only| = 1.3571962033602398e-11`.
+
+Accordingly, the project owner directs that Gate E **must no longer block further
+development** for
+`CPA/SRK-physical/simplified-rdf-1.9eta/explicit-site-pairs/v1`.
+
+This is a governance / acceptance decision, not a retroactive claim that the raw pinned
+Clapeyron regression passed. The evidence labels remain:
+
+- raw pinned Clapeyron regression: **known numerical-defect witness**;
+- independently stationary ten-state diagnostic: **PASS defect-attribution evidence**;
+- Gate-E status for project flow: **WAIVED / NON-BLOCKING**.
+
+No Gate-E numerical threshold is widened and no raw oracle is rewritten. The existing
+raw regression and all diagnostic artifacts remain in the repository for traceability.
+
+The effective readiness matrix is now:
+
+| Gate | Effective status |
+| --- | --- |
+| A — scalar Helmholtz value | **PASS** |
+| B — pressure vs MPMC analytic path | **PASS** |
+| C — residual chemical potentials vs MPMC analytic path | **PASS** |
+| D — final `ln(phi)` + ThermoPack parity | **PASS** |
+| E — named independent implementations | **WAIVED / NON-BLOCKING** |
+| F — production source-of-truth switch | **READY TO ENTER** |
+
+`READY TO ENTER` is not the same as Gate F completion. The production switchover still
+must be implemented as a focused change and must satisfy the previously frozen production
+invariants and downstream verification requirements, except that raw Gate-E PASS is no
+longer a prerequisite.
+
 ## 13. Second derivatives are explicitly later
 
 The stationarity trick removes `dX/dz` only for **first derivatives**. Second derivatives
@@ -908,25 +955,20 @@ The first implementation must not:
 
 ## 15. Current audit conclusion and recommended next increment
 
-For the frozen SRK+sCPA profile, Gates A-D are now satisfied. The named Clapeyron leg has
-also been investigated to completion at the current pinned revision: formulation and
-parameter identity are established, the raw pinned scalar and residual-chemical-potential
-rows pass, and the raw pressure / `ln(phi)` failure has been traced to the pinned
-compressed `X_exact2!` numerical path. The independently stationary same-formulation
-diagnostic passes the original ten-state pressure and Z-only `ln(phi)` envelopes without
-changing parameters or thresholds.
+For the frozen SRK+sCPA profile, Gates A-D are **PASS**. Gate E has been investigated to
+completion and its remaining raw pinned Clapeyron mismatch has been traced to the external
+compressed `X_exact2!` numerical path. By explicit project-owner decision in section
+12.5, Gate E is now **WAIVED / NON-BLOCKING** for this profile.
 
-That diagnostic is **not** contract-equivalent to the raw pinned implementation under the
-wording frozen in section 12.2.B. Gate E therefore remains **BLOCKED** and Gate F remains
-**NOT READY**. The raw pinned regression is retained as a known numerical-defect witness;
-the corrected diagnostic is retained as defect-attribution evidence, not as a substituted
-oracle.
+Therefore Gate F is **READY TO ENTER**, but it is not yet complete.
 
-The next small increment should therefore be:
+The next small increment should be:
 
-> Audit later unmodified Clapeyron revisions for a fix to the compressed `X_exact2!`
-> numerical path while holding the audited CPA formulation and parameter mapping fixed.
-> If a source revision with the defect fixed is found, record the exact source change and
-> propose a separately reviewed Gate-E reference-repin contract before rerunning the
-> existing frozen ten-state thresholds. Do not modify MPMC_HNU production code or Gate-E
-> numerical tolerances in that increment.
+> Implement the focused Gate-F production source-of-truth switch already defined in
+> section 12.2.C: redirect CPA phase pressure and residual chemical potentials / `ln(phi)`
+> to the canonical residual-Helmholtz derivative path while preserving the existing
+> association primal solve, root/stability/flash semantics, parameters, tolerances and
+> failure behavior. Keep the old analytic formulas as regression oracles. Then run the
+> exact affected downstream verification and performance gates required by section 12.2.D.
+> Do not bundle unrelated solver, parameter, flash or performance optimizations into that
+> switch.
