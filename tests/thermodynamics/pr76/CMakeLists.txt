@@ -3,7 +3,9 @@ project(mpmc_thermodynamics_pr76_tests LANGUAGES CXX)
 
 # Independent new integration suite: no existing AD/contract test project is configured.
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/thermodynamics" thermo-library)
-add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad" ad-library)
+if(NOT TARGET mpmc_ad)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad" ad-library)
+endif()
 enable_testing()
 add_executable(mpmc_thermodynamics_pr76_tests
     pr76_test.cpp header_self_contained.cpp)
