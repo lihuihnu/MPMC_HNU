@@ -304,6 +304,193 @@ inline PetscErrorCode create_section_mapping(
     return PETSC_SUCCESS;
 }
 
+/// Create one flattened point PetscSF matching create_section_mapping()'s chart.
+///
+/// The local point space is [cell points][face points][vertex points]. SharedEntityPlan
+/// stores remote indices within each EntityKind, so the adapter collectively gathers
+/// each rank's local point counts to recover the remote chart base without changing
+/// the core halo contract.
+inline PetscErrorCode create_point_sf(
+    MPI_Comm comm,
+    const mpmc::mesh::DofLayout& layout,
+    const mpmc::mesh::PartitionSnapshot& partition,
+    const mpmc::mesh::SharedEntityPlan& plan,
+    PetscSF* sf) {
+    if (sf == nullptr) return PETSC_ERR_ARG_NULL;
+    *sf = nullptr;
+
+    if (plan.local_rank() != partition.local_rank() ||
+        plan.rank_count() != partition.rank_count()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    PetscErrorCode error = detail::validate_communicator(
+        comm, partition.local_rank(), partition.rank_count());
+    if (error != PETSC_SUCCESS) return error;
+
+    for (const auto kind :
+         {mpmc::mesh::EntityKind::cell,
+          mpmc::mesh::EntityKind::face,
+          mpmc::mesh::EntityKind::vertex}) {
+        if (layout.entity_count(kind) != partition.entity_count(kind)) {
+            return PETSC_ERR_ARG_SIZ;
+        }
+    }
+
+    detail::PointRanges local_ranges;
+    error = detail::point_ranges(layout, &local_ranges);
+    if (error != PETSC_SUCCESS) return error;
+
+    const std::array<std::uint64_t, 3> local_counts{
+        static_cast<std::uint64_t>(
+            partition.entity_count(mpmc::mesh::EntityKind::cell)),
+        static_cast<std::uint64_t>(
+            partition.entity_count(mpmc::mesh::EntityKind::face)),
+        static_cast<std::uint64_t>(
+            partition.entity_count(mpmc::mesh::EntityKind::vertex))};
+
+    const std::size_t rank_count =
+        static_cast<std::size_t>(partition.rank_count());
+    if (rank_count >
+        std::numeric_limits<std::size_t>::max() / std::size_t{3U}) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    std::vector<std::uint64_t> all_counts(rank_count * std::size_t{3U});
+
+    if (MPI_Allgather(
+            local_counts.data(), 3, MPI_UINT64_T,
+            all_counts.data(), 3, MPI_UINT64_T,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+
+    PetscInt nroots = 0;
+    error = detail::checked_petsc_int_size(local_ranges.end, &nroots);
+    if (error != PETSC_SUCCESS) return error;
+
+    std::vector<PetscInt> local_leaves;
+    std::vector<PetscSFNode> remote_roots;
+    local_leaves.reserve(plan.receive_count());
+    remote_roots.reserve(plan.receive_count());
+
+    for (const auto& neighbor : plan.neighbors()) {
+        PetscMPIInt remote_rank = 0;
+        error = detail::checked_mpi_rank(neighbor.rank, &remote_rank);
+        if (error != PETSC_SUCCESS) return error;
+
+        const std::size_t remote_slot =
+            static_cast<std::size_t>(neighbor.rank.value()) *
+            std::size_t{3U};
+        const std::uint64_t remote_cells = all_counts[remote_slot];
+        const std::uint64_t remote_faces = all_counts[remote_slot + 1U];
+        const std::uint64_t remote_vertices = all_counts[remote_slot + 2U];
+
+        if (remote_faces >
+            std::numeric_limits<std::uint64_t>::max() - remote_cells) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        const std::uint64_t remote_face_base = remote_cells;
+        const std::uint64_t remote_vertex_base =
+            remote_cells + remote_faces;
+
+        for (const auto& entity :
+             plan.receive_entities_from(neighbor.rank)) {
+            std::size_t local_base = 0U;
+            std::uint64_t remote_base = 0U;
+            std::uint64_t remote_count = 0U;
+
+            switch (entity.kind) {
+            case mpmc::mesh::EntityKind::cell:
+                local_base = local_ranges.cell_begin;
+                remote_base = 0U;
+                remote_count = remote_cells;
+                break;
+            case mpmc::mesh::EntityKind::face:
+                local_base = local_ranges.face_begin;
+                remote_base = remote_face_base;
+                remote_count = remote_faces;
+                break;
+            case mpmc::mesh::EntityKind::vertex:
+                local_base = local_ranges.vertex_begin;
+                remote_base = remote_vertex_base;
+                remote_count = remote_vertices;
+                break;
+            case mpmc::mesh::EntityKind::edge:
+                continue;
+            }
+
+            if (!partition.is_ghost(entity.kind, entity.local) ||
+                partition.owner_rank(entity.kind, entity.local) !=
+                    neighbor.rank ||
+                partition.global_id(entity.kind, entity.local) !=
+                    entity.global_id) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+
+            const std::uint64_t remote_local =
+                static_cast<std::uint64_t>(
+                    entity.remote_local.value());
+            if (remote_local >= remote_count) {
+                return PETSC_ERR_ARG_OUTOFRANGE;
+            }
+            if (remote_local >
+                std::numeric_limits<std::uint64_t>::max() - remote_base) {
+                return PETSC_ERR_ARG_OUTOFRANGE;
+            }
+
+            const std::size_t local_point =
+                local_base +
+                static_cast<std::size_t>(entity.local.value());
+            const std::uint64_t remote_point =
+                remote_base + remote_local;
+
+            PetscInt local_leaf = 0;
+            PetscInt remote_root = 0;
+            error = detail::checked_petsc_int_size(
+                local_point, &local_leaf);
+            if (error != PETSC_SUCCESS) return error;
+            error = detail::checked_petsc_int_u64(
+                remote_point, &remote_root);
+            if (error != PETSC_SUCCESS) return error;
+
+            local_leaves.push_back(local_leaf);
+            remote_roots.push_back(
+                PetscSFNode{remote_rank, remote_root});
+        }
+    }
+
+    PetscInt nleaves = 0;
+    error = detail::checked_petsc_int_size(
+        local_leaves.size(), &nleaves);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscSF point_sf = nullptr;
+    error = PetscSFCreate(comm, &point_sf);
+    if (error != PETSC_SUCCESS) return error;
+
+    error = PetscSFSetGraph(
+        point_sf,
+        nroots,
+        nleaves,
+        local_leaves.empty() ? nullptr : local_leaves.data(),
+        PETSC_COPY_VALUES,
+        remote_roots.empty() ? nullptr : remote_roots.data(),
+        PETSC_COPY_VALUES);
+    if (error != PETSC_SUCCESS) {
+        PetscSFDestroy(&point_sf);
+        return error;
+    }
+
+    error = PetscSFSetUp(point_sf);
+    if (error != PETSC_SUCCESS) {
+        PetscSFDestroy(&point_sf);
+        return error;
+    }
+
+    *sf = point_sf;
+    return PETSC_SUCCESS;
+}
+
 inline PetscErrorCode create_entity_sf(
     MPI_Comm comm,
     const mpmc::mesh::PartitionSnapshot& partition,
