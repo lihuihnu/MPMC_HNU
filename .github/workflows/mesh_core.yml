@@ -1,0 +1,60 @@
+name: Mesh core correctness
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/mesh/include/**'
+      - 'modules/mesh/CMakeLists.txt'
+      - 'tests/mesh/core/**'
+      - '.github/workflows/mesh_core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mesh-core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            build_type: Debug
+            compiler: -DCMAKE_CXX_COMPILER=g++
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            build_type: Release
+            compiler: -DCMAKE_CXX_COMPILER=clang++
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            build_type: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure mesh core tests
+        run: |
+          cmake -S tests/mesh/core -B build/mesh-core \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            ${{ matrix.compiler }} \
+            -DMPMC_MESH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+      - name: Build mesh core tests
+        run: cmake --build build/mesh-core --target mpmc_mesh_core_tests --config ${{ matrix.build_type }} --parallel 2
+      - name: Run mesh core tests
+        run: ctest --test-dir build/mesh-core -C ${{ matrix.build_type }} -R '^mesh[.]core[.]' --verbose --no-tests=error
