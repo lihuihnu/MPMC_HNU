@@ -144,6 +144,32 @@ jobs:
                 "states=", audit["problem_states"])
           PY
 
+      - name: Audit state-4 association stationarity floor
+        env:
+          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+        shell: bash
+        run: |
+          set -euo pipefail
+          julia --project=_external/Clapeyron.jl \
+            tests/flash/cpa_clapeyron_oracle/association_stationarity_floor_audit.jl \
+            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
+            --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \
+            --out build/cpa-clapeyron-oracle/clapeyron_association_stationarity_floor_audit.json
+          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          audit = json.loads(Path(
+              "build/cpa-clapeyron-oracle/"
+              "clapeyron_association_stationarity_floor_audit.json"
+          ).read_text(encoding="utf-8"))
+          print("CLAPEYRON_ASSOC_STATIONARITY_ARTIFACT",
+                "records=", len(audit["records"]),
+                "precisions=", audit["precision_bits"],
+                "state=", audit["state"]["label"])
+          PY
+
       - name: Upload generated oracle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -165,5 +191,13 @@ jobs:
         with:
           name: cpa-clapeyron-bigfloat-derivative-audit
           path: build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload association stationarity audit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cpa-clapeyron-association-stationarity-audit
+          path: build/cpa-clapeyron-oracle/clapeyron_association_stationarity_floor_audit.json
           if-no-files-found: error
           retention-days: 7
