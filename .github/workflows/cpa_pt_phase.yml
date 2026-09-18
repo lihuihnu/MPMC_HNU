@@ -61,7 +61,7 @@ jobs:
             -DMPMC_CPA_PT_PHASE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
 
       - name: Build CPA PT phase
-        run: cmake --build build/cpa-pt-phase --target mpmc_cpa_pt_phase_tests --config ${{ matrix.config }} --parallel 2
+        run: cmake --build build/cpa-pt-phase --target mpmc_cpa_pt_phase_tests mpmc_cpa_pt_phase_headers --config ${{ matrix.config }} --parallel 2
 
       - name: Run CPA PT phase
         run: ctest --test-dir build/cpa-pt-phase -C ${{ matrix.config }} -R '^thermodynamics[.]cpa_pt_phase[.]' --verbose --no-tests=error
