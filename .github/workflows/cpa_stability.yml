@@ -62,7 +62,7 @@ jobs:
             -DMPMC_CPA_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
 
       - name: Build CPA stability
-        run: cmake --build build/cpa-stability --target mpmc_cpa_stability_tests --config ${{ matrix.config }} --parallel 2
+        run: cmake --build build/cpa-stability --target mpmc_cpa_stability_tests mpmc_cpa_stability_headers --config ${{ matrix.config }} --parallel 2
 
       - name: Run CPA stability
         run: ctest --test-dir build/cpa-stability -C ${{ matrix.config }} -R '^flash[.]cpa_stability[.]' --verbose --no-tests=error
