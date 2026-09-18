@@ -12,6 +12,7 @@
 #include <cstring>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -335,6 +336,337 @@ void verify_sf(
     }
 }
 
+
+void verify_global_section_and_section_sf(
+    const mesh::DofLayout& layout,
+    const mesh::DofNumberingSnapshot& numbering,
+    const mesh::PartitionSnapshot& partition,
+    const mesh::SharedEntityPlan& plan) {
+    PetscSection local_section = nullptr;
+    std::vector<PetscInt> local_to_global;
+    require_petsc(
+        mesh_petsc::create_section_mapping(
+            PETSC_COMM_WORLD, layout, numbering,
+            &local_section, &local_to_global),
+        "create_section_mapping for global section");
+
+    PetscSF point_sf = nullptr;
+    require_petsc(
+        mesh_petsc::create_point_sf(
+            PETSC_COMM_WORLD, layout, partition, plan, &point_sf),
+        "create_point_sf");
+
+    PetscInt point_roots = -1;
+    PetscInt point_leaves = -1;
+    require_petsc(
+        PetscSFGetGraph(
+            point_sf, &point_roots, &point_leaves, nullptr, nullptr),
+        "PetscSFGetGraph point SF");
+    require(point_roots == 6, "flattened point SF root count");
+    require(point_leaves == 3, "flattened point SF ghost leaf count");
+
+    PetscSection global_section = nullptr;
+    require_petsc(
+        PetscSectionCreateGlobalSection(
+            local_section,
+            point_sf,
+            PETSC_FALSE,
+            PETSC_FALSE,
+            PETSC_FALSE,
+            &global_section),
+        "PetscSectionCreateGlobalSection");
+
+    PetscInt local_storage = 0;
+    PetscInt owned_storage = 0;
+    require_petsc(
+        PetscSectionGetStorageSize(local_section, &local_storage),
+        "local PetscSection storage size");
+    require_petsc(
+        PetscSectionGetConstrainedStorageSize(
+            global_section, &owned_storage),
+        "global PetscSection owned storage size");
+    require(local_storage == 10, "local section storage must contain all local DoFs");
+    require(owned_storage == 5, "each rank must own five scalar DoFs");
+
+    int mpi_rank = -1;
+    require(
+        MPI_Comm_rank(PETSC_COMM_WORLD, &mpi_rank) == MPI_SUCCESS,
+        "MPI_Comm_rank for global section");
+
+    PetscInt rank_global_begin = 0;
+    require(
+        MPI_Exscan(
+            &owned_storage,
+            &rank_global_begin,
+            1,
+            MPIU_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Exscan global PETSc DoF range");
+    if (mpi_rank == 0) rank_global_begin = 0;
+
+    PetscInt global_storage = 0;
+    require(
+        MPI_Allreduce(
+            &owned_storage,
+            &global_storage,
+            1,
+            MPIU_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce global PETSc DoF size");
+    require(global_storage == 10, "global PETSc storage size");
+
+    const std::size_t global_storage_size =
+        static_cast<std::size_t>(global_storage);
+    std::vector<std::uint64_t> petsc_global_to_core(
+        global_storage_size,
+        std::numeric_limits<std::uint64_t>::max());
+    std::vector<int> owner_coverage(global_storage_size, 0);
+
+    const std::size_t cell_count =
+        layout.entity_count(mesh::EntityKind::cell);
+    const std::size_t face_count =
+        layout.entity_count(mesh::EntityKind::face);
+
+    for (PetscInt point = 0; point < 6; ++point) {
+        PetscInt local_dof = 0;
+        PetscInt local_offset = -1;
+        PetscInt global_dof = 0;
+        PetscInt global_offset = 0;
+        require_petsc(
+            PetscSectionGetDof(local_section, point, &local_dof),
+            "local point DoF");
+        require_petsc(
+            PetscSectionGetOffset(local_section, point, &local_offset),
+            "local point offset");
+        require_petsc(
+            PetscSectionGetDof(global_section, point, &global_dof),
+            "global point DoF");
+        require_petsc(
+            PetscSectionGetOffset(global_section, point, &global_offset),
+            "global point offset");
+
+        mesh::EntityKind kind = mesh::EntityKind::cell;
+        std::size_t local_entity = 0U;
+        const std::size_t point_index =
+            static_cast<std::size_t>(point);
+        if (point_index < cell_count) {
+            kind = mesh::EntityKind::cell;
+            local_entity = point_index;
+        } else if (point_index < cell_count + face_count) {
+            kind = mesh::EntityKind::face;
+            local_entity = point_index - cell_count;
+        } else {
+            kind = mesh::EntityKind::vertex;
+            local_entity = point_index - cell_count - face_count;
+        }
+
+        const auto local_index = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(local_entity)};
+        const bool owned = partition.is_owned(kind, local_index);
+
+        if (owned) {
+            require(global_dof == local_dof,
+                    "owned point global DoF sign/width");
+            require(global_offset >= 0,
+                    "owned point global offset must be nonnegative");
+            for (PetscInt d = 0; d < local_dof; ++d) {
+                const PetscInt petsc_global = global_offset + d;
+                require(
+                    petsc_global >= 0 &&
+                        petsc_global < global_storage,
+                    "owned PETSc global offset range");
+                const PetscInt core_global =
+                    local_to_global[
+                        static_cast<std::size_t>(local_offset + d)];
+                require(core_global >= 0,
+                        "core global DoF must fit nonnegative PetscInt");
+                petsc_global_to_core[
+                    static_cast<std::size_t>(petsc_global)] =
+                    static_cast<std::uint64_t>(core_global);
+                owner_coverage[
+                    static_cast<std::size_t>(petsc_global)] = 1;
+            }
+        } else {
+            require(global_dof == -(local_dof + 1),
+                    "ghost point global DoF must use PETSc negative encoding");
+            require(global_offset < 0,
+                    "ghost point global offset must be negative");
+        }
+    }
+
+    require(
+        global_storage <=
+            static_cast<PetscInt>(std::numeric_limits<int>::max()),
+        "fixture MPI collective count must fit int");
+    const int collective_count =
+        static_cast<int>(global_storage);
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            petsc_global_to_core.data(),
+            collective_count,
+            MPI_UINT64_T,
+            MPI_MIN,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce PETSc-global to core-global map");
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            owner_coverage.data(),
+            collective_count,
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce PETSc global owner coverage");
+
+    for (std::size_t i = 0U;
+         i < global_storage_size;
+         ++i) {
+        require(owner_coverage[i] == 1,
+                "each PETSc global DoF must have exactly one owner");
+        require(
+            petsc_global_to_core[i] !=
+                std::numeric_limits<std::uint64_t>::max(),
+            "PETSc global DoF must resolve to one core GlobalDofIndex");
+    }
+
+    for (PetscInt point = 0; point < 6; ++point) {
+        PetscInt local_dof = 0;
+        PetscInt local_offset = -1;
+        PetscInt global_dof = 0;
+        PetscInt global_offset = 0;
+        require_petsc(
+            PetscSectionGetDof(local_section, point, &local_dof),
+            "local DoF for core mapping");
+        require_petsc(
+            PetscSectionGetOffset(local_section, point, &local_offset),
+            "local offset for core mapping");
+        require_petsc(
+            PetscSectionGetDof(global_section, point, &global_dof),
+            "global DoF for core mapping");
+        require_petsc(
+            PetscSectionGetOffset(global_section, point, &global_offset),
+            "global offset for core mapping");
+
+        const PetscInt decoded_dof =
+            global_dof < 0 ? -(global_dof + 1) : global_dof;
+        const PetscInt owner_global_offset =
+            global_offset < 0 ? -(global_offset + 1) : global_offset;
+        require(decoded_dof == local_dof,
+                "global section DoF width must decode to local width");
+
+        for (PetscInt d = 0; d < local_dof; ++d) {
+            const std::size_t petsc_global =
+                static_cast<std::size_t>(
+                    owner_global_offset + d);
+            const PetscInt local_core =
+                local_to_global[
+                    static_cast<std::size_t>(local_offset + d)];
+            require(
+                petsc_global_to_core[petsc_global] ==
+                    static_cast<std::uint64_t>(local_core),
+                "owned/ghost PETSc offset must recover the same core GlobalDofIndex");
+        }
+    }
+
+    PetscSF section_sf = nullptr;
+    require_petsc(
+        PetscSFCreate(PETSC_COMM_WORLD, &section_sf),
+        "PetscSFCreate section SF");
+    require_petsc(
+        PetscSFSetGraphSection(
+            section_sf, local_section, global_section),
+        "PetscSFSetGraphSection");
+    require_petsc(
+        PetscSFSetUp(section_sf),
+        "PetscSFSetUp section SF");
+
+    PetscInt section_roots = -1;
+    PetscInt section_leaves = -1;
+    require_petsc(
+        PetscSFGetGraph(
+            section_sf,
+            &section_roots,
+            &section_leaves,
+            nullptr,
+            nullptr),
+        "PetscSFGetGraph section SF");
+    require(section_roots == owned_storage,
+            "section SF roots must match local owned global storage");
+    require(section_leaves == local_storage,
+            "section SF leaves must cover the full local DoF vector");
+
+    std::vector<PetscInt> root_values(
+        static_cast<std::size_t>(section_roots), -1);
+    for (PetscInt root = 0; root < section_roots; ++root) {
+        const PetscInt petsc_global =
+            rank_global_begin + root;
+        const std::uint64_t core_global =
+            petsc_global_to_core[
+                static_cast<std::size_t>(petsc_global)];
+        require(
+            core_global <=
+                static_cast<std::uint64_t>(
+                    std::numeric_limits<PetscInt>::max() - 1000),
+            "fixture encoded core GlobalDofIndex must fit PetscInt");
+        root_values[static_cast<std::size_t>(root)] =
+            static_cast<PetscInt>(1000U + core_global);
+    }
+
+    std::vector<PetscInt> local_values(
+        static_cast<std::size_t>(local_storage), -777);
+    require_petsc(
+        PetscSFBcastBegin(
+            section_sf,
+            MPIU_INT,
+            root_values.data(),
+            local_values.data(),
+            MPI_REPLACE),
+        "PetscSFBcastBegin section SF");
+    require_petsc(
+        PetscSFBcastEnd(
+            section_sf,
+            MPIU_INT,
+            root_values.data(),
+            local_values.data(),
+            MPI_REPLACE),
+        "PetscSFBcastEnd section SF");
+
+    for (PetscInt local = 0; local < local_storage; ++local) {
+        const PetscInt expected =
+            static_cast<PetscInt>(
+                1000 + local_to_global[
+                    static_cast<std::size_t>(local)]);
+        require(
+            local_values[static_cast<std::size_t>(local)] == expected,
+            "section SF must broadcast global-layout values into every local DoF");
+    }
+
+    require(
+        local_values[0] ==
+            static_cast<PetscInt>(1000 + local_to_global[0]) &&
+        local_values[1] ==
+            static_cast<PetscInt>(1000 + local_to_global[1]) &&
+        local_values[2] ==
+            static_cast<PetscInt>(1000 + local_to_global[2]),
+        "multi-DoF cell point broadcast");
+
+    require_petsc(
+        PetscSFDestroy(&section_sf),
+        "PetscSFDestroy section SF");
+    require_petsc(
+        PetscSectionDestroy(&global_section),
+        "PetscSectionDestroy global section");
+    require_petsc(
+        PetscSFDestroy(&point_sf),
+        "PetscSFDestroy point SF");
+    require_petsc(
+        PetscSectionDestroy(&local_section),
+        "PetscSectionDestroy local section");
+}
+
 void run_two_rank_test() {
     int mpi_rank = -1;
     int mpi_size = -1;
@@ -368,6 +700,8 @@ void run_two_rank_test() {
 
     verify_section(layout, numbering, mpi_rank);
     verify_sf(partition, plan, mpi_rank);
+    verify_global_section_and_section_sf(
+        layout, numbering, partition, plan);
 
     require(
         MPI_Barrier(PETSC_COMM_WORLD) == MPI_SUCCESS,
