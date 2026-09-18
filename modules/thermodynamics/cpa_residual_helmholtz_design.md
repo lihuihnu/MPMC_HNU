@@ -924,6 +924,170 @@ must be implemented as a focused change and must satisfy the previously frozen p
 invariants and downstream verification requirements, except that raw Gate-E PASS is no
 longer a prerequisite.
 
+### 12.6 Gate F completion — Helmholtz production source of truth
+
+Gate F is now **COMPLETE** for
+`CPA/SRK-physical/simplified-rdf-1.9eta/explicit-site-pairs/v1`.
+
+The production switch is intentionally narrow.
+
+#### Production source-of-truth changes
+
+A production first-derivative adapter now lives in
+`cpa_helmholtz_derivatives.hpp`. It uses the existing AD module around the canonical
+scalar-generic residual-Helmholtz terms while keeping the association state solved once at
+the primal state and stationary during first differentiation.
+
+`evaluate_cpa_phase_at_density(...)` now obtains:
+
+- SRK physical pressure from the volume derivative of the canonical cubic residual
+  Helmholtz term;
+- association pressure from the volume derivative of the stationary association
+  `Q` term;
+- total pressure from their sum.
+
+`cpa_fill_ln_phi(...)` now obtains:
+
+- every component's cubic, association and total residual chemical potential from
+  mole-number derivatives of the same canonical residual-Helmholtz terms;
+- `ln(phi_i)=mu_i^res/(RT)-ln(Z)` with the existing
+  `Z=target_pressure/(rho R T)` convention.
+
+The production switch does **not** change the primal association solve, density-root
+algorithm/tolerances, root identity/status, stability or split algorithms, flash
+acceptance, parameters, applicability, failure semantics or fallback behavior.
+
+Thermodynamics now has an explicit one-way dependency on the existing AD module. The
+canonical `cpa_residual_helmholtz.hpp` remains scalar-generic and independent of the AD
+framework.
+
+#### Legacy analytic formulas remain independent regression oracles
+
+The pre-switch hand-written pressure and residual-chemical-potential formulas were copied
+into the test-only Gate-F regression rather than deleted or reused by production.
+
+Across the 40-comparison matrix consisting of:
+
+- ten frozen liquid/vapor phase states;
+- literature and ThermoPack-parity parameter snapshots;
+- normal and swapped component order;
+
+the production Helmholtz path versus the legacy analytic oracle reports:
+
+- maximum absolute pressure delta:
+  `2.1159648895263672e-6 Pa`;
+- maximum absolute residual-chemical-potential delta:
+  `7.5139894306630595e-13`;
+- maximum absolute `ln(phi)` delta:
+  `7.5139894306630595e-13`.
+
+No tolerance was widened for this switch.
+
+#### Physical and downstream validation
+
+The switched production path passes the full CPA physical-validation matrix on:
+
+- GCC Debug + ASan/UBSan;
+- Clang Release;
+- MSVC Release.
+
+Current-head physical-validation run:
+`35304156432` — all three jobs PASS.
+
+The same production code also passed the required downstream CPA workflows:
+
+- density-root / fugacity kernel: run `35303522047`, all three platforms PASS;
+- stability: run `35303522261`, all three platforms PASS;
+- vapor-liquid split: run `35303522045`, all three platforms PASS;
+- max-three-phase orchestration: run `35303522043`, all three platforms PASS;
+- model-neutral PT backend conformance: run `35303522050`, all three platforms PASS;
+- parameter / association baseline: run `35303522347`, all three platforms PASS;
+- pinned ThermoPack external oracle: production-head run `35303522040` PASS and
+  current-head run `35304156383` PASS.
+
+The raw Clapeyron Gate-E regression remains present and continues to print its known
+numerical-defect values, but section 12.5 makes it non-blocking by owner decision. It is
+not rewritten as a false PASS.
+
+#### Build-system compatibility after introducing the AD dependency
+
+The explicit thermodynamics -> AD dependency initially exposed duplicate AD target
+creation in the standalone PR76 / PR76-mixture / PR76-PT test projects. That was a build
+assembly issue only: each old test project unconditionally added AD after thermodynamics
+had already added it.
+
+The standalone test CMake files now add AD only when the real `mpmc_ad` target is not
+already present. No AD implementation or thermodynamic numerical code changed in that
+repair.
+
+Thermodynamics-contract run `35304156367` verifies the compatibility repair across
+contracts, PR76, PR76-mixture and PR76-PT suites on the selected GCC/Clang/MSVC matrix.
+All jobs PASS.
+
+#### Performance / structural audit
+
+Paired hosted-runner audit `35303522137` compares
+`main@f9d65c9e5de03a6ac64fe96f6458faf311ae6fea` with the Gate-F production head
+`5ad82d8520f5cf391cfc51d35baaf68fed04c094`.
+
+The audit reports:
+
+- five-state full-flash median: `24.991 s -> 26.104 s`, ratio `1.0446`;
+- hosted-runner interpretation:
+  `no_clear_hosted_runner_regression_signal`;
+- no hard wall-time performance gate was invented.
+
+The high-level five-state solver structure is unchanged:
+
+- states: `5 -> 5`;
+- initial stability evaluations: `81 -> 81`;
+- final stability evaluations: `80 -> 80`;
+- stability trials: `25 -> 25`;
+- stability trial iterations: `131 -> 131`;
+- split evaluations: `336 -> 336`;
+- split attempts: `10 -> 10`;
+- split-attempt evaluations: `336 -> 336`;
+- split-attempt iterations: `152 -> 152`;
+- split backtracks: `650 -> 650`;
+- root-search calls: `497 -> 497`.
+
+The lower-level gcov counts are not bit-for-bit identical:
+
+- root-density / phase evaluations:
+  `305928 -> 305978` (+50, about `0.0163%`);
+- association solves:
+  `305928 -> 305978` (+50, about `0.0163%`);
+- association fixed-point sweeps:
+  `12548901 -> 12551035` (+2134, about `0.0170%`).
+
+The paired micro workload moves in the opposite direction for root-density sampling
+(`12312 -> 12304`) while keeping its association iteration count exactly `47616`.
+Together with identical high-level solver counters and unchanged root-search count, this
+supports a root-tolerance-boundary sampling effect from the approved pressure
+source-of-truth change rather than expansion of the root, stability or flash algorithms.
+
+PR review `5244043755` records the explicit performance/structural adjudication. The
+small lower-level work-count shift is accepted under the frozen contract's separately
+reviewed algorithmic-source-change exception. Gate F must **not** be described as
+bit-for-bit structural identity, and no performance improvement is claimed.
+
+#### Effective gate status after the switch
+
+| Gate | Effective status |
+| --- | --- |
+| A — scalar Helmholtz value | **PASS** |
+| B — pressure vs legacy analytic path | **PASS** |
+| C — residual chemical potentials vs legacy analytic path | **PASS** |
+| D — final `ln(phi)` + ThermoPack parity | **PASS** |
+| E — named independent implementations | **WAIVED / NON-BLOCKING** |
+| F — Helmholtz production source of truth | **PASS / COMPLETE** |
+
+Gate F completion authorizes only the already-reviewed first-derivative production source
+of truth for this frozen SRK+sCPA profile. It does not authorize second derivatives,
+caloric APIs, new CPA formulations or parameter sets, association continuation/caching,
+algorithmic optimization, three-phase physical-oracle claims, or deletion of the legacy
+analytic regression path.
+
 ## 13. Second derivatives are explicitly later
 
 The stationarity trick removes `dX/dz` only for **first derivatives**. Second derivatives
@@ -955,20 +1119,23 @@ The first implementation must not:
 
 ## 15. Current audit conclusion and recommended next increment
 
-For the frozen SRK+sCPA profile, Gates A-D are **PASS**. Gate E has been investigated to
-completion and its remaining raw pinned Clapeyron mismatch has been traced to the external
-compressed `X_exact2!` numerical path. By explicit project-owner decision in section
-12.5, Gate E is now **WAIVED / NON-BLOCKING** for this profile.
+For the frozen SRK+sCPA profile, Gates A-D are **PASS**, Gate E is **WAIVED /
+NON-BLOCKING** by explicit project-owner decision, and Gate F is now **PASS / COMPLETE**.
 
-Therefore Gate F is **READY TO ENTER**, but it is not yet complete.
+CPA production pressure, residual chemical potentials and `ln(phi)` now share the
+canonical residual-Helmholtz first-derivative source of truth. The old hand-written
+expressions remain test-only regression oracles. Physical-validation, density-root /
+fugacity, stability, two-phase split, max-three-phase, model-neutral backend,
+ThermoPack-parity, sanitizer and standalone thermodynamics-contract suites all pass for
+the reviewed switch. The performance audit shows unchanged high-level solver structure,
+a small reviewed lower-level density-sampling/work-count shift, and no clear hosted-runner
+regression signal.
 
-The next small increment should be:
+The next small increment should therefore be:
 
-> Implement the focused Gate-F production source-of-truth switch already defined in
-> section 12.2.C: redirect CPA phase pressure and residual chemical potentials / `ln(phi)`
-> to the canonical residual-Helmholtz derivative path while preserving the existing
-> association primal solve, root/stability/flash semantics, parameters, tolerances and
-> failure behavior. Keep the old analytic formulas as regression oracles. Then run the
-> exact affected downstream verification and performance gates required by section 12.2.D.
-> Do not bundle unrelated solver, parameter, flash or performance optimizations into that
-> switch.
+> Perform the final PR #115 diff/readiness audit against `main`: verify that the complete
+> PR still matches its declared CPA/ThermoPack scope, that no temporary audit scaffolding
+> or unintended production change remains, and that the final required workflow evidence
+> is coherent. If that audit is clean, move PR #115 from draft to ready-for-review. Do not
+> bundle cleanup, performance optimization, new EOS capability or additional numerical
+> work into that final-readiness slice.
