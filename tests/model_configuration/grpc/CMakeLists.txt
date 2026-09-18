@@ -17,10 +17,10 @@ add_executable(mpmc_model_hint_tests hints_test.cpp)
 target_link_libraries(mpmc_model_hint_tests PRIVATE mpmc::model_configuration_grpc mpmc::runtime_grpc)
 add_executable(mpmc_model_applicability_tests applicability_endpoint_test.cpp)
 target_link_libraries(mpmc_model_applicability_tests PRIVATE mpmc::model_configuration_grpc mpmc::runtime_grpc)
-# Unchanged legacy tests provide the necessary dependency-compatibility gate.
-add_executable(mpmc_legacy_grpc_tests ../../runtime/pt_grpc_adapter/pt_grpc_adapter_test.cpp
-                                    ../../runtime/pt_grpc_adapter/pt_grpc_adapter_headers.cpp)
-target_link_libraries(mpmc_legacy_grpc_tests PRIVATE mpmc::runtime_grpc)
+# Reuse the runtime adapter's owned test-target definition so this project
+# verifies v1 coexistence without owning another test directory's source list.
+include("${CMAKE_CURRENT_LIST_DIR}/../../runtime/pt_grpc_adapter/pt_grpc_adapter_test_target.cmake")
+mpmc_add_pt_grpc_adapter_contract_test(mpmc_legacy_grpc_tests)
 set(checked_targets mpmc_model_configuration_grpc mpmc_pr76_model_registry
                     mpmc_runtime_grpc mpmc_model_grpc_tests mpmc_model_hint_tests
                     mpmc_model_applicability_tests mpmc_legacy_grpc_tests
