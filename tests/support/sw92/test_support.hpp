@@ -44,7 +44,7 @@ inline th::Provenance paper(std::string locator) {
 inline th::Provenance synthetic(std::string locator) {
     return {th::SourceKind::synthetic_test,"MPMC_HNU SW92 structural fixture","v1",
         std::move(locator),"Artificial gas/gas BIP only for routing tests",
-        "tests/thermodynamics/sw92/test_support.hpp","Repository test data"};
+        "tests/support/sw92/test_support.hpp","Repository test data"};
 }
 inline th::SourcedScalar scalar(double value, th::Unit unit, const th::Provenance& source,
                                 std::string original="SI or dimensionless",
