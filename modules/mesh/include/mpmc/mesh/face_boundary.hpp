@@ -171,8 +171,8 @@ private:
 [[nodiscard]] inline FaceBoundarySnapshot make_face_boundary_snapshot(
     const Topology& topology) {
     const std::size_t face_count = topology.entity_count(EntityKind::face);
-    return make_face_boundary_snapshot(
-        topology, std::vector<PhysicalTag>(face_count, PhysicalTag{0U}));
+    const std::vector<PhysicalTag> untagged(face_count, PhysicalTag{0U});
+    return make_face_boundary_snapshot(topology, untagged);
 }
 
 } // namespace mpmc::mesh
