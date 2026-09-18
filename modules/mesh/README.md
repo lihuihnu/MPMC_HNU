@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index 已形成不可变 `Topology` snapshot，并新增最小 `make_cartesian_topology_2d(nx, ny)`：可确定性生成 2D Cartesian 的 vertex/face/cell ID，以及 `cell->vertex`、`cell->face`、`face->vertex`、`face->cell` 四类紧凑 CSR relation。2D 的 `face` 表示 cell 的余维一接口，`edge` 暂不物化；几何坐标/度量、字段、I/O、DoF、partition 与 PETSc 仍未实现。
+> 当前状态：core topology/index 已形成不可变 `Topology` snapshot，并有最小 2D Cartesian topology builder。其上新增独立不可变 `Geometry2D` snapshot：对 canonical Cartesian `Topology` + 严格递增的 SI 米制 x/y 轴坐标，计算 vertex coordinates、cell centroid/area、face centroid/length、face owner 与 owner-relative unit normal；几何对象不修改也不持有 `Topology`。字段、I/O、DoF、partition 与 PETSc 仍未实现。
 
 ## 1. 目标
 
@@ -43,6 +43,8 @@
 - boundary/interface 标识；
 - 非有限坐标、重复/越界 connectivity、零或负 measure、非法 orientation 的确定性错误。
 
+当前 2D Cartesian geometry 已实现前三项的最小基线：x/y 轴坐标必须是有限、严格递增的 SI 米值；cell area 以 m²、face length 以 m 保存。face owner 取 canonical `face->cell` relation 的首个 cell，unit normal 从 owner cell centroid 指向 face centroid，因此边界 face 为 owner 的外法向，内部 face 则从 owner 指向另一侧。builder 会逐项核对四类 Cartesian relation，而不是仅凭实体数量假定 topology 兼容。boundary/interface tag 仍未实现。
+
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。首批标准科研字段：
 
 - porosity：cell scalar，标准无量纲；
@@ -56,7 +58,7 @@ I/O 遇到未知单位、缺少必要分量或数组长度不匹配时不得静�
 
 本 PR 合并前至少覆盖以下实用入口：
 
-1. 内建 Cartesian 生成：当前已实现**仅拓扑**的 2D `nx × ny` builder；后续仍需 1D/3D，以及 uniform/非均匀坐标和几何层；
+1. 内建 Cartesian 生成：当前已有 2D `nx × ny` topology builder，以及由任意严格递增 x/y 轴坐标生成非均匀 Cartesian metric geometry；后续仍需 1D/3D；
 2. Gmsh MSH：至少支持当前常用 4.1 网格的导入，并能导出仓库支持的实体、physical tags 与字段子集；
 3. VTK UnstructuredGrid：至少一种标准 VTK/VTU 路径可完成几何、拓扑和 cell/point fields 的 round-trip；
 4. reservoir corner-point：至少支持 Eclipse 风格 GRDECL 的核心 `SPECGRID/COORD/ZCORN/ACTNUM` 导入，并能读取常用 `PORO/PERMX/PERMY/PERMZ` 属性。
