@@ -18,7 +18,7 @@ jobs:
   pinned-clapeyron-oracle:
     name: Pinned Clapeyron sCPA oracle
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout MPMC_HNU
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -118,6 +118,32 @@ jobs:
                 "steps=", len(audit["frozen_relative_volume_steps"]))
           PY
 
+      - name: Audit pinned Clapeyron BigFloat derivative floor
+        env:
+          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+        shell: bash
+        run: |
+          set -euo pipefail
+          julia --project=_external/Clapeyron.jl \
+            tests/flash/cpa_clapeyron_oracle/bigfloat_derivative_audit.jl \
+            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
+            --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \
+            --out build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json
+          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          audit = json.loads(Path(
+              "build/cpa-clapeyron-oracle/"
+              "clapeyron_bigfloat_derivative_audit.json"
+          ).read_text(encoding="utf-8"))
+          print("CLAPEYRON_BIGFLOAT_DERIVATIVE_ARTIFACT",
+                "records=", len(audit["records"]),
+                "precisions=", audit["precision_bits"],
+                "states=", audit["problem_states"])
+          PY
+
       - name: Upload generated oracle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -131,5 +157,13 @@ jobs:
         with:
           name: cpa-clapeyron-derivative-floor-audit
           path: build/cpa-clapeyron-oracle/clapeyron_derivative_floor_audit.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload BigFloat derivative audit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cpa-clapeyron-bigfloat-derivative-audit
+          path: build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json
           if-no-files-found: error
           retention-days: 7
