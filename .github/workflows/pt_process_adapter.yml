@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'tests/support/sw92/test_support.hpp'
       - 'api/**'
       - 'deploy/pt-grpc-web/**'
       - 'modules/runtime/**'

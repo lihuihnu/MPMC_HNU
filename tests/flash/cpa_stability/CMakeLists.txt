@@ -8,28 +8,16 @@ option(MPMC_CPA_STABILITY_ENABLE_SANITIZERS
        "Enable ASan/UBSan for CPA stability tests" OFF)
 
 add_executable(mpmc_cpa_stability_tests
-    cpa_stability_test.cpp
+    cpa_stability_test.cpp)
+add_executable(mpmc_cpa_stability_headers
     cpa_stability_headers.cpp)
-target_link_libraries(mpmc_cpa_stability_tests PRIVATE mpmc::flash)
-set_target_properties(mpmc_cpa_stability_tests PROPERTIES CXX_EXTENSIONS OFF)
 
-if(MSVC)
-    target_compile_options(mpmc_cpa_stability_tests PRIVATE /W4 /WX /permissive- /utf-8)
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(mpmc_cpa_stability_tests PRIVATE
-        -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
-endif()
-
-if(MPMC_CPA_STABILITY_ENABLE_SANITIZERS)
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
-       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
-        message(FATAL_ERROR "CPA stability sanitizers require Linux GCC/Clang")
-    endif()
-    target_compile_options(mpmc_cpa_stability_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-    target_link_options(mpmc_cpa_stability_tests PRIVATE
-        -fsanitize=address,undefined -fno-sanitize-recover=all)
-endif()
+include("${CMAKE_CURRENT_LIST_DIR}/../../support/cmake/cpp_test_options.cmake")
+foreach(target IN ITEMS mpmc_cpa_stability_tests mpmc_cpa_stability_headers)
+    target_link_libraries(${target} PRIVATE mpmc::flash)
+    mpmc_test_compile_options(${target} "${MPMC_CPA_STABILITY_ENABLE_SANITIZERS}"
+        "CPA stability sanitizers require Linux GCC/Clang")
+endforeach()
 
 foreach(case IN ITEMS
         minimum_gibbs_root
@@ -42,3 +30,8 @@ foreach(case IN ITEMS
     set_tests_properties(flash.cpa_stability.${case} PROPERTIES
         LABELS "flash;cpa;stability;tpd" TIMEOUT 300)
 endforeach()
+
+add_test(NAME flash.cpa_stability.headers
+         COMMAND mpmc_cpa_stability_headers)
+set_tests_properties(flash.cpa_stability.headers PROPERTIES
+    LABELS "flash;cpa;stability;headers" TIMEOUT 30)

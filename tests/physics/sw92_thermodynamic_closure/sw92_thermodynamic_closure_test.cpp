@@ -1,7 +1,7 @@
 #include <mpmc/physics/sw92_thermodynamic_closure.hpp>
 
 #include "../../flash/sw92_phase_assigned_pt/physical_sample6.hpp"
-#include "../../thermodynamics/sw92/test_support.hpp"
+#include "test_support.hpp"
 
 #include <algorithm>
 #include <cmath>

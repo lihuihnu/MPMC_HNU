@@ -7,6 +7,8 @@ on:
       - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
       - 'tests/thermodynamics/cpa_baseline/**'
       - '.github/workflows/cpa_baseline.yml'
+      - '.github/workflows/_cpp_ctest.yml'
+      - 'tests/support/cmake/cpp_test_options.cmake'
   workflow_dispatch:
 
 permissions:
@@ -18,49 +20,11 @@ concurrency:
 
 jobs:
   baseline:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            config: Debug
-            compiler: '-DCMAKE_CXX_COMPILER=g++'
-            sanitizer: 'ON'
-          - name: Clang Release
-            os: ubuntu-24.04
-            config: Release
-            compiler: '-DCMAKE_CXX_COMPILER=clang++'
-            sanitizer: 'OFF'
-          - name: MSVC Release
-            os: windows-2022
-            config: Release
-            compiler: ''
-            sanitizer: 'OFF'
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-
-      - name: Configure CPA baseline
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then
-            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
-          fi
-          cmake -S tests/thermodynamics/cpa_baseline \
-            -B build/cpa-baseline \
-            "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_CPA_BASELINE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-
-      - name: Build CPA baseline
-        run: cmake --build build/cpa-baseline --target mpmc_cpa_baseline_tests --config ${{ matrix.config }} --parallel 2
-
-      - name: Run CPA baseline
-        run: ctest --test-dir build/cpa-baseline -C ${{ matrix.config }} -R '^thermodynamics[.]cpa_baseline[.]' --verbose --no-tests=error
+    uses: ./.github/workflows/_cpp_ctest.yml
+    with:
+      source_dir: tests/thermodynamics/cpa_baseline
+      build_dir: build/cpa-baseline
+      targets: mpmc_cpa_baseline_tests mpmc_cpa_baseline_headers
+      test_regex: '^thermodynamics[.]cpa_baseline[.]'
+      sanitizer_option: MPMC_CPA_BASELINE_ENABLE_SANITIZERS
+      timeout_minutes: 20

@@ -8,10 +8,8 @@ enable_testing()
 option(MPMC_PT_GRPC_ENABLE_SANITIZERS
        "Enable ASan/UBSan for PT gRPC adapter tests" OFF)
 
-add_executable(mpmc_pt_grpc_adapter_tests
-    pt_grpc_adapter_test.cpp
-    pt_grpc_adapter_headers.cpp)
-target_link_libraries(mpmc_pt_grpc_adapter_tests PRIVATE mpmc::runtime_grpc)
+include("${CMAKE_CURRENT_LIST_DIR}/pt_grpc_adapter_test_target.cmake")
+mpmc_add_pt_grpc_adapter_contract_test(mpmc_pt_grpc_adapter_tests)
 
 add_executable(mpmc_pt_grpc_golden_server golden_server.cpp)
 target_link_libraries(mpmc_pt_grpc_golden_server PRIVATE mpmc::runtime_grpc)

@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'tests/flash/sw92_three_phase_experimental_line/**'
-      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - 'tests/support/sw92/test_support.hpp'
       - 'modules/flash/sw92_three_phase_experimental_validation.md'
       - '.github/workflows/sw92_three_phase_experimental_line.yml'
   workflow_dispatch:

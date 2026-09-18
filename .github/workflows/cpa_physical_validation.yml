@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json'
+      - 'tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json'
+      - 'tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
       - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
       - 'modules/flash/include/mpmc/flash/pt_*.hpp'

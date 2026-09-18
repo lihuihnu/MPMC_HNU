@@ -9,14 +9,14 @@ add_executable(mpmc_sw92_profile_c_phase_set_tests
     sw92_profile_c_phase_set_header.cpp)
 target_link_libraries(mpmc_sw92_profile_c_phase_set_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_sw92_profile_c_phase_set_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_sw92_profile_c_phase_set_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_sw92_profile_c_phase_set_provenance_tests
     sw92_profile_c_phase_set_provenance_test.cpp)
 target_link_libraries(mpmc_sw92_profile_c_phase_set_provenance_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_sw92_profile_c_phase_set_provenance_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_sw92_profile_c_phase_set_provenance_tests PROPERTIES
     CXX_EXTENSIONS OFF)
 add_dependencies(mpmc_sw92_profile_c_phase_set_tests

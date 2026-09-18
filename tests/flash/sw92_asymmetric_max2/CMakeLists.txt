@@ -9,7 +9,7 @@ add_executable(mpmc_sw92_asymmetric_max2_tests
     sw92_asymmetric_max2_header.cpp)
 target_link_libraries(mpmc_sw92_asymmetric_max2_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_sw92_asymmetric_max2_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_sw92_asymmetric_max2_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 if(MSVC)

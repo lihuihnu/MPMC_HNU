@@ -101,16 +101,98 @@ A binary fixture with one explicit self-associating site class uses an independe
 
 The same associating state is rebuilt with reversed component order. Density roots and fugacity coefficients must map exactly back by component identity.
 
-## Current boundary
+## Historical gate boundary
 
-After this gate CPA has the thermodynamic phase-property surface required by a future stability evaluator, but it still does **not** provide:
+When this PT-property gate first landed, CPA stopped at the phase-property surface and
+stability/flash were still future work. Those later layers now exist; current capability
+is summarized by [the flash module](../flash/cpa_flash.md) and the repository root
+README. The numerical root-search limitations above remain part of the current property
+contract.
 
-- a generic `StabilityPhase` adapter;
-- TPD search acceptance;
-- two-phase split;
-- max-three-phase orchestration;
-- phase-set publication/backend integration;
-- implicit root/flash sensitivities;
-- physical CPA parameter database or experimental regression.
 
-The next gate should adapt only mechanically admissible resolved CPA roots into the existing generic PT stability contract, compare same-composition roots by Gibbs energy, and establish independent single-phase/unstable stability regressions before any CPA phase split is implemented.
+## PR #115 residual-Helmholtz source-of-truth completion record
+
+This section is the minimal retained audit record for the production source-of-truth
+switch completed by PR #115. It replaces the superseded chronological design/audit
+document without discarding the scientific acceptance decisions needed to interpret the
+current implementation.
+
+For the frozen profile
+`CPA/SRK-physical/simplified-rdf-1.9eta/explicit-site-pairs/v1`, production pressure
+and residual chemical potentials now come from the canonical scalar-generic residual
+Helmholtz terms in `cpa_residual_helmholtz.hpp`, differentiated by the
+first-derivative adapter in `cpa_helmholtz_derivatives.hpp`. The association state is
+solved once at the primal state and is held stationary during first differentiation.
+The switch did not change the association solve, density-root algorithm or tolerances,
+stability/split/max3 algorithms, parameters, applicability, failure semantics or fallback
+behavior.
+
+The final acceptance matrix was:
+
+| Gate | Final status |
+| --- | --- |
+| A — scalar residual-Helmholtz value | **PASS** |
+| B — pressure versus legacy analytic path | **PASS** |
+| C — residual chemical potentials versus legacy analytic path | **PASS** |
+| D — final `ln(phi)` plus pinned ThermoPack parity | **PASS** |
+| E — named independent implementations | **WAIVED / NON-BLOCKING** |
+| F — Helmholtz production source of truth | **PASS / COMPLETE** |
+
+### Gate-E external numerical-defect witness
+
+The named Clapeyron reference remains pinned to
+`ClapeyronThermo/Clapeyron.jl@229b09452f36c2f812486150df0bb43b197bb4e5`.
+Its raw ten-state regression is deliberately retained as a **known numerical-defect
+witness**, not rewritten as a pass. The raw pinned implementation matched the frozen
+formulation/parameters and met the scalar `F_res` and residual-chemical-potential
+envelopes, but its exposed pressure / `ln(phi)` path missed the already-frozen
+derivative-level envelopes.
+
+The defect-attribution audit traced that miss to the pinned compressed
+`X_exact2!` association path returning before configurable convergence settings were
+consulted. Solving the same compressed association equations independently to high
+stationarity, without changing the CPA formulation, parameters or acceptance thresholds,
+reduced the complete ten-state discrepancies to:
+
+- `max |Delta P| = 5.323330668403745e-7 Pa`;
+- `max |Delta ln(phi)_Z-only| = 1.3571962033602398e-11`.
+
+The project-owner decision therefore made Gate E **waived / non-blocking** for this
+frozen profile; it did **not** claim that the raw pinned Clapeyron output passed. The raw
+oracle and diagnostic scripts remain under
+`tests/flash/cpa_clapeyron_oracle/`, including the pinned JSON witness and the
+independent compressed-stationarity diagnostic.
+
+### Gate-F production cross-check and downstream evidence
+
+The pre-switch hand-written pressure and residual-chemical-potential formulas remain
+test-only independent regression oracles. Across ten frozen liquid/vapor states, two
+parameter snapshots and both component orders (40 comparisons), the final production
+Helmholtz path versus those legacy analytic oracles reached:
+
+- maximum absolute pressure delta: `2.1159648895263672e-6 Pa`;
+- maximum absolute residual-chemical-potential delta: `7.5139894306630595e-13`;
+- maximum absolute `ln(phi)` delta: `7.5139894306630595e-13`.
+
+No numerical tolerance was widened for the switch. The reviewed PR #115 evidence also
+passed the CPA physical-validation, density-root/fugacity, stability, two-phase split,
+max-three-phase, model-neutral backend, ThermoPack-parity and standalone thermodynamics
+contract suites on their declared hosted matrices.
+
+The paired performance/structural audit (run `35303522137`) compared
+`main@f9d65c9e5de03a6ac64fe96f6458faf311ae6fea` with the Gate-F production head
+`5ad82d8520f5cf391cfc51d35baaf68fed04c094`. The five-state full-flash median moved
+from `24.991 s` to `26.104 s` (ratio `1.0446`) and was classified
+`no_clear_hosted_runner_regression_signal`; no speedup or hard hosted-wall-time gate is
+claimed. High-level stability/split/root-search counts were unchanged. Lower-level
+density/property evaluations, association solves and fixed-point sweeps moved by only
+about `0.016-0.017%`, a separately reviewed root-tolerance-boundary sampling effect,
+so Gate F is not described as bit-for-bit structural identity.
+
+### Remaining scope limits
+
+This completion authorizes only the reviewed **first-derivative** source of truth for the
+frozen SRK+sCPA profile. It does not establish second derivatives, caloric APIs, new CPA
+formulations or parameter sets, association continuation/caching, a performance
+optimization, or a physical three-phase VLLE oracle. Finite density-root and finite TPD
+searches retain their existing non-global-proof semantics.

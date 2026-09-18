@@ -12,7 +12,7 @@ add_executable(mpmc_pt_flash_backend_tests
     pt_flash_backend_headers.cpp)
 target_link_libraries(mpmc_pt_flash_backend_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_pt_flash_backend_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_pt_flash_backend_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_pt_flash_backend_pr76_max3_tests
@@ -34,21 +34,27 @@ add_executable(mpmc_pt_flash_backend_freeze_tests
     three_backend_freeze_test.cpp)
 target_link_libraries(mpmc_pt_flash_backend_freeze_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_pt_flash_backend_freeze_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_pt_flash_backend_freeze_tests PROPERTIES CXX_EXTENSIONS OFF)
+
+add_executable(mpmc_pt_max3_publication_tests max3_publication_test.cpp)
+target_link_libraries(mpmc_pt_max3_publication_tests PRIVATE mpmc::flash)
+set_target_properties(mpmc_pt_max3_publication_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_dependencies(mpmc_pt_flash_backend_tests
     mpmc_pt_flash_backend_pr76_max3_tests
     mpmc_pt_flash_backend_pr76_near_dew_tests
     mpmc_pt_flash_backend_cpa_max3_tests
-    mpmc_pt_flash_backend_freeze_tests)
+    mpmc_pt_flash_backend_freeze_tests
+    mpmc_pt_max3_publication_tests)
 
 set(all_targets
     mpmc_pt_flash_backend_tests
     mpmc_pt_flash_backend_pr76_max3_tests
     mpmc_pt_flash_backend_pr76_near_dew_tests
     mpmc_pt_flash_backend_cpa_max3_tests
-    mpmc_pt_flash_backend_freeze_tests)
+    mpmc_pt_flash_backend_freeze_tests
+    mpmc_pt_max3_publication_tests)
 
 if(MSVC)
     foreach(target IN LISTS all_targets)
@@ -108,3 +114,8 @@ add_test(NAME flash.pt_flash_backend.three_backend_freeze
          COMMAND mpmc_pt_flash_backend_freeze_tests)
 set_tests_properties(flash.pt_flash_backend.three_backend_freeze PROPERTIES
     LABELS "flash;pt_flash_backend;pr76;sw92;cpa;capability;contract_freeze;conformance" TIMEOUT 300)
+
+add_test(NAME flash.pt_flash_backend.max3_publication
+         COMMAND mpmc_pt_max3_publication_tests)
+set_tests_properties(flash.pt_flash_backend.max3_publication PROPERTIES
+    LABELS "flash;pt_flash_backend;publication;structural" TIMEOUT 30)

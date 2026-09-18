@@ -8,7 +8,7 @@ add_executable(mpmc_sw92_three_phase_experimental_line_tests
     sw92_three_phase_experimental_line_test.cpp)
 target_link_libraries(mpmc_sw92_three_phase_experimental_line_tests PRIVATE mpmc::flash)
 target_include_directories(mpmc_sw92_three_phase_experimental_line_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_sw92_three_phase_experimental_line_tests PROPERTIES
     CXX_EXTENSIONS OFF)
 

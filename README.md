@@ -31,16 +31,11 @@
 
 三个预置 PT 后端均通过 [统一能力与结果契约](modules/flash/pt_flash_backend.md) 暴露 1/2/3 相能力、版本与有序组分身份。预置 backend inventory 本身仍是冻结快照；组分增减、替换、重排不能原地修改该快照。Electron 的免登录 **PR76 Expert** 工作台另行支持用完整的新参数快照创建不可变运行时 PR76 模型，可新增、删除、重排组分并显式给出 `Tc`、`Pc`、偏心因子、摩尔质量、完整 `kij` 与 solver settings，再由同一 C++ 相稳定/最多三相内核求解。这个能力不是通用物性数据库；内建 PR76 甲烷/乙烷/丙烷、SW92 CO₂/淡水、CPA 甲醇/水快照仍只覆盖声明的窄文献体系。
 
-### PR76 当前验证边界
+### PR76 验证边界与历史证据
 
-PR #98–#109 没有修改生产 EOS、TPD、RR/RR3、相分裂或最多三相算法；它们把已有严格 PR76 路径的物理证据与模型局限进一步分开：
+严格 PR76 当前生产路径继续使用 classical vdW one-fluid mixing 与显式常数对称 `kij`。其 pure/mixing/root/`ln(phi)`/TPD/two-phase/max-three-phase/boundary/continuation/publication 链路已经在已合并的 [PR #112](https://github.com/lihuihnu/MPMC_HNU/pull/112) 做系统审计；在该审计覆盖的数学与数值契约内，没有保留的 production implementation defect。完整公式、接口和当前测试入口由 [热力学模块](modules/thermodynamics/README.md) 与 [闪蒸模块](modules/flash/README.md) 维护，根 README 不再复制逐 PR 的历史过程。
 
-- [PR #98](https://github.com/lihuihnu/MPMC_HNU/pull/98) 与 [PR #99](https://github.com/lihuihnu/MPMC_HNU/pull/99) 引入有来源的 Heringer 2026 六组分酸性气体数据，并在 `178.8 K`、固定 `zCO₂=0.73` 下验证 `30.2 bar` 三相到 `35 bar` 两相的 fresh `3→2` 边界；不使用文献相组成或 continuation hint。
-- [PR #100](https://github.com/lihuihnu/MPMC_HNU/pull/100)（未合并 Draft）暴露了把另一 alpha 约定下拟合的 `kij` 直接移植到严格 PR76 的问题；[PR #101](https://github.com/lihuihnu/MPMC_HNU/pull/101) 随后只用独立二元实验重新标定。CO₂/正癸烷的最佳常数 `kij` 仍有 `13.2499%` 压力 AARD。[PR #102](https://github.com/lihuihnu/MPMC_HNU/pull/102) 的未合并盲测进一步得到 M-40 相变压力 `9.6434 MPa`，而实验为 `11.21 ± 0.07 MPa`，相对误差 `13.9748%`；该 Draft 保留为模型能力阻塞证据，不能通过拟合三元目标、扩大实验不确定度或放宽生产数值门槛转绿。
-- [PR #103](https://github.com/lihuihnu/MPMC_HNU/pull/103) 与 [PR #104](https://github.com/lihuihnu/MPMC_HNU/pull/104) 排除了高偏心因子 kappa 分支和约 `0.25 K` 温差是主要误差来源，证据指向经典 vdW1f/单一标量 `kij` 的模型形式与近临界拓扑局限。
-- [PR #105](https://github.com/lihuihnu/MPMC_HNU/pull/105)–[PR #109](https://github.com/lihuihnu/MPMC_HNU/pull/109) 仅在测试侧保持严格 PR76 纯组分核、改用独立文献 Wong–Sandler/NRTL 混合规则。冻结参数的压力 AARD 随温度外推从约 `323 K` 的 `3.0543%`，增至 `411.2 K` 的 `8.1808%` 和 `462.55 K` 的 `17.9112%`。这证明混合规则是重要误差来源，也证明该常参数模型不能直接宣布宽温区生产可用；这里的 Wong–Sandler（WS）不是 Søreide–Whitson（SW92）。
-
-生产代码当前仍使用既有严格 PR76 经典混合路径。任何生产级高级混合规则都必须另行定义公式、导数、参数来源与有效范围，并用独立数据验收；不能直接搬入测试辅助实现。
+实现正确性不等于模型具有宽体系、宽温压范围的实验预测精度。独立盲测 [PR #102](https://github.com/lihuihnu/MPMC_HNU/pull/102) 仍保留为严格 PR76 的模型能力受阻证据：其 M-40 三元相变压力相对实验偏差约 `13.97%`，不能通过放宽生产容差、拟合三元目标或静默切换模型形式来“修复”。高级混合规则探索仍限定在测试/审计侧；任何生产级 WS/NRTL 等扩展都必须重新冻结公式、导数、参数来源、有效范围和独立验证。
 
 ## 应用与产品
 

@@ -15,7 +15,7 @@ add_executable(mpmc_pt_process_tests
     pt_process_headers.cpp)
 target_link_libraries(mpmc_pt_process_tests PRIVATE mpmc::pt_process)
 target_include_directories(mpmc_pt_process_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 
 add_executable(mpmc_pt_secure_test_server secure_test_server.cpp)
 target_link_libraries(mpmc_pt_secure_test_server PRIVATE mpmc::pt_process)

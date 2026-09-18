@@ -173,7 +173,7 @@ if __name__ == "__main__":
         "inline constexpr long double co2_na_phase_golden[3][3]={": [v for row in na3 for v in row],
         "inline constexpr long double co2_aq_phase_golden[3]={": list(aq1),
     }
-    text = Path(__file__).with_name("test_support.hpp").read_text(encoding="utf-8")
+    text = (Path(__file__).parents[2] / "support" / "sw92" / "test_support.hpp").read_text(encoding="utf-8")
     count = 0
     for marker, values in expected.items():
         literals = literals_after(text, marker)

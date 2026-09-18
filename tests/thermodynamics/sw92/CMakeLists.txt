@@ -5,6 +5,8 @@ add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/thermodynamics" the
 enable_testing()
 add_executable(mpmc_thermodynamics_sw92_tests sw92_test.cpp headers.cpp)
 target_link_libraries(mpmc_thermodynamics_sw92_tests PRIVATE mpmc::thermodynamics)
+target_include_directories(mpmc_thermodynamics_sw92_tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_thermodynamics_sw92_tests PROPERTIES CXX_EXTENSIONS OFF)
 if(MSVC)
     target_compile_options(mpmc_thermodynamics_sw92_tests PRIVATE /W4 /WX /permissive- /utf-8)

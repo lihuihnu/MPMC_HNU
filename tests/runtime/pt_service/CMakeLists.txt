@@ -18,21 +18,21 @@ add_executable(mpmc_pt_service_three_backend_tests
     three_backend_discovery_test.cpp)
 target_link_libraries(mpmc_pt_service_three_backend_tests PRIVATE mpmc::runtime)
 target_include_directories(mpmc_pt_service_three_backend_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_pt_service_three_backend_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_pt_service_pr_sw_interchangeability_tests
     pr_sw_interchangeability_test.cpp)
 target_link_libraries(mpmc_pt_service_pr_sw_interchangeability_tests PRIVATE mpmc::runtime)
 target_include_directories(mpmc_pt_service_pr_sw_interchangeability_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_pt_service_pr_sw_interchangeability_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_pt_service_sw92_co2_water_experimental_tests
     sw92_co2_water_experimental_regression_test.cpp)
 target_link_libraries(mpmc_pt_service_sw92_co2_water_experimental_tests PRIVATE mpmc::runtime)
 target_include_directories(mpmc_pt_service_sw92_co2_water_experimental_tests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/../../thermodynamics/sw92")
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_pt_service_sw92_co2_water_experimental_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_dependencies(mpmc_pt_service_tests

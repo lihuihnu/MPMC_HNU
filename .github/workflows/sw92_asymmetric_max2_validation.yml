@@ -12,7 +12,7 @@ on:
       - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
       - 'tests/flash/sw92_asymmetric_max2/**'
       - 'tests/flash/sw92_asymmetric_max2_validation/**'
-      - 'tests/thermodynamics/sw92/test_support.hpp'
+      - 'tests/support/sw92/test_support.hpp'
       - '.github/workflows/sw92_asymmetric_max2_validation.yml'
   workflow_dispatch:
 permissions:
