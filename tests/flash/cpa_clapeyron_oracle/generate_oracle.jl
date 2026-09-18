@@ -44,7 +44,10 @@ function site_multiplicity(model, component::Int, site::String)
     return model.sites.n_sites[component][index]
 end
 
-function build_model()
+function build_model(;
+    assoc_rtol::Float64 = 1.0e-16,
+    assoc_atol::Float64 = 1.0e-16,
+    assoc_max_iters::Int = 4096)
     epsilon_methanol_k = 24591.0 / R_MPMC
     epsilon_water_k = 16655.0 / R_MPMC
 
@@ -80,9 +83,9 @@ function build_model()
     options = Clapeyron.AssocOptions(
         # Oracle-only numerical settings: tighter than the production association
         # solve so external-reference derivative noise stays below Gate-E gates.
-        rtol = 1.0e-16,
-        atol = 1.0e-16,
-        max_iters = 4096,
+        rtol = assoc_rtol,
+        atol = assoc_atol,
+        max_iters = assoc_max_iters,
         dampingfactor = 0.5,
         # Explicit CR-1 pairs are already supplied above. :nocombining ensures
         # the pinned implementation cannot silently rewrite them.
