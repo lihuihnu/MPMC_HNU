@@ -787,6 +787,96 @@ is authorized while the pinned Clapeyron leg exceeds the predeclared pressure an
 `ln(phi)` thresholds. The failing Gate-E regression is intentionally retained as audit
 evidence; the thresholds are not widened to make the gate green.
 
+### 12.4 Gate-E adjudication — raw pinned witness versus corrected diagnostic
+
+This adjudication reviews the frozen Gate-E acceptance wording against the complete
+Clapeyron evidence chain now present on PR #115. It changes **no numerical threshold**,
+does not replace the raw pinned oracle, and does not authorize a production
+source-of-truth switch.
+
+#### Frozen wording controls the evidence qualification
+
+Section 12.2.B requires a reproducible oracle from the **unmodified** pinned revision
+`ClapeyronThermo/Clapeyron.jl@229b09452f36c2f812486150df0bb43b197bb4e5`
+and requires the ten-state cross-implementation comparison to satisfy the already-frozen
+`F_res`, pressure, residual-chemical-potential and `ln(phi)` envelopes.
+
+The contract contains one explicit derivation exception: **if Clapeyron does not expose a
+quantity directly**, that quantity may be derived from Clapeyron's own public
+residual-Helmholtz API. That exception does not apply to pressure or fugacity for this
+pinned revision because those observables are exposed directly. The acceptance wording
+therefore does not authorize replacing the pinned implementation's association solution
+with a separately maintained nonlinear solve after the raw pinned result fails.
+
+This distinction is also required by the original Gate-E purpose: the gate names
+**independent external implementations**. A test-side independent Newton correction can
+diagnose an external implementation defect, but it is no longer the numerical output of
+the named pinned implementation itself.
+
+#### Evidence now established
+
+The raw pinned revision is exactly formulation-compatible with the frozen MPMC_HNU
+profile, and its scalar / composition-derivative evidence is strong:
+
+- exact formulation and parameter read-back is established;
+- frozen ten-state `F_res` passes the `1e-10` envelope;
+- frozen ten-state `mu_i^res/(RT)` passes the `1e-10` envelope;
+- raw pressure and `ln(phi)` fail only the already-frozen derivative-level envelopes.
+
+The subsequent diagnostic chain identifies the failure source without changing the model:
+
+1. ordinary-double finite differences show a derivative floor but do not outperform the
+   pinned internal derivative;
+2. BigFloat scalar differentiation converges to the pinned internal derivative rather
+   than to the frozen target;
+3. configurable association `rtol/atol/max_iters` do not affect the problematic state;
+4. all ten frozen states enter the same compressed 4-site -> 2-site exact-initializer
+   association path;
+5. the pinned `X_exact2!` path returns before configurable association convergence
+   settings are consulted;
+6. an independent BigFloat Newton solve of the same compressed equations to
+   `max|R_X| <= 1e-30` removes the derivative discrepancy without changing formulation,
+   parameters or thresholds;
+7. over the complete ten-state set, the independently stationary diagnostic reaches
+   `max |Delta P| = 5.323330668403745e-7 Pa` and
+   `max |Delta ln(phi)_Z-only| = 1.3571962033602398e-11`, both inside the original
+   frozen envelopes.
+
+The raw pinned regression must therefore be retained as a **known numerical-defect
+witness**. The independently stationary ten-state result is accepted as **supplemental
+defect-attribution evidence** showing that the model/formulation itself is consistent
+with the frozen targets.
+
+#### Adjudication
+
+**No — under the currently frozen Gate-E contract, the independently stationary
+same-formulation ten-state diagnostic cannot substitute for the raw pinned Clapeyron
+output and cannot by itself make Gate E PASS.**
+
+Accepting it as the contract-satisfying named implementation would retroactively change
+the identity of the reference being compared: from the unmodified pinned implementation
+to a hybrid consisting of pinned Clapeyron thermodynamic algebra plus an MPMC-maintained
+independent association solve. That is a change in evidence semantics even though the
+numerical thresholds themselves are unchanged.
+
+Accordingly:
+
+- raw pinned Clapeyron remains a required regression and remains a documented
+  numerical-defect witness;
+- the independent-stationarity ten-state PASS remains a diagnostic proving that the raw
+  failure is not evidence of an MPMC_HNU formulation mismatch;
+- Gate E remains **BLOCKED** under the literal frozen acceptance contract;
+- Gate F remains **NOT READY**;
+- no threshold widening, oracle substitution or production switch is authorized by this
+  adjudication.
+
+Closing Gate E now requires a separately reviewed change to the external-reference
+contract, not a reinterpretation of the existing frozen one. A scientifically clean
+follow-up is to identify an **unmodified external revision/implementation** in which the
+compressed exact-association numerical defect is fixed while the audited CPA formulation
+and parameter mapping remain unchanged, then declare that reference change explicitly
+before rerunning the same frozen ten-state numerical envelopes.
+
 ## 13. Second derivatives are explicitly later
 
 The stationarity trick removes `dX/dz` only for **first derivatives**. Second derivatives
@@ -818,18 +908,25 @@ The first implementation must not:
 
 ## 15. Current audit conclusion and recommended next increment
 
-The scalar-generic extensive Helmholtz kernel and its first-derivative regression path now
-exist, and Gates B-D are already satisfied for the frozen SRK+sCPA profile. Gate F must
-**not** be entered yet because Gate A is missing an independent scalar cubic-value oracle
-and Gate E is missing the explicitly required pinned Clapeyron numeric comparison.
+For the frozen SRK+sCPA profile, Gates A-D are now satisfied. The named Clapeyron leg has
+also been investigated to completion at the current pinned revision: formulation and
+parameter identity are established, the raw pinned scalar and residual-chemical-potential
+rows pass, and the raw pressure / `ln(phi)` failure has been traced to the pinned
+compressed `X_exact2!` numerical path. The independently stationary same-formulation
+diagnostic passes the original ten-state pressure and Z-only `ln(phi)` envelopes without
+changing parameters or thresholds.
+
+That diagnostic is **not** contract-equivalent to the raw pinned implementation under the
+wording frozen in section 12.2.B. Gate E therefore remains **BLOCKED** and Gate F remains
+**NOT READY**. The raw pinned regression is retained as a known numerical-defect witness;
+the corrected diagnostic is retained as defect-attribution evidence, not as a substituted
+oracle.
 
 The next small increment should therefore be:
 
-> Add the test-only independent analytic `F_cubic` scalar-value regression required by
-> Gate A, over the already frozen ten phase states plus the full-binary pure endpoints,
-> normal and swapped component order, using the roundoff contract frozen in section 12.2.
-> Do not modify the production Helmholtz kernel or begin the source-of-truth switch in the
-> same increment.
-
-After that focused Gate-A closure, the remaining readiness blocker is the pinned Clapeyron
-numeric oracle required by Gate E.
+> Audit later unmodified Clapeyron revisions for a fix to the compressed `X_exact2!`
+> numerical path while holding the audited CPA formulation and parameter mapping fixed.
+> If a source revision with the defect fixed is found, record the exact source change and
+> propose a separately reviewed Gate-E reference-repin contract before rerunning the
+> existing frozen ten-state thresholds. Do not modify MPMC_HNU production code or Gate-E
+> numerical tolerances in that increment.
