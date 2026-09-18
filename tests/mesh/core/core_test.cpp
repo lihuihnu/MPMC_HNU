@@ -2,6 +2,7 @@
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
+#include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
@@ -1054,6 +1055,325 @@ void partition_invalid() {
     });
 }
 
+
+void dof_numbering_serial() {
+    const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
+    const auto partition = mesh::make_serial_partition_snapshot(topology);
+    const auto layout = mesh::DofLayout::create(
+        topology,
+        {
+            {"cell.primary", mesh::EntityKind::cell, 2U},
+            {"face.trace", mesh::EntityKind::face, 1U},
+            {"vertex.aux", mesh::EntityKind::vertex, 1U},
+            {"cell.secondary", mesh::EntityKind::cell, 1U},
+        });
+    const auto numbering =
+        mesh::DofNumberingSnapshot::create_serial(layout, partition);
+
+    require(numbering.is_serial(), "serial DoF numbering flag");
+    require(numbering.local_rank().value() == 0U, "serial numbering local rank");
+    require(numbering.rank_count() == 1U, "serial numbering rank count");
+    require(numbering.local_dof_count() == layout.total_dof_count(),
+            "serial local DoF count");
+    require(numbering.global_dof_count() ==
+                static_cast<std::uint64_t>(layout.total_dof_count()),
+            "serial global DoF count");
+    require(numbering.owned_dof_count() == layout.total_dof_count(),
+            "serial owned DoF count");
+    require(numbering.ghost_dof_count() == 0U,
+            "serial ghost DoF count");
+
+    require(numbering.global_entity_count(mesh::EntityKind::cell) == 2U,
+            "serial global cell count");
+    require(numbering.global_entity_count(mesh::EntityKind::face) == 7U,
+            "serial global face count");
+    require(numbering.global_entity_count(mesh::EntityKind::vertex) == 6U,
+            "serial global vertex count");
+
+    require(numbering.global_location_offset(mesh::EntityKind::cell) == 0U,
+            "serial cell global block");
+    require(numbering.global_location_dof_count(mesh::EntityKind::cell) == 6U,
+            "serial cell global block size");
+    require(numbering.global_location_offset(mesh::EntityKind::face) == 6U,
+            "serial face global block");
+    require(numbering.global_location_offset(mesh::EntityKind::vertex) == 13U,
+            "serial vertex global block");
+
+    for (std::size_t local = 0; local < layout.total_dof_count(); ++local) {
+        const auto global = numbering.global_index(local);
+        require(global.value() == static_cast<std::uint64_t>(local),
+                "serial global numbering must equal local scalar ordering");
+        require(numbering.local_scalar(global) == local,
+                "serial scalar roundtrip");
+        require(numbering.contains_global(global),
+                "serial global scalar presence");
+        require(numbering.is_owned(local),
+                "serial local scalar must be owned");
+        require(!numbering.is_ghost(local),
+                "serial local scalar cannot be ghost");
+    }
+}
+
+void dof_numbering_local() {
+    mesh::Topology::EntityIds ids;
+    ids.vertices = {
+        mesh::GlobalEntityId{900U},
+        mesh::GlobalEntityId{100U},
+        mesh::GlobalEntityId{500U}};
+    ids.faces = {
+        mesh::GlobalEntityId{42U},
+        mesh::GlobalEntityId{5U}};
+    ids.cells = {
+        mesh::GlobalEntityId{77U},
+        mesh::GlobalEntityId{9U}};
+    const mesh::Topology topology{std::move(ids), {}};
+
+    mesh::EntityOwnerRanks owners;
+    owners.vertices = {
+        mesh::PartitionRank{1U}, mesh::PartitionRank{0U}, mesh::PartitionRank{2U}};
+    owners.faces = {
+        mesh::PartitionRank{1U}, mesh::PartitionRank{2U}};
+    owners.cells = {
+        mesh::PartitionRank{0U}, mesh::PartitionRank{1U}};
+    const auto partition = mesh::PartitionSnapshot::create(
+        topology, mesh::PartitionRank{1U}, 3U, std::move(owners));
+
+    const auto layout = mesh::DofLayout::create(
+        topology,
+        {
+            {"cell.v", mesh::EntityKind::cell, 2U},
+            {"face.v", mesh::EntityKind::face, 1U},
+            {"vertex.v", mesh::EntityKind::vertex, 1U},
+        });
+
+    mesh::GlobalEntityNumberingInput input;
+    input.global_cell_count = 5U;
+    input.global_face_count = 7U;
+    input.global_vertex_count = 8U;
+    input.cells = {
+        {mesh::GlobalEntityId{77U}, mesh::GlobalEntityOrdinal{4U}},
+        {mesh::GlobalEntityId{9U}, mesh::GlobalEntityOrdinal{1U}}};
+    input.faces = {
+        {mesh::GlobalEntityId{42U}, mesh::GlobalEntityOrdinal{6U}},
+        {mesh::GlobalEntityId{5U}, mesh::GlobalEntityOrdinal{2U}}};
+    input.vertices = {
+        {mesh::GlobalEntityId{900U}, mesh::GlobalEntityOrdinal{7U}},
+        {mesh::GlobalEntityId{100U}, mesh::GlobalEntityOrdinal{0U}},
+        {mesh::GlobalEntityId{500U}, mesh::GlobalEntityOrdinal{4U}}};
+
+    const auto numbering = mesh::DofNumberingSnapshot::create_local(
+        layout, partition, std::move(input));
+
+    require(!numbering.is_serial(), "local numbering misclassified as serial");
+    require(numbering.local_dof_count() == 9U, "local numbering local count");
+    require(numbering.global_dof_count() == 25U, "local numbering global count");
+    require(numbering.owned_dof_count() == 4U, "owned local DoF count");
+    require(numbering.ghost_dof_count() == 5U, "ghost local DoF count");
+
+    const std::array<std::uint64_t, 9> expected_global{
+        8U, 9U, 2U, 3U, 16U, 12U, 24U, 17U, 21U};
+    const std::array<mesh::EntityOwnership, 9> expected_ownership{
+        mesh::EntityOwnership::ghost,
+        mesh::EntityOwnership::ghost,
+        mesh::EntityOwnership::owned,
+        mesh::EntityOwnership::owned,
+        mesh::EntityOwnership::owned,
+        mesh::EntityOwnership::ghost,
+        mesh::EntityOwnership::owned,
+        mesh::EntityOwnership::ghost,
+        mesh::EntityOwnership::ghost};
+
+    for (std::size_t local = 0; local < expected_global.size(); ++local) {
+        const auto global = numbering.global_index(local);
+        require(global.value() == expected_global[local],
+                "generic local-to-global DoF mapping");
+        require(numbering.ownership(local) == expected_ownership[local],
+                "generic DoF ownership");
+        require(numbering.local_scalar(global) == local,
+                "generic global-to-local DoF roundtrip");
+    }
+
+    require(numbering.global_location_offset(mesh::EntityKind::cell) == 0U,
+            "generic cell global block");
+    require(numbering.global_location_offset(mesh::EntityKind::face) == 10U,
+            "generic face global block");
+    require(numbering.global_location_offset(mesh::EntityKind::vertex) == 17U,
+            "generic vertex global block");
+
+    require(!numbering.contains_global(mesh::GlobalDofIndex{0U}),
+            "nonlocal global cell DoF reported local");
+    require(!numbering.contains_global(mesh::GlobalDofIndex{10U}),
+            "nonlocal global face DoF reported local");
+    require(!numbering.contains_global(mesh::GlobalDofIndex{18U}),
+            "nonlocal global vertex DoF reported local");
+    expect_throw<std::out_of_range>(
+        [&] { (void)numbering.local_scalar(mesh::GlobalDofIndex{0U}); });
+    expect_throw<std::out_of_range>(
+        [&] { (void)numbering.local_scalar(mesh::GlobalDofIndex{25U}); });
+}
+
+void dof_numbering_invalid() {
+    const auto topology = mesh::make_cartesian_topology_2d(1U, 1U);
+    const auto serial_partition = mesh::make_serial_partition_snapshot(topology);
+    const auto layout = mesh::DofLayout::create(
+        topology, {{"cell.x", mesh::EntityKind::cell, 2U}});
+
+    mesh::EntityOwnerRanks parallel_owners;
+    parallel_owners.vertices.assign(4U, mesh::PartitionRank{1U});
+    parallel_owners.faces.assign(4U, mesh::PartitionRank{1U});
+    parallel_owners.cells.assign(1U, mesh::PartitionRank{0U});
+    const auto parallel_partition = mesh::PartitionSnapshot::create(
+        topology, mesh::PartitionRank{0U}, 2U, std::move(parallel_owners));
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::DofNumberingSnapshot::create_serial(
+            layout, parallel_partition);
+    });
+
+    const auto larger_topology = mesh::make_cartesian_topology_2d(2U, 1U);
+    const auto larger_partition =
+        mesh::make_serial_partition_snapshot(larger_topology);
+    expect_throw<std::invalid_argument>([&] {
+        mesh::GlobalEntityNumberingInput input;
+        input.global_cell_count = 2U;
+        input.global_face_count = 7U;
+        input.global_vertex_count = 6U;
+        for (std::size_t i = 0; i < 2U; ++i) {
+            input.cells.push_back({
+                larger_partition.global_id(
+                    mesh::EntityKind::cell,
+                    mesh::LocalIndex{
+                        static_cast<mesh::LocalIndex::value_type>(i)}),
+                mesh::GlobalEntityOrdinal{static_cast<std::uint64_t>(i)}});
+        }
+        for (std::size_t i = 0; i < 7U; ++i) {
+            input.faces.push_back({
+                larger_partition.global_id(
+                    mesh::EntityKind::face,
+                    mesh::LocalIndex{
+                        static_cast<mesh::LocalIndex::value_type>(i)}),
+                mesh::GlobalEntityOrdinal{static_cast<std::uint64_t>(i)}});
+        }
+        for (std::size_t i = 0; i < 6U; ++i) {
+            input.vertices.push_back({
+                larger_partition.global_id(
+                    mesh::EntityKind::vertex,
+                    mesh::LocalIndex{
+                        static_cast<mesh::LocalIndex::value_type>(i)}),
+                mesh::GlobalEntityOrdinal{static_cast<std::uint64_t>(i)}});
+        }
+        (void)mesh::DofNumberingSnapshot::create_local(
+            layout, larger_partition, std::move(input));
+    });
+
+    expect_throw<std::invalid_argument>([&] {
+        mesh::GlobalEntityNumberingInput input;
+        input.global_cell_count = 1U;
+        input.global_face_count = 4U;
+        input.global_vertex_count = 4U;
+        input.cells = {};
+        input.faces = {
+            {mesh::GlobalEntityId{0U}, mesh::GlobalEntityOrdinal{0U}},
+            {mesh::GlobalEntityId{1U}, mesh::GlobalEntityOrdinal{1U}},
+            {mesh::GlobalEntityId{2U}, mesh::GlobalEntityOrdinal{2U}},
+            {mesh::GlobalEntityId{3U}, mesh::GlobalEntityOrdinal{3U}}};
+        input.vertices = {
+            {mesh::GlobalEntityId{0U}, mesh::GlobalEntityOrdinal{0U}},
+            {mesh::GlobalEntityId{1U}, mesh::GlobalEntityOrdinal{1U}},
+            {mesh::GlobalEntityId{2U}, mesh::GlobalEntityOrdinal{2U}},
+            {mesh::GlobalEntityId{3U}, mesh::GlobalEntityOrdinal{3U}}};
+        (void)mesh::DofNumberingSnapshot::create_local(
+            layout, serial_partition, std::move(input));
+    });
+
+    expect_throw<std::invalid_argument>([&] {
+        mesh::GlobalEntityNumberingInput input;
+        input.global_cell_count = 1U;
+        input.global_face_count = 4U;
+        input.global_vertex_count = 4U;
+        input.cells = {
+            {mesh::GlobalEntityId{999U}, mesh::GlobalEntityOrdinal{0U}}};
+        for (std::uint64_t i = 0U; i < 4U; ++i) {
+            input.faces.push_back({
+                mesh::GlobalEntityId{i}, mesh::GlobalEntityOrdinal{i}});
+            input.vertices.push_back({
+                mesh::GlobalEntityId{i}, mesh::GlobalEntityOrdinal{i}});
+        }
+        (void)mesh::DofNumberingSnapshot::create_local(
+            layout, serial_partition, std::move(input));
+    });
+
+    expect_throw<std::out_of_range>([&] {
+        mesh::GlobalEntityNumberingInput input;
+        input.global_cell_count = 1U;
+        input.global_face_count = 4U;
+        input.global_vertex_count = 4U;
+        input.cells = {
+            {mesh::GlobalEntityId{0U}, mesh::GlobalEntityOrdinal{1U}}};
+        for (std::uint64_t i = 0U; i < 4U; ++i) {
+            input.faces.push_back({
+                mesh::GlobalEntityId{i}, mesh::GlobalEntityOrdinal{i}});
+            input.vertices.push_back({
+                mesh::GlobalEntityId{i}, mesh::GlobalEntityOrdinal{i}});
+        }
+        (void)mesh::DofNumberingSnapshot::create_local(
+            layout, serial_partition, std::move(input));
+    });
+
+    mesh::Topology::EntityIds duplicate_ids;
+    duplicate_ids.cells = {
+        mesh::GlobalEntityId{10U}, mesh::GlobalEntityId{11U}};
+    const mesh::Topology duplicate_topology{std::move(duplicate_ids), {}};
+    mesh::EntityOwnerRanks duplicate_owners;
+    duplicate_owners.cells = {
+        mesh::PartitionRank{0U}, mesh::PartitionRank{0U}};
+    const auto duplicate_partition = mesh::PartitionSnapshot::create(
+        duplicate_topology, mesh::PartitionRank{0U}, 1U,
+        std::move(duplicate_owners));
+    const auto duplicate_layout = mesh::DofLayout::create(
+        duplicate_topology, {{"cell.x", mesh::EntityKind::cell, 1U}});
+    expect_throw<std::invalid_argument>([&] {
+        mesh::GlobalEntityNumberingInput input;
+        input.global_cell_count = 2U;
+        input.cells = {
+            {mesh::GlobalEntityId{10U}, mesh::GlobalEntityOrdinal{0U}},
+            {mesh::GlobalEntityId{11U}, mesh::GlobalEntityOrdinal{0U}}};
+        (void)mesh::DofNumberingSnapshot::create_local(
+            duplicate_layout, duplicate_partition, std::move(input));
+    });
+
+    expect_throw<std::length_error>([&] {
+        mesh::GlobalEntityNumberingInput input;
+        input.global_cell_count =
+            std::numeric_limits<std::uint64_t>::max();
+        input.global_face_count = 4U;
+        input.global_vertex_count = 4U;
+        input.cells = {
+            {mesh::GlobalEntityId{0U}, mesh::GlobalEntityOrdinal{0U}}};
+        for (std::uint64_t i = 0U; i < 4U; ++i) {
+            input.faces.push_back({
+                mesh::GlobalEntityId{i}, mesh::GlobalEntityOrdinal{i}});
+            input.vertices.push_back({
+                mesh::GlobalEntityId{i}, mesh::GlobalEntityOrdinal{i}});
+        }
+        (void)mesh::DofNumberingSnapshot::create_local(
+            layout, serial_partition, std::move(input));
+    });
+
+    const auto numbering =
+        mesh::DofNumberingSnapshot::create_serial(layout, serial_partition);
+    expect_throw<std::out_of_range>(
+        [&] { (void)numbering.global_index(numbering.local_dof_count()); });
+    expect_throw<std::out_of_range>(
+        [&] { (void)numbering.ownership(numbering.local_dof_count()); });
+    expect_throw<std::invalid_argument>([&] {
+        (void)numbering.global_entity_count(mesh::EntityKind::edge);
+    });
+    expect_throw<std::invalid_argument>([&] {
+        (void)numbering.global_location_offset(
+            static_cast<mesh::EntityKind>(255U));
+    });
+}
+
 void headers() {
     static_assert(
         std::is_same_v<decltype(std::declval<const mesh::CsrAdjacency&>().indices()),
@@ -1088,6 +1408,9 @@ int main(int argc, char** argv) {
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
         else if (name == "partition_local_snapshot") { partition_local_snapshot(); }
         else if (name == "partition_invalid") { partition_invalid(); }
+        else if (name == "dof_numbering_serial") { dof_numbering_serial(); }
+        else if (name == "dof_numbering_local") { dof_numbering_local(); }
+        else if (name == "dof_numbering_invalid") { dof_numbering_invalid(); }
         else if (name == "headers") { headers(); }
         else { throw std::invalid_argument("unknown mesh core test"); }
         std::cout << "[PASS] " << name << '\n';
