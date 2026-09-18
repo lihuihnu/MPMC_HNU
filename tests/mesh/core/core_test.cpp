@@ -1,6 +1,7 @@
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/entity.hpp>
+#include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/topology.hpp>
 
@@ -480,6 +481,99 @@ void cartesian_2d_geometry_invalid() {
     });
 }
 
+
+void face_boundary_snapshot() {
+    const auto topology = mesh::make_cartesian_topology_2d(2U, 2U);
+    std::vector<mesh::PhysicalTag> tags(12U, mesh::PhysicalTag{0U});
+    for (std::uint32_t face : {0U, 3U}) tags[face] = mesh::PhysicalTag{11U};
+    for (std::uint32_t face : {2U, 5U}) tags[face] = mesh::PhysicalTag{12U};
+    for (std::uint32_t face : {6U, 7U}) tags[face] = mesh::PhysicalTag{21U};
+    for (std::uint32_t face : {10U, 11U}) tags[face] = mesh::PhysicalTag{22U};
+
+    const auto snapshot = mesh::make_face_boundary_snapshot(topology, tags);
+    require(snapshot.face_count() == 12U, "boundary snapshot face count");
+    require(snapshot.boundary_face_count() == 8U, "boundary face count");
+    require(snapshot.interior_face_count() == 4U, "interior face count");
+
+    for (std::uint32_t face : {1U, 4U, 8U, 9U}) {
+        const auto index = mesh::LocalIndex{face};
+        require(!snapshot.is_boundary(index), "interior face misclassified");
+        require(!snapshot.has_physical_tag(index), "interior face unexpectedly tagged");
+    }
+    require(snapshot.is_boundary(mesh::LocalIndex{0U}), "boundary face misclassified");
+    require(snapshot.physical_tag(mesh::LocalIndex{0U}).value() == 11U, "left tag");
+    require(snapshot.physical_tag(mesh::LocalIndex{2U}).value() == 12U, "right tag");
+    require(snapshot.physical_tag(mesh::LocalIndex{6U}).value() == 21U, "bottom tag");
+    require(snapshot.physical_tag(mesh::LocalIndex{10U}).value() == 22U, "top tag");
+
+    const auto untagged = mesh::make_face_boundary_snapshot(topology);
+    require(untagged.boundary_face_count() == 8U, "untagged classification changed");
+    require(!untagged.has_physical_tag(mesh::LocalIndex{0U}), "default tag must be absent");
+
+    expect_throw<std::out_of_range>(
+        [&] { (void)snapshot.classification(mesh::LocalIndex{12U}); });
+}
+
+void face_boundary_invalid() {
+    const auto topology = mesh::make_cartesian_topology_2d(1U, 1U);
+
+    expect_throw<std::invalid_argument>([&] {
+        const std::array<mesh::PhysicalTag, 3> tags{
+            mesh::PhysicalTag{0U}, mesh::PhysicalTag{0U}, mesh::PhysicalTag{0U}};
+        (void)mesh::make_face_boundary_snapshot(topology, tags);
+    });
+
+    expect_throw<std::invalid_argument>([&] {
+        const auto two_by_two = mesh::make_cartesian_topology_2d(2U, 2U);
+        std::vector<mesh::PhysicalTag> tags(12U, mesh::PhysicalTag{0U});
+        tags[1] = mesh::PhysicalTag{99U};
+        (void)mesh::make_face_boundary_snapshot(two_by_two, tags);
+    });
+
+    mesh::Topology::EntityIds missing_ids;
+    missing_ids.faces.emplace_back(1U);
+    const mesh::Topology missing_relation{std::move(missing_ids), {}};
+    expect_throw<std::invalid_argument>(
+        [&] { (void)mesh::make_face_boundary_snapshot(missing_relation); });
+
+    mesh::Topology::EntityIds zero_ids;
+    zero_ids.faces.emplace_back(1U);
+    zero_ids.cells.emplace_back(2U);
+    std::vector<mesh::CsrAdjacency> zero_relations;
+    zero_relations.emplace_back(
+        mesh::EntityKind::face, mesh::EntityKind::cell, 1U,
+        std::vector<mesh::CsrAdjacency::Offset>{0U, 0U},
+        std::vector<mesh::LocalIndex>{});
+    const mesh::Topology zero_adjacent{std::move(zero_ids), std::move(zero_relations)};
+    expect_throw<std::invalid_argument>(
+        [&] { (void)mesh::make_face_boundary_snapshot(zero_adjacent); });
+
+    mesh::Topology::EntityIds three_ids;
+    three_ids.faces.emplace_back(1U);
+    three_ids.cells = {mesh::GlobalEntityId{10U}, mesh::GlobalEntityId{11U},
+                       mesh::GlobalEntityId{12U}};
+    std::vector<mesh::CsrAdjacency> three_relations;
+    three_relations.emplace_back(
+        mesh::EntityKind::face, mesh::EntityKind::cell, 3U,
+        std::vector<mesh::CsrAdjacency::Offset>{0U, 3U},
+        std::vector<mesh::LocalIndex>{
+            mesh::LocalIndex{0U}, mesh::LocalIndex{1U}, mesh::LocalIndex{2U}});
+    const mesh::Topology three_adjacent{std::move(three_ids), std::move(three_relations)};
+    expect_throw<std::invalid_argument>(
+        [&] { (void)mesh::make_face_boundary_snapshot(three_adjacent); });
+
+    expect_throw<std::invalid_argument>([] {
+        (void)mesh::FaceBoundarySnapshot{
+            {mesh::FaceClassification::interior},
+            {mesh::PhysicalTag{7U}}};
+    });
+    expect_throw<std::invalid_argument>([] {
+        (void)mesh::FaceBoundarySnapshot{
+            {static_cast<mesh::FaceClassification>(255U)},
+            {mesh::PhysicalTag{0U}}};
+    });
+}
+
 void headers() {
     static_assert(
         std::is_same_v<decltype(std::declval<const mesh::CsrAdjacency&>().indices()),
@@ -505,6 +599,8 @@ int main(int argc, char** argv) {
         else if (name == "cartesian_2d_invalid") { cartesian_2d_invalid(); }
         else if (name == "cartesian_2d_geometry") { cartesian_2d_geometry(); }
         else if (name == "cartesian_2d_geometry_invalid") { cartesian_2d_geometry_invalid(); }
+        else if (name == "face_boundary_snapshot") { face_boundary_snapshot(); }
+        else if (name == "face_boundary_invalid") { face_boundary_invalid(); }
         else if (name == "headers") { headers(); }
         else { throw std::invalid_argument("unknown mesh core test"); }
         std::cout << "[PASS] " << name << '\n';
