@@ -17,6 +17,7 @@ add_executable(mpmc_mesh_core_tests
     grdecl_header_self_contained.cpp
     vtu_header_self_contained.cpp
     face_boundary_header_self_contained.cpp
+    face_geometry_3d_header_self_contained.cpp
     dense_field_header_self_contained.cpp
     dof_layout_header_self_contained.cpp
     partition_snapshot_header_self_contained.cpp
