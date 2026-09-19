@@ -1779,6 +1779,23 @@ void vtu_ascii_invalid() {
     const auto valid =
         vtu_mixed_triangle_quad_fixture();
 
+    const auto expect_import_invalid =
+        [](std::string_view label,
+           const std::string& content) {
+            bool caught = false;
+            try {
+                (void)mesh::import_vtu_ascii(content);
+            } catch (const std::invalid_argument&) {
+                caught = true;
+            } catch (const std::out_of_range&) {
+                caught = true;
+            }
+            require(
+                caught,
+                std::string{"expected invalid VTU rejection: "} +
+                    std::string{label});
+        };
+
     {
         auto appended = valid;
         const auto where =
@@ -1790,10 +1807,8 @@ void vtu_ascii_invalid() {
             where,
             std::string{"format=\"ascii\""}.size(),
             "format=\"appended\"");
-        expect_throw<std::invalid_argument>([&] {
-            (void)mesh::import_vtu_ascii(
-                appended);
-        });
+        expect_import_invalid(
+            "appended format", appended);
     }
 
     {
@@ -1809,10 +1824,8 @@ void vtu_ascii_invalid() {
             std::string{
                 "byte_order=\"LittleEndian\""}.size(),
             "byte_order=\"LittleEndian\" compressor=\"vtkZLibDataCompressor\"");
-        expect_throw<std::invalid_argument>([&] {
-            (void)mesh::import_vtu_ascii(
-                compressed);
-        });
+        expect_import_invalid(
+            "compressor attribute", compressed);
     }
 
     {
@@ -1826,10 +1839,8 @@ void vtu_ascii_invalid() {
             where,
             std::string{"5 9"}.size(),
             "5 10");
-        expect_throw<std::invalid_argument>([&] {
-            (void)mesh::import_vtu_ascii(
-                unsupported);
-        });
+        expect_import_invalid(
+            "unsupported cell type", unsupported);
     }
 
     {
@@ -1843,10 +1854,8 @@ void vtu_ascii_invalid() {
             where,
             std::string{"3 1 0"}.size(),
             "3 1 0.5");
-        expect_throw<std::invalid_argument>([&] {
-            (void)mesh::import_vtu_ascii(
-                nonplanar);
-        });
+        expect_import_invalid(
+            "nonplanar coordinates", nonplanar);
     }
 
     {
@@ -1860,10 +1869,8 @@ void vtu_ascii_invalid() {
             where,
             std::string{"3 7"}.size(),
             "3 6");
-        expect_throw<std::invalid_argument>([&] {
-            (void)mesh::import_vtu_ascii(
-                bad_offsets);
-        });
+        expect_import_invalid(
+            "bad offsets", bad_offsets);
     }
 
     {
@@ -1879,10 +1886,9 @@ void vtu_ascii_invalid() {
             std::string{
                 "9223372036854775813 7000000003"}.size(),
             "7000000003 7000000003");
-        expect_throw<std::invalid_argument>([&] {
-            (void)mesh::import_vtu_ascii(
-                duplicate_ids);
-        });
+        expect_import_invalid(
+            "duplicate global cell IDs",
+            duplicate_ids);
     }
 
     {
@@ -1902,10 +1908,16 @@ void vtu_ascii_invalid() {
                         "reserved-name-test",
                         "v1",
                         "CellData"}}));
-        expect_throw<std::invalid_argument>([&] {
+        bool caught = false;
+        try {
             (void)mesh::export_vtu_ascii(
                 imported);
-        });
+        } catch (const std::invalid_argument&) {
+            caught = true;
+        }
+        require(
+            caught,
+            "expected invalid VTU rejection: reserved cell field name");
     }
 }
 
