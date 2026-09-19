@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <iterator>
 #include <map>
 #include <set>
 #include <span>
