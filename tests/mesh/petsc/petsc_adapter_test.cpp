@@ -4069,6 +4069,15 @@ void verify_dmplex_distribute_overlap_identity() {
         "DMDestroy distributed DMPlex");
 }
 
+mesh::LocalIndex reference_local_by_global(
+    const mesh::Topology& topology,
+    mesh::EntityKind kind,
+    mesh::GlobalEntityId global);
+
+void require_field_metadata_same(
+    const mesh::DenseFieldMetadata& left,
+    const mesh::DenseFieldMetadata& right);
+
 const mesh::DenseFieldSnapshot&
 processed_grdecl_cell_field(
     const mesh::ActiveCornerPointGrid& processed,
