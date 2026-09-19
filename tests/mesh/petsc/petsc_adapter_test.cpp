@@ -4120,7 +4120,7 @@ processed_grdecl_diagonal_permeability(
 
 void verify_stable_gated_tpfa_transport_stage(
     const discretization_petsc::StableFaceGatedTpfaSnapshot3D& actual,
-    const mesh::TpfaInternalFaceTransmissibilitySnapshot3D& reference,
+    const discretization::TpfaInternalFaceTransmissibilitySnapshot3D& reference,
     const mesh::Topology& reference_topology,
     const std::vector<
         mesh_petsc::DMPlexPointIdentity>& identities,
@@ -4264,7 +4264,7 @@ void verify_stable_gated_tpfa_transport_stage(
 void verify_target_local_gated_tpfa_view_stage(
     const discretization_petsc::TargetLocalGatedTpfaTransmissibilityView3D& view,
     const discretization_petsc::StableFaceGatedTpfaSnapshot3D& transport,
-    const mesh::TpfaInternalFaceTransmissibilitySnapshot3D& reference,
+    const discretization::TpfaInternalFaceTransmissibilitySnapshot3D& reference,
     const mesh::Topology& reference_topology,
     const std::vector<
         mesh_petsc::DMPlexPointIdentity>& identities,
@@ -4471,7 +4471,7 @@ void verify_assembly_ready_internal_connection_table_stage(
                 gated.global);
         const bool materialized =
             gated.disposition ==
-            mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+            discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                 materialized;
 
         require(
@@ -5696,7 +5696,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         discretization::KOrthogonalityAdmissibilityPolicy3D{
             0.0};
     const auto reference_gated_materialized =
-        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+        discretization::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
             reference_operator,
             reference_permeability,
             strict_geometry_policy,
@@ -5709,7 +5709,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
                 mesh::CartesianDiagonalPermeabilityTensor3D{
                     0.0, 0.0, 0.0})};
     const auto reference_gated_blocked =
-        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+        discretization::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
             reference_operator,
             zero_permeability,
             strict_geometry_policy,
@@ -5895,7 +5895,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         require(
             source_gated_blocked.entry_count() == 1U &&
                 source_gated_blocked.dispositions[0U] ==
-                    mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                    discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                         blocked_degenerate_permeability_direction &&
                 !source_gated_blocked
                      .materialized_face_transmissibilities_m3[
