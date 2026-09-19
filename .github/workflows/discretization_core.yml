@@ -60,7 +60,7 @@ jobs:
       - name: Build discretization core tests
         run: |
           cmake --build build/discretization-core \
-            --target mpmc_discretization_core_tests \
+            --target mpmc_discretization_core_all \
             --config ${{ matrix.build_type }} \
             --parallel 2
 
