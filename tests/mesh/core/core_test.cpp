@@ -4,6 +4,7 @@
 #include <mpmc/mesh/corner_point_geometry_3d.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/dense_field.hpp>
+#include <mpmc/mesh/dense_field_registry.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/entity.hpp>
@@ -597,6 +598,28 @@ mesh::DenseFieldMetadata synthetic_field_metadata(std::string id, std::string un
          "core_test.cpp"}};
 }
 
+
+mesh::Topology field_contract_topology() {
+    mesh::Topology::EntityIds ids;
+    ids.vertices = {
+        mesh::GlobalEntityId{10U},
+        mesh::GlobalEntityId{11U},
+        mesh::GlobalEntityId{12U},
+        mesh::GlobalEntityId{13U}};
+    ids.edges = {
+        mesh::GlobalEntityId{20U},
+        mesh::GlobalEntityId{21U},
+        mesh::GlobalEntityId{22U}};
+    ids.faces = {
+        mesh::GlobalEntityId{30U},
+        mesh::GlobalEntityId{31U}};
+    ids.cells = {
+        mesh::GlobalEntityId{40U}};
+    return mesh::Topology{
+        std::move(ids),
+        {}};
+}
+
 void dense_field_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 2U);
 
@@ -654,14 +677,232 @@ void dense_field_snapshot() {
         std::move(vertex_values),
         synthetic_field_metadata("test.vertex.vector", "m"));
     require(vertex_vector.entity_count() == 9U, "vertex field entity count");
-    require(vertex_vector.component_count() == 3U, "vertex field component count");
+    require(vertex_vector.component_count() == 3U, "vertex scalar component count");
     require_close(vertex_vector.value(mesh::LocalIndex{8U}, 2U), 28.0, 0.0,
                   "vertex component lookup");
+
+    const auto edge_topology =
+        field_contract_topology();
+    const auto edge_vector =
+        mesh::DenseFieldSnapshot::create(
+            edge_topology,
+            mesh::EntityKind::edge,
+            2U,
+            {1.0, 10.0,
+             2.0, 20.0,
+             3.0, 30.0},
+            synthetic_field_metadata(
+                "test.edge.vector",
+                "Pa"));
+    require(
+        edge_vector.location() ==
+            mesh::EntityKind::edge &&
+            edge_vector.entity_count() == 3U &&
+            edge_vector.component_count() == 2U,
+        "edge field location/count/layout");
+    require_close(
+        edge_vector.value(
+            mesh::LocalIndex{2U},
+            1U),
+        30.0,
+        0.0,
+        "edge field component lookup");
 
     expect_throw<std::out_of_range>(
         [&] { (void)cell_scalar.value(mesh::LocalIndex{4U}, 0U); });
     expect_throw<std::out_of_range>(
         [&] { (void)cell_scalar.value(mesh::LocalIndex{0U}, 1U); });
+}
+
+
+void dense_field_registry() {
+    const auto topology =
+        field_contract_topology();
+
+    const auto vertex_field =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::vertex,
+            1U,
+            {1.0, 2.0, 3.0, 4.0},
+            synthetic_field_metadata(
+                "shared.scalar",
+                "1"));
+    const auto edge_field =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::edge,
+            1U,
+            {5.0, 6.0, 7.0},
+            synthetic_field_metadata(
+                "shared.scalar",
+                "1"));
+    const auto face_field =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::face,
+            2U,
+            {8.0, 80.0,
+             9.0, 90.0},
+            synthetic_field_metadata(
+                "face.vector",
+                "m/s"));
+    const auto cell_field =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            1U,
+            {0.25},
+            synthetic_field_metadata(
+                "shared.scalar",
+                "1"));
+
+    const auto registry =
+        mesh::DenseFieldRegistry::create(
+            topology,
+            {vertex_field,
+             edge_field,
+             face_field,
+             cell_field});
+
+    require(
+        registry.size() == 4U &&
+            !registry.empty(),
+        "field registry size");
+    require(
+        registry.field_count(
+            mesh::EntityKind::vertex) == 1U &&
+            registry.field_count(
+                mesh::EntityKind::edge) == 1U &&
+            registry.field_count(
+                mesh::EntityKind::face) == 1U &&
+            registry.field_count(
+                mesh::EntityKind::cell) == 1U,
+        "field registry location counts");
+    require(
+        registry.contains(
+            mesh::EntityKind::vertex,
+            "shared.scalar") &&
+            registry.contains(
+                mesh::EntityKind::edge,
+                "shared.scalar") &&
+            registry.contains(
+                mesh::EntityKind::cell,
+                "shared.scalar"),
+        "same field id is location-aware");
+    require(
+        !registry.contains(
+            mesh::EntityKind::face,
+            "shared.scalar"),
+        "field registry key includes location");
+    require_close(
+        registry.at(
+            mesh::EntityKind::edge,
+            "shared.scalar")
+            .value(
+                mesh::LocalIndex{1U},
+                0U),
+        6.0,
+        0.0,
+        "edge registry lookup");
+    require_close(
+        registry.at(
+            mesh::EntityKind::face,
+            "face.vector")
+            .value(
+                mesh::LocalIndex{1U},
+                1U),
+        90.0,
+        0.0,
+        "face registry lookup");
+    require(
+        registry.fields().size() == 4U,
+        "registry exposes immutable field collection");
+}
+
+void dense_field_registry_invalid() {
+    const auto topology =
+        field_contract_topology();
+    const auto first =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::edge,
+            1U,
+            {1.0, 2.0, 3.0},
+            synthetic_field_metadata(
+                "duplicate.edge",
+                "1"));
+    const auto duplicate =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::edge,
+            2U,
+            {1.0, 10.0,
+             2.0, 20.0,
+             3.0, 30.0},
+            synthetic_field_metadata(
+                "duplicate.edge",
+                "Pa"));
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::DenseFieldRegistry::create(
+                topology,
+                {first, duplicate});
+        });
+
+    const auto other_topology =
+        mesh::make_cartesian_topology_2d(
+            2U,
+            1U);
+    const auto foreign_cell_field =
+        mesh::DenseFieldSnapshot::create(
+            other_topology,
+            mesh::EntityKind::cell,
+            1U,
+            {1.0, 2.0},
+            synthetic_field_metadata(
+                "foreign.cell",
+                "1"));
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::DenseFieldRegistry::create(
+                topology,
+                {foreign_cell_field});
+        });
+
+    const auto registry =
+        mesh::DenseFieldRegistry::create(
+            topology,
+            {first});
+    expect_throw<std::out_of_range>(
+        [&] {
+            (void)registry.at(
+                mesh::EntityKind::cell,
+                "missing");
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)registry.field_count(
+                static_cast<
+                    mesh::EntityKind>(255U));
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)registry.find(
+                static_cast<
+                    mesh::EntityKind>(255U),
+                "missing");
+        });
+
+    const auto empty =
+        mesh::DenseFieldRegistry::create(
+            topology,
+            {});
+    require(
+        empty.empty() &&
+            empty.size() == 0U,
+        "empty field registry is valid");
 }
 
 void dense_field_invalid() {
@@ -671,11 +912,6 @@ void dense_field_invalid() {
         (void)mesh::DenseFieldSnapshot::create(
             topology, mesh::EntityKind::cell, 0U, {},
             synthetic_field_metadata("test.zero-components", "1"));
-    });
-    expect_throw<std::invalid_argument>([&] {
-        (void)mesh::DenseFieldSnapshot::create(
-            topology, mesh::EntityKind::edge, 1U, {},
-            synthetic_field_metadata("test.edge", "1"));
     });
     expect_throw<std::invalid_argument>([&] {
         (void)mesh::DenseFieldSnapshot::create(
@@ -4704,6 +4940,8 @@ int main(int argc, char** argv) {
         else if (name == "face_boundary_snapshot") { face_boundary_snapshot(); }
         else if (name == "face_boundary_invalid") { face_boundary_invalid(); }
         else if (name == "dense_field_snapshot") { dense_field_snapshot(); }
+        else if (name == "dense_field_registry") { dense_field_registry(); }
+        else if (name == "dense_field_registry_invalid") { dense_field_registry_invalid(); }
         else if (name == "dense_field_invalid") { dense_field_invalid(); }
         else if (name == "gmsh_4_1_import") { gmsh_4_1_import(); }
         else if (name == "gmsh_4_1_roundtrip") { gmsh_4_1_roundtrip(); }

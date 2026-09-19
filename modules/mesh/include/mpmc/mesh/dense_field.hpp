@@ -133,12 +133,10 @@ private:
     static void validate_location(EntityKind location) {
         switch (location) {
         case EntityKind::vertex:
+        case EntityKind::edge:
         case EntityKind::face:
         case EntityKind::cell:
             return;
-        case EntityKind::edge:
-            throw std::invalid_argument(
-                "mpmc::mesh::DenseFieldSnapshot: edge fields are not supported by this contract");
         }
         throw std::invalid_argument(
             "mpmc::mesh::DenseFieldSnapshot: invalid field location");
