@@ -6,6 +6,7 @@ on:
     paths:
       - 'modules/mesh/include/**'
       - 'modules/mesh_petsc/**'
+      - 'modules/discretization/**'
       - 'modules/discretization_petsc/**'
       - 'tests/mesh/petsc/**'
       - '.github/workflows/mesh_petsc.yml'
