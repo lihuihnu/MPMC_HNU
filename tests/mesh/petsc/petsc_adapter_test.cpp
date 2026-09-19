@@ -4302,11 +4302,16 @@ void verify_target_local_gated_tpfa_view_stage(
                 !view.contains_internal_face(
                     identity.local),
                 "boundary target face must remain absent from assembly-facing TPFA view");
-            expect_throw<std::invalid_argument>(
-                [&] {
-                    (void)view.entry(
-                        identity.local);
-                });
+            bool boundary_entry_rejected = false;
+            try {
+                (void)view.entry(
+                    identity.local);
+            } catch (const std::invalid_argument&) {
+                boundary_entry_rejected = true;
+            }
+            require(
+                boundary_entry_rejected,
+                "boundary target face entry accessor must reject");
             continue;
         }
 
@@ -4357,11 +4362,16 @@ void verify_target_local_gated_tpfa_view_stage(
             require(
                 !optional_value.has_value(),
                 "blocked target-local TPFA view exposes no optional T_f");
-            expect_throw<std::invalid_argument>(
-                [&] {
-                    (void)view.transmissibility_m3(
-                        identity.local);
-                });
+            bool blocked_value_rejected = false;
+            try {
+                (void)view.transmissibility_m3(
+                    identity.local);
+            } catch (const std::invalid_argument&) {
+                blocked_value_rejected = true;
+            }
+            require(
+                blocked_value_rejected,
+                "blocked target-local TPFA numeric accessor must reject");
         }
 
         if (partition.is_owned(
