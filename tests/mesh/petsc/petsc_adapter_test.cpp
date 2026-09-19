@@ -3529,26 +3529,22 @@ void verify_gmsh_import_through_dmplex_chain() {
             mpi_size == 2,
         "Gmsh PETSc chain requires two ranks");
 
-    std::optional<mesh::Gmsh41ImportResult>
-        imported;
-    if (mpi_rank == 0) {
-        imported.emplace(
-            mesh::import_gmsh_4_1_ascii(
-                gmsh_petsc_chain_fixture(),
-                2.0));
-    }
+    const auto reference_import =
+        mesh::import_gmsh_4_1_ascii(
+            gmsh_petsc_chain_fixture(),
+            2.0);
 
     mesh::Topology empty_topology{
         mesh::Topology::EntityIds{}, {}};
     const auto source_boundary =
         mpi_rank == 0
-            ? imported->face_boundary
+            ? reference_import.face_boundary
             : mesh::FaceBoundarySnapshot{
                   {}, {}};
     const auto source_field =
         mpi_rank == 0
             ? gmsh_chain_source_field(
-                  imported->topology)
+                  reference_import.topology)
             : mesh::DenseFieldSnapshot::create(
                   empty_topology,
                   mesh::EntityKind::cell,
@@ -3564,7 +3560,7 @@ void verify_gmsh_import_through_dmplex_chain() {
             PETSC_COMM_WORLD,
             0,
             mpi_rank == 0
-                ? &imported->topology
+                ? &reference_import.topology
                 : nullptr,
             &source_dm,
             &source_identities),
@@ -3575,7 +3571,7 @@ void verify_gmsh_import_through_dmplex_chain() {
             source_dm,
             0,
             mpi_rank == 0
-                ? &imported->geometry
+                ? &reference_import.geometry
                 : nullptr,
             source_identities),
         "attach imported Gmsh coordinates");
@@ -3647,33 +3643,12 @@ void verify_gmsh_import_through_dmplex_chain() {
             distributed_field.has_value(),
         "distributed imported snapshots");
 
-    if (mpi_rank == 0) {
-        require(
-            imported.has_value(),
-            "rank0 imported Gmsh reference");
-    }
-
-    const auto reference_topology =
-        mpi_rank == 0
-            ? imported->topology
-            : mesh::import_gmsh_4_1_ascii(
-                  gmsh_petsc_chain_fixture(),
-                  2.0)
-                  .topology;
-    const auto reference_geometry =
-        mpi_rank == 0
-            ? imported->geometry
-            : mesh::import_gmsh_4_1_ascii(
-                  gmsh_petsc_chain_fixture(),
-                  2.0)
-                  .geometry;
-    const auto reference_boundary =
-        mpi_rank == 0
-            ? imported->face_boundary
-            : mesh::import_gmsh_4_1_ascii(
-                  gmsh_petsc_chain_fixture(),
-                  2.0)
-                  .face_boundary;
+    const auto& reference_topology =
+        reference_import.topology;
+    const auto& reference_geometry =
+        reference_import.geometry;
+    const auto& reference_boundary =
+        reference_import.face_boundary;
     const auto reference_field =
         gmsh_chain_source_field(
             reference_topology);
