@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -66,7 +67,7 @@ inline void validate_location(
 /// Values must be finite (already guaranteed by DenseFieldSnapshot) and
 /// non-negative. Zero conductivity is permitted. Unit matching is exact and no
 /// conversion or interpretation is performed.
-[[nodiscard]] inline const DenseFieldSnapshot&
+[[nodiscard]] inline std::reference_wrapper<const DenseFieldSnapshot>
 require_scalar_conductivity_field(
     const Topology& topology,
     const DenseFieldRegistry& registry,
@@ -107,7 +108,7 @@ require_scalar_conductivity_field(
         throw std::invalid_argument(
             "mpmc::mesh::require_scalar_conductivity_field: conductivity values must be non-negative");
     }
-    return field;
+    return std::cref(field);
 }
 
 } // namespace mpmc::mesh

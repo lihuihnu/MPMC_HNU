@@ -4156,7 +4156,7 @@ void conductivity_field_contract() {
             {thermal_cell,
              electrical_edge});
 
-    const auto& thermal =
+    const auto thermal =
         mesh::require_scalar_conductivity_field(
             topology,
             registry,
@@ -4165,14 +4165,14 @@ void conductivity_field_contract() {
                 "rock.thermal_conductivity",
                 "W/(m*K)"});
     require_close(
-        thermal.value(
+        thermal.get().value(
             mesh::LocalIndex{0U},
             0U),
         2.5,
         0.0,
         "thermal conductivity value");
 
-    const auto& electrical =
+    const auto electrical =
         mesh::require_scalar_conductivity_field(
             topology,
             registry,
@@ -4181,7 +4181,7 @@ void conductivity_field_contract() {
                 "edge.electrical_conductivity",
                 "S/m"});
     require_close(
-        electrical.value(
+        electrical.get().value(
             mesh::LocalIndex{2U},
             0U),
         30.0,
