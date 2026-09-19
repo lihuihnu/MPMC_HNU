@@ -1,5 +1,6 @@
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
+#include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <exception>
 #include <iostream>
@@ -1876,6 +1878,354 @@ shared_links_from_dm_point_sf(
                             all_words[offset + 5U])}});
     }
     return links;
+}
+
+mesh::Geometry2D two_by_one_reference_geometry(
+    const mesh::Topology& topology) {
+    const std::array<double, 3> x{
+        0.0, 1.25, 3.75};
+    const std::array<double, 2> y{
+        -2.0, 2.0};
+    return mesh::make_cartesian_geometry_2d(
+        topology, x, y);
+}
+
+struct DMPlexCoordinateView {
+    PetscSection section;
+    Vec values;
+    const PetscScalar* array;
+};
+
+DMPlexCoordinateView get_dmplex_coordinate_view(DM dm) {
+    PetscInt coordinate_dim = -1;
+    require_petsc(
+        DMGetCoordinateDim(dm, &coordinate_dim),
+        "DMGetCoordinateDim distributed geometry");
+    require(coordinate_dim == 2,
+            "distributed DMPlex coordinate dimension");
+
+    PetscSection section = nullptr;
+    Vec values = nullptr;
+    require_petsc(
+        DMGetCoordinateSection(dm, &section),
+        "DMGetCoordinateSection distributed geometry");
+    require(section != nullptr,
+            "distributed DMPlex coordinate section");
+    require_petsc(
+        DMGetCoordinatesLocal(dm, &values),
+        "DMGetCoordinatesLocal distributed geometry");
+    require(values != nullptr,
+            "distributed DMPlex local coordinate vector");
+
+    const PetscScalar* array = nullptr;
+    require_petsc(
+        VecGetArrayRead(values, &array),
+        "VecGetArrayRead distributed coordinates");
+    return DMPlexCoordinateView{
+        section, values, array};
+}
+
+void restore_dmplex_coordinate_view(
+    DMPlexCoordinateView* view) {
+    require(view != nullptr,
+            "coordinate view pointer");
+    require_petsc(
+        VecRestoreArrayRead(
+            view->values, &view->array),
+        "VecRestoreArrayRead distributed coordinates");
+}
+
+mesh::Coordinate2D coordinate_for_dmplex_vertex(
+    const DMPlexCoordinateView& view,
+    PetscInt point) {
+    PetscInt dof = -1;
+    PetscInt offset = -1;
+    require_petsc(
+        PetscSectionGetDof(
+            view.section, point, &dof),
+        "coordinate section vertex dof");
+    require_petsc(
+        PetscSectionGetOffset(
+            view.section, point, &offset),
+        "coordinate section vertex offset");
+    require(dof == 2 && offset >= 0,
+            "DMPlex vertex must carry two coordinate DoFs");
+    return mesh::Coordinate2D{
+        static_cast<double>(
+            PetscRealPart(
+                view.array[
+                    static_cast<std::size_t>(
+                        offset)])),
+        static_cast<double>(
+            PetscRealPart(
+                view.array[
+                    static_cast<std::size_t>(
+                        offset + 1)]))};
+}
+
+void verify_dmplex_geometry_against_core(
+    DM dm,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities,
+    const mesh::Geometry2D& reference) {
+    constexpr double tolerance = 1.0e-12;
+
+    auto view = get_dmplex_coordinate_view(dm);
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::vertex) {
+            PetscInt dof = -1;
+            require_petsc(
+                PetscSectionGetDof(
+                    view.section,
+                    identity.point,
+                    &dof),
+                "nonvertex coordinate dof");
+            require(dof == 0,
+                    "only DMPlex vertices may carry coordinates");
+            continue;
+        }
+
+        const auto actual =
+            coordinate_for_dmplex_vertex(
+                view, identity.point);
+        require(
+            identity.global.value() >=
+                5000000000ULL,
+            "vertex stable ID geometry base");
+        const std::uint64_t ordinal =
+            identity.global.value() -
+            5000000000ULL;
+        require(
+            ordinal <
+                static_cast<std::uint64_t>(
+                    reference.vertex_count()),
+            "vertex stable ID geometry range");
+        const auto expected =
+            reference.vertex_coordinate_m(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            ordinal)});
+        require(
+            std::abs(actual.x_m - expected.x_m) <=
+                    tolerance &&
+                std::abs(actual.y_m - expected.y_m) <=
+                    tolerance,
+            "distributed vertex coordinates must match Geometry2D by stable GlobalEntityId");
+    }
+
+    for (const auto& identity : identities) {
+        if (identity.kind ==
+            mesh::EntityKind::face) {
+            PetscInt cone_size = -1;
+            const PetscInt* cone = nullptr;
+            require_petsc(
+                DMPlexGetConeSize(
+                    dm,
+                    identity.point,
+                    &cone_size),
+                "geometry face cone size");
+            require_petsc(
+                DMPlexGetCone(
+                    dm,
+                    identity.point,
+                    &cone),
+                "geometry face cone");
+            require(cone_size == 2 && cone != nullptr,
+                    "geometry face must have two vertices");
+
+            const auto a =
+                coordinate_for_dmplex_vertex(
+                    view, cone[0]);
+            const auto b =
+                coordinate_for_dmplex_vertex(
+                    view, cone[1]);
+            const double dx = b.x_m - a.x_m;
+            const double dy = b.y_m - a.y_m;
+            const double actual_length =
+                std::hypot(dx, dy);
+
+            require(
+                identity.global.value() >=
+                    6000000000ULL,
+                "face stable ID geometry base");
+            const std::uint64_t ordinal =
+                identity.global.value() -
+                6000000000ULL;
+            require(
+                ordinal <
+                    static_cast<std::uint64_t>(
+                        reference.face_count()),
+                "face stable ID geometry range");
+            const double expected_length =
+                reference.face_length_m(
+                    mesh::LocalIndex{
+                        static_cast<
+                            mesh::LocalIndex::value_type>(
+                                ordinal)});
+            require(
+                std::abs(
+                    actual_length -
+                    expected_length) <=
+                    tolerance,
+                "distributed face length recomputation must match Geometry2D");
+        }
+    }
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::cell) {
+            continue;
+        }
+
+        PetscInt closure_size = 0;
+        PetscInt* closure = nullptr;
+        require_petsc(
+            DMPlexGetTransitiveClosure(
+                dm,
+                identity.point,
+                PETSC_TRUE,
+                &closure_size,
+                &closure),
+            "DMPlex cell transitive closure geometry");
+
+        std::array<PetscInt, 4> vertices{
+            -1, -1, -1, -1};
+        std::size_t vertex_count = 0U;
+        for (PetscInt i = 0;
+             i < closure_size;
+             ++i) {
+            const PetscInt point =
+                closure[2 * i];
+            const auto& closure_identity =
+                identity_for_point(
+                    identities, point);
+            if (closure_identity.kind !=
+                mesh::EntityKind::vertex) {
+                continue;
+            }
+
+            const bool already_present =
+                std::find(
+                    vertices.begin(),
+                    vertices.begin() +
+                        static_cast<
+                            std::ptrdiff_t>(
+                                vertex_count),
+                    point) !=
+                vertices.begin() +
+                    static_cast<
+                        std::ptrdiff_t>(
+                            vertex_count);
+            if (!already_present) {
+                require(
+                    vertex_count <
+                        vertices.size(),
+                    "quad closure vertex overflow");
+                vertices[
+                    vertex_count++] = point;
+            }
+        }
+        require_petsc(
+            DMPlexRestoreTransitiveClosure(
+                dm,
+                identity.point,
+                PETSC_TRUE,
+                &closure_size,
+                &closure),
+            "DMPlexRestoreTransitiveClosure geometry");
+        require(vertex_count == 4U,
+                "quad cell closure must contain four unique vertices");
+
+        std::array<mesh::Coordinate2D, 4>
+            coordinates{};
+        double centroid_x = 0.0;
+        double centroid_y = 0.0;
+        for (std::size_t i = 0U;
+             i < coordinates.size();
+             ++i) {
+            coordinates[i] =
+                coordinate_for_dmplex_vertex(
+                    view, vertices[i]);
+            centroid_x += coordinates[i].x_m;
+            centroid_y += coordinates[i].y_m;
+        }
+        centroid_x /= 4.0;
+        centroid_y /= 4.0;
+
+        std::sort(
+            coordinates.begin(),
+            coordinates.end(),
+            [centroid_x, centroid_y](
+                const mesh::Coordinate2D& left,
+                const mesh::Coordinate2D& right) {
+                return std::atan2(
+                           left.y_m - centroid_y,
+                           left.x_m - centroid_x) <
+                       std::atan2(
+                           right.y_m - centroid_y,
+                           right.x_m - centroid_x);
+            });
+
+        double twice_area = 0.0;
+        for (std::size_t i = 0U;
+             i < coordinates.size();
+             ++i) {
+            const auto& a = coordinates[i];
+            const auto& b =
+                coordinates[
+                    (i + 1U) %
+                    coordinates.size()];
+            twice_area +=
+                a.x_m * b.y_m -
+                b.x_m * a.y_m;
+        }
+        const double actual_area =
+            0.5 * std::abs(twice_area);
+
+        require(
+            identity.global.value() >=
+                7000000000ULL,
+            "cell stable ID geometry base");
+        const std::uint64_t ordinal =
+            identity.global.value() -
+            7000000000ULL;
+        require(
+            ordinal <
+                static_cast<std::uint64_t>(
+                    reference.cell_count()),
+            "cell stable ID geometry range");
+        const auto cell_local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        ordinal)};
+        const auto expected_centroid =
+            reference.cell_centroid_m(cell_local);
+        const double expected_area =
+            reference.cell_area_m2(cell_local);
+
+        require(
+            std::abs(
+                centroid_x -
+                expected_centroid.x_m) <=
+                    tolerance &&
+                std::abs(
+                    centroid_y -
+                    expected_centroid.y_m) <=
+                    tolerance,
+            "distributed cell centroid recomputation must match Geometry2D");
+        require(
+            std::abs(
+                actual_area -
+                expected_area) <=
+                    tolerance,
+            "distributed cell area recomputation must match Geometry2D");
+    }
+
+    restore_dmplex_coordinate_view(&view);
 }
 
 void verify_dmplex_distribute_overlap_identity() {
