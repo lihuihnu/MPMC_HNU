@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'modules/flow/**'
+      - 'modules/ad/include/mpmc/ad/**'
+      - 'modules/ad/CMakeLists.txt'
       - 'tests/flow/core/**'
       - '.github/workflows/flow_core.yml'
   workflow_dispatch:
@@ -62,7 +64,7 @@ jobs:
       - name: Build flow core contract
         run: |
           cmake --build build/flow-core \
-            --target mpmc_flow_core_tests \
+            --target mpmc_flow_core_tests mpmc_flow_fugacity_tests \
             --config ${{ matrix.config }} \
             --parallel 2
 
@@ -70,6 +72,6 @@ jobs:
         run: |
           ctest --test-dir build/flow-core \
             -C ${{ matrix.config }} \
-            -R '^flow[.]core[.]' \
+            -R '^flow[.](core|fugacity)[.]' \
             --verbose \
             --no-tests=error

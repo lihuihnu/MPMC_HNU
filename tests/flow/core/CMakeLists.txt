@@ -4,6 +4,9 @@ project(mpmc_flow_core_tests LANGUAGES CXX)
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow"
     flow-library)
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad"
+    ad-library)
 enable_testing()
 
 option(
@@ -18,52 +21,69 @@ add_executable(
 target_link_libraries(
     mpmc_flow_core_tests
     PRIVATE mpmc::flow)
-set_target_properties(
-    mpmc_flow_core_tests
-    PROPERTIES CXX_EXTENSIONS OFF)
 
-if(MSVC)
-    target_compile_options(
-        mpmc_flow_core_tests
-        PRIVATE /W4 /WX /permissive- /utf-8)
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(
-        mpmc_flow_core_tests
-        PRIVATE
-            -Wall
-            -Wextra
-            -Wpedantic
-            -Wconversion
-            -Wshadow
-            -Werror)
-endif()
+add_executable(
+    mpmc_flow_fugacity_tests
+    fugacity_equilibrium_residual_test.cpp
+    fugacity_equilibrium_residual_header.cpp)
+target_link_libraries(
+    mpmc_flow_fugacity_tests
+    PRIVATE mpmc::flow mpmc::ad)
 
-if(MPMC_FLOW_ENABLE_SANITIZERS)
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
-       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
-        message(
-            FATAL_ERROR
-            "flow core sanitizers require Linux GCC/Clang")
+foreach(target IN ITEMS
+        mpmc_flow_core_tests
+        mpmc_flow_fugacity_tests)
+    set_target_properties(
+        ${target}
+        PROPERTIES CXX_EXTENSIONS OFF)
+
+    if(MSVC)
+        target_compile_options(
+            ${target}
+            PRIVATE
+                /W4
+                /WX
+                /permissive-
+                /utf-8)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+        target_compile_options(
+            ${target}
+            PRIVATE
+                -Wall
+                -Wextra
+                -Wpedantic
+                -Wconversion
+                -Wshadow
+                -Werror)
     endif()
-    target_compile_options(
-        mpmc_flow_core_tests
-        PRIVATE
-            -fsanitize=address,undefined
-            -fno-sanitize-recover=all
-            -fno-omit-frame-pointer)
-    target_link_options(
-        mpmc_flow_core_tests
-        PRIVATE
-            -fsanitize=address,undefined
-            -fno-sanitize-recover=all)
-endif()
 
-set(cases
+    if(MPMC_FLOW_ENABLE_SANITIZERS)
+        if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+           NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+            message(
+                FATAL_ERROR
+                "flow core sanitizers require Linux GCC/Clang")
+        endif()
+        target_compile_options(
+            ${target}
+            PRIVATE
+                -fsanitize=address,undefined
+                -fno-sanitize-recover=all
+                -fno-omit-frame-pointer)
+        target_link_options(
+            ${target}
+            PRIVATE
+                -fsanitize=address,undefined
+                -fno-sanitize-recover=all)
+    endif()
+endforeach()
+
+set(core_cases
     layout
     valid_state
     invalid_state
     headers)
-foreach(case IN LISTS cases)
+foreach(case IN LISTS core_cases)
     add_test(
         NAME flow.core.${case}
         COMMAND mpmc_flow_core_tests ${case})
@@ -71,5 +91,22 @@ foreach(case IN LISTS cases)
         flow.core.${case}
         PROPERTIES
             LABELS "flow;natural_variables;contract"
+            TIMEOUT 30)
+endforeach()
+
+set(fugacity_cases
+    residual_values
+    actual_phase_pressure
+    differentiable_interface
+    invalid_inputs
+    headers)
+foreach(case IN LISTS fugacity_cases)
+    add_test(
+        NAME flow.fugacity.${case}
+        COMMAND mpmc_flow_fugacity_tests ${case})
+    set_tests_properties(
+        flow.fugacity.${case}
+        PROPERTIES
+            LABELS "flow;natural_variables;fugacity;thermodynamics_boundary"
             TIMEOUT 30)
 endforeach()

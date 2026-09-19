@@ -491,4 +491,107 @@ The dedicated `tests/flow/core` regression owns:
 
 `.github/workflows/flow_core.yml` is the required GitHub-hosted GCC Debug+ASan/UBSan, Clang Release and MSVC Release gate for this contract.
 
-This slice still does **not** evaluate fugacity, create equilibrium residual values, consume a thermodynamic backend, construct pore-volume accumulation, build mesh/face fluxes, assemble a Jacobian or PETSc matrix, perform phase switching, advance time or create a well model.
+That first slice intentionally did **not** evaluate fugacity or create equilibrium residual values. Those capabilities begin in the next local thermodynamic-equilibrium slice; pore-volume accumulation, mesh/face fluxes, global Jacobian/PETSc matrix assembly, phase switching, time advancement and wells remain outside both slices.
+
+
+## 19. Flow -> thermodynamics audit and fixed-three-phase fugacity residual
+
+### 19.1 Cross-module audit
+
+The existing thermodynamic kernels do not yet expose one uniform differentiable phase-fugacity interface across all configured EOS families.
+
+- **PR76:** `Pr76Phase::evaluate_full/evaluate_reduced<Number>()` accepts scalar-generic `p,T,x` on an explicitly selected algebraic root and returns scalar-generic `ln_phi`. Its selected-root implicit derivative remains explicit and errors on unresolved/ill-conditioned roots.
+- **SW92:** `Sw92Phase::evaluate_full/evaluate_reduced<Number>()` has the same scalar-generic `p,T,x -> ln_phi` property path, with explicit SW phase family, molality and selected root supplied by the caller.
+- **CPA:** the current `CpaPtPhase::roots()` path evaluates PT roots and `ln_phi` in `double` through the density-root search. It does not currently provide the same scalar-generic differentiable phase interface as PR76/SW92.
+
+Because those capabilities are asymmetric, this slice does **not** add a hard public `mpmc::flow -> mpmc::thermodynamics` CMake dependency or pretend that CPA is already differentiable. Instead, flow freezes the model-neutral scalar-generic evaluator boundary that concrete thermodynamic adapters must satisfy later. This keeps EOS branch/family/root selection in thermodynamics/adapter code and keeps the flow residual independent of a particular EOS.
+
+The evaluator contract is:
+
+```text
+(slot, actual_phase_pressure, T, full_positive_composition)
+    -> ln(phi_i), i=0..Nc-1
+```
+
+with the **same scalar type** on inputs and outputs. The adapter may capture model-specific root/family provenance, but the flow residual performs no root search, stability search, family selection, fallback or finite-difference differentiation.
+
+### 19.2 Residual definition
+
+For `phase0` as the local fugacity-reference slot and each `alpha in {phase1, phase2}`, the positive-support equilibrium row for component `i` is
+
+```text
+R_(alpha,i) =
+    log(x_0,i / x_alpha,i)
+  + ln(phi_0,i) - ln(phi_alpha,i)
+  + log(p_0 / p_alpha)
+```
+
+which is
+
+```text
+R_(alpha,i) = log(f_0,i / f_alpha,i)
+```
+
+when `f_i = x_i phi_i p`.
+
+The ratio form is deliberate: every logarithm argument is dimensionless. It is equivalent to fugacity equality while avoiding a logarithm of a dimensional pressure. The reference-minus-other sign matches the repository's existing generic PT three-phase `mu0-mu1` / `mu0-mu2` chemical-potential residual convention.
+
+Local row order is exactly:
+
+```text
+phase1 vs phase0: components 0..Nc-1
+phase2 vs phase0: components 0..Nc-1
+```
+
+so the compact residual has `2*Nc` entries and maps directly to the final `2*Nc` equation rows in `NaturalVariableLayout3P`.
+
+### 19.3 Actual phase pressure
+
+`FugacityEquilibriumStateView3P<Number>` contains three explicit `phase_pressures_pa` values. The residual calls the thermodynamic evaluator separately with each phase's own supplied pressure.
+
+The current `NaturalVariableCellState3P` helper still produces equal pressures because the first state slice implements `pc=none`. That helper is only a convenience adapter. The residual itself does **not** assume equal phase pressure; a future capillary-pressure layer must resolve `p_alpha` before constructing the fugacity state view.
+
+### 19.4 Differentiability contract
+
+`evaluate_fugacity_equilibrium_residual_3p()` is templated on the scalar `Number`. It preserves that scalar through
+
+- actual phase pressures;
+- temperature;
+- full phase compositions;
+- thermodynamic `ln(phi)`;
+- composition-ratio logarithms;
+- pressure-ratio logarithms;
+- the final `2*Nc` residual values.
+
+The dedicated regression instantiates the full residual with the existing `mpmc::ad::Dual<double,2>` type and verifies analytic pressure/composition derivative propagation, including the dependent-last composition direction. Production finite differences are not used.
+
+The evaluator must return exactly `Nc` finite `ln(phi)` values. Model-specific thermodynamic exceptions are propagated unchanged so flow cannot silently replace a failed selected branch with another root, zeros, stale values or a fallback model.
+
+### 19.5 Positive-support and failure policy
+
+This slice remains interior fixed-three-phase only:
+
+- all actual phase pressures are finite and strictly positive;
+- `T` is finite and strictly positive;
+- every phase has the same `Nc >= 2`;
+- every `x_alpha,i` is finite and strictly positive;
+- each phase composition is normalized within a machine-roundoff structural tolerance;
+- no epsilon insertion, clipping or renormalization is performed.
+
+The contract intentionally does not handle phase disappearance, zero-support logarithms or root/family switching.
+
+### 19.6 Validation ownership
+
+`tests/flow/core` now additionally verifies:
+
+- exact `2*Nc` residual shape and row ordering;
+- independent reconstruction of the logarithmic fugacity-ratio formula;
+- thermodynamic evaluator calls receiving three distinct supplied phase pressures;
+- AD propagation through actual pressure and composition coordinates;
+- wrong evaluator result size, non-finite `ln(phi)`, invalid pressure/T/composition and normalization rejection;
+- unchanged propagation of a thermodynamic selected-root/property failure;
+- public-header self containment.
+
+The flow core CI listens to the AD public headers because the differentiability compatibility test is an owned downstream consumer. It still has no mesh, discretization, MPI or PETSc dependency.
+
+This slice still does **not** evaluate a concrete PR76/SW92/CPA adapter in production, assemble component/energy conservation, create Darcy flux, construct a global Newton system, insert PETSc values, switch phase sets or create wells.
