@@ -1,4 +1,3 @@
-#include <mpmc/discretization/transmissibility_admissibility_3d.hpp>
 #include <mpmc/mesh/active_corner_point.hpp>
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/cell_face_geometric_operator_3d.hpp>
@@ -35,7 +34,6 @@
 
 namespace {
 namespace mesh = mpmc::mesh;
-namespace discretization = mpmc::discretization;
 
 void require(bool condition,
              std::string_view message,
@@ -3171,36 +3169,36 @@ void require_shared_operator_axis(
         "3D neighbour normal distance");
 
     const auto inputs =
-        op.transmissibility_geometry(
+        op.face_connection_geometry(
             interface);
     require_close(
         inputs.area_m2,
         1.0,
         1.0e-14,
-        "3D transmissibility geometry area");
+        "3D connection geometry area");
     require_close(
         inputs.owner_unit_normal.x,
         expected_normal[0],
         1.0e-14,
-        "3D transmissibility geometry normal x");
+        "3D connection geometry normal x");
     require_close(
         inputs.owner_unit_normal.y,
         expected_normal[1],
         1.0e-14,
-        "3D transmissibility geometry normal y");
+        "3D connection geometry normal y");
     require_close(
         inputs.owner_unit_normal.z,
         expected_normal[2],
         1.0e-14,
-        "3D transmissibility geometry normal z");
+        "3D connection geometry normal z");
     require_close(
         inputs.owner_normal_distance_m,
         0.5,
         1.0e-14,
-        "3D transmissibility owner distance");
+        "3D connection owner distance");
     require(
         inputs.neighbour_normal_distance_m.has_value(),
-        "3D transmissibility neighbour distance");
+        "3D connection neighbour distance");
 
     const auto non_orthogonality =
         op.internal_non_orthogonality(
@@ -3224,28 +3222,6 @@ void require_shared_operator_axis(
         0.0,
         1.0e-14,
         "3D orthogonal non-orthogonality angle");
-
-    const auto strict_admissibility =
-        discretization::classify_internal_face_transmissibility_geometry(
-            op,
-            interface,
-            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                0.0});
-    require(
-        strict_admissibility.disposition ==
-            discretization::TransmissibilityGeometryDisposition3D::
-                direct_normal_projection_allowed,
-        "orthogonal face allows direct normal projection under strict geometry policy");
-    require_close(
-        strict_admissibility.non_orthogonality_angle_rad,
-        0.0,
-        1.0e-14,
-        "orthogonal admissibility angle");
-    require_close(
-        strict_admissibility.max_direct_normal_projection_angle_rad,
-        0.0,
-        0.0,
-        "orthogonal strict admissibility policy");
 
     const auto& face_cells =
         processed.topology.relation(
@@ -3277,14 +3253,6 @@ void require_shared_operator_axis(
         require(
             op.owner_normal_distance_m(local) > 0.0,
             "3D boundary owner normal distance positive");
-        expect_throw<std::invalid_argument>(
-            [&] {
-                (void)discretization::classify_internal_face_transmissibility_geometry(
-                    op,
-                    local,
-                    discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                        0.0});
-            });
         break;
     }
     require(
@@ -3533,58 +3501,22 @@ void cell_face_geometric_operator_3d_skewed() {
                 25.0 * std::acos(-1.0) / 180.0,
         "skewed fixture must be visibly non-orthogonal");
 
-    const auto transmissibility_geometry =
-        op.transmissibility_geometry(
+    const auto connection_geometry =
+        op.face_connection_geometry(
             interface);
     require(
-        transmissibility_geometry
+        connection_geometry
             .internal_non_orthogonality
             .has_value(),
-        "skewed transmissibility geometry exposes non-orthogonality");
+        "skewed connection geometry exposes non-orthogonality");
     require_close(
-        transmissibility_geometry
+        connection_geometry
             .internal_non_orthogonality
             ->angle_rad,
         expected_angle,
         1.0e-14,
-        "skewed transmissibility non-orthogonality angle");
+        "skewed connection non-orthogonality angle");
 
-    const auto strict_admissibility =
-        discretization::classify_internal_face_transmissibility_geometry(
-            op,
-            interface,
-            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                0.0});
-    require(
-        strict_admissibility.disposition ==
-            discretization::TransmissibilityGeometryDisposition3D::
-                requires_non_orthogonal_treatment,
-        "skewed face requires non-orthogonal treatment under strict policy");
-    require_close(
-        strict_admissibility.non_orthogonality_angle_rad,
-        expected_angle,
-        1.0e-14,
-        "skewed admissibility reports actual angle");
-
-    const auto explicit_relaxed_policy =
-        discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-            expected_angle + 1.0e-12};
-    const auto relaxed_admissibility =
-        discretization::classify_internal_face_transmissibility_geometry(
-            op,
-            interface,
-            explicit_relaxed_policy);
-    require(
-        relaxed_admissibility.disposition ==
-            discretization::TransmissibilityGeometryDisposition3D::
-                direct_normal_projection_allowed,
-        "skewed face may use direct projection only under explicit relaxed policy");
-    require_close(
-        relaxed_admissibility.max_direct_normal_projection_angle_rad,
-        explicit_relaxed_policy
-            .max_direct_normal_projection_angle_rad,
-        0.0,
-        "skewed explicit policy is preserved in result");
 }
 
 mesh::FaceGeometry3D modified_face_geometry(
@@ -3625,31 +3557,6 @@ void cell_face_geometric_operator_3d_invalid() {
         baseline.face_owner(interface);
     const auto neighbour =
         *baseline.face_neighbour(interface);
-
-    expect_throw<std::invalid_argument>(
-        [&] {
-            (void)discretization::classify_internal_face_transmissibility_geometry(
-                baseline,
-                interface,
-                discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                    -1.0e-6});
-        });
-    expect_throw<std::invalid_argument>(
-        [&] {
-            (void)discretization::classify_internal_face_transmissibility_geometry(
-                baseline,
-                interface,
-                discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                    std::numeric_limits<double>::quiet_NaN()});
-        });
-    expect_throw<std::invalid_argument>(
-        [&] {
-            (void)discretization::classify_internal_face_transmissibility_geometry(
-                baseline,
-                interface,
-                discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                    0.5 * std::acos(-1.0)});
-        });
 
     const std::vector<mesh::Coordinate3D>
         original_centroids{
@@ -3761,77 +3668,6 @@ mesh::DenseFieldSnapshot synthetic_permeability_field(
                 "cell"}});
 }
 
-void require_strict_k_orthogonal_fixture(
-    const mesh::ActiveCornerPointGrid& processed) {
-    const auto geometry =
-        mesh::make_cell_face_geometric_operator_3d(
-            processed.topology,
-            processed.vertex_coordinates_m,
-            processed.face_geometry);
-    const auto permeability =
-        processed_diagonal_permeability(
-            processed);
-    const auto interface =
-        only_shared_face(
-            processed.topology);
-
-    const auto k_result =
-        discretization::classify_internal_face_k_orthogonality(
-            geometry,
-            permeability,
-            interface,
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                0.0});
-    require(
-        k_result.disposition ==
-            discretization::KOrthogonalityDisposition3D::
-                k_orthogonal_within_policy,
-        "axis-aligned fixture is K-orthogonal under strict policy");
-    require(
-        k_result.owner_half_face.has_value() &&
-            k_result.neighbour_half_face.has_value(),
-        "axis-aligned half-face K directions exist");
-    require_close(
-        k_result.owner_half_face->angle_rad,
-        0.0,
-        1.0e-14,
-        "axis-aligned owner half-face K angle");
-    require_close(
-        k_result.neighbour_half_face->angle_rad,
-        0.0,
-        1.0e-14,
-        "axis-aligned neighbour half-face K angle");
-    require(
-        k_result.center_line_diagnostic.owner.has_value() &&
-            k_result.center_line_diagnostic.neighbour.has_value(),
-        "axis-aligned K*d_cc diagnostics exist");
-    require_close(
-        k_result.center_line_diagnostic.owner->angle_rad,
-        0.0,
-        1.0e-14,
-        "axis-aligned owner K*d_cc diagnostic angle");
-    require_close(
-        k_result.center_line_diagnostic.neighbour->angle_rad,
-        0.0,
-        1.0e-14,
-        "axis-aligned neighbour K*d_cc diagnostic angle");
-
-    const auto combined =
-        discretization::classify_internal_face_transmissibility_admissibility(
-            geometry,
-            permeability,
-            interface,
-            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                0.0},
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                0.0});
-    require(
-        combined.disposition ==
-            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
-                direct_normal_projection_k_orthogonal_candidate,
-        "axis-aligned geometry and K-orthogonality combine to direct candidate");
-}
-
 void permeability_tensor_3d() {
     const auto horizontal =
         mesh::process_active_corner_point_grid(
@@ -3883,150 +3719,6 @@ void permeability_tensor_3d() {
         1.0e-28,
         "second PERMZ maps to Kzz");
 
-    require_strict_k_orthogonal_fixture(
-        horizontal);
-
-    const auto vertical =
-        mesh::process_active_corner_point_grid(
-            mesh::import_grdecl(
-                grdecl_vertical_two_cell_fixture(),
-                mesh::GrdeclImportOptions{
-                    1.0, 1.0e-15}));
-    require_strict_k_orthogonal_fixture(
-        vertical);
-
-    const auto skewed =
-        mesh::process_active_corner_point_grid(
-            mesh::import_grdecl(
-                grdecl_skewed_two_cell_fixture(),
-                mesh::GrdeclImportOptions{
-                    1.0, 1.0e-15}));
-    const auto skewed_geometry =
-        mesh::make_cell_face_geometric_operator_3d(
-            skewed.topology,
-            skewed.vertex_coordinates_m,
-            skewed.face_geometry);
-    const auto skewed_permeability =
-        processed_diagonal_permeability(
-            skewed);
-    const auto interface =
-        only_shared_face(
-            skewed.topology);
-
-    const double geometry_angle =
-        std::acos(5.0 / std::sqrt(29.0));
-    const double owner_k_angle =
-        std::atan(0.2);
-    const double neighbour_k_angle =
-        std::atan(0.15);
-
-    const auto strict_k =
-        discretization::classify_internal_face_k_orthogonality(
-            skewed_geometry,
-            skewed_permeability,
-            interface,
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                0.0});
-    require(
-        strict_k.disposition ==
-            discretization::KOrthogonalityDisposition3D::
-                requires_k_non_orthogonal_treatment,
-        "skewed anisotropic fixture fails strict K-orthogonality");
-    require(
-        strict_k.owner_half_face.has_value() &&
-            strict_k.neighbour_half_face.has_value(),
-        "skewed half-face K directions exist");
-    require_close(
-        strict_k.owner_half_face->angle_rad,
-        owner_k_angle,
-        1.0e-14,
-        "skewed owner half-face co-normal angle");
-    require_close(
-        strict_k.neighbour_half_face->angle_rad,
-        neighbour_k_angle,
-        1.0e-14,
-        "skewed neighbour half-face co-normal angle");
-
-    require(
-        strict_k.center_line_diagnostic.owner.has_value() &&
-            strict_k.center_line_diagnostic.neighbour.has_value(),
-        "skewed K*d_cc diagnostics exist");
-    require_close(
-        strict_k.center_line_diagnostic.owner->angle_rad,
-        geometry_angle,
-        1.0e-14,
-        "skewed owner K*d_cc diagnostic differs from half-face K angle");
-    require_close(
-        strict_k.center_line_diagnostic.neighbour->angle_rad,
-        geometry_angle,
-        1.0e-14,
-        "skewed neighbour K*d_cc diagnostic differs from half-face K angle");
-    require(
-        std::abs(
-            strict_k.center_line_diagnostic.owner->angle_rad -
-            strict_k.owner_half_face->angle_rad) >
-            0.1,
-        "K*d_cc diagnostic must not alias standard K-orthogonality");
-
-    const auto strict_both =
-        discretization::classify_internal_face_transmissibility_admissibility(
-            skewed_geometry,
-            skewed_permeability,
-            interface,
-            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                0.0},
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                0.0});
-    require(
-        strict_both.disposition ==
-            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
-                requires_geometry_and_k_non_orthogonal_treatment,
-        "strict skewed fixture requires geometry and K treatment");
-
-    const auto geometry_relaxed =
-        discretization::classify_internal_face_transmissibility_admissibility(
-            skewed_geometry,
-            skewed_permeability,
-            interface,
-            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                geometry_angle + 1.0e-12},
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                0.0});
-    require(
-        geometry_relaxed.disposition ==
-            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
-                requires_k_non_orthogonal_treatment,
-        "relaxed geometry policy isolates K-non-orthogonality");
-
-    const auto k_relaxed =
-        discretization::classify_internal_face_transmissibility_admissibility(
-            skewed_geometry,
-            skewed_permeability,
-            interface,
-            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                0.0},
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                owner_k_angle + 1.0e-12});
-    require(
-        k_relaxed.disposition ==
-            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
-                requires_geometry_non_orthogonal_treatment,
-        "relaxed K policy isolates geometry non-orthogonality");
-
-    const auto both_relaxed =
-        discretization::classify_internal_face_transmissibility_admissibility(
-            skewed_geometry,
-            skewed_permeability,
-            interface,
-            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                geometry_angle + 1.0e-12},
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                owner_k_angle + 1.0e-12});
-    require(
-        both_relaxed.disposition ==
-            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
-                direct_normal_projection_k_orthogonal_candidate,
-        "explicitly relaxed geometry and K policies produce candidate state");
 }
 
 void permeability_tensor_3d_invalid() {
@@ -4036,15 +3728,6 @@ void permeability_tensor_3d_invalid() {
                 grdecl_two_cell_all_active_fixture(),
                 mesh::GrdeclImportOptions{
                     1.0, 1.0e-15}));
-    const auto geometry =
-        mesh::make_cell_face_geometric_operator_3d(
-            processed.topology,
-            processed.vertex_coordinates_m,
-            processed.face_geometry);
-    const auto interface =
-        only_shared_face(
-            processed.topology);
-
     const auto good_x =
         synthetic_permeability_field(
             processed.topology,
@@ -4098,118 +3781,6 @@ void permeability_tensor_3d_invalid() {
             });
     }
 
-    const auto good =
-        mesh::make_cell_cartesian_diagonal_permeability_3d(
-            processed.topology,
-            good_x,
-            good_y,
-            good_z);
-    expect_throw<std::invalid_argument>(
-        [&] {
-            (void)discretization::classify_internal_face_k_orthogonality(
-                geometry,
-                good,
-                interface,
-                discretization::KOrthogonalityAdmissibilityPolicy3D{
-                    -1.0e-6});
-        });
-    expect_throw<std::invalid_argument>(
-        [&] {
-            (void)discretization::classify_internal_face_k_orthogonality(
-                geometry,
-                good,
-                interface,
-                discretization::KOrthogonalityAdmissibilityPolicy3D{
-                    std::numeric_limits<double>::quiet_NaN()});
-        });
-    expect_throw<std::invalid_argument>(
-        [&] {
-            (void)discretization::classify_internal_face_k_orthogonality(
-                geometry,
-                good,
-                interface,
-                discretization::KOrthogonalityAdmissibilityPolicy3D{
-                    0.5 * std::acos(-1.0)});
-        });
-
-    const auto& face_cells =
-        processed.topology.relation(
-            mesh::EntityKind::face,
-            mesh::EntityKind::cell);
-    for (std::size_t face = 0U;
-         face < processed.topology.entity_count(
-             mesh::EntityKind::face);
-         ++face) {
-        const auto local =
-            mesh::LocalIndex{
-                static_cast<
-                    mesh::LocalIndex::value_type>(
-                        face)};
-        if (face_cells.adjacent(local).size() == 1U) {
-            expect_throw<std::invalid_argument>(
-                [&] {
-                    (void)discretization::classify_internal_face_k_orthogonality(
-                        geometry,
-                        good,
-                        local,
-                        discretization::KOrthogonalityAdmissibilityPolicy3D{
-                            0.0});
-                });
-            break;
-        }
-    }
-
-    const auto zero =
-        synthetic_permeability_field(
-            processed.topology,
-            "PERMX",
-            "m2",
-            {0.0, 0.0});
-    const auto zero_y =
-        synthetic_permeability_field(
-            processed.topology,
-            "PERMY",
-            "m2",
-            {0.0, 0.0});
-    const auto zero_z =
-        synthetic_permeability_field(
-            processed.topology,
-            "PERMZ",
-            "m2",
-            {0.0, 0.0});
-    const auto degenerate =
-        mesh::make_cell_cartesian_diagonal_permeability_3d(
-            processed.topology,
-            zero,
-            zero_y,
-            zero_z);
-    const auto degenerate_k =
-        discretization::classify_internal_face_k_orthogonality(
-            geometry,
-            degenerate,
-            interface,
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                0.0});
-    require(
-        degenerate_k.disposition ==
-            discretization::KOrthogonalityDisposition3D::
-                degenerate_permeability_direction,
-        "zero permeability produces explicit degenerate K direction");
-
-    const auto combined =
-        discretization::classify_internal_face_transmissibility_admissibility(
-            geometry,
-            degenerate,
-            interface,
-            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
-                0.0},
-            discretization::KOrthogonalityAdmissibilityPolicy3D{
-                0.0});
-    require(
-        combined.disposition ==
-            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
-                degenerate_permeability_direction,
-        "combined admissibility preserves degenerate permeability state");
 }
 
 
