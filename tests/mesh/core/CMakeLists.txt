@@ -11,8 +11,11 @@ add_executable(mpmc_mesh_core_tests
     corner_point_geometry_3d_header_self_contained.cpp
     active_corner_point_header_self_contained.cpp
     topology_header_self_contained.cpp
+    cartesian_1d_header_self_contained.cpp
+    geometry_1d_header_self_contained.cpp
     cartesian_2d_header_self_contained.cpp
     geometry_2d_header_self_contained.cpp
+    cartesian_3d_header_self_contained.cpp
     gmsh_4_1_header_self_contained.cpp
     gmsh_4_1_3d_header_self_contained.cpp
     grdecl_header_self_contained.cpp
@@ -34,9 +37,16 @@ add_executable(mpmc_mesh_io3d_tests
     io_3d_test.cpp)
 target_link_libraries(mpmc_mesh_io3d_tests PRIVATE mpmc::mesh)
 
+add_executable(mpmc_mesh_cartesian_structured_tests
+    cartesian_structured_test.cpp)
+target_link_libraries(
+    mpmc_mesh_cartesian_structured_tests
+    PRIVATE mpmc::mesh)
+
 foreach(target IN ITEMS
         mpmc_mesh_core_tests
-        mpmc_mesh_io3d_tests)
+        mpmc_mesh_io3d_tests
+        mpmc_mesh_cartesian_structured_tests)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
 
     if(MSVC)
@@ -56,7 +66,8 @@ if(MPMC_MESH_ENABLE_SANITIZERS)
     endif()
     foreach(target IN ITEMS
             mpmc_mesh_core_tests
-            mpmc_mesh_io3d_tests)
+            mpmc_mesh_io3d_tests
+            mpmc_mesh_cartesian_structured_tests)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -79,8 +90,18 @@ set_tests_properties(
         LABELS "mesh;mesh.core;io;3d;unit"
         TIMEOUT 30)
 
+add_test(
+    NAME mesh.core.cartesian_structured
+    COMMAND mpmc_mesh_cartesian_structured_tests)
+set_tests_properties(
+    mesh.core.cartesian_structured
+    PROPERTIES
+        LABELS "mesh;mesh.core;cartesian;structured;unit"
+        TIMEOUT 30)
+
 add_custom_target(
     mpmc_mesh_core_all
     DEPENDS
         mpmc_mesh_core_tests
-        mpmc_mesh_io3d_tests)
+        mpmc_mesh_io3d_tests
+        mpmc_mesh_cartesian_structured_tests)

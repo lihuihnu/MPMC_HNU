@@ -1,5 +1,6 @@
 #include <mpmc/mesh/active_corner_point.hpp>
 #include <mpmc/mesh/cartesian_2d.hpp>
+#include <mpmc/mesh/cartesian_3d.hpp>
 #include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
@@ -7912,6 +7913,172 @@ void verify_structural_column_pattern_sorting_fixture(
         "multi-neighbour finalized column storage is compact across rows");
 }
 
+void verify_cartesian_3d_dmplex(
+    int mpi_rank,
+    int mpi_size) {
+    require(
+        mpi_size == 2 &&
+            (mpi_rank == 0 ||
+             mpi_rank == 1),
+        "Cartesian 3D PETSc fixture requires two MPI ranks");
+
+    const std::array<double, 3>
+        x{0.0, 1.0, 3.0};
+    const std::array<double, 2>
+        y{0.0, 2.0};
+    const std::array<double, 2>
+        z{0.0, 1.0};
+    const auto fixture =
+        mesh::make_cartesian_mesh_3d(
+            x,
+            y,
+            z);
+
+    DM source_dm = nullptr;
+    std::vector<
+        mesh_petsc::DMPlexPointIdentity>
+        source_identities;
+    require_petsc(
+        mesh_petsc::create_root_dmplex_topology(
+            PETSC_COMM_WORLD,
+            0,
+            mpi_rank == 0
+                ? &fixture.topology
+                : nullptr,
+            &source_dm,
+            &source_identities),
+        "create rooted Cartesian 3D DMPlex");
+
+    std::span<const mesh::Coordinate3D>
+        root_coordinates;
+    if (mpi_rank == 0) {
+        root_coordinates =
+            fixture.vertex_coordinates_m;
+    }
+    require_petsc(
+        mesh_petsc::attach_root_vertex_coordinates_3d(
+            source_dm,
+            0,
+            root_coordinates,
+            source_identities),
+        "attach rooted Cartesian 3D coordinates");
+
+    PetscInt dimension = -1;
+    require_petsc(
+        DMGetDimension(
+            source_dm,
+            &dimension),
+        "Cartesian 3D source dimension");
+    require(
+        dimension == 3,
+        "Cartesian structured source DMPlex is 3D");
+
+    PetscPartitioner partitioner = nullptr;
+    require_petsc(
+        DMPlexGetPartitioner(
+            source_dm,
+            &partitioner),
+        "Cartesian 3D DMPlexGetPartitioner");
+    require_petsc(
+        PetscPartitionerSetType(
+            partitioner,
+            PETSCPARTITIONERSIMPLE),
+        "Cartesian 3D simple partitioner");
+
+    PetscSF migration_sf = nullptr;
+    DM distributed_dm = nullptr;
+    require_petsc(
+        DMPlexDistribute(
+            source_dm,
+            0,
+            &migration_sf,
+            &distributed_dm),
+        "distribute Cartesian 3D DMPlex");
+    require(
+        migration_sf != nullptr &&
+            distributed_dm != nullptr,
+        "Cartesian 3D distribution outputs");
+
+    std::vector<
+        mesh_petsc::DMPlexPointIdentity>
+        distributed_identities;
+    require_petsc(
+        mesh_petsc::migrate_dmplex_identities(
+            source_dm,
+            migration_sf,
+            source_identities,
+            distributed_dm,
+            &distributed_identities),
+        "migrate Cartesian 3D identities");
+
+    PetscInt cell_start = 0;
+    PetscInt cell_end = 0;
+    require_petsc(
+        DMPlexGetHeightStratum(
+            distributed_dm,
+            0,
+            &cell_start,
+            &cell_end),
+        "Cartesian 3D distributed cell stratum");
+    const int local_cells =
+        static_cast<int>(
+            cell_end - cell_start);
+    int global_cells = 0;
+    require(
+        MPI_Allreduce(
+            &local_cells,
+            &global_cells,
+            1,
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "Cartesian 3D global cell count");
+    require(
+        global_cells == 2,
+        "Cartesian 3D distribution preserves both cells");
+
+    PetscSF overlap_sf = nullptr;
+    DM overlap_dm = nullptr;
+    require_petsc(
+        DMPlexDistributeOverlap(
+            distributed_dm,
+            1,
+            &overlap_sf,
+            &overlap_dm),
+        "Cartesian 3D depth-1 overlap");
+    require(
+        overlap_sf != nullptr &&
+            overlap_dm != nullptr,
+        "Cartesian 3D overlap outputs");
+
+    PetscInt overlap_dimension = -1;
+    require_petsc(
+        DMGetDimension(
+            overlap_dm,
+            &overlap_dimension),
+        "Cartesian 3D overlap dimension");
+    require(
+        overlap_dimension == 3,
+        "Cartesian 3D overlap remains 3D");
+
+    require_petsc(
+        PetscSFDestroy(&overlap_sf),
+        "destroy Cartesian 3D overlap SF");
+    require_petsc(
+        DMDestroy(&overlap_dm),
+        "destroy Cartesian 3D overlap DM");
+    require_petsc(
+        PetscSFDestroy(&migration_sf),
+        "destroy Cartesian 3D migration SF");
+    require_petsc(
+        DMDestroy(&distributed_dm),
+        "destroy Cartesian 3D distributed DM");
+    require_petsc(
+        DMDestroy(&source_dm),
+        "destroy Cartesian 3D source DM");
+}
+
 void verify_linear_3d_cell_families_dmplex(
     int mpi_rank,
     int mpi_size) {
@@ -8140,6 +8307,9 @@ void run_two_rank_test() {
     require(mpi_rank == 0 || mpi_rank == 1, "unexpected MPI rank");
 
     const auto rank = static_cast<std::uint32_t>(mpi_rank);
+    verify_cartesian_3d_dmplex(
+        mpi_rank,
+        mpi_size);
     verify_linear_3d_cell_families_dmplex(
         mpi_rank,
         mpi_size);
