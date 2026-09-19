@@ -349,16 +349,12 @@ classify_internal_face_k_orthogonality(
     const auto neighbour_conormal =
         apply(neighbour_tensor, neighbour_normal);
 
+    // K*n has permeability units (m2), so its degeneracy tolerance must
+    // be scaled only by a permeability magnitude. Do not multiply by length.
     const double owner_scale =
-        maximum_component(owner_tensor) *
-        std::max(
-            magnitude(owner_to_face),
-            non_orthogonality->center_distance_m);
+        maximum_component(owner_tensor);
     const double neighbour_scale =
-        maximum_component(neighbour_tensor) *
-        std::max(
-            magnitude(*neighbour_to_face),
-            non_orthogonality->center_distance_m);
+        maximum_component(neighbour_tensor);
 
     const auto owner_half_face =
         alignment(
