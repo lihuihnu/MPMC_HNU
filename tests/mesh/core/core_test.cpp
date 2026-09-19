@@ -15,6 +15,7 @@
 #include <mpmc/mesh/permeability_tensor_3d.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
 #include <mpmc/mesh/topology.hpp>
+#include <mpmc/mesh/tpfa_half_connection_3d.hpp>
 #include <mpmc/mesh/vtu.hpp>
 
 #include <array>
@@ -4210,6 +4211,336 @@ void permeability_tensor_3d_invalid() {
         "combined admissibility preserves degenerate permeability state");
 }
 
+
+void tpfa_half_connection_3d() {
+    const auto horizontal =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto horizontal_geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            horizontal.topology,
+            horizontal.vertex_coordinates_m,
+            horizontal.face_geometry);
+    const auto horizontal_permeability =
+        processed_diagonal_permeability(
+            horizontal);
+    const auto horizontal_interface =
+        only_shared_face(
+            horizontal.topology);
+
+    const auto owner =
+        mesh::make_owner_tpfa_half_connection_coefficient_3d(
+            horizontal_geometry,
+            horizontal_permeability,
+            horizontal_interface);
+    require(
+        owner.projection ==
+            mesh::TpfaHalfConnectionProjection3D::
+                positive_projection,
+        "horizontal owner half connection positive projection");
+    require_close(
+        owner.normal_permeability_displacement_m3,
+        50.0e-15,
+        1.0e-28,
+        "horizontal owner nTKd");
+    require_close(
+        owner.squared_distance_m2,
+        0.25,
+        1.0e-14,
+        "horizontal owner dTd");
+    require_close(
+        owner.coefficient_m,
+        200.0e-15,
+        1.0e-28,
+        "horizontal owner one-sided coefficient");
+
+    const auto neighbour =
+        mesh::make_neighbour_tpfa_half_connection_coefficient_3d(
+            horizontal_geometry,
+            horizontal_permeability,
+            horizontal_interface);
+    require(
+        neighbour.projection ==
+            mesh::TpfaHalfConnectionProjection3D::
+                positive_projection,
+        "horizontal neighbour half connection positive projection");
+    require_close(
+        neighbour.normal_permeability_displacement_m3,
+        100.0e-15,
+        1.0e-28,
+        "horizontal neighbour nTKd");
+    require_close(
+        neighbour.squared_distance_m2,
+        0.25,
+        1.0e-14,
+        "horizontal neighbour dTd");
+    require_close(
+        neighbour.coefficient_m,
+        400.0e-15,
+        1.0e-28,
+        "horizontal neighbour one-sided coefficient");
+
+    const auto vertical =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_vertical_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto vertical_geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            vertical.topology,
+            vertical.vertex_coordinates_m,
+            vertical.face_geometry);
+    const auto vertical_permeability =
+        processed_diagonal_permeability(
+            vertical);
+    const auto vertical_interface =
+        only_shared_face(
+            vertical.topology);
+
+    const auto vertical_owner =
+        mesh::make_owner_tpfa_half_connection_coefficient_3d(
+            vertical_geometry,
+            vertical_permeability,
+            vertical_interface);
+    const auto vertical_neighbour =
+        mesh::make_neighbour_tpfa_half_connection_coefficient_3d(
+            vertical_geometry,
+            vertical_permeability,
+            vertical_interface);
+    require_close(
+        vertical_owner.coefficient_m,
+        20.0e-15,
+        1.0e-28,
+        "vertical owner one-sided coefficient");
+    require_close(
+        vertical_neighbour.coefficient_m,
+        24.0e-15,
+        1.0e-28,
+        "vertical neighbour one-sided coefficient");
+
+    const auto skewed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_skewed_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto skewed_geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            skewed.topology,
+            skewed.vertex_coordinates_m,
+            skewed.face_geometry);
+    const auto skewed_permeability =
+        processed_diagonal_permeability(
+            skewed);
+    const auto skewed_interface =
+        only_shared_face(
+            skewed.topology);
+    const double sqrt29 =
+        std::sqrt(29.0);
+
+    const auto skewed_owner =
+        mesh::make_owner_tpfa_half_connection_coefficient_3d(
+            skewed_geometry,
+            skewed_permeability,
+            skewed_interface);
+    const auto skewed_neighbour =
+        mesh::make_neighbour_tpfa_half_connection_coefficient_3d(
+            skewed_geometry,
+            skewed_permeability,
+            skewed_interface);
+    require_close(
+        skewed_owner.normal_permeability_displacement_m3,
+        250.0e-15 / sqrt29,
+        1.0e-28,
+        "skewed owner nTKd");
+    require_close(
+        skewed_owner.coefficient_m,
+        1000.0e-15 / sqrt29,
+        1.0e-28,
+        "skewed owner one-sided coefficient");
+    require_close(
+        skewed_neighbour.normal_permeability_displacement_m3,
+        500.0e-15 / sqrt29,
+        1.0e-28,
+        "skewed neighbour nTKd");
+    require_close(
+        skewed_neighbour.coefficient_m,
+        2000.0e-15 / sqrt29,
+        1.0e-28,
+        "skewed neighbour one-sided coefficient");
+
+    const auto strict_admissibility =
+        mesh::classify_internal_face_transmissibility_admissibility(
+            skewed_geometry,
+            skewed_permeability,
+            skewed_interface,
+            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                0.0},
+            mesh::KOrthogonalityAdmissibilityPolicy3D{
+                0.0});
+    require(
+        strict_admissibility.disposition ==
+            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+                requires_geometry_and_k_non_orthogonal_treatment,
+        "skewed one-sided coefficients do not bypass strict admissibility");
+}
+
+void tpfa_half_connection_3d_invalid() {
+    const auto positive_tensor =
+        mesh::CartesianDiagonalPermeabilityTensor3D{
+            100.0e-15,
+            50.0e-15,
+            10.0e-15};
+    const auto unit_x =
+        mesh::UnitVector3D{
+            1.0, 0.0, 0.0};
+    const auto half_x =
+        mesh::Displacement3D{
+            0.5, 0.0, 0.0};
+
+    const auto zero_projection =
+        mesh::make_tpfa_half_connection_coefficient_3d(
+            mesh::CartesianDiagonalPermeabilityTensor3D{
+                0.0,
+                50.0e-15,
+                10.0e-15},
+            unit_x,
+            half_x);
+    require(
+        zero_projection.projection ==
+            mesh::TpfaHalfConnectionProjection3D::
+                zero_projection &&
+            zero_projection
+                    .normal_permeability_displacement_m3 ==
+                0.0 &&
+            zero_projection.coefficient_m == 0.0,
+        "zero normal permeability projection remains explicit zero coefficient");
+    require_close(
+        zero_projection.squared_distance_m2,
+        0.25,
+        0.0,
+        "zero projection keeps positive dTd");
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_tpfa_half_connection_coefficient_3d(
+                mesh::CartesianDiagonalPermeabilityTensor3D{
+                    -1.0,
+                    1.0,
+                    1.0},
+                unit_x,
+                half_x);
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_tpfa_half_connection_coefficient_3d(
+                positive_tensor,
+                mesh::UnitVector3D{
+                    2.0, 0.0, 0.0},
+                half_x);
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_tpfa_half_connection_coefficient_3d(
+                positive_tensor,
+                unit_x,
+                mesh::Displacement3D{
+                    0.0, 0.0, 0.0});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_tpfa_half_connection_coefficient_3d(
+                positive_tensor,
+                unit_x,
+                mesh::Displacement3D{
+                    std::numeric_limits<double>::
+                        quiet_NaN(),
+                    0.0,
+                    0.0});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_tpfa_half_connection_coefficient_3d(
+                positive_tensor,
+                mesh::UnitVector3D{
+                    -1.0, 0.0, 0.0},
+                half_x);
+        });
+
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            processed.topology,
+            processed.vertex_coordinates_m,
+            processed.face_geometry);
+    const auto permeability =
+        processed_diagonal_permeability(
+            processed);
+
+    const auto& face_cells =
+        processed.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    bool checked_boundary = false;
+    for (std::size_t face = 0U;
+         face < processed.topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        if (face_cells.adjacent(local).size() != 1U) {
+            continue;
+        }
+        const auto boundary_owner =
+            mesh::make_owner_tpfa_half_connection_coefficient_3d(
+                geometry,
+                permeability,
+                local);
+        require(
+            boundary_owner.squared_distance_m2 > 0.0,
+            "boundary owner half connection remains independently defined");
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::make_neighbour_tpfa_half_connection_coefficient_3d(
+                    geometry,
+                    permeability,
+                    local);
+            });
+        checked_boundary = true;
+        break;
+    }
+    require(
+        checked_boundary,
+        "TPFA half-connection invalid test found boundary face");
+
+    const auto mismatched_permeability =
+        mesh::CellCartesianDiagonalPermeability3D{
+            {mesh::CartesianDiagonalPermeabilityTensor3D{
+                100.0e-15,
+                50.0e-15,
+                10.0e-15}}};
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_owner_tpfa_half_connection_coefficient_3d(
+                geometry,
+                mismatched_permeability,
+                only_shared_face(
+                    processed.topology));
+        });
+}
+
 void dof_layout_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
     const auto layout = mesh::DofLayout::create(
@@ -5149,6 +5480,8 @@ int main(int argc, char** argv) {
         else if (name == "cell_face_geometric_operator_3d_invalid") { cell_face_geometric_operator_3d_invalid(); }
         else if (name == "permeability_tensor_3d") { permeability_tensor_3d(); }
         else if (name == "permeability_tensor_3d_invalid") { permeability_tensor_3d_invalid(); }
+        else if (name == "tpfa_half_connection_3d") { tpfa_half_connection_3d(); }
+        else if (name == "tpfa_half_connection_3d_invalid") { tpfa_half_connection_3d_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
