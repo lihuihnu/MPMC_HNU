@@ -2322,7 +2322,7 @@ void grdecl_invalid() {
         [&] {
             (void)mesh::import_grdecl(
                 grdecl_single_cell_fixture(
-                    "4*1 4*1 4*0 4*0", 0),
+                    "4*1 4*0", 0),
                 options);
         });
 
