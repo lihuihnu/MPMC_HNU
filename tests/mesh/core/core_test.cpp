@@ -2607,9 +2607,22 @@ void active_corner_point_i_neighbor() {
         repeated.topology,
         processed.topology);
     require(
-        repeated.vertex_coordinates_m ==
-            processed.vertex_coordinates_m,
-        "active corner-point deterministic vertex ordering");
+        repeated.vertex_coordinates_m.size() ==
+            processed.vertex_coordinates_m.size(),
+        "active corner-point deterministic vertex count");
+    for (std::size_t vertex = 0U;
+         vertex < processed.vertex_coordinates_m.size();
+         ++vertex) {
+        const auto a =
+            repeated.vertex_coordinates_m[vertex];
+        const auto e =
+            processed.vertex_coordinates_m[vertex];
+        require(
+            a.x_m == e.x_m &&
+            a.y_m == e.y_m &&
+            a.z_m == e.z_m,
+            "active corner-point deterministic vertex ordering");
+    }
 }
 
 void active_corner_point_k_neighbor() {
