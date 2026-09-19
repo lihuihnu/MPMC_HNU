@@ -17,6 +17,7 @@
 #include <mpmc/mesh/topology.hpp>
 #include <mpmc/mesh/tpfa_half_connection_3d.hpp>
 #include <mpmc/mesh/tpfa_half_transmissibility_3d.hpp>
+#include <mpmc/mesh/tpfa_internal_face_transmissibility_snapshot_3d.hpp>
 #include <mpmc/mesh/tpfa_static_face_transmissibility_3d.hpp>
 #include <mpmc/mesh/vtu.hpp>
 
@@ -5234,6 +5235,400 @@ void tpfa_static_face_transmissibility_3d_invalid() {
         "static TPFA invalid test found boundary face");
 }
 
+
+void tpfa_internal_face_transmissibility_snapshot_3d() {
+    const auto horizontal =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto horizontal_geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            horizontal.topology,
+            horizontal.vertex_coordinates_m,
+            horizontal.face_geometry);
+    const auto horizontal_permeability =
+        processed_diagonal_permeability(
+            horizontal);
+    const auto horizontal_interface =
+        only_shared_face(
+            horizontal.topology);
+
+    const auto strict_geometry_policy =
+        mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            0.0};
+    const auto strict_k_policy =
+        mesh::KOrthogonalityAdmissibilityPolicy3D{
+            0.0};
+
+    const auto horizontal_snapshot =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            horizontal_geometry,
+            horizontal_permeability,
+            strict_geometry_policy,
+            strict_k_policy);
+
+    require(
+        horizontal_snapshot.total_face_count() ==
+                horizontal_geometry.face_count() &&
+            horizontal_snapshot.internal_face_count() ==
+                1U &&
+            horizontal_snapshot.materialized_face_count() ==
+                1U &&
+            horizontal_snapshot.blocked_face_count() ==
+                0U,
+        "strict orthogonal snapshot materializes exactly one internal face");
+    require_close(
+        horizontal_snapshot
+            .geometry_policy()
+            .max_direct_normal_projection_angle_rad,
+        0.0,
+        0.0,
+        "snapshot retains strict geometry policy");
+    require_close(
+        horizontal_snapshot
+            .k_policy()
+            .max_half_face_co_normal_angle_rad,
+        0.0,
+        0.0,
+        "snapshot retains strict K policy");
+
+    const auto& horizontal_entry =
+        horizontal_snapshot.entry(
+            horizontal_interface);
+    require(
+        horizontal_entry.disposition ==
+                mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                    materialized &&
+            horizontal_entry.admissibility.disposition ==
+                mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+                    direct_normal_projection_k_orthogonal_candidate &&
+            horizontal_entry
+                .static_transmissibility
+                .has_value(),
+        "strict orthogonal internal face is materialized");
+    require_close(
+        horizontal_entry
+            .static_transmissibility
+            ->face_transmissibility_m3,
+        400.0e-15 / 3.0,
+        1.0e-28,
+        "gated snapshot stores static face transmissibility");
+
+    const auto& face_cells =
+        horizontal.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    bool checked_boundary = false;
+    for (std::size_t face = 0U;
+         face < horizontal_geometry.face_count();
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        if (face_cells.adjacent(local).size() !=
+            1U) {
+            continue;
+        }
+        require(
+            !horizontal_snapshot
+                .contains_internal_face(local),
+            "boundary face is absent from internal-face snapshot");
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)horizontal_snapshot.entry(
+                    local);
+            });
+        checked_boundary = true;
+        break;
+    }
+    require(
+        checked_boundary,
+        "gated snapshot test found boundary face");
+
+    const auto skewed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_skewed_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto skewed_geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            skewed.topology,
+            skewed.vertex_coordinates_m,
+            skewed.face_geometry);
+    const auto skewed_permeability =
+        processed_diagonal_permeability(
+            skewed);
+    const auto skewed_interface =
+        only_shared_face(
+            skewed.topology);
+    const double geometry_angle =
+        std::acos(
+            5.0 / std::sqrt(29.0));
+    const double owner_k_angle =
+        std::atan(0.2);
+
+    const auto blocked_both =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            skewed_geometry,
+            skewed_permeability,
+            strict_geometry_policy,
+            strict_k_policy);
+    const auto& blocked_both_entry =
+        blocked_both.entry(
+            skewed_interface);
+    require(
+        blocked_both.materialized_face_count() ==
+                0U &&
+            blocked_both.blocked_face_count() ==
+                1U &&
+            blocked_both_entry.disposition ==
+                mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                    blocked_geometry_and_k_non_orthogonal &&
+            !blocked_both_entry
+                 .static_transmissibility
+                 .has_value(),
+        "strict skewed face is blocked without materializing T_f");
+
+    const auto blocked_k =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            skewed_geometry,
+            skewed_permeability,
+            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                geometry_angle + 1.0e-12},
+            strict_k_policy);
+    require(
+        blocked_k.entry(
+            skewed_interface)
+                .disposition ==
+            mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                blocked_k_non_orthogonal &&
+            !blocked_k.entry(
+                skewed_interface)
+                 .static_transmissibility
+                 .has_value(),
+        "relaxed geometry policy leaves K-only block");
+
+    const auto blocked_geometry =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            skewed_geometry,
+            skewed_permeability,
+            strict_geometry_policy,
+            mesh::KOrthogonalityAdmissibilityPolicy3D{
+                owner_k_angle + 1.0e-12});
+    require(
+        blocked_geometry.entry(
+            skewed_interface)
+                .disposition ==
+            mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                blocked_geometry_non_orthogonal &&
+            !blocked_geometry.entry(
+                skewed_interface)
+                 .static_transmissibility
+                 .has_value(),
+        "relaxed K policy leaves geometry-only block");
+
+    const auto relaxed_both =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            skewed_geometry,
+            skewed_permeability,
+            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                geometry_angle + 1.0e-12},
+            mesh::KOrthogonalityAdmissibilityPolicy3D{
+                owner_k_angle + 1.0e-12});
+    const auto& relaxed_entry =
+        relaxed_both.entry(
+            skewed_interface);
+    require(
+        relaxed_entry.disposition ==
+                mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                    materialized &&
+            relaxed_entry.static_transmissibility.has_value(),
+        "explicitly relaxed geometry/K policies materialize skewed face");
+    require_close(
+        relaxed_entry
+            .static_transmissibility
+            ->face_transmissibility_m3,
+        400.0e-15 / 3.0,
+        1.0e-28,
+        "relaxed gated snapshot stores skewed static transmissibility");
+
+    const auto zero_permeability =
+        mesh::CellCartesianDiagonalPermeability3D{
+            {
+                mesh::CartesianDiagonalPermeabilityTensor3D{
+                    0.0, 0.0, 0.0},
+                mesh::CartesianDiagonalPermeabilityTensor3D{
+                    0.0, 0.0, 0.0},
+            }};
+    const auto degenerate_snapshot =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            horizontal_geometry,
+            zero_permeability,
+            strict_geometry_policy,
+            strict_k_policy);
+    const auto& degenerate_entry =
+        degenerate_snapshot.entry(
+            horizontal_interface);
+    require(
+        degenerate_entry.disposition ==
+                mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                    blocked_degenerate_permeability_direction &&
+            !degenerate_entry
+                 .static_transmissibility
+                 .has_value(),
+        "degenerate permeability blocks transmissibility materialization");
+}
+
+void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            processed.topology,
+            processed.vertex_coordinates_m,
+            processed.face_geometry);
+    const auto permeability =
+        processed_diagonal_permeability(
+            processed);
+    const auto interface =
+        only_shared_face(
+            processed.topology);
+
+    const auto valid =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            geometry,
+            permeability,
+            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                0.0},
+            mesh::KOrthogonalityAdmissibilityPolicy3D{
+                0.0});
+    const auto valid_entry =
+        valid.entry(interface);
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
+                geometry.face_count(),
+                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                    -1.0},
+                mesh::KOrthogonalityAdmissibilityPolicy3D{
+                    0.0},
+                {}};
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
+                geometry.face_count(),
+                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                    0.0},
+                mesh::KOrthogonalityAdmissibilityPolicy3D{
+                    std::numeric_limits<double>::
+                        quiet_NaN()},
+                {}};
+        });
+
+    {
+        auto duplicate =
+            std::vector<
+                mesh::TpfaInternalFaceTransmissibilityEntry3D>{
+                valid_entry,
+                valid_entry};
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
+                    geometry.face_count(),
+                    valid.geometry_policy(),
+                    valid.k_policy(),
+                    std::move(duplicate)};
+            });
+    }
+
+    {
+        auto missing =
+            valid_entry;
+        missing.static_transmissibility =
+            std::nullopt;
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
+                    geometry.face_count(),
+                    valid.geometry_policy(),
+                    valid.k_policy(),
+                    {missing}};
+            });
+    }
+
+    {
+        auto non_finite =
+            valid_entry;
+        non_finite
+            .static_transmissibility
+            ->face_transmissibility_m3 =
+            std::numeric_limits<double>::
+                quiet_NaN();
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
+                    geometry.face_count(),
+                    valid.geometry_policy(),
+                    valid.k_policy(),
+                    {non_finite}};
+            });
+    }
+
+    {
+        auto blocked =
+            valid_entry;
+        blocked.disposition =
+            mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                blocked_geometry_non_orthogonal;
+        blocked.admissibility.disposition =
+            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+                requires_geometry_non_orthogonal_treatment;
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
+                    geometry.face_count(),
+                    valid.geometry_policy(),
+                    valid.k_policy(),
+                    {blocked}};
+            });
+    }
+
+    const auto mismatched_permeability =
+        mesh::CellCartesianDiagonalPermeability3D{
+            {mesh::CartesianDiagonalPermeabilityTensor3D{
+                100.0e-15,
+                50.0e-15,
+                10.0e-15}}};
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+                geometry,
+                mismatched_permeability,
+                valid.geometry_policy(),
+                valid.k_policy());
+        });
+
+    expect_throw<std::out_of_range>(
+        [&] {
+            (void)valid.contains_internal_face(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            geometry.face_count())});
+        });
+}
+
 void dof_layout_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
     const auto layout = mesh::DofLayout::create(
@@ -6179,6 +6574,8 @@ int main(int argc, char** argv) {
         else if (name == "tpfa_half_transmissibility_3d_invalid") { tpfa_half_transmissibility_3d_invalid(); }
         else if (name == "tpfa_static_face_transmissibility_3d") { tpfa_static_face_transmissibility_3d(); }
         else if (name == "tpfa_static_face_transmissibility_3d_invalid") { tpfa_static_face_transmissibility_3d_invalid(); }
+        else if (name == "tpfa_internal_face_transmissibility_snapshot_3d") { tpfa_internal_face_transmissibility_snapshot_3d(); }
+        else if (name == "tpfa_internal_face_transmissibility_snapshot_3d_invalid") { tpfa_internal_face_transmissibility_snapshot_3d_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
