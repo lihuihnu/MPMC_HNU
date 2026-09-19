@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已覆盖 local/global `PetscSection`、entity/point/section SF、global/local Vec、serial/distributed DMPlex topology、coordinates/geometry，以及 distributed boundary/property migration。`FaceBoundarySnapshot` 的 classification + 32-bit `PhysicalTag` 与 cell/face/vertex `DenseFieldSnapshot` values 现在都通过真实 PETSc migration SF 在 distribute 与 depth-1 overlap 两段迁移，并按 64-bit stable `GlobalEntityId` 重建 core snapshots；字段级 provenance metadata 原样保留。core 仍不依赖 PETSc/MPI；不含 Mat、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；新增最小 Gmsh MSH 4.1 ASCII importer，可将 2D linear triangle/quad、nodes/elements、boundary Physical Groups 转成 `Topology + Geometry2D + FaceBoundarySnapshot`，并保留 PhysicalNames 与逐-cell surface Physical Group metadata。导入的 mixed triangle/quad 已进入既有 `mpmc::mesh_petsc` distribute/overlap 链，验证 stable identity、coordinates/geometry、boundary tags 与 cell property 在 owned/ghost 视图中一致。core 仍不依赖 PETSc/MPI；不含 binary/high-order/3D Gmsh、Mat、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -58,7 +58,7 @@
 本 PR 合并前至少覆盖以下实用入口：
 
 1. 内建 Cartesian 生成：当前已有 2D `nx × ny` topology builder，以及由任意严格递增 x/y 轴坐标生成非均匀 Cartesian metric geometry；后续仍需 1D/3D；
-2. Gmsh MSH：至少支持当前常用 4.1 网格的导入，并能导出仓库支持的实体、physical tags 与字段子集；
+2. Gmsh MSH：当前已建立 4.1 ASCII 2D 导入基线：`$MeshFormat/$PhysicalNames/$Entities/$Nodes/$Elements`，支持 2-node line、3-node triangle、4-node quad；node/element tags 可稀疏且乱序，最终 local ordering 按 stable tag 确定性压紧。调用方必须显式给出 `coordinate_scale_to_m`，本基线只接受可映射到 `Geometry2D` 的 XY-plane 网格。vertex `GlobalEntityId` 使用 Gmsh node tag，cell 使用 2D element tag；显式 line element 对应 face 使用其 element tag，未在文件中出现的内部 cell edge 由 importer 重建，并从 `max(all element tags)+1` 起按确定性 edge order 分配 generated face ID。curve entity 最多允许一个 Physical Group，因为 `FaceBoundarySnapshot` 每 face 只有一个 `PhysicalTag`；surface Physical Groups 可多重归属并保留在 `GmshCellPhysicalGroups` metadata 中。parametric nodes、binary、high-order、concave quad、非 XY-plane、embedded line 不落在 cell edge、3D 与导出仍显式不支持；
 3. VTK UnstructuredGrid：至少一种标准 VTK/VTU 路径可完成几何、拓扑和 cell/point fields 的 round-trip；
 4. reservoir corner-point：至少支持 Eclipse 风格 GRDECL 的核心 `SPECGRID/COORD/ZCORN/ACTNUM` 导入，并能读取常用 `PORO/PERMX/PERMY/PERMZ` 属性。
 
@@ -108,11 +108,13 @@ distributed boundary/property gate 继续复用两段真实 migration SF。`migr
 
 `migrate_dense_field_snapshot()` 以 source `DenseFieldSnapshot` 的 location/component_count 为 point-section DoF，使用 `MPI_DOUBLE` 迁移 entity-major components，并按迁移后的 `DMPlexPointIdentity` 重建实际 core `DenseFieldSnapshot`。gate 同时覆盖 cell scalar（1 component）、face field（2 components）和 vertex field（3 components）。字段 metadata 保持字段级 provenance，不作为 per-point payload 重复发送：`id`、`unit`、`FieldSourceKind::synthetic_test`、`reference`、`revision`、`locator` 在重建 snapshot 中逐项保持不变。测试执行严格两段链路：root snapshot → distribute snapshot → overlap snapshot；第二段只消费第一段重建结果。每个 target value/tag 最终都按 stable `GlobalEntityId` 回查 root reference，因此 owned 与 ghost copy 必须完全一致。
 
-当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现通用 partition policy、超过 depth-1 的 overlap、constraint DoF、真实 halo buffer abstraction、Mat integration 或残差/Jacobian；这些不得由当前 adapter 冒充完成。
+Gmsh importer 下游 gate 使用一个同一 surface 内相邻的 triangle+quad fixture：5 个 sparse/out-of-order node tags、5 个 physical boundary line elements、2 个 surface cells，内部共享 edge 不在 `$Elements` 中，因此 importer 必须生成 stable face ID 203。core 回归核对 topology relation widths、generated internal face、PhysicalTag、surface Physical Group、显式 SI scale 后的 centroid/area/face length，并覆盖 binary/high-order/missing-node/multi-boundary-group/nonplanar 拒绝路径。随后同一导入结果在 2-rank PETSc gate 中由 rank 0 进入 rooted DMPlex，`PETSCPARTITIONERSIMPLE` 分发后仍保持一个 triangle 与一个 quad；coordinates、FaceBoundarySnapshot 与一个带 provenance metadata 的 cell `DenseFieldSnapshot` 分别经过 distribute 与 depth-1 overlap migration，并按 stable `GlobalEntityId` 在 owned/ghost 两侧重新核验。
+
+当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现通用 partition policy、超过 depth-1 的 overlap、Gmsh binary/high-order/3D/export、constraint DoF、真实 halo buffer abstraction、Mat integration 或残差/Jacobian；这些不得由当前 adapter/importer 冒充完成。
 
 后续适配层仍可负责：
 
-- 在已经验证的 distributed DMPlex topology/geometry/boundary/field gate 上补最小 Gmsh 4.1 导入，使外部 unstructured mesh 能进入同一 stable-identity/PETSc 分发链；
+- 在已验证的 Gmsh 4.1 import 基线上补最小 ASCII export/round-trip，只导出当前支持的 linear triangle/quad、boundary Physical Groups 与 stable node/cell identities；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
