@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；新增最小 Gmsh MSH 4.1 ASCII importer，可将 2D linear triangle/quad、nodes/elements、boundary Physical Groups 转成 `Topology + Geometry2D + FaceBoundarySnapshot`，并保留 PhysicalNames 与逐-cell surface Physical Group metadata。导入的 mixed triangle/quad 已进入既有 `mpmc::mesh_petsc` distribute/overlap 链，验证 stable identity、coordinates/geometry、boundary tags 与 cell property 在 owned/ghost 视图中一致。core 仍不依赖 PETSc/MPI；不含 binary/high-order/3D Gmsh、Mat、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；Gmsh MSH 4.1 ASCII 已有 2D import/export round-trip，并新增最小 VTK XML UnstructuredGrid（`.vtu`）ASCII import/export round-trip。VTU baseline 支持单 Piece linear triangle/quad、XY-plane vertex coordinates、stable cell identity，以及 point/cell `DenseFieldSnapshot`；Gmsh mixed triangle/quad 仍已进入既有 `mpmc::mesh_petsc` distribute/overlap 链。core 仍不依赖 PETSc/MPI；不含 VTU binary/appended/compressed、Gmsh binary/high-order/3D、Mat、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -59,7 +59,7 @@
 
 1. 内建 Cartesian 生成：当前已有 2D `nx × ny` topology builder，以及由任意严格递增 x/y 轴坐标生成非均匀 Cartesian metric geometry；后续仍需 1D/3D；
 2. Gmsh MSH：当前已建立 4.1 ASCII 2D import/export 基线，覆盖 `$MeshFormat/$PhysicalNames/$Entities/$Nodes/$Elements`，支持 2-node line、3-node triangle、4-node quad。import 允许 sparse/out-of-order node/element tags，并按 stable tag 确定性压紧 local ordering；调用方显式提供 `coordinate_scale_to_m`，仅接受可映射到 `Geometry2D` 的 XY-plane mesh。vertex `GlobalEntityId` 使用 Gmsh node tag，cell 使用 2D element tag；显式 line element 对应 face 使用其 element tag，缺失的内部 cell edge 由 importer 重建并从 `max(all element tags)+1` 起确定性生成 face ID。export 以 SI metre 写出 coordinates，为每个 vertex/face/cell 构造 point/curve/surface entity，并把 face 与 cell `GlobalEntityId` 原样写回 line/2D element tag，因此 generated internal face ID 也能 round-trip 保留。boundary `PhysicalTag`、surface multi-Physical-Group membership 与 `PhysicalNames` 均写回；curve entity 仍最多允许一个 Physical Group，因为 `FaceBoundarySnapshot` 每 face 只有一个 `PhysicalTag`。parametric nodes、binary、high-order、concave quad、非 XY-plane、3D、post-processing field sections 与通用 Gmsh data export 仍显式不支持；
-3. VTK UnstructuredGrid：至少一种标准 VTK/VTU 路径可完成几何、拓扑和 cell/point fields 的 round-trip；
+3. VTK XML UnstructuredGrid：当前已建立 `.vtu` ASCII 单-Piece import/export round-trip。import 要求 `VTKFile type="UnstructuredGrid"`，`Points` 为 Float32/Float64 三分量且 z≈0，`Cells` 为标准 `connectivity + offsets + types`；connectivity/offsets 接受 Int32/Int64，types 接受 UInt8，cell type 只支持 VTK_TRIANGLE=5 与 VTK_QUAD=9。point/cell DataArray 当前只映射 Float32/Float64 为 `DenseFieldSnapshot`，component count 原样保留。稳定 cell identity 使用保留的 `CellData/DataArray Name="mpmc_global_cell_id"`（UInt64/Int64）；外部文件若缺失则按 cell 文件顺序生成确定性 `1..N`，export 总是写回 UInt64 identity array。vertex ID 当前按 point order 生成 `1..N`，faces 从 cell edges 确定性重建。字段数值走标准 PointData/CellData；为满足 core 强制的 unit/source provenance，export 额外写 `mpmc_unit/mpmc_source_kind/mpmc_source_reference/mpmc_source_revision/mpmc_source_locator` XML attributes，import 在存在时恢复，缺失时生成明确的 file-import 默认 metadata。export 使用 Float64 points/fields、Int64 connectivity/offsets 与 UInt8 types。binary、appended、compressor、多 Piece、3D/high-order、非三角/四边形以及整数型物理字段均显式不支持；
 4. reservoir corner-point：至少支持 Eclipse 风格 GRDECL 的核心 `SPECGRID/COORD/ZCORN/ACTNUM` 导入，并能读取常用 `PORO/PERMX/PERMY/PERMZ` 属性。
 
 若某格式只实现声明的子集，必须在解析器入口与文档中显式拒绝未支持特性；不得“读取成功”后丢失高阶节点、物理组、inactive cell 或字段。
@@ -110,11 +110,13 @@ distributed boundary/property gate 继续复用两段真实 migration SF。`migr
 
 Gmsh importer 下游 gate 使用一个同一 surface 内相邻的 triangle+quad fixture：5 个 sparse/out-of-order node tags、5 个 physical boundary line elements、2 个 surface cells，内部共享 edge 不在 `$Elements` 中，因此 importer 必须生成 stable face ID 203。core 回归核对 topology relation widths、generated internal face、PhysicalTag、surface Physical Group、显式 SI scale 后的 centroid/area/face length，并覆盖 binary/high-order/missing-node/multi-boundary-group/nonplanar 拒绝路径。round-trip gate 进一步把每个 cell 的 surface membership 扩为 `{21,22}`，执行 `import(scale-to-m=2) -> export(SI metre) -> import(scale-to-m=1)`，逐项比较 vertex/face/cell stable IDs、四类 CSR relations、全部 `Geometry2D` metric、`FaceBoundarySnapshot`、`PhysicalNames` 与逐-cell surface Physical Groups。export 会为所有 faces（包括内部 face）写出 line element，因此 generated face 203 不会再次分配新 ID。随后同一导入结果在 2-rank PETSc gate 中由 rank 0 进入 rooted DMPlex，`PETSCPARTITIONERSIMPLE` 分发后仍保持一个 triangle 与一个 quad；coordinates、FaceBoundarySnapshot 与一个带 provenance metadata 的 cell `DenseFieldSnapshot` 分别经过 distribute 与 depth-1 overlap migration，并按 stable `GlobalEntityId` 在 owned/ghost 两侧重新核验。
 
+VTU gate 使用同样的相邻 triangle+quad 2D 形状，`Points` 5 个点、`Cells` offsets=`{3,7}`、types=`{5,9}`，并包含一个 2-component point field 与一个 2-component cell field。cell identity 专门使用 `9223372036854775813`（超过 signed int64 上限）与 `7000000003`，验证 UInt64 不被缩窄；point field provenance 中含 XML `&amp;` 转义，验证 metadata escape/unescape。round-trip 执行 `VTU ASCII -> core -> VTU ASCII -> core`，逐项比较 vertex/face/cell IDs、四类 CSR relations、`Geometry2D`、point/cell field layout/value/metadata。invalid gate 覆盖 appended、compressor、unsupported cell type、non-planar coordinate、malformed offsets、duplicate cell IDs 与 reserved field-name collision。
+
 当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现通用 partition policy、超过 depth-1 的 overlap、Gmsh binary/high-order/3D、Gmsh NodeData/ElementData/ElementNodeData export、constraint DoF、真实 halo buffer abstraction、Mat integration 或残差/Jacobian；这些不得由当前 adapter/importer/exporter 冒充完成。
 
 后续适配层仍可负责：
 
-- 在已验证的 Gmsh 4.1 import/export round-trip 基线上建立最小 VTK XML UnstructuredGrid（VTU）ASCII import/export round-trip，先覆盖 triangle/quad geometry 与 point/cell fields；
+- 在已验证的 Gmsh/VTU 2D I/O 基线上建立最小 GRDECL `SPECGRID/COORD/ZCORN/ACTNUM` parser contract，先锁定 corner-point geometry、inactive-cell identity 与 PORO/PERM 属性映射，不进入流动离散；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
