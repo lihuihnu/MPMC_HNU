@@ -26,6 +26,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace mpmc::mesh_petsc {
@@ -3876,6 +3877,395 @@ inline PetscErrorCode migrate_stable_face_gated_tpfa_snapshot_3d(
         return disposition_free_error;
     }
     return value_free_error;
+}
+
+
+struct TargetLocalGatedTpfaTransmissibilityEntry3D {
+    mpmc::mesh::LocalIndex face;
+    mpmc::mesh::GlobalEntityId global;
+    mpmc::mesh::TpfaInternalFaceTransmissibilityDisposition3D
+        disposition;
+    std::optional<double> transmissibility_m3;
+};
+
+/// Read-only target-local view for assembly-facing static TPFA data.
+///
+/// Membership comes from the stable transported internal-face snapshot, not
+/// target-local DMPlex support cardinality. This is required at overlap=0,
+/// where a globally internal shared face can have only one local supporting
+/// cell because the remote cell is absent from the rank-local DM.
+class TargetLocalGatedTpfaTransmissibilityView3D {
+public:
+    TargetLocalGatedTpfaTransmissibilityView3D(
+        std::size_t target_face_count,
+        mpmc::mesh::
+            TransmissibilityGeometryAdmissibilityPolicy3D
+                geometry_policy,
+        mpmc::mesh::KOrthogonalityAdmissibilityPolicy3D
+            k_policy,
+        std::vector<
+            TargetLocalGatedTpfaTransmissibilityEntry3D>
+                entries)
+        : target_face_count_(target_face_count),
+          geometry_policy_(geometry_policy),
+          k_policy_(k_policy),
+          entries_(std::move(entries)),
+          face_to_entry_(target_face_count) {
+        validate_and_index();
+    }
+
+    TargetLocalGatedTpfaTransmissibilityView3D(
+        const TargetLocalGatedTpfaTransmissibilityView3D&) =
+        default;
+    TargetLocalGatedTpfaTransmissibilityView3D(
+        TargetLocalGatedTpfaTransmissibilityView3D&&) noexcept =
+        default;
+    TargetLocalGatedTpfaTransmissibilityView3D& operator=(
+        const TargetLocalGatedTpfaTransmissibilityView3D&) =
+        delete;
+    TargetLocalGatedTpfaTransmissibilityView3D& operator=(
+        TargetLocalGatedTpfaTransmissibilityView3D&&) =
+        delete;
+    ~TargetLocalGatedTpfaTransmissibilityView3D() = default;
+
+    [[nodiscard]] std::size_t
+    target_face_count() const noexcept {
+        return target_face_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    internal_face_count() const noexcept {
+        return entries_.size();
+    }
+
+    [[nodiscard]] std::size_t
+    materialized_face_count() const noexcept {
+        return materialized_face_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    blocked_face_count() const noexcept {
+        return entries_.size() -
+               materialized_face_count_;
+    }
+
+    [[nodiscard]] mpmc::mesh::
+        TransmissibilityGeometryAdmissibilityPolicy3D
+    geometry_policy() const noexcept {
+        return geometry_policy_;
+    }
+
+    [[nodiscard]]
+    mpmc::mesh::KOrthogonalityAdmissibilityPolicy3D
+    k_policy() const noexcept {
+        return k_policy_;
+    }
+
+    [[nodiscard]] std::span<
+        const TargetLocalGatedTpfaTransmissibilityEntry3D>
+    entries() const noexcept {
+        return entries_;
+    }
+
+    [[nodiscard]] bool contains_internal_face(
+        mpmc::mesh::LocalIndex face) const {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                face.value());
+        if (local >= target_face_count_) {
+            throw std::out_of_range(
+                "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: face index out of range");
+        }
+        return face_to_entry_[local].has_value();
+    }
+
+    [[nodiscard]]
+    const TargetLocalGatedTpfaTransmissibilityEntry3D&
+    entry(mpmc::mesh::LocalIndex face) const {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                face.value());
+        if (local >= target_face_count_) {
+            throw std::out_of_range(
+                "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: face index out of range");
+        }
+        const auto mapped =
+            face_to_entry_[local];
+        if (!mapped.has_value()) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: face is not a transported internal face");
+        }
+        return entries_.at(*mapped);
+    }
+
+    [[nodiscard]] mpmc::mesh::GlobalEntityId
+    global_id(mpmc::mesh::LocalIndex face) const {
+        return entry(face).global;
+    }
+
+    [[nodiscard]] mpmc::mesh::
+        TpfaInternalFaceTransmissibilityDisposition3D
+    disposition(mpmc::mesh::LocalIndex face) const {
+        return entry(face).disposition;
+    }
+
+    [[nodiscard]] std::optional<double>
+    optional_transmissibility_m3(
+        mpmc::mesh::LocalIndex face) const {
+        return entry(face).transmissibility_m3;
+    }
+
+    /// Return the assembly-usable static T_f [m3].
+    ///
+    /// Blocked faces deliberately reject this accessor rather than returning
+    /// zero or another sentinel that could accidentally enter an assembly.
+    [[nodiscard]] double transmissibility_m3(
+        mpmc::mesh::LocalIndex face) const {
+        const auto& local_entry =
+            entry(face);
+        if (!local_entry
+                 .transmissibility_m3
+                 .has_value()) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: blocked face has no assembly-usable transmissibility");
+        }
+        return *local_entry.transmissibility_m3;
+    }
+
+private:
+    void validate_and_index() {
+        const double half_pi =
+            0.5 * std::acos(-1.0);
+        if (!std::isfinite(
+                geometry_policy_
+                    .max_direct_normal_projection_angle_rad) ||
+            geometry_policy_
+                    .max_direct_normal_projection_angle_rad <
+                0.0 ||
+            geometry_policy_
+                    .max_direct_normal_projection_angle_rad >=
+                half_pi ||
+            !std::isfinite(
+                k_policy_
+                    .max_half_face_co_normal_angle_rad) ||
+            k_policy_
+                    .max_half_face_co_normal_angle_rad <
+                0.0 ||
+            k_policy_
+                    .max_half_face_co_normal_angle_rad >=
+                half_pi) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: policy angles must be finite in [0, pi/2)");
+        }
+
+        materialized_face_count_ = 0U;
+        for (std::size_t index = 0U;
+             index < entries_.size();
+             ++index) {
+            const auto& local_entry =
+                entries_[index];
+            const std::size_t local =
+                static_cast<std::size_t>(
+                    local_entry.face.value());
+            if (local >= target_face_count_) {
+                throw std::out_of_range(
+                    "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: entry face index out of range");
+            }
+            if (face_to_entry_[local].has_value()) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: duplicate local face entry");
+            }
+            for (std::size_t prior = 0U;
+                 prior < index;
+                 ++prior) {
+                if (entries_[prior].global ==
+                    local_entry.global) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: duplicate stable face GlobalEntityId");
+                }
+            }
+
+            const bool has_value =
+                local_entry
+                    .transmissibility_m3
+                    .has_value();
+            switch (local_entry.disposition) {
+            case mpmc::mesh::
+                TpfaInternalFaceTransmissibilityDisposition3D::
+                    materialized:
+                if (!has_value ||
+                    !std::isfinite(
+                        *local_entry
+                             .transmissibility_m3) ||
+                    *local_entry
+                         .transmissibility_m3 <=
+                        0.0) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: materialized face requires finite positive T_f");
+                }
+                ++materialized_face_count_;
+                break;
+            case mpmc::mesh::
+                TpfaInternalFaceTransmissibilityDisposition3D::
+                    blocked_geometry_non_orthogonal:
+            case mpmc::mesh::
+                TpfaInternalFaceTransmissibilityDisposition3D::
+                    blocked_k_non_orthogonal:
+            case mpmc::mesh::
+                TpfaInternalFaceTransmissibilityDisposition3D::
+                    blocked_geometry_and_k_non_orthogonal:
+            case mpmc::mesh::
+                TpfaInternalFaceTransmissibilityDisposition3D::
+                    blocked_degenerate_permeability_direction:
+                if (has_value) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: blocked face must not expose T_f");
+                }
+                break;
+            default:
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D: invalid disposition");
+            }
+
+            face_to_entry_[local] = index;
+        }
+    }
+
+    std::size_t target_face_count_;
+    mpmc::mesh::
+        TransmissibilityGeometryAdmissibilityPolicy3D
+            geometry_policy_;
+    mpmc::mesh::KOrthogonalityAdmissibilityPolicy3D
+        k_policy_;
+    std::vector<
+        TargetLocalGatedTpfaTransmissibilityEntry3D>
+            entries_;
+    std::vector<std::optional<std::size_t>>
+        face_to_entry_;
+    std::size_t materialized_face_count_{0U};
+};
+
+inline PetscErrorCode
+make_target_local_gated_tpfa_transmissibility_view_3d(
+    DM target_dm,
+    const StableFaceGatedTpfaSnapshot3D& transport,
+    std::span<const DMPlexPointIdentity> target_identities,
+    std::optional<
+        TargetLocalGatedTpfaTransmissibilityView3D>* output) {
+    if (target_dm == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+
+    PetscErrorCode error =
+        validate_stable_face_gated_tpfa_snapshot_3d(
+            transport);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscInt face_start = -1;
+    PetscInt face_end = -1;
+    error = DMPlexGetHeightStratum(
+        target_dm,
+        1,
+        &face_start,
+        &face_end);
+    if (error != PETSC_SUCCESS ||
+        face_start < 0 ||
+        face_end < face_start) {
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+    const std::size_t face_count =
+        static_cast<std::size_t>(
+            face_end - face_start);
+
+    std::vector<std::uint8_t> identity_face_seen(
+        face_count,
+        std::uint8_t{0U});
+    for (const auto& identity :
+         target_identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::face) {
+            continue;
+        }
+        if (identity.point < face_start ||
+            identity.point >= face_end) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        const std::size_t expected_local =
+            static_cast<std::size_t>(
+                identity.point -
+                face_start);
+        if (local >= face_count ||
+            local != expected_local ||
+            identity_face_seen[local] !=
+                std::uint8_t{0U}) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        identity_face_seen[local] =
+            std::uint8_t{1U};
+    }
+    if (std::find(
+            identity_face_seen.begin(),
+            identity_face_seen.end(),
+            std::uint8_t{0U}) !=
+        identity_face_seen.end()) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    std::vector<
+        TargetLocalGatedTpfaTransmissibilityEntry3D>
+            entries;
+    entries.reserve(
+        transport.entry_count());
+
+    for (std::size_t entry = 0U;
+         entry < transport.entry_count();
+         ++entry) {
+        const auto global =
+            transport.face_global_ids[entry];
+        const auto found =
+            std::find_if(
+                target_identities.begin(),
+                target_identities.end(),
+                [global](
+                    const DMPlexPointIdentity& identity) {
+                    return identity.kind ==
+                               mpmc::mesh::EntityKind::face &&
+                           identity.global ==
+                               global;
+                });
+        if (found == target_identities.end()) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        entries.push_back(
+            TargetLocalGatedTpfaTransmissibilityEntry3D{
+                found->local,
+                global,
+                transport.dispositions[entry],
+                transport
+                    .materialized_face_transmissibilities_m3[
+                        entry]});
+    }
+
+    try {
+        output->emplace(
+            face_count,
+            transport.geometry_policy,
+            transport.k_policy,
+            std::move(entries));
+    } catch (...) {
+        output->reset();
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    return PETSC_SUCCESS;
 }
 
 inline PetscErrorCode migrate_dense_field_snapshot(
