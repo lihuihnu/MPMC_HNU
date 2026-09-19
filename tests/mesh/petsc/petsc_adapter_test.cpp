@@ -125,6 +125,392 @@ PERMZ
     return mesh::process_active_corner_point_grid(raw);
 }
 
+
+struct SerialCoordinateView3D {
+    PetscSection section;
+    Vec values;
+    const PetscScalar* array;
+};
+
+SerialCoordinateView3D get_serial_coordinate_view_3d(DM dm) {
+    PetscInt coordinate_dim = -1;
+    require_petsc(
+        DMGetCoordinateDim(dm, &coordinate_dim),
+        "serial 3D DMGetCoordinateDim");
+    require(
+        coordinate_dim == 3,
+        "serial processed GRDECL coordinate dimension");
+
+    PetscSection section = nullptr;
+    Vec values = nullptr;
+    require_petsc(
+        DMGetCoordinateSection(dm, &section),
+        "serial 3D DMGetCoordinateSection");
+    require(
+        section != nullptr,
+        "serial 3D coordinate section");
+    require_petsc(
+        DMGetCoordinatesLocal(dm, &values),
+        "serial 3D DMGetCoordinatesLocal");
+    require(
+        values != nullptr,
+        "serial 3D local coordinate vector");
+
+    const PetscScalar* array = nullptr;
+    require_petsc(
+        VecGetArrayRead(values, &array),
+        "serial 3D VecGetArrayRead coordinates");
+    return SerialCoordinateView3D{
+        section, values, array};
+}
+
+void restore_serial_coordinate_view_3d(
+    SerialCoordinateView3D* view) {
+    require(
+        view != nullptr,
+        "serial 3D coordinate view pointer");
+    require_petsc(
+        VecRestoreArrayRead(
+            view->values, &view->array),
+        "serial 3D VecRestoreArrayRead coordinates");
+}
+
+mesh::Coordinate3D serial_vertex_coordinate_3d(
+    const SerialCoordinateView3D& view,
+    PetscInt point) {
+    PetscInt dof = -1;
+    PetscInt offset = -1;
+    require_petsc(
+        PetscSectionGetDof(
+            view.section, point, &dof),
+        "serial 3D vertex coordinate dof");
+    require_petsc(
+        PetscSectionGetOffset(
+            view.section, point, &offset),
+        "serial 3D vertex coordinate offset");
+    require(
+        dof == 3 && offset >= 0,
+        "serial DMPlex vertex must carry three coordinate DoFs");
+    return mesh::Coordinate3D{
+        static_cast<double>(
+            PetscRealPart(
+                view.array[
+                    static_cast<std::size_t>(
+                        offset)])),
+        static_cast<double>(
+            PetscRealPart(
+                view.array[
+                    static_cast<std::size_t>(
+                        offset + 1)])),
+        static_cast<double>(
+            PetscRealPart(
+                view.array[
+                    static_cast<std::size_t>(
+                        offset + 2)]))};
+}
+
+struct TestVector3D {
+    double x;
+    double y;
+    double z;
+};
+
+TestVector3D subtract(
+    mesh::Coordinate3D left,
+    mesh::Coordinate3D right) {
+    return TestVector3D{
+        left.x_m - right.x_m,
+        left.y_m - right.y_m,
+        left.z_m - right.z_m};
+}
+
+TestVector3D subtract(
+    mesh::Coordinate3D left,
+    TestVector3D right) {
+    return TestVector3D{
+        left.x_m - right.x,
+        left.y_m - right.y,
+        left.z_m - right.z};
+}
+
+TestVector3D cross(
+    TestVector3D left,
+    TestVector3D right) {
+    return TestVector3D{
+        left.y * right.z - left.z * right.y,
+        left.z * right.x - left.x * right.z,
+        left.x * right.y - left.y * right.x};
+}
+
+double dot(
+    TestVector3D left,
+    TestVector3D right) {
+    return left.x * right.x +
+           left.y * right.y +
+           left.z * right.z;
+}
+
+double magnitude(TestVector3D value) {
+    return std::sqrt(dot(value, value));
+}
+
+TestVector3D scaled(
+    TestVector3D value,
+    double factor) {
+    return TestVector3D{
+        value.x * factor,
+        value.y * factor,
+        value.z * factor};
+}
+
+mesh::Coordinate3D triangle_centroid(
+    mesh::Coordinate3D a,
+    mesh::Coordinate3D b,
+    mesh::Coordinate3D c) {
+    return mesh::Coordinate3D{
+        (a.x_m + b.x_m + c.x_m) / 3.0,
+        (a.y_m + b.y_m + c.y_m) / 3.0,
+        (a.z_m + b.z_m + c.z_m) / 3.0};
+}
+
+TestVector3D triangle_area_vector(
+    mesh::Coordinate3D a,
+    mesh::Coordinate3D b,
+    mesh::Coordinate3D c) {
+    return scaled(
+        cross(subtract(b, a), subtract(c, a)),
+        0.5);
+}
+
+mesh::Coordinate3D serial_cell_vertex_mean(
+    DM dm,
+    const SerialCoordinateView3D& view,
+    PetscInt cell) {
+    PetscInt vertex_start = -1;
+    PetscInt vertex_end = -1;
+    require_petsc(
+        DMPlexGetDepthStratum(
+            dm, 0, &vertex_start, &vertex_end),
+        "serial 3D vertex stratum for cell centroid");
+
+    PetscInt closure_size = 0;
+    PetscInt* closure = nullptr;
+    require_petsc(
+        DMPlexGetTransitiveClosure(
+            dm, cell, PETSC_TRUE,
+            &closure_size, &closure),
+        "serial 3D cell transitive closure");
+
+    std::vector<PetscInt> vertices;
+    vertices.reserve(8U);
+    for (PetscInt i = 0;
+         i < closure_size;
+         ++i) {
+        const PetscInt point = closure[2 * i];
+        if (point < vertex_start ||
+            point >= vertex_end) {
+            continue;
+        }
+        if (std::find(
+                vertices.begin(),
+                vertices.end(),
+                point) == vertices.end()) {
+            vertices.push_back(point);
+        }
+    }
+    require_petsc(
+        DMPlexRestoreTransitiveClosure(
+            dm, cell, PETSC_TRUE,
+            &closure_size, &closure),
+        "serial 3D restore cell transitive closure");
+    require(
+        vertices.size() == 8U,
+        "serial hexa closure must contain eight unique vertices");
+
+    mesh::Coordinate3D mean{
+        0.0, 0.0, 0.0};
+    for (const PetscInt vertex : vertices) {
+        const auto coordinate =
+            serial_vertex_coordinate_3d(
+                view, vertex);
+        mean.x_m += coordinate.x_m;
+        mean.y_m += coordinate.y_m;
+        mean.z_m += coordinate.z_m;
+    }
+    mean.x_m /= 8.0;
+    mean.y_m /= 8.0;
+    mean.z_m /= 8.0;
+    return mean;
+}
+
+struct SerialFaceMetric3D {
+    mesh::Coordinate3D centroid;
+    double area;
+    mesh::UnitVector3D owner_unit_normal;
+};
+
+SerialFaceMetric3D serial_face_metric_3d(
+    DM dm,
+    const SerialCoordinateView3D& view,
+    PetscInt face,
+    PetscInt owner_cell) {
+    PetscInt cone_size = -1;
+    const PetscInt* cone = nullptr;
+    require_petsc(
+        DMPlexGetConeSize(
+            dm, face, &cone_size),
+        "serial 3D face cone size for metric");
+    require_petsc(
+        DMPlexGetCone(dm, face, &cone),
+        "serial 3D face cone for metric");
+    require(
+        cone_size == 4 && cone != nullptr,
+        "serial 3D metric face must be a quad");
+
+    std::array<mesh::Coordinate3D, 4> p{};
+    for (std::size_t i = 0U;
+         i < p.size();
+         ++i) {
+        p[i] = serial_vertex_coordinate_3d(
+            view, cone[i]);
+    }
+
+    const auto area_vector0 =
+        triangle_area_vector(
+            p[0], p[1], p[2]);
+    const auto area_vector1 =
+        triangle_area_vector(
+            p[0], p[2], p[3]);
+    const double area0 =
+        magnitude(area_vector0);
+    const double area1 =
+        magnitude(area_vector1);
+    require(
+        area0 > 0.0 && area1 > 0.0,
+        "serial 3D face triangles must be nondegenerate");
+
+    const auto centroid0 =
+        triangle_centroid(
+            p[0], p[1], p[2]);
+    const auto centroid1 =
+        triangle_centroid(
+            p[0], p[2], p[3]);
+    const double area = area0 + area1;
+    const mesh::Coordinate3D centroid{
+        (area0 * centroid0.x_m +
+         area1 * centroid1.x_m) / area,
+        (area0 * centroid0.y_m +
+         area1 * centroid1.y_m) / area,
+        (area0 * centroid0.z_m +
+         area1 * centroid1.z_m) / area};
+
+    TestVector3D total{
+        area_vector0.x + area_vector1.x,
+        area_vector0.y + area_vector1.y,
+        area_vector0.z + area_vector1.z};
+    const double total_magnitude =
+        magnitude(total);
+    require(
+        total_magnitude > 0.0,
+        "serial 3D quad resultant area vector");
+    total = scaled(
+        total, 1.0 / total_magnitude);
+
+    const auto owner_centroid =
+        serial_cell_vertex_mean(
+            dm, view, owner_cell);
+    if (dot(
+            total,
+            subtract(
+                centroid,
+                owner_centroid)) < 0.0) {
+        total = scaled(total, -1.0);
+    }
+
+    return SerialFaceMetric3D{
+        centroid,
+        area,
+        mesh::UnitVector3D{
+            total.x, total.y, total.z}};
+}
+
+double serial_cell_volume_3d(
+    DM dm,
+    const SerialCoordinateView3D& view,
+    PetscInt cell) {
+    const auto cell_centroid =
+        serial_cell_vertex_mean(
+            dm, view, cell);
+
+    PetscInt cone_size = -1;
+    const PetscInt* faces = nullptr;
+    require_petsc(
+        DMPlexGetConeSize(
+            dm, cell, &cone_size),
+        "serial 3D cell cone size for volume");
+    require_petsc(
+        DMPlexGetCone(dm, cell, &faces),
+        "serial 3D cell cone for volume");
+    require(
+        cone_size == 6 && faces != nullptr,
+        "serial hexa volume requires six quad faces");
+
+    double signed_volume = 0.0;
+    for (PetscInt f = 0;
+         f < cone_size;
+         ++f) {
+        PetscInt face_cone_size = -1;
+        const PetscInt* face_vertices = nullptr;
+        require_petsc(
+            DMPlexGetConeSize(
+                dm, faces[f], &face_cone_size),
+            "serial 3D volume face cone size");
+        require_petsc(
+            DMPlexGetCone(
+                dm, faces[f], &face_vertices),
+            "serial 3D volume face cone");
+        require(
+            face_cone_size == 4 &&
+                face_vertices != nullptr,
+            "serial hexa volume face must be quad");
+
+        std::array<mesh::Coordinate3D, 4> p{};
+        for (std::size_t i = 0U;
+             i < p.size();
+             ++i) {
+            p[i] =
+                serial_vertex_coordinate_3d(
+                    view, face_vertices[i]);
+        }
+
+        for (const auto triangle :
+             {std::array<std::size_t, 3>{0U, 1U, 2U},
+              std::array<std::size_t, 3>{0U, 2U, 3U}}) {
+            const auto a = p[triangle[0]];
+            const auto b = p[triangle[1]];
+            const auto c = p[triangle[2]];
+            auto area_vector =
+                triangle_area_vector(a, b, c);
+            const auto centroid =
+                triangle_centroid(a, b, c);
+            if (dot(
+                    area_vector,
+                    subtract(
+                        centroid,
+                        cell_centroid)) < 0.0) {
+                area_vector =
+                    scaled(area_vector, -1.0);
+            }
+            signed_volume +=
+                (centroid.x_m * area_vector.x +
+                 centroid.y_m * area_vector.y +
+                 centroid.z_m * area_vector.z) /
+                3.0;
+        }
+    }
+    return std::abs(signed_volume);
+}
+
 void verify_serial_dmplex_processed_grdecl() {
     const auto processed =
         processed_grdecl_two_by_one_all_active();
@@ -143,6 +529,12 @@ void verify_serial_dmplex_processed_grdecl() {
         mesh_petsc::create_serial_dmplex_topology(
             topology, &dm, &identities),
         "create_serial_dmplex_topology processed GRDECL");
+    require_petsc(
+        mesh_petsc::attach_serial_vertex_coordinates_3d(
+            dm,
+            processed.vertex_coordinates_m,
+            identities),
+        "attach processed GRDECL serial 3D coordinates");
 
     PetscInt dimension = -1;
     PetscInt depth = -1;
@@ -392,6 +784,160 @@ void verify_serial_dmplex_processed_grdecl() {
     require(
         shared_face_count == 1U,
         "processed GRDECL DMPlex must preserve exactly one shared face");
+
+    constexpr double geometry_tolerance =
+        1.0e-12;
+    auto coordinate_view =
+        get_serial_coordinate_view_3d(dm);
+
+    for (const auto& identity : identities) {
+        PetscInt dof = -1;
+        require_petsc(
+            PetscSectionGetDof(
+                coordinate_view.section,
+                identity.point,
+                &dof),
+            "processed GRDECL coordinate point dof");
+
+        if (identity.kind !=
+            mesh::EntityKind::vertex) {
+            require(
+                dof == 0,
+                "only processed DMPlex vertices may carry coordinates");
+            continue;
+        }
+
+        require(
+            dof == 3,
+            "processed DMPlex vertex coordinate width");
+        const auto actual =
+            serial_vertex_coordinate_3d(
+                coordinate_view,
+                identity.point);
+        const auto expected =
+            processed.vertex_coordinates_m[
+                static_cast<std::size_t>(
+                    identity.local.value())];
+        require(
+            std::abs(actual.x_m - expected.x_m) <=
+                    geometry_tolerance &&
+                std::abs(actual.y_m - expected.y_m) <=
+                    geometry_tolerance &&
+                std::abs(actual.z_m - expected.z_m) <=
+                    geometry_tolerance,
+            "serial DMPlex coordinates must match processed GRDECL vertex_coordinates_m");
+    }
+
+    for (std::size_t face = 0U;
+         face < 11U;
+         ++face) {
+        const auto local = mesh::LocalIndex{
+            static_cast<
+                mesh::LocalIndex::value_type>(
+                    face)};
+        const PetscInt point =
+            2 + static_cast<PetscInt>(face);
+
+        PetscInt support_size = -1;
+        const PetscInt* support = nullptr;
+        require_petsc(
+            DMPlexGetSupportSize(
+                dm, point, &support_size),
+            "processed GRDECL metric face support size");
+        require_petsc(
+            DMPlexGetSupport(
+                dm, point, &support),
+            "processed GRDECL metric face support");
+        require(
+            support_size >= 1 &&
+                support != nullptr,
+            "processed GRDECL metric face owner support");
+
+        const auto expected_owner =
+            processed.face_geometry.face_owner(
+                local);
+        require(
+            support[0] ==
+                static_cast<PetscInt>(
+                    expected_owner.value()),
+            "serial DMPlex first face support must preserve core owner");
+
+        const auto actual =
+            serial_face_metric_3d(
+                dm,
+                coordinate_view,
+                point,
+                support[0]);
+        const auto expected_centroid =
+            processed.face_geometry
+                .face_centroid_m(local);
+        const double expected_area =
+            processed.face_geometry
+                .face_area_m2(local);
+        const auto expected_normal =
+            processed.face_geometry
+                .face_owner_unit_normal(local);
+
+        require(
+            std::abs(
+                actual.centroid.x_m -
+                expected_centroid.x_m) <=
+                    geometry_tolerance &&
+                std::abs(
+                    actual.centroid.y_m -
+                    expected_centroid.y_m) <=
+                    geometry_tolerance &&
+                std::abs(
+                    actual.centroid.z_m -
+                    expected_centroid.z_m) <=
+                    geometry_tolerance,
+            "serial DMPlex face centroid must match FaceGeometry3D");
+        require(
+            std::abs(
+                actual.area -
+                expected_area) <=
+                    geometry_tolerance,
+            "serial DMPlex face area must match FaceGeometry3D");
+        require(
+            std::abs(
+                actual.owner_unit_normal.x -
+                expected_normal.x) <=
+                    geometry_tolerance &&
+                std::abs(
+                    actual.owner_unit_normal.y -
+                    expected_normal.y) <=
+                    geometry_tolerance &&
+                std::abs(
+                    actual.owner_unit_normal.z -
+                    expected_normal.z) <=
+                    geometry_tolerance,
+            "serial DMPlex owner-relative face normal must match FaceGeometry3D");
+    }
+
+    for (std::size_t cell = 0U;
+         cell < 2U;
+         ++cell) {
+        const auto local = mesh::LocalIndex{
+            static_cast<
+                mesh::LocalIndex::value_type>(
+                    cell)};
+        const double actual_volume =
+            serial_cell_volume_3d(
+                dm,
+                coordinate_view,
+                static_cast<PetscInt>(cell));
+        const double expected_volume =
+            processed.cell_volumes_m3[cell];
+        require(
+            std::abs(
+                actual_volume -
+                expected_volume) <=
+                    geometry_tolerance,
+            "serial DMPlex cell volume must match processed cell_volumes_m3");
+    }
+
+    restore_serial_coordinate_view_3d(
+        &coordinate_view);
 
     require_petsc(
         DMDestroy(&dm),
