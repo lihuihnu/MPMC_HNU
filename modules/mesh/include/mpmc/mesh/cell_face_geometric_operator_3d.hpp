@@ -24,6 +24,17 @@ struct Displacement3D {
     double z_m;
 };
 
+/// Internal-face non-orthogonality measured between the owner-to-neighbour
+/// cell-centre vector and the owner-relative face unit normal.
+///
+/// theta=0 is orthogonal. Increasing theta indicates increasing non-orthogonality.
+struct InternalFaceNonOrthogonality3D {
+    Displacement3D owner_to_neighbour_displacement_m;
+    double center_distance_m;
+    double normal_alignment_cosine;
+    double angle_rad;
+};
+
 /// Geometry-only inputs that a later two-point transmissibility kernel may consume.
 ///
 /// This contract deliberately contains no permeability, mobility, Darcy flux,
@@ -36,6 +47,8 @@ struct FaceTransmissibilityGeometry3D {
     UnitVector3D owner_unit_normal;
     double owner_normal_distance_m;
     std::optional<double> neighbour_normal_distance_m;
+    std::optional<InternalFaceNonOrthogonality3D>
+        internal_non_orthogonality;
 };
 
 /// Immutable 3D cell/face geometric-operator snapshot.
@@ -55,8 +68,13 @@ struct FaceTransmissibilityGeometry3D {
 ///   d_neighbour = -dot(neighbour_to_face, n)
 ///
 /// Both distances must be finite and strictly positive above a scale-aware
-/// floating-point tolerance. Boundary faces have no neighbour displacement or
-/// neighbour distance.
+/// floating-point tolerance. For an internal face the owner-to-neighbour
+/// centre vector d_cc is also retained and the non-orthogonality angle is
+///
+///   theta = acos(dot(d_cc, n) / |d_cc|)
+///
+/// where theta=0 denotes an orthogonal face. Boundary faces have no neighbour
+/// displacement, neighbour distance, or non-orthogonality quantity.
 class CellFaceGeometricOperator3D {
 public:
     CellFaceGeometricOperator3D(
@@ -68,6 +86,8 @@ public:
             neighbour_to_face_displacements_m,
         std::vector<double> owner_normal_distances_m,
         std::vector<std::optional<double>> neighbour_normal_distances_m,
+        std::vector<std::optional<InternalFaceNonOrthogonality3D>>
+            internal_non_orthogonality,
         std::vector<double> face_areas_m2,
         std::vector<UnitVector3D> face_owner_unit_normals)
         : cell_centroids_m_(std::move(cell_centroids_m)),
@@ -81,6 +101,8 @@ public:
               std::move(owner_normal_distances_m)),
           neighbour_normal_distances_m_(
               std::move(neighbour_normal_distances_m)),
+          internal_non_orthogonality_(
+              std::move(internal_non_orthogonality)),
           face_areas_m2_(std::move(face_areas_m2)),
           face_owner_unit_normals_(
               std::move(face_owner_unit_normals)) {
@@ -147,6 +169,12 @@ public:
             static_cast<std::size_t>(face.value()));
     }
 
+    [[nodiscard]] std::optional<InternalFaceNonOrthogonality3D>
+    internal_non_orthogonality(LocalIndex face) const {
+        return internal_non_orthogonality_.at(
+            static_cast<std::size_t>(face.value()));
+    }
+
     [[nodiscard]] FaceTransmissibilityGeometry3D
     transmissibility_geometry(LocalIndex face) const {
         const std::size_t local =
@@ -157,7 +185,8 @@ public:
             face_areas_m2_.at(local),
             face_owner_unit_normals_.at(local),
             owner_normal_distances_m_.at(local),
-            neighbour_normal_distances_m_.at(local)};
+            neighbour_normal_distances_m_.at(local),
+            internal_non_orthogonality_.at(local)};
     }
 
 private:
@@ -188,6 +217,7 @@ private:
             neighbour_to_face_displacements_m_.size() != faces ||
             owner_normal_distances_m_.size() != faces ||
             neighbour_normal_distances_m_.size() != faces ||
+            internal_non_orthogonality_.size() != faces ||
             face_areas_m2_.size() != faces ||
             face_owner_unit_normals_.size() != faces) {
             throw std::invalid_argument(
@@ -220,7 +250,9 @@ private:
             if (has_neighbour !=
                     neighbour_to_face_displacements_m_[face].has_value() ||
                 has_neighbour !=
-                    neighbour_normal_distances_m_[face].has_value()) {
+                    neighbour_normal_distances_m_[face].has_value() ||
+                has_neighbour !=
+                    internal_non_orthogonality_[face].has_value()) {
                 throw std::invalid_argument(
                     "mpmc::mesh::CellFaceGeometricOperator3D: neighbour arrays are inconsistent");
             }
@@ -261,6 +293,31 @@ private:
                 }
             }
 
+            if (has_neighbour) {
+                const auto non_orthogonality =
+                    *internal_non_orthogonality_[face];
+                require_finite_displacement(
+                    non_orthogonality
+                        .owner_to_neighbour_displacement_m,
+                    "mpmc::mesh::CellFaceGeometricOperator3D: non-finite owner-to-neighbour displacement");
+                if (!std::isfinite(
+                        non_orthogonality.center_distance_m) ||
+                    non_orthogonality.center_distance_m <= 0.0 ||
+                    !std::isfinite(
+                        non_orthogonality.normal_alignment_cosine) ||
+                    non_orthogonality.normal_alignment_cosine <= 0.0 ||
+                    non_orthogonality.normal_alignment_cosine >
+                        1.0 + normal_tolerance ||
+                    !std::isfinite(
+                        non_orthogonality.angle_rad) ||
+                    non_orthogonality.angle_rad < 0.0 ||
+                    non_orthogonality.angle_rad >
+                        0.5 * std::acos(-1.0)) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh::CellFaceGeometricOperator3D: invalid internal-face non-orthogonality geometry");
+                }
+            }
+
             const double area = face_areas_m2_[face];
             if (!std::isfinite(area) ||
                 area <= 0.0) {
@@ -297,6 +354,8 @@ private:
     std::vector<double> owner_normal_distances_m_;
     std::vector<std::optional<double>>
         neighbour_normal_distances_m_;
+    std::vector<std::optional<InternalFaceNonOrthogonality3D>>
+        internal_non_orthogonality_;
     std::vector<double> face_areas_m2_;
     std::vector<UnitVector3D>
         face_owner_unit_normals_;
@@ -327,6 +386,16 @@ namespace cell_face_geometric_operator_3d_detail {
         value.x_m * value.x_m +
         value.y_m * value.y_m +
         value.z_m * value.z_m);
+}
+
+[[nodiscard]] inline Displacement3D
+owner_to_neighbour(
+    Displacement3D owner_to_face,
+    Displacement3D neighbour_to_face) {
+    return Displacement3D{
+        owner_to_face.x_m - neighbour_to_face.x_m,
+        owner_to_face.y_m - neighbour_to_face.y_m,
+        owner_to_face.z_m - neighbour_to_face.z_m};
 }
 
 [[nodiscard]] inline Coordinate3D cell_vertex_mean(
@@ -475,6 +544,8 @@ make_cell_face_geometric_operator_3d(
         owner_distances;
     std::vector<std::optional<double>>
         neighbour_distances;
+    std::vector<std::optional<InternalFaceNonOrthogonality3D>>
+        internal_non_orthogonality;
     std::vector<double> face_areas;
     std::vector<UnitVector3D> face_normals;
 
@@ -484,6 +555,7 @@ make_cell_face_geometric_operator_3d(
     neighbour_displacements.reserve(face_count);
     owner_distances.reserve(face_count);
     neighbour_distances.reserve(face_count);
+    internal_non_orthogonality.reserve(face_count);
     face_areas.reserve(face_count);
     face_normals.reserve(face_count);
 
@@ -548,6 +620,8 @@ make_cell_face_geometric_operator_3d(
             neighbour_to_face;
         std::optional<double>
             neighbour_distance;
+        std::optional<InternalFaceNonOrthogonality3D>
+            non_orthogonality;
 
         if (support.size() == 2U) {
             if (support[1] == owner) {
@@ -580,6 +654,65 @@ make_cell_face_geometric_operator_3d(
                 *neighbour_distance,
                 neighbour_scale,
                 "mpmc::mesh::make_cell_face_geometric_operator_3d: neighbour normal distance is non-positive or degenerate");
+
+            const Displacement3D centre_vector =
+                owner_to_neighbour(
+                    owner_to_face,
+                    *neighbour_to_face);
+            const double centre_distance =
+                magnitude(centre_vector);
+            const double centre_scale =
+                std::max(
+                    centre_distance,
+                    std::sqrt(area));
+            require_positive_normal_distance(
+                centre_distance,
+                centre_scale,
+                "mpmc::mesh::make_cell_face_geometric_operator_3d: owner-to-neighbour cell-centre distance is degenerate");
+
+            const double normal_projection =
+                dot(centre_vector, normal);
+            const double expected_projection =
+                owner_distance +
+                *neighbour_distance;
+            const double projection_tolerance =
+                4096.0 *
+                std::numeric_limits<double>::epsilon() *
+                centre_scale;
+            if (!std::isfinite(normal_projection) ||
+                std::abs(
+                    normal_projection -
+                    expected_projection) >
+                    projection_tolerance ||
+                normal_projection <=
+                    projection_tolerance) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::make_cell_face_geometric_operator_3d: inconsistent owner-to-neighbour normal projection");
+            }
+
+            double alignment_cosine =
+                normal_projection /
+                centre_distance;
+            if (!std::isfinite(alignment_cosine) ||
+                alignment_cosine <= 0.0 ||
+                alignment_cosine >
+                    1.0 +
+                        128.0 *
+                        std::numeric_limits<double>::epsilon()) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::make_cell_face_geometric_operator_3d: invalid internal-face normal alignment");
+            }
+            alignment_cosine =
+                std::clamp(
+                    alignment_cosine,
+                    0.0,
+                    1.0);
+            non_orthogonality =
+                InternalFaceNonOrthogonality3D{
+                    centre_vector,
+                    centre_distance,
+                    alignment_cosine,
+                    std::acos(alignment_cosine)};
         }
 
         face_owners.push_back(owner);
@@ -592,6 +725,8 @@ make_cell_face_geometric_operator_3d(
             owner_distance);
         neighbour_distances.push_back(
             neighbour_distance);
+        internal_non_orthogonality.push_back(
+            non_orthogonality);
         face_areas.push_back(area);
         face_normals.push_back(normal);
     }
@@ -604,6 +739,7 @@ make_cell_face_geometric_operator_3d(
         std::move(neighbour_displacements),
         std::move(owner_distances),
         std::move(neighbour_distances),
+        std::move(internal_non_orthogonality),
         std::move(face_areas),
         std::move(face_normals)};
 }
