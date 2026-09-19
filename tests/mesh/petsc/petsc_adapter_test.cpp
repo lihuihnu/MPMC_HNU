@@ -5051,6 +5051,214 @@ void verify_petsc_mpiaij_symbolic_preallocation_stage(
         "point-SF ghost row resolves to the remote owner's stable-cell PETSc row");
 }
 
+void verify_owned_cell_structural_column_pattern_stage(
+    const mesh_petsc::
+        OwnedCellStructuralColumnPatternSnapshot3D& snapshot,
+    const mesh_petsc::PetscMpiAijSymbolicPreallocation3D& bridge,
+    const mesh_petsc::CellPairSparsityStencilSnapshot3D& sparsity,
+    const mesh::PartitionSnapshot& partition,
+    bool expect_remote_coupling) {
+    require(
+        snapshot.local_rank() ==
+                partition.local_rank() &&
+            snapshot.rank_count() ==
+                partition.rank_count() &&
+            snapshot.local_cell_count() ==
+                partition.entity_count(
+                    mesh::EntityKind::cell) &&
+            snapshot.global_row_start() ==
+                bridge.global_row_start() &&
+            snapshot.global_row_end() ==
+                bridge.global_row_end() &&
+            snapshot.global_row_count() ==
+                bridge.global_row_count() &&
+            snapshot.row_count() ==
+                static_cast<std::size_t>(
+                    bridge.local_owned_row_count()),
+        "owned-cell structural column-pattern snapshot metadata");
+
+    const auto owned_cells =
+        bridge.owned_cells_in_petsc_row_order();
+    const auto owned_ids =
+        bridge.owned_cell_global_ids();
+    const auto owned_rows =
+        bridge.owned_global_rows();
+    const auto d_nnz =
+        bridge.diagonal_nnz();
+    const auto o_nnz =
+        bridge.off_diagonal_nnz();
+
+    require(
+        snapshot.rows().size() ==
+            owned_cells.size(),
+        "column-pattern row count follows symbolic bridge");
+
+    for (std::size_t index = 0U;
+         index < snapshot.rows().size();
+         ++index) {
+        const auto& pattern =
+            snapshot.rows()[index];
+        const auto cell =
+            owned_cells[index];
+
+        require(
+            snapshot.contains_owned_cell(
+                cell) &&
+                &snapshot.row(cell) ==
+                    &pattern &&
+                pattern.cell ==
+                    cell &&
+                pattern.cell_global ==
+                    owned_ids[index] &&
+                pattern.global_row ==
+                    owned_rows[index],
+            "column-pattern row preserves owned stable-cell PETSc row identity");
+
+        const auto& structural =
+            sparsity.structural_counts(
+                cell);
+        require(
+            pattern.diagonal_global_columns.size() ==
+                    structural.diagonal_block_nnz &&
+                pattern.off_diagonal_global_columns.size() ==
+                    structural.off_diagonal_block_nnz &&
+                pattern.diagonal_global_columns.size() ==
+                    static_cast<std::size_t>(
+                        d_nnz[index]) &&
+                pattern.off_diagonal_global_columns.size() ==
+                    static_cast<std::size_t>(
+                        o_nnz[index]) &&
+                pattern.diagonal_global_columns.size() +
+                        pattern.off_diagonal_global_columns.size() ==
+                    static_cast<std::size_t>(
+                        d_nnz[index] +
+                        o_nnz[index]),
+            "N_columns,row must equal d_nnz + o_nnz with exact block counts");
+
+        require(
+            std::is_sorted(
+                pattern
+                    .diagonal_global_columns
+                    .begin(),
+                pattern
+                    .diagonal_global_columns
+                    .end()) &&
+                std::adjacent_find(
+                    pattern
+                        .diagonal_global_columns
+                        .begin(),
+                    pattern
+                        .diagonal_global_columns
+                        .end()) ==
+                    pattern
+                        .diagonal_global_columns
+                        .end() &&
+                std::binary_search(
+                    pattern
+                        .diagonal_global_columns
+                        .begin(),
+                    pattern
+                        .diagonal_global_columns
+                        .end(),
+                    pattern.global_row),
+            "diagonal structural columns are sorted, unique, and include self");
+
+        for (const PetscInt column :
+             pattern
+                 .diagonal_global_columns) {
+            require(
+                column >=
+                        bridge.global_row_start() &&
+                    column <
+                        bridge.global_row_end(),
+                "diagonal structural column is locally owned");
+        }
+
+        require(
+            std::is_sorted(
+                pattern
+                    .off_diagonal_global_columns
+                    .begin(),
+                pattern
+                    .off_diagonal_global_columns
+                    .end()) &&
+                std::adjacent_find(
+                    pattern
+                        .off_diagonal_global_columns
+                        .begin(),
+                    pattern
+                        .off_diagonal_global_columns
+                        .end()) ==
+                    pattern
+                        .off_diagonal_global_columns
+                        .end(),
+            "off-diagonal structural columns are sorted and unique");
+
+        for (const PetscInt column :
+             pattern
+                 .off_diagonal_global_columns) {
+            require(
+                column >= 0 &&
+                    column <
+                        bridge.global_row_count() &&
+                    (column <
+                         bridge.global_row_start() ||
+                     column >=
+                         bridge.global_row_end()),
+                "off-diagonal structural column is remote-owned");
+        }
+
+        require(
+            pattern.diagonal_global_columns.size() ==
+                    1U &&
+                pattern.diagonal_global_columns
+                    .front() ==
+                    pattern.global_row &&
+                pattern.off_diagonal_global_columns.size() ==
+                    (expect_remote_coupling
+                         ? 1U
+                         : 0U),
+            "two-cell fixture structural column pattern");
+    }
+
+    mesh::LocalIndex ghost_cell{0U};
+    bool found_ghost = false;
+    for (std::size_t local = 0U;
+         local < partition.entity_count(
+             mesh::EntityKind::cell);
+         ++local) {
+        const auto cell =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        local)};
+        if (partition.is_ghost(
+                mesh::EntityKind::cell,
+                cell)) {
+            ghost_cell = cell;
+            found_ghost = true;
+            break;
+        }
+    }
+    require(
+        found_ghost &&
+            !snapshot.contains_owned_cell(
+                ghost_cell),
+        "column-pattern snapshot excludes ghost rows");
+
+    bool ghost_row_rejected = false;
+    try {
+        (void)snapshot.row(
+            ghost_cell);
+    } catch (const std::invalid_argument&) {
+        ghost_row_rejected = true;
+    }
+    require(
+        ghost_row_rejected,
+        "ghost cell column-pattern accessor must reject");
+}
+
+
 void verify_empty_petsc_mpiaij_symbolic_matrix_stage(
     Mat matrix,
     const mesh_petsc::PetscMpiAijSymbolicPreallocation3D& bridge) {
@@ -6340,6 +6548,49 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         overlap_partition,
         false);
 
+    std::optional<
+        mesh_petsc::
+            OwnedCellStructuralColumnPatternSnapshot3D>
+        materialized_column_pattern;
+    std::optional<
+        mesh_petsc::
+            OwnedCellStructuralColumnPatternSnapshot3D>
+        blocked_column_pattern;
+    require_petsc(
+        mesh_petsc::
+            make_owned_cell_structural_column_pattern_snapshot_3d(
+                *materialized_sparsity,
+                *materialized_preallocation,
+                overlap_partition,
+                &materialized_column_pattern),
+        "build materialized owned-cell structural column pattern");
+    require_petsc(
+        mesh_petsc::
+            make_owned_cell_structural_column_pattern_snapshot_3d(
+                *blocked_sparsity,
+                *blocked_preallocation,
+                overlap_partition,
+                &blocked_column_pattern),
+        "build blocked-only owned-cell structural column pattern");
+    require(
+        materialized_column_pattern
+                .has_value() &&
+            blocked_column_pattern
+                .has_value(),
+        "owned-cell structural column patterns constructed");
+    verify_owned_cell_structural_column_pattern_stage(
+        *materialized_column_pattern,
+        *materialized_preallocation,
+        *materialized_sparsity,
+        overlap_partition,
+        true);
+    verify_owned_cell_structural_column_pattern_stage(
+        *blocked_column_pattern,
+        *blocked_preallocation,
+        *blocked_sparsity,
+        overlap_partition,
+        false);
+
     Mat materialized_symbolic_matrix = nullptr;
     require_petsc(
         mesh_petsc::
@@ -7418,6 +7669,212 @@ void run_three_rank_sparsity_test() {
         "3-rank sparsity MPI_Barrier");
 }
 
+void verify_structural_column_pattern_sorting_fixture(
+    int mpi_rank) {
+    require(
+        mpi_rank == 0 ||
+            mpi_rank == 1,
+        "column-pattern sorting fixture requires rank 0 or 1");
+
+    const auto rank =
+        static_cast<std::uint32_t>(
+            mpi_rank);
+
+    mesh::Topology::EntityIds ids;
+    ids.cells = {
+        mesh::GlobalEntityId{100U},
+        mesh::GlobalEntityId{200U},
+        mesh::GlobalEntityId{300U},
+        mesh::GlobalEntityId{400U}};
+    const mesh::Topology topology{
+        std::move(ids),
+        {}};
+
+    mesh::EntityOwnerRanks owners;
+    owners.cells = {
+        mesh::PartitionRank{0U},
+        mesh::PartitionRank{1U},
+        mesh::PartitionRank{0U},
+        mesh::PartitionRank{1U}};
+    const auto partition =
+        mesh::PartitionSnapshot::create(
+            topology,
+            mesh::PartitionRank{rank},
+            2U,
+            std::move(owners));
+
+    const auto coupling =
+        [](std::uint32_t first_local,
+           std::uint64_t first_global,
+           std::uint32_t second_local,
+           std::uint64_t second_global) {
+            return mesh_petsc::
+                CellPairCoupling3D{
+                    mesh::LocalIndex{
+                        first_local},
+                    mesh::GlobalEntityId{
+                        first_global},
+                    mesh::LocalIndex{
+                        second_local},
+                    mesh::GlobalEntityId{
+                        second_global}};
+        };
+
+    std::vector<
+        mesh_petsc::CellPairCoupling3D>
+        couplings;
+    std::vector<
+        mesh_petsc::OwnedCellStructuralCounts3D>
+        counts;
+    std::vector<mesh::LocalIndex>
+        owned_cells;
+    std::vector<mesh::GlobalEntityId>
+        owned_ids;
+    std::vector<PetscInt>
+        owned_rows;
+    std::vector<PetscInt>
+        d_nnz;
+    std::vector<PetscInt>
+        o_nnz;
+
+    if (rank == 0U) {
+        couplings = {
+            coupling(2U, 300U, 3U, 400U),
+            coupling(0U, 100U, 3U, 400U),
+            coupling(0U, 100U, 2U, 300U),
+            coupling(0U, 100U, 1U, 200U)};
+        counts = {
+            {mesh::LocalIndex{0U},
+             mesh::GlobalEntityId{100U},
+             2U,
+             2U},
+            {mesh::LocalIndex{2U},
+             mesh::GlobalEntityId{300U},
+             2U,
+             1U}};
+        owned_cells = {
+            mesh::LocalIndex{0U},
+            mesh::LocalIndex{2U}};
+        owned_ids = {
+            mesh::GlobalEntityId{100U},
+            mesh::GlobalEntityId{300U}};
+        owned_rows = {0, 1};
+        d_nnz = {2, 2};
+        o_nnz = {2, 1};
+    } else {
+        couplings = {
+            coupling(0U, 100U, 3U, 400U),
+            coupling(1U, 200U, 3U, 400U),
+            coupling(0U, 100U, 1U, 200U),
+            coupling(2U, 300U, 3U, 400U)};
+        counts = {
+            {mesh::LocalIndex{1U},
+             mesh::GlobalEntityId{200U},
+             2U,
+             1U},
+            {mesh::LocalIndex{3U},
+             mesh::GlobalEntityId{400U},
+             2U,
+             2U}};
+        owned_cells = {
+            mesh::LocalIndex{1U},
+            mesh::LocalIndex{3U}};
+        owned_ids = {
+            mesh::GlobalEntityId{200U},
+            mesh::GlobalEntityId{400U}};
+        owned_rows = {2, 3};
+        d_nnz = {2, 2};
+        o_nnz = {1, 2};
+    }
+
+    const mesh_petsc::
+        CellPairSparsityStencilSnapshot3D
+        sparsity{
+            mesh::PartitionRank{rank},
+            2U,
+            4U,
+            std::move(couplings),
+            std::move(counts)};
+
+    const mesh_petsc::
+        PetscMpiAijSymbolicPreallocation3D
+        bridge{
+            mesh::PartitionRank{rank},
+            2U,
+            rank == 0U ? 0 : 2,
+            rank == 0U ? 2 : 4,
+            4,
+            std::move(owned_cells),
+            std::move(owned_ids),
+            std::move(owned_rows),
+            std::move(d_nnz),
+            std::move(o_nnz),
+            {0, 2, 1, 3}};
+
+    std::optional<
+        mesh_petsc::
+            OwnedCellStructuralColumnPatternSnapshot3D>
+        snapshot;
+    require_petsc(
+        mesh_petsc::
+            make_owned_cell_structural_column_pattern_snapshot_3d(
+                sparsity,
+                bridge,
+                partition,
+                &snapshot),
+        "build multi-neighbour sorted structural column pattern");
+    require(
+        snapshot.has_value() &&
+            snapshot->row_count() == 2U,
+        "multi-neighbour structural column-pattern row count");
+
+    if (rank == 0U) {
+        require(
+            snapshot->rows()[0]
+                    .diagonal_global_columns ==
+                std::vector<PetscInt>{0, 1} &&
+            snapshot->rows()[0]
+                    .off_diagonal_global_columns ==
+                std::vector<PetscInt>{2, 3} &&
+            snapshot->rows()[1]
+                    .diagonal_global_columns ==
+                std::vector<PetscInt>{0, 1} &&
+            snapshot->rows()[1]
+                    .off_diagonal_global_columns ==
+                std::vector<PetscInt>{3},
+            "rank 0 structural columns are globally sorted and block-classified");
+    } else {
+        require(
+            snapshot->rows()[0]
+                    .diagonal_global_columns ==
+                std::vector<PetscInt>{2, 3} &&
+            snapshot->rows()[0]
+                    .off_diagonal_global_columns ==
+                std::vector<PetscInt>{0} &&
+            snapshot->rows()[1]
+                    .diagonal_global_columns ==
+                std::vector<PetscInt>{2, 3} &&
+            snapshot->rows()[1]
+                    .off_diagonal_global_columns ==
+                std::vector<PetscInt>{0, 1},
+            "rank 1 structural columns are globally sorted and block-classified");
+    }
+
+    for (std::size_t index = 0U;
+         index < snapshot->rows().size();
+         ++index) {
+        const auto& row =
+            snapshot->rows()[index];
+        require(
+            row.diagonal_global_columns.size() +
+                    row.off_diagonal_global_columns.size() ==
+                static_cast<std::size_t>(
+                    bridge.diagonal_nnz()[index] +
+                    bridge.off_diagonal_nnz()[index]),
+            "multi-neighbour N_columns,row equals d_nnz + o_nnz");
+    }
+}
+
 void run_two_rank_test() {
     int mpi_rank = -1;
     int mpi_size = -1;
@@ -7449,6 +7906,8 @@ void run_two_rank_test() {
             layout, partition,
             global_entity_numbering(partition));
 
+    verify_structural_column_pattern_sorting_fixture(
+        mpi_rank);
     verify_serial_dmplex_topology();
     verify_serial_dmplex_processed_grdecl();
     verify_dmplex_distribute_overlap_identity();
