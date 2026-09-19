@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.21)
 project(mpmc_mesh_core_tests LANGUAGES CXX)
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/mesh" mesh-library)
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/discretization"
+    discretization-library)
 enable_testing()
 
 add_executable(mpmc_mesh_core_tests
@@ -20,6 +23,7 @@ add_executable(mpmc_mesh_core_tests
     face_geometry_3d_header_self_contained.cpp
     cell_face_geometric_operator_3d_header_self_contained.cpp
     permeability_tensor_3d_header_self_contained.cpp
+    transmissibility_admissibility_3d_header_self_contained.cpp
     tpfa_half_connection_3d_header_self_contained.cpp
     tpfa_half_transmissibility_3d_header_self_contained.cpp
     tpfa_static_face_transmissibility_3d_header_self_contained.cpp
@@ -29,7 +33,9 @@ add_executable(mpmc_mesh_core_tests
     partition_snapshot_header_self_contained.cpp
     dof_numbering_header_self_contained.cpp
     shared_entity_plan_header_self_contained.cpp)
-target_link_libraries(mpmc_mesh_core_tests PRIVATE mpmc::mesh)
+target_link_libraries(
+    mpmc_mesh_core_tests
+    PRIVATE mpmc::mesh mpmc::discretization)
 set_target_properties(mpmc_mesh_core_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 if(MSVC)
