@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   petsc:
-    name: PETSc 3.19.6 synthetic 2-rank
+    name: PETSc 3.19.6 synthetic MPI
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -48,7 +48,7 @@ jobs:
             --target mpmc_mesh_petsc_tests \
             --parallel 2
 
-      - name: Run synthetic two-rank PETSc test
+      - name: Run PETSc MPI integration tests
         run: |
           ctest --test-dir build/mesh-petsc \
             -R '^mesh[.]petsc[.]' \
