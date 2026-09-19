@@ -451,3 +451,44 @@ It must freeze:
 The first slice must **not** create a mesh residual, Darcy face flux, time stepper, Newton solver, PETSc matrix values, phase switching or a well model.
 
 Only after this local contract is independently tested should the next cross-module consumption step be selected.
+
+
+## 18. First implementation slice: local natural-variable contract
+
+The first executable slice is implemented as the header-only `mpmc::flow` target with public header:
+
+```text
+mpmc/flow/natural_variable_cell_state.hpp
+```
+
+It remains independent of thermodynamics, flash, physics, mesh, discretization, MPI and PETSc.
+
+The fixed interior contract freezes:
+
+- generic `phase0/phase1/phase2` numerical slots with no inferred morphology;
+- `phase0` as the local fugacity-reference slot for deterministic equation indexing;
+- ordered unique component IDs with `Nc >= 2`;
+- strictly positive finite `p_ref` and `T`;
+- two independent strictly positive saturations and dependent `S2 = 1-S0-S1 > 0`;
+- `Nc-1` strictly positive independent mole fractions per phase and a dependent final fraction `x_last = 1-sum(x_independent) > 0`;
+- `pc=none` only: all three local phase pressures equal `p_ref`;
+- mandatory per-phase molar density, mass density and dynamic viscosity, all finite and strictly positive;
+- mandatory finite specific enthalpy and specific internal energy; these may be negative because their zero depends on the thermodynamic reference convention;
+- exact deterministic unknown and equation indexing for `3*Nc+1` local unknowns/equations.
+
+Missing required phase properties are represented explicitly by absent input optionals and are rejected as unsupported prerequisites. The validated state contains no optional property values and performs no density/viscosity/energy inference.
+
+Positive support is a strict domain contract for this slice. Zero saturations, zero component fractions, hidden epsilon insertion, clipping and silent renormalization are all rejected rather than interpreted as phase appearance/disappearance.
+
+The dedicated `tests/flow/core` regression owns:
+
+- unknown/equation count and index mapping;
+- dependent saturation/composition reconstruction;
+- ordered component identity and `pc=none` phase pressures;
+- complete validated property payload;
+- duplicate IDs, non-finite/non-positive p/T, boundary/invalid simplex inputs, malformed composition shape, missing property and invalid property rejection;
+- public-header self containment.
+
+`.github/workflows/flow_core.yml` is the required GitHub-hosted GCC Debug+ASan/UBSan, Clang Release and MSVC Release gate for this contract.
+
+This slice still does **not** evaluate fugacity, create equilibrium residual values, consume a thermodynamic backend, construct pore-volume accumulation, build mesh/face fluxes, assemble a Jacobian or PETSc matrix, perform phase switching, advance time or create a well model.
