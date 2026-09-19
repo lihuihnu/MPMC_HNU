@@ -4734,6 +4734,155 @@ void verify_parallel_owned_connection_schedule_stage(
         "authoritative and ghost rows must be identical except for ownership role");
 }
 
+
+void verify_cell_pair_sparsity_stencil_stage(
+    const mesh_petsc::CellPairSparsityStencilSnapshot3D& snapshot,
+    const mesh::PartitionSnapshot& partition,
+    bool expect_materialized_pair) {
+    require(
+        snapshot.local_rank() ==
+                partition.local_rank() &&
+            snapshot.rank_count() ==
+                partition.rank_count() &&
+            snapshot.local_cell_count() ==
+                partition.entity_count(
+                    mesh::EntityKind::cell) &&
+            snapshot.owned_cell_count() ==
+                partition.owned_count(
+                    mesh::EntityKind::cell),
+        "cell-pair sparsity snapshot partition metadata");
+
+    require(
+        partition.owned_count(
+            mesh::EntityKind::cell) == 1U &&
+            partition.ghost_count(
+                mesh::EntityKind::cell) == 1U,
+        "cell-pair sparsity fixture requires one owned and one ghost cell");
+
+    mesh::LocalIndex owned_cell{0U};
+    mesh::LocalIndex ghost_cell{0U};
+    bool found_owned = false;
+    bool found_ghost = false;
+    for (std::size_t local = 0U;
+         local < partition.entity_count(
+             mesh::EntityKind::cell);
+         ++local) {
+        const auto cell =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        local)};
+        if (partition.is_owned(
+                mesh::EntityKind::cell,
+                cell)) {
+            owned_cell = cell;
+            found_owned = true;
+        } else {
+            require(
+                partition.is_ghost(
+                    mesh::EntityKind::cell,
+                    cell),
+                "non-owned sparsity fixture cell must be ghost");
+            ghost_cell = cell;
+            found_ghost = true;
+        }
+    }
+    require(
+        found_owned && found_ghost,
+        "cell-pair sparsity fixture resolves owned/ghost cells");
+
+    require(
+        snapshot.contains_owned_cell(
+            owned_cell) &&
+            !snapshot.contains_owned_cell(
+                ghost_cell),
+        "structural counts exist only for owned cells");
+
+    bool ghost_counts_rejected = false;
+    try {
+        (void)snapshot.structural_counts(
+            ghost_cell);
+    } catch (const std::invalid_argument&) {
+        ghost_counts_rejected = true;
+    }
+    require(
+        ghost_counts_rejected,
+        "ghost cell structural-count accessor must reject");
+
+    const auto& counts =
+        snapshot.structural_counts(
+            owned_cell);
+    require(
+        counts.cell ==
+                owned_cell &&
+            counts.cell_global ==
+                partition.global_id(
+                    mesh::EntityKind::cell,
+                    owned_cell),
+        "owned-cell structural count identity");
+
+    if (!expect_materialized_pair) {
+        require(
+            snapshot.coupling_count() == 0U &&
+                counts.diagonal_block_nnz == 1U &&
+                counts.off_diagonal_block_nnz == 0U,
+            "blocked-only sparsity snapshot contains self diagonal structure only");
+        return;
+    }
+
+    require(
+        snapshot.coupling_count() == 1U &&
+            counts.diagonal_block_nnz == 1U &&
+            counts.off_diagonal_block_nnz == 1U,
+        "materialized two-cell sparsity snapshot has one self diagonal and one remote off-diagonal");
+
+    const auto& pair =
+        snapshot.couplings().front();
+    require(
+        pair.first_cell_global <
+                pair.second_cell_global &&
+            partition.global_id(
+                mesh::EntityKind::cell,
+                pair.first_cell) ==
+                pair.first_cell_global &&
+            partition.global_id(
+                mesh::EntityKind::cell,
+                pair.second_cell) ==
+                pair.second_cell_global,
+        "cell-pair coupling uses canonical stable-ID order and target-local indices");
+
+    const bool owned_is_first =
+        pair.first_cell == owned_cell;
+    const bool owned_is_second =
+        pair.second_cell == owned_cell;
+    require(
+        owned_is_first != owned_is_second &&
+            (pair.first_cell == ghost_cell ||
+             pair.second_cell == ghost_cell),
+        "local coupling connects exactly one owned and one ghost cell");
+
+    std::array<std::uint64_t, 2> local_pair{
+        pair.first_cell_global.value(),
+        pair.second_cell_global.value()};
+    std::array<std::uint64_t, 4> all_pairs{};
+    require(
+        MPI_Allgather(
+            local_pair.data(),
+            static_cast<int>(
+                local_pair.size()),
+            MPI_UINT64_T,
+            all_pairs.data(),
+            static_cast<int>(
+                local_pair.size()),
+            MPI_UINT64_T,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allgather local cell-pair sparsity graph");
+    require(
+        all_pairs[0] == all_pairs[2] &&
+            all_pairs[1] == all_pairs[3],
+        "both cell-row owner ranks reconstruct the same stable cell pair from authoritative rows only");
+}
+
 void verify_processed_grdecl_cell_field_stage(
     const mesh::DenseFieldSnapshot& actual,
     const mesh::DenseFieldSnapshot& reference,
@@ -5832,6 +5981,85 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         *overlap_blocked_table,
         overlap_partition,
         false);
+
+    std::optional<
+        mesh_petsc::CellPairSparsityStencilSnapshot3D>
+        materialized_sparsity;
+    std::optional<
+        mesh_petsc::CellPairSparsityStencilSnapshot3D>
+        blocked_sparsity;
+    require_petsc(
+        mesh_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
+            PETSC_COMM_WORLD,
+            *overlap_materialized_schedule,
+            overlap_partition,
+            &materialized_sparsity),
+        "build materialized cell-pair sparsity/stencil snapshot");
+    require_petsc(
+        mesh_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
+            PETSC_COMM_WORLD,
+            *overlap_blocked_schedule,
+            overlap_partition,
+            &blocked_sparsity),
+        "build blocked-only cell-pair sparsity/stencil snapshot");
+    require(
+        materialized_sparsity.has_value() &&
+            blocked_sparsity.has_value(),
+        "cell-pair sparsity/stencil snapshots constructed");
+    verify_cell_pair_sparsity_stencil_stage(
+        *materialized_sparsity,
+        overlap_partition,
+        true);
+    verify_cell_pair_sparsity_stencil_stage(
+        *blocked_sparsity,
+        overlap_partition,
+        false);
+
+    std::vector<
+        mesh_petsc::AssemblyReadyInternalConnectionRow3D>
+        duplicate_pair_authoritative_rows;
+    if (!overlap_materialized_schedule
+             ->assembly_rows()
+             .empty()) {
+        const auto source_row =
+            overlap_materialized_schedule
+                ->assembly_rows()
+                .front();
+        auto duplicate_row =
+            source_row;
+        duplicate_row.face_global =
+            mesh::GlobalEntityId{
+                source_row.face_global.value() +
+                1000000ULL};
+        duplicate_pair_authoritative_rows.push_back(
+            source_row);
+        duplicate_pair_authoritative_rows.push_back(
+            duplicate_row);
+    }
+    const auto duplicate_pair_schedule =
+        mesh_petsc::ParallelOwnedConnectionSchedule3D{
+            overlap_partition.local_rank(),
+            overlap_partition.rank_count(),
+            std::move(
+                duplicate_pair_authoritative_rows),
+            {}};
+    std::optional<
+        mesh_petsc::CellPairSparsityStencilSnapshot3D>
+        deduplicated_sparsity;
+    require_petsc(
+        mesh_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
+            PETSC_COMM_WORLD,
+            duplicate_pair_schedule,
+            overlap_partition,
+            &deduplicated_sparsity),
+        "deduplicate multiple authoritative face rows sharing one stable cell pair");
+    require(
+        deduplicated_sparsity.has_value(),
+        "deduplicated cell-pair sparsity snapshot constructed");
+    verify_cell_pair_sparsity_stencil_stage(
+        *deduplicated_sparsity,
+        overlap_partition,
+        true);
 
     std::optional<mesh::FaceGeometry3D>
         overlap_materialized_face_geometry;
