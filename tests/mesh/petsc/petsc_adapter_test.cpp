@@ -4422,6 +4422,165 @@ void verify_target_local_gated_tpfa_view_stage(
         "target-local gated TPFA view must expose one owned and one ghost stable internal-face copy");
 }
 
+
+void verify_assembly_ready_internal_connection_table_stage(
+    const mesh_petsc::AssemblyReadyInternalConnectionTable3D& table,
+    const mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D& view,
+    const mesh::ActiveCornerPointGrid& reference,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities) {
+    std::size_t target_face_count = 0U;
+    std::size_t target_cell_count = 0U;
+    for (const auto& identity : identities) {
+        if (identity.kind == mesh::EntityKind::face) {
+            ++target_face_count;
+        } else if (
+            identity.kind == mesh::EntityKind::cell) {
+            ++target_cell_count;
+        }
+    }
+    require(
+        table.target_face_count() ==
+                target_face_count &&
+            table.target_cell_count() ==
+                target_cell_count &&
+            table.row_count() ==
+                view.materialized_face_count(),
+        "assembly-ready internal connection table counts");
+
+    const auto& face_cells =
+        reference.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+
+    for (const auto& gated :
+         view.entries()) {
+        const auto source_face =
+            reference_local_by_global(
+                reference.topology,
+                mesh::EntityKind::face,
+                gated.global);
+        const bool materialized =
+            gated.disposition ==
+            mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                materialized;
+
+        require(
+            table.contains_face(
+                gated.face) ==
+                materialized,
+            "only materialized gated faces enter active connection table");
+
+        if (!materialized) {
+            bool blocked_row_rejected = false;
+            try {
+                (void)table.row(
+                    gated.face);
+            } catch (const std::invalid_argument&) {
+                blocked_row_rejected = true;
+            }
+            require(
+                blocked_row_rejected,
+                "blocked gated face active-row accessor must reject");
+            continue;
+        }
+
+        const auto& row =
+            table.row(gated.face);
+        require(
+            row.face ==
+                    gated.face &&
+                row.face_global ==
+                    gated.global &&
+                row.transmissibility_m3 ==
+                    view.transmissibility_m3(
+                        gated.face) &&
+                table.transmissibility_m3(
+                    gated.face) ==
+                    row.transmissibility_m3,
+            "assembly-ready row face identity and T_f");
+
+        const auto adjacent =
+            face_cells.adjacent(
+                source_face);
+        require(
+            adjacent.size() == 2U,
+            "reference active connection must have two adjacent cells");
+
+        const auto expected_owner_global =
+            processed_grdecl_face_owner_global_id(
+                reference,
+                source_face);
+        mesh::GlobalEntityId
+            expected_neighbour_global{
+                0U};
+        bool found_neighbour = false;
+        for (const auto cell :
+             adjacent) {
+            const auto global =
+                reference.topology.global_id(
+                    mesh::EntityKind::cell,
+                    cell);
+            if (global != expected_owner_global) {
+                expected_neighbour_global =
+                    global;
+                found_neighbour = true;
+            }
+        }
+        require(
+            found_neighbour &&
+                row.owner_cell_global ==
+                    expected_owner_global &&
+                row.neighbour_cell_global ==
+                    expected_neighbour_global &&
+                row.owner_cell !=
+                    row.neighbour_cell,
+            "assembly-ready canonical owner/neighbour stable cell identities");
+
+        const auto owner_identity =
+            std::find_if(
+                identities.begin(),
+                identities.end(),
+                [&row](const auto& identity) {
+                    return identity.kind ==
+                               mesh::EntityKind::cell &&
+                           identity.local ==
+                               row.owner_cell;
+                });
+        const auto neighbour_identity =
+            std::find_if(
+                identities.begin(),
+                identities.end(),
+                [&row](const auto& identity) {
+                    return identity.kind ==
+                               mesh::EntityKind::cell &&
+                           identity.local ==
+                               row.neighbour_cell;
+                });
+        require(
+            owner_identity != identities.end() &&
+                neighbour_identity != identities.end() &&
+                owner_identity->global ==
+                    row.owner_cell_global &&
+                neighbour_identity->global ==
+                    row.neighbour_cell_global,
+            "assembly-ready row local cell indices resolve stable cell IDs");
+    }
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::face ||
+            view.contains_internal_face(
+                identity.local)) {
+            continue;
+        }
+        require(
+            !table.contains_face(
+                identity.local),
+            "boundary/untransported face never enters active connection table");
+    }
+}
+
 void verify_processed_grdecl_cell_field_stage(
     const mesh::DenseFieldSnapshot& actual,
     const mesh::DenseFieldSnapshot& reference,
@@ -5135,6 +5294,65 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         field_reference,
         distributed_identities);
 
+    std::optional<
+        mesh_petsc::AssemblyReadyInternalConnectionTable3D>
+        distributed_materialized_table;
+    const PetscErrorCode
+        distributed_materialized_table_error =
+            mesh_petsc::make_assembly_ready_internal_connection_table_3d(
+                distributed_dm,
+                *distributed_materialized_view,
+                distributed_face_geometry,
+                distributed_identities,
+                &distributed_materialized_table);
+    require(
+        distributed_materialized_table_error ==
+                PETSC_ERR_ARG_WRONGSTATE &&
+            !distributed_materialized_table.has_value(),
+        "overlap0 materialized connection table must reject missing remote cell LocalIndex");
+
+    int local_overlap0_wrongstate =
+        distributed_materialized_table_error ==
+                PETSC_ERR_ARG_WRONGSTATE
+            ? 1
+            : 0;
+    int overlap0_wrongstate_ranks = 0;
+    require(
+        MPI_Allreduce(
+            &local_overlap0_wrongstate,
+            &overlap0_wrongstate_ranks,
+            1,
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce overlap0 active connection incompleteness");
+    require(
+        overlap0_wrongstate_ranks == 2,
+        "both overlap0 ranks must refuse a cross-rank materialized connection without both local cells");
+
+    std::optional<
+        mesh_petsc::AssemblyReadyInternalConnectionTable3D>
+        distributed_blocked_table;
+    require_petsc(
+        mesh_petsc::make_assembly_ready_internal_connection_table_3d(
+            distributed_dm,
+            *distributed_blocked_view,
+            distributed_face_geometry,
+            distributed_identities,
+            &distributed_blocked_table),
+        "build overlap0 blocked-only active connection table");
+    require(
+        distributed_blocked_table.has_value() &&
+            distributed_blocked_table
+                    ->row_count() ==
+                0U,
+        "blocked overlap0 view produces empty active connection table");
+    verify_assembly_ready_internal_connection_table_stage(
+        *distributed_blocked_table,
+        *distributed_blocked_view,
+        field_reference,
+        distributed_identities);
+
     std::optional<mesh::FaceGeometry3D>
         distributed_materialized_face_geometry;
     const PetscErrorCode distributed_materialize_error =
@@ -5383,6 +5601,49 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         "migrate processed GRDECL face geometry into overlap");
     verify_stable_owner_face_geometry_stage(
         overlap_face_geometry,
+        field_reference,
+        overlap_identities);
+
+    std::optional<
+        mesh_petsc::AssemblyReadyInternalConnectionTable3D>
+        overlap_materialized_table;
+    std::optional<
+        mesh_petsc::AssemblyReadyInternalConnectionTable3D>
+        overlap_blocked_table;
+    require_petsc(
+        mesh_petsc::make_assembly_ready_internal_connection_table_3d(
+            overlap_dm,
+            *overlap_materialized_view,
+            overlap_face_geometry,
+            overlap_identities,
+            &overlap_materialized_table),
+        "build depth-one assembly-ready materialized connection table");
+    require_petsc(
+        mesh_petsc::make_assembly_ready_internal_connection_table_3d(
+            overlap_dm,
+            *overlap_blocked_view,
+            overlap_face_geometry,
+            overlap_identities,
+            &overlap_blocked_table),
+        "build depth-one blocked-only active connection table");
+    require(
+        overlap_materialized_table.has_value() &&
+            overlap_materialized_table
+                    ->row_count() ==
+                1U &&
+            overlap_blocked_table.has_value() &&
+            overlap_blocked_table
+                    ->row_count() ==
+                0U,
+        "depth-one active connection row counts");
+    verify_assembly_ready_internal_connection_table_stage(
+        *overlap_materialized_table,
+        *overlap_materialized_view,
+        field_reference,
+        overlap_identities);
+    verify_assembly_ready_internal_connection_table_stage(
+        *overlap_blocked_table,
+        *overlap_blocked_view,
         field_reference,
         overlap_identities);
 
