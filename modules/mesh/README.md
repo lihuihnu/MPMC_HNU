@@ -73,6 +73,8 @@ area-scaled one-sided half transmissibility contract 现在建立在独立 `tpfa
 
 internal-face two-sided static transmissibility contract 现在建立在独立 `tpfa_static_face_transmissibility_3d.hpp` 中，只消费同一 physical face 上已经验证的 owner/neighbour `T_half [m3]`。两侧都为 finite positive 时定义 `T_f=T_o*T_n/(T_o+T_n) [m3]`；实现用代数等价的 `min(T_o,T_n)/(1+min/max)`，避免中间乘积 overflow，并允许极端动态范围下因舍入得到恰好等于较小 half。组合结果使用对交换完全对称的 disposition：`positive_harmonic_combination`、`zero_due_to_one_half`、`zero_due_to_both_halves`；交换 owner/neighbour 后 disposition、face area 与 `T_f` 必须不变。任一合法 `zero_projection` half 都使静态 face transmissibility 精确为 `0 m3`；both-zero 也为 0，但使用独立 both-zero 状态。负值、NaN/Inf、positive-projection 却为 zero、zero-projection 却为 positive、half 内部 numerator/denominator/coefficient 与 area-scaled value 不一致都拒绝；owner/neighbour half 还必须使用同一 face area。I-interface `200e-15/400e-15 m3` 合成为 `400/3 e-15 m3`，K-interface `20e-15/24e-15 m3` 合成为 `120/11 e-15 m3`；skewed interface 的 half values 同为 `200e-15/400e-15 m3`，因此静态组合也为 `400/3 e-15 m3`，但 strict geometry+K admissibility 仍保持 non-orthogonal treatment，说明“静态 scalar 可计算”仍不等于允许 direct TPFA。另有大 finite half 回归验证不会因 `T_o*T_n` 中间乘积溢出。这里仍没有 pressure、mobility、gravity、Darcy flux 或 residual。
 
+admissibility-gated internal-face transmissibility snapshot 现在建立在独立 `tpfa_internal_face_transmissibility_snapshot_3d.hpp` 中。snapshot 只收录 internal faces，boundary faces 明确不进入 entries；同时冻结生成时使用的 geometry/K angular policies，保证 materialization decision 可审计。每个 internal face 恰有一个 entry：仅当 `classify_internal_face_transmissibility_admissibility()` 返回 `direct_normal_projection_k_orthogonal_candidate` 时，entry disposition 为 `materialized` 并实际构造 `TpfaStaticFaceTransmissibility3D`；geometry-only、K-only、geometry+K non-orthogonal 与 degenerate-permeability 四类失败分别映射为独立 blocked disposition，且 blocked entry 的 `static_transmissibility` 必须 absent。strict I-interface snapshot 因 geometry/K 均通过而物化 `400/3 e-15 m3`；strict skewed fixture 保留 `blocked_geometry_and_k_non_orthogonal` 且完全不物化 `T_f`，分别放宽 geometry 或 K policy 后只剩对应单侧 blocked reason，只有两边 policy 都显式容许才 materialize skewed `T_f`；全零 permeability 则进入 `blocked_degenerate_permeability_direction`。snapshot 还验证 duplicate internal-face entry、materialized-without-T、blocked-with-T、non-finite materialized T、非法 policy 与 geometry/permeability size mismatch 均拒绝。这里仍没有 pressure、mobility、gravity、Darcy flux 或 residual。
+
 `FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。
@@ -156,7 +158,7 @@ active face processor gate 使用两种正交共享方向：`2×1×1` 两 active
 
 后续适配层仍可负责：
 
-- 在已通过的 two-sided static face transmissibility contract 上，下一步建议建立一个 admissibility-gated internal-face transmissibility snapshot：只对 geometry/K 联合状态为 direct candidate 的 internal faces 物化 `T_f`，其余 face 保留明确的 blocked/non-orthogonal disposition；仍不引入 pressure、mobility、gravity、Darcy flux 或 residual；
+- 在已通过的 admissibility-gated internal-face transmissibility snapshot 上，下一步建议把该 snapshot 接入现有 stable-face identity / DMPlex distribute+overlap 链：只迁移 internal-face gated disposition、policy 与 materialized `T_f`，验证 owner/ghost 视图一致且 blocked face 永远不被补成数值；仍不引入 pressure、mobility、gravity、Darcy flux 或 residual；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
