@@ -6407,9 +6407,10 @@ public:
             rows_.at(
                 row_index(cell));
         return std::span<const PetscInt>{
-            diagonal_global_columns_.data() +
+            diagonal_global_columns_}
+            .subspan(
                 pattern.diagonal_column_offset,
-            pattern.diagonal_column_count};
+                pattern.diagonal_column_count);
     }
 
     [[nodiscard]] std::span<const PetscInt>
@@ -6419,9 +6420,10 @@ public:
             rows_.at(
                 row_index(cell));
         return std::span<const PetscInt>{
-            off_diagonal_global_columns_.data() +
+            off_diagonal_global_columns_}
+            .subspan(
                 pattern.off_diagonal_column_offset,
-            pattern.off_diagonal_column_count};
+                pattern.off_diagonal_column_count);
     }
 
 private:
@@ -6498,14 +6500,16 @@ private:
 
             const auto diagonal_columns =
                 std::span<const PetscInt>{
-                    diagonal_global_columns_.data() +
+                    diagonal_global_columns_}
+                    .subspan(
                         pattern.diagonal_column_offset,
-                    pattern.diagonal_column_count};
+                        pattern.diagonal_column_count);
             const auto off_diagonal_columns =
                 std::span<const PetscInt>{
-                    off_diagonal_global_columns_.data() +
+                    off_diagonal_global_columns_}
+                    .subspan(
                         pattern.off_diagonal_column_offset,
-                    pattern.off_diagonal_column_count};
+                        pattern.off_diagonal_column_count);
 
             if (!std::is_sorted(
                     diagonal_columns.begin(),
