@@ -11,6 +11,7 @@
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
 #include <mpmc/mesh/topology.hpp>
+#include <mpmc/mesh/tpfa_internal_face_transmissibility_snapshot_3d.hpp>
 
 #include <petscdmplex.h>
 #include <petscsection.h>
@@ -3144,6 +3145,737 @@ inline PetscErrorCode materialize_face_geometry_3d(
         return PETSC_ERR_ARG_INCOMP;
     }
     return PETSC_SUCCESS;
+}
+
+
+struct StableFaceGatedTpfaSnapshot3D {
+    mpmc::mesh::TransmissibilityGeometryAdmissibilityPolicy3D
+        geometry_policy{0.0};
+    mpmc::mesh::KOrthogonalityAdmissibilityPolicy3D
+        k_policy{0.0};
+    std::vector<mpmc::mesh::GlobalEntityId>
+        face_global_ids;
+    std::vector<
+        mpmc::mesh::TpfaInternalFaceTransmissibilityDisposition3D>
+        dispositions;
+    std::vector<std::optional<double>>
+        materialized_face_transmissibilities_m3;
+
+    [[nodiscard]] std::size_t
+    entry_count() const noexcept {
+        return face_global_ids.size();
+    }
+};
+
+inline PetscErrorCode make_root_stable_face_gated_tpfa_snapshot_3d(
+    MPI_Comm comm,
+    PetscMPIInt root_rank,
+    const mpmc::mesh::TpfaInternalFaceTransmissibilitySnapshot3D*
+        root_snapshot,
+    std::span<const DMPlexPointIdentity> root_identities,
+    StableFaceGatedTpfaSnapshot3D* output) {
+    if (output == nullptr) return PETSC_ERR_ARG_NULL;
+    *output = StableFaceGatedTpfaSnapshot3D{};
+
+    int mpi_rank = -1;
+    int mpi_size = -1;
+    if (MPI_Comm_rank(comm, &mpi_rank) != MPI_SUCCESS ||
+        MPI_Comm_size(comm, &mpi_size) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (root_rank < 0 || root_rank >= mpi_size) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    std::array<double, 2> policies{0.0, 0.0};
+    PetscErrorCode local_error = PETSC_SUCCESS;
+    if (mpi_rank == root_rank) {
+        if (root_snapshot == nullptr) {
+            local_error = PETSC_ERR_ARG_NULL;
+        } else {
+            policies[0] =
+                root_snapshot
+                    ->geometry_policy()
+                    .max_direct_normal_projection_angle_rad;
+            policies[1] =
+                root_snapshot
+                    ->k_policy()
+                    .max_half_face_co_normal_angle_rad;
+            if (!std::isfinite(policies[0]) ||
+                !std::isfinite(policies[1])) {
+                local_error = PETSC_ERR_FP;
+            }
+        }
+    } else if (root_snapshot != nullptr ||
+               !root_identities.empty()) {
+        local_error = PETSC_ERR_ARG_INCOMP;
+    }
+
+    int local_code =
+        static_cast<int>(local_error);
+    if (MPI_Bcast(
+            &local_code,
+            1,
+            MPI_INT,
+            root_rank,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (local_code !=
+        static_cast<int>(PETSC_SUCCESS)) {
+        return static_cast<PetscErrorCode>(
+            local_code);
+    }
+    if (MPI_Bcast(
+            policies.data(),
+            static_cast<int>(policies.size()),
+            MPI_DOUBLE,
+            root_rank,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+
+    output->geometry_policy =
+        mpmc::mesh::
+            TransmissibilityGeometryAdmissibilityPolicy3D{
+                policies[0]};
+    output->k_policy =
+        mpmc::mesh::
+            KOrthogonalityAdmissibilityPolicy3D{
+                policies[1]};
+
+    if (mpi_rank != root_rank) {
+        return PETSC_SUCCESS;
+    }
+
+    output->face_global_ids.reserve(
+        root_snapshot->internal_face_count());
+    output->dispositions.reserve(
+        root_snapshot->internal_face_count());
+    output->materialized_face_transmissibilities_m3.reserve(
+        root_snapshot->internal_face_count());
+
+    for (const auto& entry :
+         root_snapshot->entries()) {
+        const auto identity =
+            std::find_if(
+                root_identities.begin(),
+                root_identities.end(),
+                [&entry](
+                    const DMPlexPointIdentity& candidate) {
+                    return candidate.kind ==
+                               mpmc::mesh::EntityKind::face &&
+                           candidate.local ==
+                               entry.face;
+                });
+        if (identity == root_identities.end()) {
+            *output = StableFaceGatedTpfaSnapshot3D{};
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        output->face_global_ids.push_back(
+            identity->global);
+        output->dispositions.push_back(
+            entry.disposition);
+        if (entry.static_transmissibility.has_value()) {
+            const double value =
+                entry.static_transmissibility
+                    ->face_transmissibility_m3;
+            if (!std::isfinite(value) ||
+                value <= 0.0) {
+                *output =
+                    StableFaceGatedTpfaSnapshot3D{};
+                return PETSC_ERR_FP;
+            }
+            output
+                ->materialized_face_transmissibilities_m3
+                .push_back(value);
+        } else {
+            output
+                ->materialized_face_transmissibilities_m3
+                .push_back(std::nullopt);
+        }
+    }
+
+    return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode validate_stable_face_gated_tpfa_snapshot_3d(
+    const StableFaceGatedTpfaSnapshot3D& snapshot) {
+    const std::size_t count =
+        snapshot.entry_count();
+    if (snapshot.dispositions.size() != count ||
+        snapshot
+                .materialized_face_transmissibilities_m3
+                .size() !=
+            count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+    const double half_pi =
+        0.5 * std::acos(-1.0);
+    if (!std::isfinite(
+            snapshot.geometry_policy
+                .max_direct_normal_projection_angle_rad) ||
+        snapshot.geometry_policy
+                .max_direct_normal_projection_angle_rad <
+            0.0 ||
+        snapshot.geometry_policy
+                .max_direct_normal_projection_angle_rad >=
+            half_pi ||
+        !std::isfinite(
+            snapshot.k_policy
+                .max_half_face_co_normal_angle_rad) ||
+        snapshot.k_policy
+                .max_half_face_co_normal_angle_rad <
+            0.0 ||
+        snapshot.k_policy
+                .max_half_face_co_normal_angle_rad >=
+            half_pi) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    for (std::size_t i = 0U; i < count; ++i) {
+        for (std::size_t j = 0U; j < i; ++j) {
+            if (snapshot.face_global_ids[i] ==
+                snapshot.face_global_ids[j]) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        }
+
+        const bool has_value =
+            snapshot
+                .materialized_face_transmissibilities_m3[i]
+                .has_value();
+        switch (snapshot.dispositions[i]) {
+        case mpmc::mesh::
+            TpfaInternalFaceTransmissibilityDisposition3D::
+                materialized:
+            if (!has_value ||
+                !std::isfinite(
+                    *snapshot
+                         .materialized_face_transmissibilities_m3[i]) ||
+                *snapshot
+                     .materialized_face_transmissibilities_m3[i] <=
+                    0.0) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+            break;
+        case mpmc::mesh::
+            TpfaInternalFaceTransmissibilityDisposition3D::
+                blocked_geometry_non_orthogonal:
+        case mpmc::mesh::
+            TpfaInternalFaceTransmissibilityDisposition3D::
+                blocked_k_non_orthogonal:
+        case mpmc::mesh::
+            TpfaInternalFaceTransmissibilityDisposition3D::
+                blocked_geometry_and_k_non_orthogonal:
+        case mpmc::mesh::
+            TpfaInternalFaceTransmissibilityDisposition3D::
+                blocked_degenerate_permeability_direction:
+            if (has_value) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+            break;
+        default:
+            return PETSC_ERR_ARG_INCOMP;
+        }
+    }
+    return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode migrate_stable_face_gated_tpfa_snapshot_3d(
+    DM source_dm,
+    PetscSF migration_sf,
+    const StableFaceGatedTpfaSnapshot3D& source_snapshot,
+    std::span<const DMPlexPointIdentity> source_identities,
+    DM target_dm,
+    std::span<const DMPlexPointIdentity> target_identities,
+    StableFaceGatedTpfaSnapshot3D* target_snapshot) {
+    if (source_dm == nullptr ||
+        migration_sf == nullptr ||
+        target_dm == nullptr ||
+        target_snapshot == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    *target_snapshot = StableFaceGatedTpfaSnapshot3D{};
+
+    PetscErrorCode error =
+        validate_stable_face_gated_tpfa_snapshot_3d(
+            source_snapshot);
+    if (error != PETSC_SUCCESS) return error;
+
+    MPI_Comm comm =
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(source_dm));
+    std::array<double, 2> local_policy{
+        source_snapshot.geometry_policy
+            .max_direct_normal_projection_angle_rad,
+        source_snapshot.k_policy
+            .max_half_face_co_normal_angle_rad};
+    std::array<double, 2> minimum_policy{};
+    std::array<double, 2> maximum_policy{};
+    if (MPI_Allreduce(
+            local_policy.data(),
+            minimum_policy.data(),
+            static_cast<int>(local_policy.size()),
+            MPI_DOUBLE,
+            MPI_MIN,
+            comm) != MPI_SUCCESS ||
+        MPI_Allreduce(
+            local_policy.data(),
+            maximum_policy.data(),
+            static_cast<int>(local_policy.size()),
+            MPI_DOUBLE,
+            MPI_MAX,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    for (std::size_t i = 0U;
+         i < local_policy.size();
+         ++i) {
+        if (minimum_policy[i] !=
+            maximum_policy[i]) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+    }
+
+    PetscInt source_start = 0;
+    PetscInt source_end = 0;
+    error = DMPlexGetChart(
+        source_dm,
+        &source_start,
+        &source_end);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscSection disposition_source_section = nullptr;
+    PetscSection disposition_target_section = nullptr;
+    PetscSection value_source_section = nullptr;
+    PetscSection value_target_section = nullptr;
+    auto destroy_sections = [&]() {
+        PetscSectionDestroy(&value_target_section);
+        PetscSectionDestroy(&value_source_section);
+        PetscSectionDestroy(&disposition_target_section);
+        PetscSectionDestroy(&disposition_source_section);
+    };
+
+    error = PetscSectionCreate(
+        comm,
+        &disposition_source_section);
+    if (error != PETSC_SUCCESS) return error;
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(target_dm)),
+        &disposition_target_section);
+    if (error != PETSC_SUCCESS) {
+        destroy_sections();
+        return error;
+    }
+    error = PetscSectionCreate(
+        comm,
+        &value_source_section);
+    if (error != PETSC_SUCCESS) {
+        destroy_sections();
+        return error;
+    }
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(target_dm)),
+        &value_target_section);
+    if (error != PETSC_SUCCESS) {
+        destroy_sections();
+        return error;
+    }
+
+    for (PetscSection section :
+         {disposition_source_section,
+          value_source_section}) {
+        error = PetscSectionSetChart(
+            section,
+            source_start,
+            source_end);
+        if (error != PETSC_SUCCESS) {
+            destroy_sections();
+            return error;
+        }
+    }
+
+    std::vector<PetscInt> source_points(
+        source_snapshot.entry_count(),
+        PetscInt{-1});
+    for (std::size_t entry = 0U;
+         entry < source_snapshot.entry_count();
+         ++entry) {
+        const auto global =
+            source_snapshot.face_global_ids[entry];
+        const auto identity =
+            std::find_if(
+                source_identities.begin(),
+                source_identities.end(),
+                [global](
+                    const DMPlexPointIdentity& candidate) {
+                    return candidate.kind ==
+                               mpmc::mesh::EntityKind::face &&
+                           candidate.global == global;
+                });
+        if (identity == source_identities.end() ||
+            identity->point < source_start ||
+            identity->point >= source_end) {
+            destroy_sections();
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        source_points[entry] =
+            identity->point;
+
+        error = PetscSectionSetDof(
+            disposition_source_section,
+            identity->point,
+            1);
+        if (error == PETSC_SUCCESS &&
+            source_snapshot
+                .materialized_face_transmissibilities_m3[
+                    entry]
+                .has_value()) {
+            error = PetscSectionSetDof(
+                value_source_section,
+                identity->point,
+                1);
+        }
+        if (error != PETSC_SUCCESS) {
+            destroy_sections();
+            return error;
+        }
+    }
+
+    error = PetscSectionSetUp(
+        disposition_source_section);
+    if (error == PETSC_SUCCESS) {
+        error = PetscSectionSetUp(
+            value_source_section);
+    }
+    if (error != PETSC_SUCCESS) {
+        destroy_sections();
+        return error;
+    }
+
+    PetscInt disposition_storage = 0;
+    PetscInt value_storage = 0;
+    error = PetscSectionGetStorageSize(
+        disposition_source_section,
+        &disposition_storage);
+    if (error == PETSC_SUCCESS) {
+        error = PetscSectionGetStorageSize(
+            value_source_section,
+            &value_storage);
+    }
+    if (error != PETSC_SUCCESS ||
+        disposition_storage < 0 ||
+        value_storage < 0) {
+        destroy_sections();
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+
+    std::vector<std::uint32_t> disposition_data(
+        static_cast<std::size_t>(
+            disposition_storage),
+        0U);
+    std::vector<double> value_data(
+        static_cast<std::size_t>(
+            value_storage),
+        0.0);
+
+    for (std::size_t entry = 0U;
+         entry < source_snapshot.entry_count();
+         ++entry) {
+        PetscInt disposition_offset = -1;
+        error = PetscSectionGetOffset(
+            disposition_source_section,
+            source_points[entry],
+            &disposition_offset);
+        if (error != PETSC_SUCCESS ||
+            disposition_offset < 0 ||
+            disposition_offset >=
+                disposition_storage) {
+            destroy_sections();
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+        disposition_data[
+            static_cast<std::size_t>(
+                disposition_offset)] =
+            static_cast<std::uint32_t>(
+                source_snapshot.dispositions[entry]);
+
+        if (source_snapshot
+                .materialized_face_transmissibilities_m3[
+                    entry]
+                .has_value()) {
+            PetscInt value_offset = -1;
+            error = PetscSectionGetOffset(
+                value_source_section,
+                source_points[entry],
+                &value_offset);
+            if (error != PETSC_SUCCESS ||
+                value_offset < 0 ||
+                value_offset >= value_storage) {
+                destroy_sections();
+                return error != PETSC_SUCCESS
+                           ? error
+                           : PETSC_ERR_PLIB;
+            }
+            value_data[
+                static_cast<std::size_t>(
+                    value_offset)] =
+                *source_snapshot
+                     .materialized_face_transmissibilities_m3[
+                         entry];
+        }
+    }
+
+    void* disposition_target_raw = nullptr;
+    void* value_target_raw = nullptr;
+    error = DMPlexDistributeData(
+        source_dm,
+        migration_sf,
+        disposition_source_section,
+        MPI_UINT32_T,
+        disposition_data.empty()
+            ? nullptr
+            : disposition_data.data(),
+        disposition_target_section,
+        &disposition_target_raw);
+    if (error == PETSC_SUCCESS) {
+        error = DMPlexDistributeData(
+            source_dm,
+            migration_sf,
+            value_source_section,
+            MPI_DOUBLE,
+            value_data.empty()
+                ? nullptr
+                : value_data.data(),
+            value_target_section,
+            &value_target_raw);
+    }
+    if (error != PETSC_SUCCESS) {
+        PetscFree(disposition_target_raw);
+        PetscFree(value_target_raw);
+        destroy_sections();
+        return error;
+    }
+
+    target_snapshot->geometry_policy =
+        source_snapshot.geometry_policy;
+    target_snapshot->k_policy =
+        source_snapshot.k_policy;
+
+    auto* disposition_target_data =
+        static_cast<std::uint32_t*>(
+            disposition_target_raw);
+    auto* value_target_data =
+        static_cast<double*>(
+            value_target_raw);
+
+    for (const auto& identity :
+         target_identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::face) {
+            continue;
+        }
+
+        PetscInt disposition_dof = 0;
+        PetscInt disposition_offset = -1;
+        error = PetscSectionGetDof(
+            disposition_target_section,
+            identity.point,
+            &disposition_dof);
+        if (error != PETSC_SUCCESS) {
+            *target_snapshot =
+                StableFaceGatedTpfaSnapshot3D{};
+            PetscFree(disposition_target_raw);
+            PetscFree(value_target_raw);
+            destroy_sections();
+            return error;
+        }
+        if (disposition_dof == 0) {
+            continue;
+        }
+        if (disposition_dof != 1) {
+            *target_snapshot =
+                StableFaceGatedTpfaSnapshot3D{};
+            PetscFree(disposition_target_raw);
+            PetscFree(value_target_raw);
+            destroy_sections();
+            return PETSC_ERR_PLIB;
+        }
+        error = PetscSectionGetOffset(
+            disposition_target_section,
+            identity.point,
+            &disposition_offset);
+        if (error != PETSC_SUCCESS ||
+            disposition_offset < 0) {
+            *target_snapshot =
+                StableFaceGatedTpfaSnapshot3D{};
+            PetscFree(disposition_target_raw);
+            PetscFree(value_target_raw);
+            destroy_sections();
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+
+        const auto raw_disposition =
+            disposition_target_data[
+                static_cast<std::size_t>(
+                    disposition_offset)];
+        mpmc::mesh::
+            TpfaInternalFaceTransmissibilityDisposition3D
+                disposition;
+        switch (raw_disposition) {
+        case static_cast<std::uint32_t>(
+                 mpmc::mesh::
+                     TpfaInternalFaceTransmissibilityDisposition3D::
+                         materialized):
+            disposition =
+                mpmc::mesh::
+                    TpfaInternalFaceTransmissibilityDisposition3D::
+                        materialized;
+            break;
+        case static_cast<std::uint32_t>(
+                 mpmc::mesh::
+                     TpfaInternalFaceTransmissibilityDisposition3D::
+                         blocked_geometry_non_orthogonal):
+            disposition =
+                mpmc::mesh::
+                    TpfaInternalFaceTransmissibilityDisposition3D::
+                        blocked_geometry_non_orthogonal;
+            break;
+        case static_cast<std::uint32_t>(
+                 mpmc::mesh::
+                     TpfaInternalFaceTransmissibilityDisposition3D::
+                         blocked_k_non_orthogonal):
+            disposition =
+                mpmc::mesh::
+                    TpfaInternalFaceTransmissibilityDisposition3D::
+                        blocked_k_non_orthogonal;
+            break;
+        case static_cast<std::uint32_t>(
+                 mpmc::mesh::
+                     TpfaInternalFaceTransmissibilityDisposition3D::
+                         blocked_geometry_and_k_non_orthogonal):
+            disposition =
+                mpmc::mesh::
+                    TpfaInternalFaceTransmissibilityDisposition3D::
+                        blocked_geometry_and_k_non_orthogonal;
+            break;
+        case static_cast<std::uint32_t>(
+                 mpmc::mesh::
+                     TpfaInternalFaceTransmissibilityDisposition3D::
+                         blocked_degenerate_permeability_direction):
+            disposition =
+                mpmc::mesh::
+                    TpfaInternalFaceTransmissibilityDisposition3D::
+                        blocked_degenerate_permeability_direction;
+            break;
+        default:
+            *target_snapshot =
+                StableFaceGatedTpfaSnapshot3D{};
+            PetscFree(disposition_target_raw);
+            PetscFree(value_target_raw);
+            destroy_sections();
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        PetscInt value_dof = 0;
+        error = PetscSectionGetDof(
+            value_target_section,
+            identity.point,
+            &value_dof);
+        if (error != PETSC_SUCCESS) {
+            *target_snapshot =
+                StableFaceGatedTpfaSnapshot3D{};
+            PetscFree(disposition_target_raw);
+            PetscFree(value_target_raw);
+            destroy_sections();
+            return error;
+        }
+
+        std::optional<double> value;
+        if (disposition ==
+            mpmc::mesh::
+                TpfaInternalFaceTransmissibilityDisposition3D::
+                    materialized) {
+            if (value_dof != 1) {
+                *target_snapshot =
+                    StableFaceGatedTpfaSnapshot3D{};
+                PetscFree(disposition_target_raw);
+                PetscFree(value_target_raw);
+                destroy_sections();
+                return PETSC_ERR_ARG_INCOMP;
+            }
+            PetscInt value_offset = -1;
+            error = PetscSectionGetOffset(
+                value_target_section,
+                identity.point,
+                &value_offset);
+            if (error != PETSC_SUCCESS ||
+                value_offset < 0) {
+                *target_snapshot =
+                    StableFaceGatedTpfaSnapshot3D{};
+                PetscFree(disposition_target_raw);
+                PetscFree(value_target_raw);
+                destroy_sections();
+                return error != PETSC_SUCCESS
+                           ? error
+                           : PETSC_ERR_PLIB;
+            }
+            const double transported =
+                value_target_data[
+                    static_cast<std::size_t>(
+                        value_offset)];
+            if (!std::isfinite(transported) ||
+                transported <= 0.0) {
+                *target_snapshot =
+                    StableFaceGatedTpfaSnapshot3D{};
+                PetscFree(disposition_target_raw);
+                PetscFree(value_target_raw);
+                destroy_sections();
+                return PETSC_ERR_FP;
+            }
+            value = transported;
+        } else if (value_dof != 0) {
+            *target_snapshot =
+                StableFaceGatedTpfaSnapshot3D{};
+            PetscFree(disposition_target_raw);
+            PetscFree(value_target_raw);
+            destroy_sections();
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        target_snapshot->face_global_ids.push_back(
+            identity.global);
+        target_snapshot->dispositions.push_back(
+            disposition);
+        target_snapshot
+            ->materialized_face_transmissibilities_m3
+            .push_back(value);
+    }
+
+    error =
+        validate_stable_face_gated_tpfa_snapshot_3d(
+            *target_snapshot);
+    const PetscErrorCode disposition_free_error =
+        PetscFree(disposition_target_raw);
+    const PetscErrorCode value_free_error =
+        PetscFree(value_target_raw);
+    destroy_sections();
+
+    if (error != PETSC_SUCCESS) return error;
+    if (disposition_free_error != PETSC_SUCCESS) {
+        return disposition_free_error;
+    }
+    return value_free_error;
 }
 
 inline PetscErrorCode migrate_dense_field_snapshot(
