@@ -3,6 +3,7 @@
 #include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
+#include <mpmc/mesh/gmsh_4_1.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
@@ -3052,6 +3053,801 @@ void verify_dmplex_distribute_overlap_identity() {
         "DMDestroy distributed DMPlex");
 }
 
+std::string gmsh_petsc_chain_fixture() {
+    return R"msh($MeshFormat
+4.1 0 8
+$EndMeshFormat
+$PhysicalNames
+5
+1 11 "left"
+1 12 "bottom"
+1 13 "right"
+1 14 "top"
+2 21 "domain"
+$EndPhysicalNames
+$Entities
+0 5 1 0
+1 0 0 0 1 0 0 1 12 0
+2 0 0 0 1 1 0 1 11 0
+3 1 0 0 3 0 0 1 12 0
+4 3 0 0 3 1 0 1 13 0
+5 1 1 0 3 1 0 1 14 0
+100 0 0 0 3 1 0 1 21 5 1 2 3 4 5
+$EndEntities
+$Nodes
+1 5 10 50
+2 100 0 5
+50
+10
+40
+20
+30
+3 1 0
+0 0 0
+3 0 0
+1 0 0
+1 1 0
+$EndNodes
+$Elements
+7 7 101 202
+1 1 1 1
+101 10 20
+1 2 1 1
+103 30 10
+1 3 1 1
+104 20 40
+1 4 1 1
+105 40 50
+1 5 1 1
+106 50 30
+2 100 2 1
+201 10 20 30
+2 100 3 1
+202 20 40 50 30
+$EndElements
+)msh";
+}
+
+mesh::LocalIndex reference_local_by_global(
+    const mesh::Topology& topology,
+    mesh::EntityKind kind,
+    mesh::GlobalEntityId global) {
+    const auto ids = topology.global_ids(kind);
+    for (std::size_t local = 0U;
+         local < ids.size();
+         ++local) {
+        if (ids[local] == global) {
+            return mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        local)};
+        }
+    }
+    throw std::runtime_error(
+        "stable GlobalEntityId missing from imported reference topology");
+}
+
+void verify_imported_boundary_by_global(
+    const mesh::FaceBoundarySnapshot& actual,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities,
+    const mesh::Topology& reference_topology,
+    const mesh::FaceBoundarySnapshot& reference) {
+    std::size_t count = 0U;
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::face) {
+            continue;
+        }
+        ++count;
+        const auto source_local =
+            reference_local_by_global(
+                reference_topology,
+                mesh::EntityKind::face,
+                identity.global);
+        require(
+            actual.classification(
+                identity.local) ==
+                reference.classification(
+                    source_local),
+            "imported DMPlex face classification by stable ID");
+        require(
+            actual.physical_tag(
+                identity.local) ==
+                reference.physical_tag(
+                    source_local),
+            "imported DMPlex PhysicalTag by stable ID");
+    }
+    require(
+        actual.face_count() == count,
+        "imported DMPlex boundary target face count");
+}
+
+void require_field_metadata_same(
+    const mesh::DenseFieldMetadata& left,
+    const mesh::DenseFieldMetadata& right) {
+    require(
+        left.id == right.id &&
+            left.unit == right.unit &&
+            left.source.kind ==
+                right.source.kind &&
+            left.source.reference ==
+                right.source.reference &&
+            left.source.revision ==
+                right.source.revision &&
+            left.source.locator ==
+                right.source.locator,
+        "imported DMPlex property metadata");
+}
+
+void verify_imported_cell_field_by_global(
+    const mesh::DenseFieldSnapshot& actual,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities,
+    const mesh::Topology& reference_topology,
+    const mesh::DenseFieldSnapshot& reference) {
+    require(
+        actual.location() ==
+            mesh::EntityKind::cell &&
+        actual.component_count() ==
+            reference.component_count(),
+        "imported DMPlex cell field layout");
+    require_field_metadata_same(
+        actual.metadata(),
+        reference.metadata());
+
+    std::size_t count = 0U;
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::cell) {
+            continue;
+        }
+        ++count;
+        const auto source_local =
+            reference_local_by_global(
+                reference_topology,
+                mesh::EntityKind::cell,
+                identity.global);
+        for (std::size_t component = 0U;
+             component <
+                 actual.component_count();
+             ++component) {
+            require(
+                actual.value(
+                    identity.local,
+                    component) ==
+                    reference.value(
+                        source_local,
+                        component),
+                "imported DMPlex cell property by stable ID");
+        }
+    }
+    require(
+        actual.entity_count() == count,
+        "imported DMPlex cell field entity count");
+}
+
+void verify_imported_geometry_by_global(
+    DM dm,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities,
+    const mesh::Topology& reference_topology,
+    const mesh::Geometry2D& reference_geometry) {
+    constexpr double tolerance = 1.0e-12;
+    auto view = get_dmplex_coordinate_view(dm);
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::vertex) {
+            continue;
+        }
+        const auto source_local =
+            reference_local_by_global(
+                reference_topology,
+                mesh::EntityKind::vertex,
+                identity.global);
+        const auto expected =
+            reference_geometry.vertex_coordinate_m(
+                source_local);
+        const auto actual =
+            coordinate_for_dmplex_vertex(
+                view, identity.point);
+        require(
+            std::abs(actual.x_m - expected.x_m) <=
+                    tolerance &&
+                std::abs(actual.y_m - expected.y_m) <=
+                    tolerance,
+            "imported distributed vertex coordinate by stable ID");
+    }
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::face) {
+            continue;
+        }
+        PetscInt cone_size = -1;
+        const PetscInt* cone = nullptr;
+        require_petsc(
+            DMPlexGetConeSize(
+                dm,
+                identity.point,
+                &cone_size),
+            "imported face cone size");
+        require_petsc(
+            DMPlexGetCone(
+                dm,
+                identity.point,
+                &cone),
+            "imported face cone");
+        require(
+            cone_size == 2 &&
+                cone != nullptr,
+            "imported face has two vertices");
+        const auto a =
+            coordinate_for_dmplex_vertex(
+                view, cone[0]);
+        const auto b =
+            coordinate_for_dmplex_vertex(
+                view, cone[1]);
+        const double length =
+            std::hypot(
+                b.x_m - a.x_m,
+                b.y_m - a.y_m);
+        const auto source_local =
+            reference_local_by_global(
+                reference_topology,
+                mesh::EntityKind::face,
+                identity.global);
+        require(
+            std::abs(
+                length -
+                reference_geometry.face_length_m(
+                    source_local)) <=
+                tolerance,
+            "imported distributed face length by stable ID");
+    }
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::cell) {
+            continue;
+        }
+        const auto source_local =
+            reference_local_by_global(
+                reference_topology,
+                mesh::EntityKind::cell,
+                identity.global);
+        const std::size_t expected_vertex_count =
+            reference_topology
+                .relation(
+                    mesh::EntityKind::cell,
+                    mesh::EntityKind::vertex)
+                .adjacent(source_local)
+                .size();
+        require(
+            expected_vertex_count == 3U ||
+                expected_vertex_count == 4U,
+            "imported reference cell degree");
+
+        DMPolytopeType type =
+            DM_POLYTOPE_UNKNOWN;
+        require_petsc(
+            DMPlexGetCellType(
+                dm,
+                identity.point,
+                &type),
+            "imported distributed cell type");
+        require(
+            type ==
+                (expected_vertex_count == 3U
+                     ? DM_POLYTOPE_TRIANGLE
+                     : DM_POLYTOPE_QUADRILATERAL),
+            "imported triangle/quad cell type after DMPlex distribution");
+
+        PetscInt closure_size = 0;
+        PetscInt* closure = nullptr;
+        require_petsc(
+            DMPlexGetTransitiveClosure(
+                dm,
+                identity.point,
+                PETSC_TRUE,
+                &closure_size,
+                &closure),
+            "imported cell closure");
+
+        std::vector<PetscInt> vertices;
+        vertices.reserve(expected_vertex_count);
+        for (PetscInt i = 0;
+             i < closure_size;
+             ++i) {
+            const PetscInt point =
+                closure[2 * i];
+            const auto& closure_identity =
+                identity_for_point(
+                    identities, point);
+            if (closure_identity.kind ==
+                    mesh::EntityKind::vertex &&
+                std::find(
+                    vertices.begin(),
+                    vertices.end(),
+                    point) ==
+                    vertices.end()) {
+                vertices.push_back(point);
+            }
+        }
+        require_petsc(
+            DMPlexRestoreTransitiveClosure(
+                dm,
+                identity.point,
+                PETSC_TRUE,
+                &closure_size,
+                &closure),
+            "restore imported cell closure");
+        require(
+            vertices.size() ==
+                expected_vertex_count,
+            "imported cell closure vertex count");
+
+        std::vector<mesh::Coordinate2D>
+            coordinates;
+        coordinates.reserve(vertices.size());
+        double mean_x = 0.0;
+        double mean_y = 0.0;
+        for (const PetscInt vertex :
+             vertices) {
+            const auto coordinate =
+                coordinate_for_dmplex_vertex(
+                    view, vertex);
+            coordinates.push_back(coordinate);
+            mean_x += coordinate.x_m;
+            mean_y += coordinate.y_m;
+        }
+        mean_x /=
+            static_cast<double>(
+                coordinates.size());
+        mean_y /=
+            static_cast<double>(
+                coordinates.size());
+
+        std::sort(
+            coordinates.begin(),
+            coordinates.end(),
+            [mean_x, mean_y](
+                const mesh::Coordinate2D& left,
+                const mesh::Coordinate2D& right) {
+                return std::atan2(
+                           left.y_m - mean_y,
+                           left.x_m - mean_x) <
+                       std::atan2(
+                           right.y_m - mean_y,
+                           right.x_m - mean_x);
+            });
+
+        double twice_area = 0.0;
+        double centroid_numerator_x = 0.0;
+        double centroid_numerator_y = 0.0;
+        for (std::size_t i = 0U;
+             i < coordinates.size();
+             ++i) {
+            const auto& a = coordinates[i];
+            const auto& b =
+                coordinates[
+                    (i + 1U) %
+                    coordinates.size()];
+            const double cross =
+                a.x_m * b.y_m -
+                b.x_m * a.y_m;
+            twice_area += cross;
+            centroid_numerator_x +=
+                (a.x_m + b.x_m) * cross;
+            centroid_numerator_y +=
+                (a.y_m + b.y_m) * cross;
+        }
+        require(
+            std::abs(twice_area) >
+                tolerance,
+            "imported distributed cell nonzero area");
+        const double centroid_x =
+            centroid_numerator_x /
+            (3.0 * twice_area);
+        const double centroid_y =
+            centroid_numerator_y /
+            (3.0 * twice_area);
+        const double area =
+            0.5 * std::abs(twice_area);
+
+        const auto expected_centroid =
+            reference_geometry.cell_centroid_m(
+                source_local);
+        require(
+            std::abs(
+                centroid_x -
+                expected_centroid.x_m) <=
+                    tolerance &&
+                std::abs(
+                    centroid_y -
+                expected_centroid.y_m) <=
+                    tolerance,
+            "imported distributed cell centroid by stable ID");
+        require(
+            std::abs(
+                area -
+                reference_geometry.cell_area_m2(
+                    source_local)) <=
+                tolerance,
+            "imported distributed cell area by stable ID");
+    }
+
+    restore_dmplex_coordinate_view(&view);
+}
+
+mesh::DenseFieldMetadata gmsh_chain_field_metadata() {
+    return mesh::DenseFieldMetadata{
+        "gmsh.import.cell.scalar",
+        "kg/m3",
+        mesh::FieldSourceMetadata{
+            mesh::FieldSourceKind::synthetic_test,
+            "gmsh_mixed_triangle_quad_fixture",
+            "msh4.1-v1",
+            "$Elements/2D"}};
+}
+
+mesh::DenseFieldSnapshot gmsh_chain_source_field(
+    const mesh::Topology& topology) {
+    std::vector<double> values;
+    values.reserve(
+        topology.entity_count(
+            mesh::EntityKind::cell));
+    for (const auto id :
+         topology.global_ids(
+             mesh::EntityKind::cell)) {
+        values.push_back(
+            0.01 *
+            static_cast<double>(
+                id.value()));
+    }
+    return mesh::DenseFieldSnapshot::create(
+        topology,
+        mesh::EntityKind::cell,
+        1U,
+        std::move(values),
+        gmsh_chain_field_metadata());
+}
+
+void verify_gmsh_import_through_dmplex_chain() {
+    int mpi_rank = -1;
+    int mpi_size = -1;
+    require(
+        MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &mpi_rank) == MPI_SUCCESS,
+        "MPI rank for Gmsh PETSc chain");
+    require(
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &mpi_size) == MPI_SUCCESS &&
+            mpi_size == 2,
+        "Gmsh PETSc chain requires two ranks");
+
+    std::optional<mesh::Gmsh41ImportResult>
+        imported;
+    if (mpi_rank == 0) {
+        imported.emplace(
+            mesh::import_gmsh_4_1_ascii(
+                gmsh_petsc_chain_fixture(),
+                2.0));
+    }
+
+    mesh::Topology empty_topology{
+        mesh::Topology::EntityIds{}, {}};
+    const auto source_boundary =
+        mpi_rank == 0
+            ? imported->face_boundary
+            : mesh::FaceBoundarySnapshot{
+                  {}, {}};
+    const auto source_field =
+        mpi_rank == 0
+            ? gmsh_chain_source_field(
+                  imported->topology)
+            : mesh::DenseFieldSnapshot::create(
+                  empty_topology,
+                  mesh::EntityKind::cell,
+                  1U,
+                  {},
+                  gmsh_chain_field_metadata());
+
+    DM source_dm = nullptr;
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        source_identities;
+    require_petsc(
+        mesh_petsc::create_root_dmplex_topology(
+            PETSC_COMM_WORLD,
+            0,
+            mpi_rank == 0
+                ? &imported->topology
+                : nullptr,
+            &source_dm,
+            &source_identities),
+        "create rooted Gmsh DMPlex");
+
+    require_petsc(
+        mesh_petsc::attach_root_geometry2d_coordinates(
+            source_dm,
+            0,
+            mpi_rank == 0
+                ? &imported->geometry
+                : nullptr,
+            source_identities),
+        "attach imported Gmsh coordinates");
+
+    PetscPartitioner partitioner = nullptr;
+    require_petsc(
+        DMPlexGetPartitioner(
+            source_dm,
+            &partitioner),
+        "get Gmsh DMPlex partitioner");
+    require_petsc(
+        PetscPartitionerSetType(
+            partitioner,
+            PETSCPARTITIONERSIMPLE),
+        "set simple Gmsh partitioner");
+
+    PetscSF migration_sf = nullptr;
+    DM distributed_dm = nullptr;
+    require_petsc(
+        DMPlexDistribute(
+            source_dm,
+            0,
+            &migration_sf,
+            &distributed_dm),
+        "distribute imported Gmsh DMPlex");
+    require(
+        distributed_dm != nullptr &&
+            migration_sf != nullptr,
+        "Gmsh distribution outputs");
+
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        distributed_identities;
+    require_petsc(
+        mesh_petsc::migrate_dmplex_identities(
+            source_dm,
+            migration_sf,
+            source_identities,
+            distributed_dm,
+            &distributed_identities),
+        "migrate imported Gmsh identities");
+
+    std::optional<mesh::FaceBoundarySnapshot>
+        distributed_boundary;
+    std::optional<mesh::DenseFieldSnapshot>
+        distributed_field;
+    require_petsc(
+        mesh_petsc::migrate_face_boundary_snapshot(
+            source_dm,
+            migration_sf,
+            source_boundary,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_boundary),
+        "migrate imported Gmsh boundary");
+    require_petsc(
+        mesh_petsc::migrate_dense_field_snapshot(
+            source_dm,
+            migration_sf,
+            source_field,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_field),
+        "migrate imported Gmsh property");
+
+    require(
+        distributed_boundary.has_value() &&
+            distributed_field.has_value(),
+        "distributed imported snapshots");
+
+    if (mpi_rank == 0) {
+        require(
+            imported.has_value(),
+            "rank0 imported Gmsh reference");
+    }
+
+    const auto reference_topology =
+        mpi_rank == 0
+            ? imported->topology
+            : mesh::import_gmsh_4_1_ascii(
+                  gmsh_petsc_chain_fixture(),
+                  2.0)
+                  .topology;
+    const auto reference_geometry =
+        mpi_rank == 0
+            ? imported->geometry
+            : mesh::import_gmsh_4_1_ascii(
+                  gmsh_petsc_chain_fixture(),
+                  2.0)
+                  .geometry;
+    const auto reference_boundary =
+        mpi_rank == 0
+            ? imported->face_boundary
+            : mesh::import_gmsh_4_1_ascii(
+                  gmsh_petsc_chain_fixture(),
+                  2.0)
+                  .face_boundary;
+    const auto reference_field =
+        gmsh_chain_source_field(
+            reference_topology);
+
+    verify_imported_geometry_by_global(
+        distributed_dm,
+        distributed_identities,
+        reference_topology,
+        reference_geometry);
+    verify_imported_boundary_by_global(
+        *distributed_boundary,
+        distributed_identities,
+        reference_topology,
+        reference_boundary);
+    verify_imported_cell_field_by_global(
+        *distributed_field,
+        distributed_identities,
+        reference_topology,
+        reference_field);
+
+    PetscInt local_triangles = 0;
+    PetscInt local_quads = 0;
+    for (const auto& identity :
+         distributed_identities) {
+        if (identity.kind !=
+            mesh::EntityKind::cell) {
+            continue;
+        }
+        DMPolytopeType type =
+            DM_POLYTOPE_UNKNOWN;
+        require_petsc(
+            DMPlexGetCellType(
+                distributed_dm,
+                identity.point,
+                &type),
+            "imported distributed polytope");
+        if (type == DM_POLYTOPE_TRIANGLE) {
+            ++local_triangles;
+        } else if (
+            type ==
+            DM_POLYTOPE_QUADRILATERAL) {
+            ++local_quads;
+        } else {
+            throw std::runtime_error(
+                "imported distributed cell is neither triangle nor quad");
+        }
+    }
+    PetscInt global_triangles =
+        local_triangles;
+    PetscInt global_quads =
+        local_quads;
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            &global_triangles,
+            1,
+            MPIU_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "count distributed triangles");
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            &global_quads,
+            1,
+            MPIU_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "count distributed quads");
+    require(
+        global_triangles == 1 &&
+            global_quads == 1,
+        "Gmsh mixed triangle/quad types survive distribution");
+
+    PetscSF overlap_sf = nullptr;
+    DM overlap_dm = nullptr;
+    require_petsc(
+        DMPlexDistributeOverlap(
+            distributed_dm,
+            1,
+            &overlap_sf,
+            &overlap_dm),
+        "overlap imported Gmsh DMPlex");
+    require(
+        overlap_sf != nullptr &&
+            overlap_dm != nullptr,
+        "Gmsh overlap outputs");
+
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        overlap_identities;
+    require_petsc(
+        mesh_petsc::migrate_dmplex_identities(
+            distributed_dm,
+            overlap_sf,
+            distributed_identities,
+            overlap_dm,
+            &overlap_identities),
+        "migrate Gmsh identities into overlap");
+
+    std::optional<mesh::FaceBoundarySnapshot>
+        overlap_boundary;
+    std::optional<mesh::DenseFieldSnapshot>
+        overlap_field;
+    require_petsc(
+        mesh_petsc::migrate_face_boundary_snapshot(
+            distributed_dm,
+            overlap_sf,
+            *distributed_boundary,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_boundary),
+        "migrate Gmsh boundary into overlap");
+    require_petsc(
+        mesh_petsc::migrate_dense_field_snapshot(
+            distributed_dm,
+            overlap_sf,
+            *distributed_field,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_field),
+        "migrate Gmsh property into overlap");
+
+    require(
+        overlap_boundary.has_value() &&
+            overlap_field.has_value(),
+        "overlap imported snapshots");
+    verify_imported_geometry_by_global(
+        overlap_dm,
+        overlap_identities,
+        reference_topology,
+        reference_geometry);
+    verify_imported_boundary_by_global(
+        *overlap_boundary,
+        overlap_identities,
+        reference_topology,
+        reference_boundary);
+    verify_imported_cell_field_by_global(
+        *overlap_field,
+        overlap_identities,
+        reference_topology,
+        reference_field);
+
+    const auto generated_internal =
+        reference_local_by_global(
+            reference_topology,
+            mesh::EntityKind::face,
+            mesh::GlobalEntityId{203U});
+    require(
+        reference_boundary.classification(
+            generated_internal) ==
+            mesh::FaceClassification::interior &&
+        !reference_boundary.has_physical_tag(
+            generated_internal),
+        "generated Gmsh internal face remains interior through PETSc chain");
+
+    require_petsc(
+        PetscSFDestroy(&overlap_sf),
+        "destroy Gmsh overlap migration SF");
+    require_petsc(
+        DMDestroy(&overlap_dm),
+        "destroy Gmsh overlap DM");
+    require_petsc(
+        PetscSFDestroy(&migration_sf),
+        "destroy Gmsh distribution migration SF");
+    require_petsc(
+        DMDestroy(&distributed_dm),
+        "destroy Gmsh distributed DM");
+    require_petsc(
+        DMDestroy(&source_dm),
+        "destroy Gmsh source DM");
+}
+
 void run_two_rank_test() {
     int mpi_rank = -1;
     int mpi_size = -1;
@@ -3085,6 +3881,7 @@ void run_two_rank_test() {
 
     verify_serial_dmplex_topology();
     verify_dmplex_distribute_overlap_identity();
+    verify_gmsh_import_through_dmplex_chain();
     verify_section(layout, numbering, mpi_rank);
     verify_sf(partition, plan, mpi_rank);
     verify_global_section_and_section_sf(
