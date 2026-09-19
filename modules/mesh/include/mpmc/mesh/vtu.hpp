@@ -16,8 +16,10 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -1003,6 +1005,27 @@ import_vtu_ascii(std::string_view content) {
             "mpmc::mesh::import_vtu_ascii: incomplete Cells arrays");
     }
 
+    const auto& connectivity_type =
+        require_attribute(
+            *connectivity_array, "type",
+            "mpmc::mesh::import_vtu_ascii: connectivity type is required");
+    const auto& offsets_type =
+        require_attribute(
+            *offsets_array, "type",
+            "mpmc::mesh::import_vtu_ascii: offsets type is required");
+    const auto& types_type =
+        require_attribute(
+            *types_array, "type",
+            "mpmc::mesh::import_vtu_ascii: types type is required");
+    if ((connectivity_type != "Int32" &&
+         connectivity_type != "Int64") ||
+        (offsets_type != "Int32" &&
+         offsets_type != "Int64") ||
+        types_type != "UInt8") {
+        throw std::invalid_argument(
+            "mpmc::mesh::import_vtu_ascii: Cells requires Int32/Int64 connectivity+offsets and UInt8 types");
+    }
+
     const auto connectivity =
         parse_integer_values<std::int64_t>(
             connectivity_array->body,
@@ -1115,30 +1138,47 @@ import_vtu_ascii(std::string_view content) {
                     throw std::invalid_argument(
                         "mpmc::mesh::import_vtu_ascii: mpmc_global_cell_id must use UInt64 or Int64");
                 }
-                const auto values =
-                    parse_integer_values<std::int64_t>(
-                        array.body,
-                        "mpmc::mesh::import_vtu_ascii: invalid global cell IDs");
-                if (values.size() != cell_count) {
-                    throw std::invalid_argument(
-                        "mpmc::mesh::import_vtu_ascii: global cell ID count mismatch");
-                }
                 cell_global_ids.clear();
                 cell_global_ids.reserve(cell_count);
                 std::set<std::uint64_t> unique;
-                for (const auto value : values) {
-                    if (value < 0) {
+                if (type == "UInt64") {
+                    const auto values =
+                        parse_integer_values<std::uint64_t>(
+                            array.body,
+                            "mpmc::mesh::import_vtu_ascii: invalid UInt64 global cell IDs");
+                    if (values.size() != cell_count) {
                         throw std::invalid_argument(
-                            "mpmc::mesh::import_vtu_ascii: global cell ID cannot be negative");
+                            "mpmc::mesh::import_vtu_ascii: global cell ID count mismatch");
                     }
-                    const auto id =
-                        static_cast<std::uint64_t>(
-                            value);
-                    if (!unique.insert(id).second) {
+                    for (const auto id : values) {
+                        if (!unique.insert(id).second) {
+                            throw std::invalid_argument(
+                                "mpmc::mesh::import_vtu_ascii: global cell IDs must be unique");
+                        }
+                        cell_global_ids.push_back(id);
+                    }
+                } else {
+                    const auto values =
+                        parse_integer_values<std::int64_t>(
+                            array.body,
+                            "mpmc::mesh::import_vtu_ascii: invalid Int64 global cell IDs");
+                    if (values.size() != cell_count) {
                         throw std::invalid_argument(
-                            "mpmc::mesh::import_vtu_ascii: global cell IDs must be unique");
+                            "mpmc::mesh::import_vtu_ascii: global cell ID count mismatch");
                     }
-                    cell_global_ids.push_back(id);
+                    for (const auto value : values) {
+                        if (value < 0) {
+                            throw std::invalid_argument(
+                                "mpmc::mesh::import_vtu_ascii: global cell ID cannot be negative");
+                        }
+                        const auto id =
+                            static_cast<std::uint64_t>(value);
+                        if (!unique.insert(id).second) {
+                            throw std::invalid_argument(
+                                "mpmc::mesh::import_vtu_ascii: global cell IDs must be unique");
+                        }
+                        cell_global_ids.push_back(id);
+                    }
                 }
             } else {
                 parsed_cell_fields.push_back(
