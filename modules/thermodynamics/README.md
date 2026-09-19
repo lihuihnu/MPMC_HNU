@@ -37,6 +37,6 @@
 - SW92: selected family, NaCl molality and algebraic root index;
 - CPA: selected PT density-root index.
 
-The common output is ordered `ln(phi_i)` at the exact supplied `p,T,x`. PR76 and SW92 advertise `scalar_generic_first_order` because their selected-root phase kernels already preserve the caller scalar type and reject unreliable root derivatives. CPA currently advertises `value_only`: its PT density-root/association path is scientifically valid for fugacity values, but the repository does not yet contain the association-state and density-root IFT derivatives required for a complete `p,T,x` Jacobian. The contract therefore forbids presenting CPA as differentiable until that missing derivative layer is implemented and independently validated.
+The common output is ordered `ln(phi_i)` at the exact supplied `p,T,x`. PR76, SW92 and CPA now advertise `scalar_generic_first_order`. PR76/SW92 reuse their existing selected-root scalar-generic kernels. CPA uses the dedicated `cpa_pt_phase_ad.hpp` path: association site fractions are differentiated by an implicit solve of the stationary mass-action system, the selected density root is differentiated by the PT pressure implicit-function relation, and residual-Helmholtz cross derivatives provide the final `d ln(phi)/d(p,T,x)`. Production finite differences are not used.
 
 CPA `near_multiple`/tangent root topology is rejected by the selected-phase façade, and an out-of-range selected root is an error; the bridge never silently changes root identity.

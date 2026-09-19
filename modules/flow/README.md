@@ -502,7 +502,7 @@ The EoS layer now exposes a common selected-phase fugacity façade in `mpmc/ther
 
 - **PR76:** selected algebraic root + exact `p,T,x` -> scalar-generic `ln_phi`; derivative capability is `scalar_generic_first_order`.
 - **SW92:** selected family/molality/root + exact `p,T,x` -> scalar-generic `ln_phi`; derivative capability is `scalar_generic_first_order`.
-- **CPA:** selected PT density-root index + exact `p,T,x` -> `double` `ln_phi`; derivative capability is explicitly `value_only`. The current repository does not yet contain the association-state and density-root IFT derivative layer needed for a scientifically complete CPA `p,T,x` Jacobian.
+- **CPA:** selected PT density-root index + exact `p,T,x` -> scalar-preserving `ln_phi`; derivative capability is now `scalar_generic_first_order`. The CPA path differentiates association site fractions and the selected density root by explicit IFTs and uses second-directional residual-Helmholtz derivatives; near-multiple/ill-conditioned branches remain explicit failures.
 
 The façade never chooses a different root, family or phase on behalf of flow. CPA near-multiple/tangent topology is rejected, and an invalid selected root index is an error. Flow still consumes the model-neutral evaluator boundary below; a concrete flow-to-EoS adapter can wrap this thermodynamics façade without moving branch selection into the residual.
 

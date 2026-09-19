@@ -2,6 +2,7 @@
 #define MPMC_THERMODYNAMICS_SELECTED_PHASE_FUGACITY_HPP
 
 #include <mpmc/thermodynamics/cpa_pt_phase.hpp>
+#include <mpmc/thermodynamics/cpa_pt_phase_ad.hpp>
 #include <mpmc/thermodynamics/pr76_phase.hpp>
 #include <mpmc/thermodynamics/sw92_phase.hpp>
 
@@ -38,7 +39,7 @@ struct SelectedPhaseFugacityCapabilities<Sw92Phase<T>> {
 template <>
 struct SelectedPhaseFugacityCapabilities<CpaPtPhase> {
     static constexpr SelectedPhaseFugacityDerivativeSupport derivative_support =
-        SelectedPhaseFugacityDerivativeSupport::value_only;
+        SelectedPhaseFugacityDerivativeSupport::scalar_generic_first_order;
 };
 
 template <typename Number>
@@ -130,6 +131,26 @@ evaluate_selected_phase_fugacity(
             "CPA selected phase fugacity: selected root index out of range");
     }
     return {roots.roots[selection.root_index].ln_phi};
+}
+
+template <std::size_t K>
+[[nodiscard]] inline
+SelectedPhaseFugacityValues<
+    mpmc::ad::Dual<double, K>>
+evaluate_selected_phase_fugacity(
+    const CpaPtPhase& model,
+    const mpmc::ad::Dual<double, K>& pressure_pa,
+    const mpmc::ad::Dual<double, K>& temperature_k,
+    std::span<const mpmc::ad::Dual<double, K>> composition,
+    const CpaSelectedPhase& selection) {
+    return {
+        evaluate_cpa_selected_pt_ln_phi_first_order(
+            model,
+            pressure_pa,
+            temperature_k,
+            composition,
+            selection.root_index,
+            selection.options)};
 }
 
 } // namespace mpmc::thermodynamics
