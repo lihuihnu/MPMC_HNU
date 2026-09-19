@@ -847,18 +847,37 @@ void verify_serial_dmplex_processed_grdecl() {
         const auto expected_owner =
             processed.face_geometry.face_owner(
                 local);
+        const auto owner_identity =
+            std::find_if(
+                identities.begin(),
+                identities.end(),
+                [expected_owner](const auto& identity) {
+                    return identity.kind ==
+                               mesh::EntityKind::cell &&
+                           identity.local ==
+                               expected_owner;
+                });
         require(
-            support[0] ==
-                static_cast<PetscInt>(
-                    expected_owner.value()),
-            "serial DMPlex first face support must preserve core owner");
+            owner_identity != identities.end(),
+            "processed GRDECL face owner must have DMPlex identity");
+        require(
+            std::find(
+                support,
+                support +
+                    static_cast<std::ptrdiff_t>(
+                        support_size),
+                owner_identity->point) !=
+                support +
+                    static_cast<std::ptrdiff_t>(
+                        support_size),
+            "processed GRDECL face owner must be in DMPlex support");
 
         const auto actual =
             serial_face_metric_3d(
                 dm,
                 coordinate_view,
                 point,
-                support[0]);
+                owner_identity->point);
         const auto expected_centroid =
             processed.face_geometry
                 .face_centroid_m(local);
