@@ -25,7 +25,55 @@ namespace mpmc::discretization_petsc {
 
 using mpmc::mesh_petsc::DMPlexPointIdentity;
 using mpmc::mesh_petsc::StableOwnerFaceGeometry3D;
-namespace detail = mpmc::mesh_petsc::detail;
+
+namespace detail {
+
+inline PetscErrorCode checked_petsc_int_size(
+    std::size_t value,
+    PetscInt* output) {
+    if (output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    if (value >
+        static_cast<std::size_t>(
+            std::numeric_limits<PetscInt>::max())) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    *output =
+        static_cast<PetscInt>(value);
+    return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode validate_communicator(
+    MPI_Comm comm,
+    mpmc::mesh::PartitionRank local_rank,
+    std::uint32_t rank_count) {
+    int mpi_rank = -1;
+    int mpi_size = -1;
+    if (MPI_Comm_rank(
+            comm,
+            &mpi_rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            comm,
+            &mpi_size) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (mpi_rank < 0 ||
+        mpi_size < 0) {
+        return PETSC_ERR_MPI;
+    }
+    if (static_cast<std::uint32_t>(
+            mpi_rank) !=
+            local_rank.value() ||
+        static_cast<std::uint32_t>(
+            mpi_size) !=
+            rank_count) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+    return PETSC_SUCCESS;
+}
+
+} // namespace detail
 
 struct StableFaceGatedTpfaSnapshot3D {
     mpmc::mesh::TransmissibilityGeometryAdmissibilityPolicy3D
