@@ -652,6 +652,236 @@ void verify_global_section_and_section_sf(
             static_cast<PetscInt>(1000 + local_to_global[2]),
         "multi-DoF cell point broadcast");
 
+    Vec global_vec = nullptr;
+    Vec local_vec = nullptr;
+    require_petsc(
+        mesh_petsc::create_section_vecs(
+            PETSC_COMM_WORLD,
+            local_section,
+            global_section,
+            &global_vec,
+            &local_vec),
+        "create_section_vecs");
+
+    PetscInt global_local_size = -1;
+    PetscInt global_size = -1;
+    PetscInt local_local_size = -1;
+    PetscInt local_size = -1;
+    require_petsc(
+        VecGetLocalSize(global_vec, &global_local_size),
+        "VecGetLocalSize global");
+    require_petsc(
+        VecGetSize(global_vec, &global_size),
+        "VecGetSize global");
+    require_petsc(
+        VecGetLocalSize(local_vec, &local_local_size),
+        "VecGetLocalSize local");
+    require_petsc(
+        VecGetSize(local_vec, &local_size),
+        "VecGetSize local");
+    require(global_local_size == owned_storage,
+            "global Vec must store only locally owned DoFs");
+    require(global_size == global_storage,
+            "global Vec global size");
+    require(local_local_size == local_storage &&
+                local_size == local_storage,
+            "local Vec must store owned plus ghost DoFs");
+
+    PetscBool global_is_mpi = PETSC_FALSE;
+    PetscBool local_is_seq = PETSC_FALSE;
+    require_petsc(
+        PetscObjectTypeCompare(
+            reinterpret_cast<PetscObject>(global_vec),
+            VECMPI,
+            &global_is_mpi),
+        "global Vec type");
+    require_petsc(
+        PetscObjectTypeCompare(
+            reinterpret_cast<PetscObject>(local_vec),
+            VECSEQ,
+            &local_is_seq),
+        "local Vec type");
+    require(global_is_mpi == PETSC_TRUE,
+            "global Vec must use VECMPI");
+    require(local_is_seq == PETSC_TRUE,
+            "local Vec must use VECSEQ");
+
+    PetscInt ownership_begin = -1;
+    PetscInt ownership_end = -1;
+    require_petsc(
+        VecGetOwnershipRange(
+            global_vec, &ownership_begin, &ownership_end),
+        "VecGetOwnershipRange global");
+    require(ownership_begin == rank_global_begin,
+            "global Vec ownership start must match global section");
+    require(ownership_end - ownership_begin == owned_storage,
+            "global Vec ownership width");
+
+    PetscScalar* global_array = nullptr;
+    require_petsc(
+        VecGetArray(global_vec, &global_array),
+        "VecGetArray global initialization");
+    for (PetscInt local_root = 0;
+         local_root < owned_storage;
+         ++local_root) {
+        const PetscInt petsc_global =
+            ownership_begin + local_root;
+        const std::uint64_t core_global =
+            petsc_global_to_core[
+                static_cast<std::size_t>(petsc_global)];
+        global_array[
+            static_cast<std::size_t>(local_root)] =
+            static_cast<PetscScalar>(1000U + core_global);
+    }
+    require_petsc(
+        VecRestoreArray(global_vec, &global_array),
+        "VecRestoreArray global initialization");
+
+    require_petsc(
+        VecSet(local_vec, static_cast<PetscScalar>(-777.0)),
+        "VecSet local sentinel");
+    require_petsc(
+        mesh_petsc::global_to_local(
+            section_sf, global_vec, local_vec),
+        "global_to_local Vec broadcast");
+
+    const PetscScalar* local_array = nullptr;
+    require_petsc(
+        VecGetArrayRead(local_vec, &local_array),
+        "VecGetArrayRead local broadcast");
+    for (PetscInt local = 0;
+         local < local_storage;
+         ++local) {
+        const PetscInt core_global =
+            local_to_global[
+                static_cast<std::size_t>(local)];
+        const PetscReal actual =
+            PetscRealPart(
+                local_array[
+                    static_cast<std::size_t>(local)]);
+        const PetscReal expected =
+            static_cast<PetscReal>(1000 + core_global);
+        require(actual == expected,
+                "global Vec to local Vec must preserve core GlobalDofIndex identity");
+    }
+    require_petsc(
+        VecRestoreArrayRead(local_vec, &local_array),
+        "VecRestoreArrayRead local broadcast");
+
+    std::vector<int> local_copy_counts(
+        static_cast<std::size_t>(global_storage), 0);
+    for (const PetscInt core_global : local_to_global) {
+        require(core_global >= 0 && core_global < global_storage,
+                "fixture core GlobalDofIndex range");
+        ++local_copy_counts[
+            static_cast<std::size_t>(core_global)];
+    }
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            local_copy_counts.data(),
+            collective_count,
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce local copy counts");
+    for (const int copies : local_copy_counts) {
+        require(copies == 2,
+                "fixture must contain exactly one owner and one ghost copy per global DoF");
+    }
+
+    PetscScalar* local_contributions = nullptr;
+    require_petsc(
+        VecGetArray(local_vec, &local_contributions),
+        "VecGetArray local contributions");
+    for (PetscInt local = 0;
+         local < local_storage;
+         ++local) {
+        const PetscInt core_global =
+            local_to_global[
+                static_cast<std::size_t>(local)];
+        local_contributions[
+            static_cast<std::size_t>(local)] =
+            static_cast<PetscScalar>(
+                (mpi_rank + 1) * 100 + core_global);
+    }
+    require_petsc(
+        VecRestoreArray(
+            local_vec, &local_contributions),
+        "VecRestoreArray local contributions");
+
+    require_petsc(
+        VecSet(global_vec, static_cast<PetscScalar>(10.0)),
+        "VecSet global ADD baseline");
+    require_petsc(
+        mesh_petsc::local_to_global_add(
+            section_sf, local_vec, global_vec),
+        "local_to_global_add Vec reduction");
+
+    const PetscScalar* assembled_global = nullptr;
+    require_petsc(
+        VecGetArrayRead(global_vec, &assembled_global),
+        "VecGetArrayRead assembled global");
+    for (PetscInt local_root = 0;
+         local_root < owned_storage;
+         ++local_root) {
+        const PetscInt petsc_global =
+            ownership_begin + local_root;
+        const std::uint64_t core_global =
+            petsc_global_to_core[
+                static_cast<std::size_t>(petsc_global)];
+        const PetscReal actual =
+            PetscRealPart(
+                assembled_global[
+                    static_cast<std::size_t>(local_root)]);
+        const PetscReal expected =
+            static_cast<PetscReal>(
+                310U + 2U * core_global);
+        require(actual == expected,
+                "ADD_VALUES must sum owner and ghost contributions exactly once onto the unique owner");
+    }
+    require_petsc(
+        VecRestoreArrayRead(
+            global_vec, &assembled_global),
+        "VecRestoreArrayRead assembled global");
+
+    require_petsc(
+        VecSet(local_vec, static_cast<PetscScalar>(-999.0)),
+        "VecSet local post-assembly sentinel");
+    require_petsc(
+        mesh_petsc::global_to_local(
+            section_sf, global_vec, local_vec),
+        "global_to_local assembled Vec broadcast");
+    require_petsc(
+        VecGetArrayRead(local_vec, &local_array),
+        "VecGetArrayRead post-assembly local");
+    for (PetscInt local = 0;
+         local < local_storage;
+         ++local) {
+        const PetscInt core_global =
+            local_to_global[
+                static_cast<std::size_t>(local)];
+        const PetscReal actual =
+            PetscRealPart(
+                local_array[
+                    static_cast<std::size_t>(local)]);
+        const PetscReal expected =
+            static_cast<PetscReal>(
+                310 + 2 * core_global);
+        require(actual == expected,
+                "assembled global Vec must broadcast back to owner and ghost local slots");
+    }
+    require_petsc(
+        VecRestoreArrayRead(local_vec, &local_array),
+        "VecRestoreArrayRead post-assembly local");
+
+    require_petsc(
+        VecDestroy(&local_vec),
+        "VecDestroy local Vec");
+    require_petsc(
+        VecDestroy(&global_vec),
+        "VecDestroy global Vec");
+
     require_petsc(
         PetscSFDestroy(&section_sf),
         "PetscSFDestroy section SF");
