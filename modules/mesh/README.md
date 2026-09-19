@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已覆盖 local/global `PetscSection`、entity/point/section SF、global/local Vec、serial DMPlex topology，并新增最小 2-rank `DMPlexDistribute + DMPlexDistributeOverlap` identity gate。rank 0 以完整 `2×1` quad DMPlex 为源、rank 1 以空 source 参与 collective，stable `(EntityKind, GlobalEntityId)` 经 PETSc migration SF 以 64-bit 数据真实迁移；分发后 point-SF ownership 可重建为 core `PartitionSnapshot`，depth-1 overlap 的 owner/ghost 图可重建为 `SharedEntityPlan`。core 仍不依赖 PETSc/MPI；不含 Mat、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已覆盖 local/global `PetscSection`、entity/point/section SF、global/local Vec、serial DMPlex topology、2-rank distribute/overlap identity，以及 distributed DMPlex coordinates/geometry gate。现有 `Geometry2D` vertex coordinates 通过真实 PETSc coordinate section/local Vec 写入 rooted DMPlex，并由 `DMPlexDistribute + DMPlexDistributeOverlap` 自动迁移；分发后按 64-bit stable `GlobalEntityId` 核对 vertex coordinates，并从 PETSc topology+coordinates 独立重算 cell centroid/area 与 face length。core 仍不依赖 PETSc/MPI；不含 Mat、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -100,11 +100,15 @@ synthetic serial 回归使用现有 `2×1` Cartesian quad connectivity，但把 
 
 对 overlap=0，回归对 2 个 cell、7 个 face、6 个 vertex 的每一个 stable ID 跨 rank 统计 owner 数，要求严格为 1；共享 closure points 的 point-SF leaves 必须能逐项解释为 `PartitionSnapshot` ghost。随后调用 `DMPlexDistributeOverlap(..., 1)`，再次沿 overlap migration SF 迁移 stable identity。对本 2×1 fixture，每个 rank 必须看见两个 cell，其中一个 owned、一个 ghost。测试从 overlap DM point SF 的 remote `(rank, point)`、各 rank strata ranges 与迁移后的 GlobalEntityId 构造 canonical `SharedEntityLink`，经 collective 汇总后交给现有 `SharedEntityPlan::create()`；最终要求 plan 的 receive 数等于 core ghost 数、两 rank send/receive 对称，且每个 point-SF leaf 的 owner rank 与 `PartitionSnapshot` 完全一致。PETSc point SF 的 `nroots` 按 DMPlex point-index space 的上界解释，而不是简单 chart size，这一差异已由真实 3.19.6 runner 定点修正。
 
-当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现通用 partition policy、超过 depth-1 的 overlap、distributed DMPlex geometry/coordinates、constraint DoF、真实 halo buffer abstraction、Mat integration 或残差/Jacobian；这些不得由当前 adapter 冒充完成。
+distributed geometry gate 在同一个 rooted/distribute/overlap 链上加入真实 PETSc coordinates。`attach_root_geometry2d_coordinates()` 用 `DMSetCoordinateDim(2)`、`DMSetCoordinateSection()` 与 `DMSetCoordinatesLocal()` 把 `Geometry2D::vertex_coordinates_m` 写到 source DMPlex；只有 vertex points 拥有 2 个 coordinate DoFs，cell/face coordinate DoF 为 0。PETSc 的 DMPlex distribution 会随 migration SF 迁移 coordinate section/local Vec，因此 distributed 与 overlap DM 都直接通过 `DMGetCoordinateSection()` / `DMGetCoordinatesLocal()` 读取迁移后的坐标，而不是测试侧重新复制。
+
+geometry 回归使用非均匀轴 `x={0,1.25,3.75}`、`y={-2,2}`，避免单位网格掩盖错误。每个 distributed/overlap vertex 先通过 stable `GlobalEntityId` 对照原 `Geometry2D` 坐标；每个 face 再从 DMPlex face cone 的两端 vertex coordinates 独立计算 Euclidean length；每个 cell 从 transitive closure 提取四个唯一 vertex，以坐标均值重算 centroid，并按围绕 centroid 的角排序后用 shoelace 公式重算 area。结果分别对照 `Geometry2D::face_length_m()`、`cell_centroid_m()` 和 `cell_area_m2()`，所以验证的是 PETSc 分发后的 metric geometry，而不只是 topology/identity。
+
+当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现通用 partition policy、超过 depth-1 的 overlap、distributed boundary/field data migration、constraint DoF、真实 halo buffer abstraction、Mat integration 或残差/Jacobian；这些不得由当前 adapter 冒充完成。
 
 后续适配层仍可负责：
 
-- 在已经验证的 2-rank distribute/overlap identity gate 上加入 distributed DMPlex geometry/coordinates 与边界/字段迁移；
+- 在已经验证的 distributed DMPlex identity + geometry gate 上迁移 `PhysicalTag` 与通用 `DenseFieldSnapshot`，核对 boundary/field stable identity；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
