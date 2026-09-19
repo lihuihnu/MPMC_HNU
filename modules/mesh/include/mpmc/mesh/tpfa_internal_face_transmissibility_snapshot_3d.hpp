@@ -47,19 +47,19 @@ struct TpfaInternalFaceTransmissibilityEntry3D {
 class TpfaInternalFaceTransmissibilitySnapshot3D {
 public:
     TpfaInternalFaceTransmissibilitySnapshot3D(
-        std::size_t total_face_count,
+        const CellFaceGeometricOperator3D& geometry,
         TransmissibilityGeometryAdmissibilityPolicy3D
             geometry_policy,
         KOrthogonalityAdmissibilityPolicy3D
             k_policy,
         std::vector<TpfaInternalFaceTransmissibilityEntry3D>
             entries)
-        : total_face_count_(total_face_count),
+        : total_face_count_(geometry.face_count()),
           geometry_policy_(geometry_policy),
           k_policy_(k_policy),
           entries_(std::move(entries)),
-          face_to_entry_(total_face_count_) {
-        validate_and_index();
+          face_to_entry_(geometry.face_count()) {
+        validate_and_index(geometry);
     }
 
     TpfaInternalFaceTransmissibilitySnapshot3D(
@@ -133,7 +133,8 @@ public:
     }
 
 private:
-    void validate_and_index() {
+    void validate_and_index(
+        const CellFaceGeometricOperator3D& geometry) {
         const double half_pi =
             0.5 * std::acos(-1.0);
         if (!std::isfinite(
@@ -236,7 +237,39 @@ private:
                     "mpmc::mesh::TpfaInternalFaceTransmissibilitySnapshot3D: invalid internal face disposition");
             }
 
+            const double entry_geometry_policy =
+                entry.admissibility.geometry
+                    .max_direct_normal_projection_angle_rad;
+            const double entry_k_policy =
+                entry.admissibility.k_orthogonality
+                    .max_half_face_co_normal_angle_rad;
+            if (entry_geometry_policy !=
+                    geometry_policy_
+                        .max_direct_normal_projection_angle_rad ||
+                entry_k_policy !=
+                    k_policy_
+                        .max_half_face_co_normal_angle_rad) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::TpfaInternalFaceTransmissibilitySnapshot3D: entry admissibility policy does not match snapshot policy");
+            }
+
             face_to_entry_[face] = index;
+        }
+
+        for (std::size_t face = 0U;
+             face < total_face_count_;
+             ++face) {
+            const LocalIndex local{
+                static_cast<LocalIndex::value_type>(
+                    face)};
+            const bool expected_internal =
+                geometry.face_neighbour(local)
+                    .has_value();
+            if (expected_internal !=
+                face_to_entry_[face].has_value()) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::TpfaInternalFaceTransmissibilitySnapshot3D: every internal face must appear exactly once and boundary faces must be absent");
+            }
         }
     }
 
@@ -359,7 +392,7 @@ make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
     }
 
     return TpfaInternalFaceTransmissibilitySnapshot3D{
-        geometry.face_count(),
+        geometry,
         geometry_policy,
         k_policy,
         std::move(entries)};
