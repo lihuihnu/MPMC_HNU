@@ -70,7 +70,7 @@ inline void validate_location(
 require_scalar_conductivity_field(
     const Topology& topology,
     const DenseFieldRegistry& registry,
-    const ScalarConductivityFieldContract& contract) {
+    ScalarConductivityFieldContract contract) {
     conductivity_field_detail::validate_location(
         contract.location);
     conductivity_field_detail::require_text(
