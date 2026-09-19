@@ -115,7 +115,7 @@ tokenize(std::string_view content) {
 
     std::vector<std::string> tokens;
     std::string current;
-    const auto flush = [&]() mutable {
+    const auto flush = [&]() {
         if (!current.empty()) {
             tokens.push_back(
                 std::move(current));
