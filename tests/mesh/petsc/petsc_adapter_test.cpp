@@ -4069,6 +4069,92 @@ void verify_dmplex_distribute_overlap_identity() {
         "DMDestroy distributed DMPlex");
 }
 
+const mesh::DenseFieldSnapshot&
+processed_grdecl_cell_field(
+    const mesh::ActiveCornerPointGrid& processed,
+    std::string_view id) {
+    const auto found =
+        std::find_if(
+            processed.cell_fields.begin(),
+            processed.cell_fields.end(),
+            [id](const auto& field) {
+                return field.metadata().id == id;
+            });
+    require(
+        found != processed.cell_fields.end(),
+        "processed GRDECL cell field ID missing");
+    require(
+        found->location() ==
+                mesh::EntityKind::cell &&
+            found->component_count() == 1U,
+        "processed GRDECL property must remain scalar cell field");
+    return *found;
+}
+
+void verify_processed_grdecl_cell_field_stage(
+    const mesh::DenseFieldSnapshot& actual,
+    const mesh::DenseFieldSnapshot& reference,
+    const mesh::Topology& reference_topology,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities,
+    const mesh::PartitionSnapshot& partition,
+    std::size_t expected_owned,
+    std::size_t expected_ghost) {
+    require(
+        actual.location() ==
+                mesh::EntityKind::cell &&
+            actual.component_count() ==
+                reference.component_count(),
+        "processed GRDECL migrated cell field layout");
+    require_field_metadata_same(
+        actual.metadata(),
+        reference.metadata());
+
+    std::size_t cell_count = 0U;
+    std::size_t owned_count = 0U;
+    std::size_t ghost_count = 0U;
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::cell) {
+            continue;
+        }
+        ++cell_count;
+
+        const auto source_local =
+            reference_local_by_global(
+                reference_topology,
+                mesh::EntityKind::cell,
+                identity.global);
+        require(
+            actual.value(
+                identity.local, 0U) ==
+                reference.value(
+                    source_local, 0U),
+            "processed GRDECL migrated value by stable cell GlobalEntityId");
+
+        if (partition.is_owned(
+                mesh::EntityKind::cell,
+                identity.local)) {
+            ++owned_count;
+        } else {
+            require(
+                partition.is_ghost(
+                    mesh::EntityKind::cell,
+                    identity.local),
+                "processed GRDECL non-owned cell copy must be ghost");
+            ++ghost_count;
+        }
+    }
+
+    require(
+        actual.entity_count() == cell_count,
+        "processed GRDECL migrated cell field entity count");
+    require(
+        owned_count == expected_owned &&
+            ghost_count == expected_ghost,
+        "processed GRDECL migrated field owned/ghost coverage");
+}
+
 void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
     int mpi_rank = -1;
     int mpi_size = -1;
@@ -4086,12 +4172,19 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         mpi_size == 2,
         "processed GRDECL 3D distribute gate requires exactly two ranks");
 
+    const auto field_reference =
+        processed_grdecl_two_by_one_all_active();
+
     std::optional<mesh::ActiveCornerPointGrid>
         root_processed;
     if (mpi_rank == 0) {
         root_processed.emplace(
-            processed_grdecl_two_by_one_all_active());
+            field_reference);
     }
+
+    const std::array<std::string_view, 4>
+        property_ids{
+            "PORO", "PERMX", "PERMY", "PERMZ"};
 
     std::array<double, 36>
         expected_vertex_coordinates{};
@@ -4246,6 +4339,55 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         distributed_identities,
         expected_vertex_coordinates);
 
+    const auto distributed_partition =
+        partition_from_dm_point_sf(
+            distributed_dm,
+            distributed_identities,
+            mpi_rank,
+            mpi_size);
+    require(
+        distributed_partition.owned_count(
+            mesh::EntityKind::cell) == 1U &&
+            distributed_partition.ghost_count(
+                mesh::EntityKind::cell) == 0U,
+        "processed GRDECL overlap0 cell ownership");
+    require_processed_grdecl_identity_owner_counts(
+        distributed_partition);
+
+    std::array<
+        std::optional<mesh::DenseFieldSnapshot>,
+        4>
+        distributed_fields;
+    for (std::size_t field_index = 0U;
+         field_index < property_ids.size();
+         ++field_index) {
+        const auto& source_field =
+            processed_grdecl_cell_field(
+                field_reference,
+                property_ids[field_index]);
+        require_petsc(
+            mesh_petsc::migrate_dense_field_snapshot(
+                source_dm,
+                migration_sf,
+                source_field,
+                source_identities,
+                distributed_dm,
+                distributed_identities,
+                &distributed_fields[field_index]),
+            "migrate processed GRDECL cell field after distribute");
+        require(
+            distributed_fields[field_index].has_value(),
+            "distributed processed GRDECL field must be reconstructed");
+        verify_processed_grdecl_cell_field_stage(
+            *distributed_fields[field_index],
+            source_field,
+            field_reference.topology,
+            distributed_identities,
+            distributed_partition,
+            1U,
+            0U);
+    }
+
     require_petsc(
         PetscSFDestroy(&migration_sf),
         "destroy processed GRDECL distribution migration SF");
@@ -4270,21 +4412,6 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
                 distributed_strata.cell_start ==
             1,
         "processed GRDECL simple partitioner must assign one hexa per rank");
-
-    const auto distributed_partition =
-        partition_from_dm_point_sf(
-            distributed_dm,
-            distributed_identities,
-            mpi_rank,
-            mpi_size);
-    require(
-        distributed_partition.owned_count(
-            mesh::EntityKind::cell) == 1U &&
-            distributed_partition.ghost_count(
-                mesh::EntityKind::cell) == 0U,
-        "processed GRDECL overlap0 cell ownership");
-    require_processed_grdecl_identity_owner_counts(
-        distributed_partition);
 
     PetscSF overlap_migration_sf = nullptr;
     DM overlap_dm = nullptr;
@@ -4314,10 +4441,6 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         overlap_dm,
         overlap_identities,
         expected_vertex_coordinates);
-
-    require_petsc(
-        PetscSFDestroy(&overlap_migration_sf),
-        "destroy processed GRDECL overlap migration SF");
 
     PetscInt overlap_depth = -1;
     require_petsc(
@@ -4354,6 +4477,47 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         "processed GRDECL overlap must contain one owned and one ghost cell");
     require_processed_grdecl_identity_owner_counts(
         overlap_partition);
+
+    std::array<
+        std::optional<mesh::DenseFieldSnapshot>,
+        4>
+        overlap_fields;
+    for (std::size_t field_index = 0U;
+         field_index < property_ids.size();
+         ++field_index) {
+        require(
+            distributed_fields[field_index].has_value(),
+            "distributed processed GRDECL source field must exist");
+        const auto& reference_field =
+            processed_grdecl_cell_field(
+                field_reference,
+                property_ids[field_index]);
+        require_petsc(
+            mesh_petsc::migrate_dense_field_snapshot(
+                distributed_dm,
+                overlap_migration_sf,
+                *distributed_fields[field_index],
+                distributed_identities,
+                overlap_dm,
+                overlap_identities,
+                &overlap_fields[field_index]),
+            "migrate processed GRDECL cell field into overlap");
+        require(
+            overlap_fields[field_index].has_value(),
+            "overlap processed GRDECL field must be reconstructed");
+        verify_processed_grdecl_cell_field_stage(
+            *overlap_fields[field_index],
+            reference_field,
+            field_reference.topology,
+            overlap_identities,
+            overlap_partition,
+            1U,
+            1U);
+    }
+
+    require_petsc(
+        PetscSFDestroy(&overlap_migration_sf),
+        "destroy processed GRDECL overlap migration SF");
 
     require_petsc(
         DMDestroy(&overlap_dm),
