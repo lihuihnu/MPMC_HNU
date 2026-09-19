@@ -2043,13 +2043,44 @@ void verify_dmplex_distribute_overlap_identity() {
             nullptr,
             nullptr),
         "PetscSFGetGraph distributed point SF");
+    PetscInt distributed_chart_start = -1;
+    PetscInt distributed_chart_end = -1;
+    require_petsc(
+        DMPlexGetChart(
+            distributed_dm,
+            &distributed_chart_start,
+            &distributed_chart_end),
+        "DMPlexGetChart distributed point SF");
     require(
-        distributed_roots ==
-            distributed_strata.vertex_end -
-                distributed_strata.cell_start,
-        "distributed point SF root space must match local chart size");
+        distributed_roots == distributed_chart_end,
+        "distributed point SF root space must use DMPlex point-index upper bound");
     require(distributed_leaves >= 0,
             "distributed point SF leaf count");
+
+    const PetscInt* distributed_ilocal = nullptr;
+    const PetscSFNode* distributed_remote = nullptr;
+    require_petsc(
+        PetscSFGetGraph(
+            distributed_point_sf,
+            &distributed_roots,
+            &distributed_leaves,
+            &distributed_ilocal,
+            &distributed_remote),
+        "PetscSFGetGraph distributed point SF leaves");
+    for (PetscInt leaf = 0;
+         leaf < distributed_leaves;
+         ++leaf) {
+        const PetscInt point =
+            distributed_ilocal != nullptr
+                ? distributed_ilocal[leaf]
+                : leaf;
+        require(
+            point >= distributed_chart_start &&
+                point < distributed_chart_end,
+            "distributed point SF leaf must lie inside local DMPlex chart");
+        require(distributed_remote != nullptr,
+                "distributed point SF remote roots");
+    }
 
     PetscSF overlap_migration_sf = nullptr;
     DM overlap_dm = nullptr;
