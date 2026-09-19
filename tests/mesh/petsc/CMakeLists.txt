@@ -38,4 +38,7 @@ add_test(
         ${MPIEXEC_POSTFLAGS})
 set_tests_properties(
     mesh.petsc.sparsity_owner_targeted_3rank
-    PROPERTIES LABELS "mesh;mesh.petsc;integration;mpi;sparsity" TIMEOUT 60)
+    PROPERTIES
+        LABELS "mesh;mesh.petsc;integration;mpi;sparsity"
+        TIMEOUT 60
+        ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1")
