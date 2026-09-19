@@ -1017,9 +1017,381 @@ void gmsh_4_1_import() {
     }
 }
 
+std::string gmsh_roundtrip_surface_groups_fixture() {
+    auto content =
+        gmsh_mixed_triangle_quad_fixture();
+
+    const auto physical_count =
+        content.find("$PhysicalNames\n5\n");
+    require(
+        physical_count != std::string::npos,
+        "round-trip PhysicalNames count marker");
+    content.replace(
+        physical_count,
+        std::string{"$PhysicalNames\n5\n"}.size(),
+        "$PhysicalNames\n6\n");
+
+    const auto physical_end =
+        content.find("$EndPhysicalNames");
+    require(
+        physical_end != std::string::npos,
+        "round-trip PhysicalNames end marker");
+    content.insert(
+        physical_end,
+        "2 22 \"material\"\n");
+
+    const std::string surface_entity =
+        "100 0 0 0 3 1 0 1 21 5 1 2 3 4 5";
+    const auto surface =
+        content.find(surface_entity);
+    require(
+        surface != std::string::npos,
+        "round-trip surface entity marker");
+    content.replace(
+        surface,
+        surface_entity.size(),
+        "100 0 0 0 3 1 0 2 21 22 5 1 2 3 4 5");
+    return content;
+}
+
+void require_topology_equal(
+    const mesh::Topology& actual,
+    const mesh::Topology& expected) {
+    for (const auto kind :
+         {mesh::EntityKind::vertex,
+          mesh::EntityKind::edge,
+          mesh::EntityKind::face,
+          mesh::EntityKind::cell}) {
+        require(
+            actual.entity_count(kind) ==
+                expected.entity_count(kind),
+            "round-trip topology entity count");
+        const auto actual_ids =
+            actual.global_ids(kind);
+        const auto expected_ids =
+            expected.global_ids(kind);
+        require(
+            actual_ids.size() ==
+                expected_ids.size(),
+            "round-trip topology GlobalEntityId count");
+        for (std::size_t i = 0U;
+             i < actual_ids.size();
+             ++i) {
+            require(
+                actual_ids[i] ==
+                    expected_ids[i],
+                "round-trip topology GlobalEntityId");
+        }
+    }
+
+    for (const auto relation :
+         {std::pair{
+              mesh::EntityKind::cell,
+              mesh::EntityKind::vertex},
+          std::pair{
+              mesh::EntityKind::cell,
+              mesh::EntityKind::face},
+          std::pair{
+              mesh::EntityKind::face,
+              mesh::EntityKind::vertex},
+          std::pair{
+              mesh::EntityKind::face,
+              mesh::EntityKind::cell}}) {
+        require(
+            actual.has_relation(
+                relation.first,
+                relation.second) ==
+                expected.has_relation(
+                    relation.first,
+                    relation.second),
+            "round-trip topology relation presence");
+        const auto& actual_relation =
+            actual.relation(
+                relation.first,
+                relation.second);
+        const auto& expected_relation =
+            expected.relation(
+                relation.first,
+                relation.second);
+        require(
+            actual_relation.offsets().size() ==
+                expected_relation.offsets().size() &&
+            actual_relation.indices().size() ==
+                expected_relation.indices().size(),
+            "round-trip topology relation storage size");
+        for (std::size_t i = 0U;
+             i < actual_relation.offsets().size();
+             ++i) {
+            require(
+                actual_relation.offsets()[i] ==
+                    expected_relation.offsets()[i],
+                "round-trip topology relation offsets");
+        }
+        for (std::size_t i = 0U;
+             i < actual_relation.indices().size();
+             ++i) {
+            require(
+                actual_relation.indices()[i] ==
+                    expected_relation.indices()[i],
+                "round-trip topology relation indices");
+        }
+    }
+}
+
+void require_geometry_equal(
+    const mesh::Geometry2D& actual,
+    const mesh::Geometry2D& expected) {
+    constexpr double tolerance = 1.0e-13;
+    require(
+        actual.vertex_count() ==
+            expected.vertex_count() &&
+        actual.face_count() ==
+            expected.face_count() &&
+        actual.cell_count() ==
+            expected.cell_count(),
+        "round-trip geometry entity counts");
+
+    for (std::size_t vertex = 0U;
+         vertex < actual.vertex_count();
+         ++vertex) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        vertex)};
+        const auto a =
+            actual.vertex_coordinate_m(local);
+        const auto e =
+            expected.vertex_coordinate_m(local);
+        require_close(
+            a.x_m, e.x_m, tolerance,
+            "round-trip vertex x");
+        require_close(
+            a.y_m, e.y_m, tolerance,
+            "round-trip vertex y");
+    }
+
+    for (std::size_t cell = 0U;
+         cell < actual.cell_count();
+         ++cell) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        cell)};
+        const auto a =
+            actual.cell_centroid_m(local);
+        const auto e =
+            expected.cell_centroid_m(local);
+        require_close(
+            a.x_m, e.x_m, tolerance,
+            "round-trip cell centroid x");
+        require_close(
+            a.y_m, e.y_m, tolerance,
+            "round-trip cell centroid y");
+        require_close(
+            actual.cell_area_m2(local),
+            expected.cell_area_m2(local),
+            tolerance,
+            "round-trip cell area");
+    }
+
+    for (std::size_t face = 0U;
+         face < actual.face_count();
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        const auto a =
+            actual.face_centroid_m(local);
+        const auto e =
+            expected.face_centroid_m(local);
+        require_close(
+            a.x_m, e.x_m, tolerance,
+            "round-trip face centroid x");
+        require_close(
+            a.y_m, e.y_m, tolerance,
+            "round-trip face centroid y");
+        require_close(
+            actual.face_length_m(local),
+            expected.face_length_m(local),
+            tolerance,
+            "round-trip face length");
+        require(
+            actual.face_owner(local) ==
+                expected.face_owner(local),
+            "round-trip face owner");
+        const auto an =
+            actual.face_owner_unit_normal(local);
+        const auto en =
+            expected.face_owner_unit_normal(local);
+        require_close(
+            an.x, en.x, tolerance,
+            "round-trip face normal x");
+        require_close(
+            an.y, en.y, tolerance,
+            "round-trip face normal y");
+    }
+}
+
+void require_boundary_equal(
+    const mesh::FaceBoundarySnapshot& actual,
+    const mesh::FaceBoundarySnapshot& expected) {
+    require(
+        actual.face_count() ==
+            expected.face_count(),
+        "round-trip boundary face count");
+    for (std::size_t face = 0U;
+         face < actual.face_count();
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        require(
+            actual.classification(local) ==
+                expected.classification(local),
+            "round-trip face classification");
+        require(
+            actual.physical_tag(local) ==
+                expected.physical_tag(local),
+            "round-trip PhysicalTag");
+    }
+}
+
+void require_physical_metadata_equal(
+    const mesh::Gmsh41ImportResult& actual,
+    const mesh::Gmsh41ImportResult& expected) {
+    require(
+        actual.physical_names.size() ==
+            expected.physical_names.size(),
+        "round-trip PhysicalNames count");
+    for (std::size_t i = 0U;
+         i < actual.physical_names.size();
+         ++i) {
+        const auto& a =
+            actual.physical_names[i];
+        const auto& e =
+            expected.physical_names[i];
+        require(
+            a.dimension == e.dimension &&
+                a.tag == e.tag &&
+                a.name == e.name,
+            "round-trip PhysicalName");
+    }
+
+    require(
+        actual.cell_physical_groups.size() ==
+            expected.cell_physical_groups.size(),
+        "round-trip surface Physical Group record count");
+    for (std::size_t i = 0U;
+         i < actual.cell_physical_groups.size();
+         ++i) {
+        const auto& a =
+            actual.cell_physical_groups[i];
+        const auto& e =
+            expected.cell_physical_groups[i];
+        require(
+            a.cell_global_id ==
+                e.cell_global_id &&
+                a.physical_tags ==
+                    e.physical_tags,
+            "round-trip surface Physical Groups");
+    }
+}
+
+void gmsh_4_1_roundtrip() {
+    const auto first =
+        mesh::import_gmsh_4_1_ascii(
+            gmsh_roundtrip_surface_groups_fixture(),
+            2.0);
+
+    require(
+        first.cell_physical_groups.size() == 2U,
+        "round-trip source surface group count");
+    for (const auto& record :
+         first.cell_physical_groups) {
+        require(
+            record.physical_tags ==
+                std::vector<std::uint32_t>{
+                    21U, 22U},
+            "round-trip source multiple surface groups");
+    }
+
+    const std::string exported =
+        mesh::export_gmsh_4_1_ascii(first);
+    require(
+        exported.find("$MeshFormat\n4.1 0 8\n") !=
+            std::string::npos,
+        "round-trip export MSH4.1 ASCII header");
+    require(
+        exported.find("2 22 \"material\"") !=
+            std::string::npos,
+        "round-trip export PhysicalName");
+    require(
+        exported.find("\n203 ") !=
+            std::string::npos,
+        "round-trip export generated internal face element tag");
+
+    const auto second =
+        mesh::import_gmsh_4_1_ascii(
+            exported,
+            1.0);
+
+    require_topology_equal(
+        second.topology,
+        first.topology);
+    require_geometry_equal(
+        second.geometry,
+        first.geometry);
+    require_boundary_equal(
+        second.face_boundary,
+        first.face_boundary);
+    require_physical_metadata_equal(
+        second,
+        first);
+}
+
 void gmsh_4_1_invalid() {
     const auto valid =
         gmsh_mixed_triangle_quad_fixture();
+
+    const auto export_source =
+        mesh::import_gmsh_4_1_ascii(
+            valid, 1.0);
+
+    {
+        auto bad = export_source;
+        bad.physical_names.push_back(
+            bad.physical_names.front());
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::export_gmsh_4_1_ascii(
+                bad);
+        });
+    }
+
+    {
+        auto bad = export_source;
+        bad.cell_physical_groups.pop_back();
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::export_gmsh_4_1_ascii(
+                bad);
+        });
+    }
+
+    {
+        auto bad = export_source;
+        bad.physical_names.push_back(
+            mesh::GmshPhysicalName{
+                1, 999U, "unused"});
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::export_gmsh_4_1_ascii(
+                bad);
+        });
+    }
 
     expect_throw<std::invalid_argument>([&] {
         (void)mesh::import_gmsh_4_1_ascii(
@@ -2030,6 +2402,7 @@ int main(int argc, char** argv) {
         else if (name == "dense_field_snapshot") { dense_field_snapshot(); }
         else if (name == "dense_field_invalid") { dense_field_invalid(); }
         else if (name == "gmsh_4_1_import") { gmsh_4_1_import(); }
+        else if (name == "gmsh_4_1_roundtrip") { gmsh_4_1_roundtrip(); }
         else if (name == "gmsh_4_1_invalid") { gmsh_4_1_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
