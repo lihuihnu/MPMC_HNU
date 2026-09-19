@@ -16,6 +16,7 @@
 #include <mpmc/mesh/shared_entity_plan.hpp>
 #include <mpmc/mesh/topology.hpp>
 #include <mpmc/mesh/tpfa_half_connection_3d.hpp>
+#include <mpmc/mesh/tpfa_half_transmissibility_3d.hpp>
 #include <mpmc/mesh/vtu.hpp>
 
 #include <array>
@@ -4541,6 +4542,317 @@ void tpfa_half_connection_3d_invalid() {
         });
 }
 
+
+void tpfa_half_transmissibility_3d() {
+    const auto horizontal =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto horizontal_geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            horizontal.topology,
+            horizontal.vertex_coordinates_m,
+            horizontal.face_geometry);
+    const auto horizontal_permeability =
+        processed_diagonal_permeability(
+            horizontal);
+    const auto horizontal_interface =
+        only_shared_face(
+            horizontal.topology);
+
+    const auto horizontal_owner =
+        mesh::make_owner_area_scaled_tpfa_half_transmissibility_3d(
+            horizontal_geometry,
+            horizontal_permeability,
+            horizontal_interface);
+    const auto horizontal_neighbour =
+        mesh::make_neighbour_area_scaled_tpfa_half_transmissibility_3d(
+            horizontal_geometry,
+            horizontal_permeability,
+            horizontal_interface);
+
+    require_close(
+        horizontal_owner.face_area_m2,
+        1.0,
+        1.0e-14,
+        "horizontal owner TPFA half area");
+    require_close(
+        horizontal_owner
+            .half_connection.coefficient_m,
+        200.0e-15,
+        1.0e-28,
+        "horizontal owner half coefficient retained");
+    require_close(
+        horizontal_owner
+            .half_transmissibility_m3,
+        200.0e-15,
+        1.0e-28,
+        "horizontal owner area-scaled half transmissibility");
+    require_close(
+        horizontal_neighbour
+            .half_transmissibility_m3,
+        400.0e-15,
+        1.0e-28,
+        "horizontal neighbour area-scaled half transmissibility");
+
+    const auto vertical =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_vertical_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto vertical_geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            vertical.topology,
+            vertical.vertex_coordinates_m,
+            vertical.face_geometry);
+    const auto vertical_permeability =
+        processed_diagonal_permeability(
+            vertical);
+    const auto vertical_interface =
+        only_shared_face(
+            vertical.topology);
+    const auto vertical_owner =
+        mesh::make_owner_area_scaled_tpfa_half_transmissibility_3d(
+            vertical_geometry,
+            vertical_permeability,
+            vertical_interface);
+    const auto vertical_neighbour =
+        mesh::make_neighbour_area_scaled_tpfa_half_transmissibility_3d(
+            vertical_geometry,
+            vertical_permeability,
+            vertical_interface);
+    require_close(
+        vertical_owner.half_transmissibility_m3,
+        20.0e-15,
+        1.0e-28,
+        "vertical owner area-scaled half transmissibility");
+    require_close(
+        vertical_neighbour.half_transmissibility_m3,
+        24.0e-15,
+        1.0e-28,
+        "vertical neighbour area-scaled half transmissibility");
+
+    const auto skewed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_skewed_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto skewed_geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            skewed.topology,
+            skewed.vertex_coordinates_m,
+            skewed.face_geometry);
+    const auto skewed_permeability =
+        processed_diagonal_permeability(
+            skewed);
+    const auto skewed_interface =
+        only_shared_face(
+            skewed.topology);
+
+    const auto skewed_owner =
+        mesh::make_owner_area_scaled_tpfa_half_transmissibility_3d(
+            skewed_geometry,
+            skewed_permeability,
+            skewed_interface);
+    const auto skewed_neighbour =
+        mesh::make_neighbour_area_scaled_tpfa_half_transmissibility_3d(
+            skewed_geometry,
+            skewed_permeability,
+            skewed_interface);
+    require_close(
+        skewed_owner.face_area_m2,
+        std::sqrt(29.0) / 5.0,
+        1.0e-14,
+        "skewed shared face area retained");
+    require_close(
+        skewed_owner
+            .half_connection.coefficient_m,
+        1000.0e-15 / std::sqrt(29.0),
+        1.0e-28,
+        "skewed owner coefficient retained before area scaling");
+    require_close(
+        skewed_owner.half_transmissibility_m3,
+        200.0e-15,
+        1.0e-28,
+        "skewed owner area-scaled half transmissibility");
+    require_close(
+        skewed_neighbour.half_transmissibility_m3,
+        400.0e-15,
+        1.0e-28,
+        "skewed neighbour area-scaled half transmissibility");
+
+    const auto strict_admissibility =
+        mesh::classify_internal_face_transmissibility_admissibility(
+            skewed_geometry,
+            skewed_permeability,
+            skewed_interface,
+            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                0.0},
+            mesh::KOrthogonalityAdmissibilityPolicy3D{
+                0.0});
+    require(
+        strict_admissibility.disposition ==
+            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+                requires_geometry_and_k_non_orthogonal_treatment,
+        "area scaling does not bypass strict geometry/K admissibility");
+}
+
+void tpfa_half_transmissibility_3d_invalid() {
+    const auto zero_half =
+        mesh::TpfaHalfConnectionCoefficient3D{
+            mesh::TpfaHalfConnectionProjection3D::
+                zero_projection,
+            0.0,
+            0.25,
+            0.0};
+    const auto zero_scaled =
+        mesh::make_area_scaled_tpfa_half_transmissibility_3d(
+            2.0,
+            zero_half);
+    require(
+        zero_scaled.half_connection.projection ==
+            mesh::TpfaHalfConnectionProjection3D::
+                zero_projection &&
+            zero_scaled.face_area_m2 == 2.0 &&
+            zero_scaled.half_transmissibility_m3 ==
+                0.0,
+        "zero half projection survives positive area scaling");
+
+    const auto positive_half =
+        mesh::TpfaHalfConnectionCoefficient3D{
+            mesh::TpfaHalfConnectionProjection3D::
+                positive_projection,
+            50.0e-15,
+            0.25,
+            200.0e-15};
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_area_scaled_tpfa_half_transmissibility_3d(
+                0.0,
+                positive_half);
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_area_scaled_tpfa_half_transmissibility_3d(
+                -1.0,
+                positive_half);
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_area_scaled_tpfa_half_transmissibility_3d(
+                std::numeric_limits<double>::
+                    quiet_NaN(),
+                positive_half);
+        });
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_area_scaled_tpfa_half_transmissibility_3d(
+                1.0,
+                mesh::TpfaHalfConnectionCoefficient3D{
+                    mesh::TpfaHalfConnectionProjection3D::
+                        positive_projection,
+                    50.0e-15,
+                    0.25,
+                    0.0});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_area_scaled_tpfa_half_transmissibility_3d(
+                1.0,
+                mesh::TpfaHalfConnectionCoefficient3D{
+                    mesh::TpfaHalfConnectionProjection3D::
+                        zero_projection,
+                    50.0e-15,
+                    0.25,
+                    200.0e-15});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_area_scaled_tpfa_half_transmissibility_3d(
+                1.0,
+                mesh::TpfaHalfConnectionCoefficient3D{
+                    mesh::TpfaHalfConnectionProjection3D::
+                        positive_projection,
+                    50.0e-15,
+                    0.5,
+                    200.0e-15});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_area_scaled_tpfa_half_transmissibility_3d(
+                1.0,
+                mesh::TpfaHalfConnectionCoefficient3D{
+                    static_cast<
+                        mesh::TpfaHalfConnectionProjection3D>(
+                            255U),
+                    50.0e-15,
+                    0.25,
+                    200.0e-15});
+        });
+
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto geometry =
+        mesh::make_cell_face_geometric_operator_3d(
+            processed.topology,
+            processed.vertex_coordinates_m,
+            processed.face_geometry);
+    const auto permeability =
+        processed_diagonal_permeability(
+            processed);
+
+    const auto& face_cells =
+        processed.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    bool checked_boundary = false;
+    for (std::size_t face = 0U;
+         face < processed.topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        if (face_cells.adjacent(local).size() != 1U) {
+            continue;
+        }
+        const auto owner_half =
+            mesh::make_owner_area_scaled_tpfa_half_transmissibility_3d(
+                geometry,
+                permeability,
+                local);
+        require(
+            owner_half.face_area_m2 > 0.0 &&
+                owner_half.half_transmissibility_m3 >=
+                    0.0,
+            "boundary owner area-scaled half transmissibility is independently defined");
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::make_neighbour_area_scaled_tpfa_half_transmissibility_3d(
+                    geometry,
+                    permeability,
+                    local);
+            });
+        checked_boundary = true;
+        break;
+    }
+    require(
+        checked_boundary,
+        "area-scaled TPFA half transmissibility invalid test found boundary face");
+}
+
 void dof_layout_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
     const auto layout = mesh::DofLayout::create(
@@ -5482,6 +5794,8 @@ int main(int argc, char** argv) {
         else if (name == "permeability_tensor_3d_invalid") { permeability_tensor_3d_invalid(); }
         else if (name == "tpfa_half_connection_3d") { tpfa_half_connection_3d(); }
         else if (name == "tpfa_half_connection_3d_invalid") { tpfa_half_connection_3d_invalid(); }
+        else if (name == "tpfa_half_transmissibility_3d") { tpfa_half_transmissibility_3d(); }
+        else if (name == "tpfa_half_transmissibility_3d_invalid") { tpfa_half_transmissibility_3d_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
