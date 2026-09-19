@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <vector>
 
 namespace mpmc::mesh_petsc {
@@ -936,6 +937,514 @@ inline PetscErrorCode create_serial_dmplex_topology(
 
     *dm = plex;
     return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode create_root_dmplex_topology(
+    MPI_Comm comm,
+    PetscMPIInt root_rank,
+    const mpmc::mesh::Topology* root_topology,
+    DM* dm,
+    std::vector<DMPlexPointIdentity>* identities) {
+    if (dm == nullptr || identities == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    *dm = nullptr;
+    identities->clear();
+
+    int mpi_rank = -1;
+    int mpi_size = -1;
+    if (MPI_Comm_rank(comm, &mpi_rank) != MPI_SUCCESS ||
+        MPI_Comm_size(comm, &mpi_size) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (root_rank < 0 || root_rank >= mpi_size) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    DM serial_dm = nullptr;
+    std::vector<DMPlexPointIdentity> serial_identities;
+    PetscErrorCode root_error = PETSC_SUCCESS;
+    if (mpi_rank == root_rank) {
+        if (root_topology == nullptr) {
+            root_error = PETSC_ERR_ARG_NULL;
+        } else {
+            root_error = create_serial_dmplex_topology(
+                *root_topology, &serial_dm, &serial_identities);
+        }
+    }
+
+    int broadcast_error = static_cast<int>(root_error);
+    if (MPI_Bcast(
+            &broadcast_error, 1, MPI_INT,
+            root_rank, comm) != MPI_SUCCESS) {
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return PETSC_ERR_MPI;
+    }
+    if (broadcast_error != static_cast<int>(PETSC_SUCCESS)) {
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return static_cast<PetscErrorCode>(broadcast_error);
+    }
+
+    PetscErrorCode error = PETSC_SUCCESS;
+    PetscInt chart_start = 0;
+    PetscInt chart_end = 0;
+    if (mpi_rank == root_rank) {
+        error = DMPlexGetChart(
+            serial_dm, &chart_start, &chart_end);
+        if (error != PETSC_SUCCESS) {
+            DMDestroy(&serial_dm);
+            return error;
+        }
+        if (chart_start != 0) {
+            DMDestroy(&serial_dm);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+    }
+
+    DM rooted_dm = nullptr;
+    error = DMPlexCreate(comm, &rooted_dm);
+    if (error != PETSC_SUCCESS) {
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return error;
+    }
+
+    error = DMSetDimension(rooted_dm, 2);
+    if (error != PETSC_SUCCESS) {
+        DMDestroy(&rooted_dm);
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return error;
+    }
+    error = DMPlexSetChart(rooted_dm, 0, chart_end);
+    if (error != PETSC_SUCCESS) {
+        DMDestroy(&rooted_dm);
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return error;
+    }
+
+    if (mpi_rank == root_rank) {
+        for (PetscInt point = 0; point < chart_end; ++point) {
+            PetscInt cone_size = 0;
+            error = DMPlexGetConeSize(
+                serial_dm, point, &cone_size);
+            if (error != PETSC_SUCCESS) {
+                DMDestroy(&rooted_dm);
+                DMDestroy(&serial_dm);
+                return error;
+            }
+            error = DMPlexSetConeSize(
+                rooted_dm, point, cone_size);
+            if (error != PETSC_SUCCESS) {
+                DMDestroy(&rooted_dm);
+                DMDestroy(&serial_dm);
+                return error;
+            }
+        }
+    }
+
+    error = DMSetUp(rooted_dm);
+    if (error != PETSC_SUCCESS) {
+        DMDestroy(&rooted_dm);
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return error;
+    }
+
+    if (mpi_rank == root_rank) {
+        for (PetscInt point = 0; point < chart_end; ++point) {
+            PetscInt cone_size = 0;
+            const PetscInt* cone = nullptr;
+            const PetscInt* orientation = nullptr;
+            error = DMPlexGetConeSize(
+                serial_dm, point, &cone_size);
+            if (error != PETSC_SUCCESS) {
+                DMDestroy(&rooted_dm);
+                DMDestroy(&serial_dm);
+                return error;
+            }
+            if (cone_size == 0) continue;
+
+            error = DMPlexGetCone(
+                serial_dm, point, &cone);
+            if (error != PETSC_SUCCESS) {
+                DMDestroy(&rooted_dm);
+                DMDestroy(&serial_dm);
+                return error;
+            }
+            error = DMPlexGetConeOrientation(
+                serial_dm, point, &orientation);
+            if (error != PETSC_SUCCESS) {
+                DMDestroy(&rooted_dm);
+                DMDestroy(&serial_dm);
+                return error;
+            }
+            error = DMPlexSetCone(
+                rooted_dm, point, cone);
+            if (error != PETSC_SUCCESS) {
+                DMDestroy(&rooted_dm);
+                DMDestroy(&serial_dm);
+                return error;
+            }
+            error = DMPlexSetConeOrientation(
+                rooted_dm, point, orientation);
+            if (error != PETSC_SUCCESS) {
+                DMDestroy(&rooted_dm);
+                DMDestroy(&serial_dm);
+                return error;
+            }
+        }
+    }
+
+    error = DMPlexSymmetrize(rooted_dm);
+    if (error != PETSC_SUCCESS) {
+        DMDestroy(&rooted_dm);
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return error;
+    }
+    error = DMPlexStratify(rooted_dm);
+    if (error != PETSC_SUCCESS) {
+        DMDestroy(&rooted_dm);
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return error;
+    }
+    error = DMPlexComputeCellTypes(rooted_dm);
+    if (error != PETSC_SUCCESS) {
+        DMDestroy(&rooted_dm);
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return error;
+    }
+
+    if (mpi_rank == root_rank) {
+        *identities = std::move(serial_identities);
+    }
+
+    if (serial_dm != nullptr) {
+        error = DMDestroy(&serial_dm);
+        if (error != PETSC_SUCCESS) {
+            identities->clear();
+            DMDestroy(&rooted_dm);
+            return error;
+        }
+    }
+
+    *dm = rooted_dm;
+    return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode migrate_dmplex_identities(
+    DM source_dm,
+    PetscSF migration_sf,
+    std::span<const DMPlexPointIdentity> source_identities,
+    DM target_dm,
+    std::vector<DMPlexPointIdentity>* target_identities) {
+    if (source_dm == nullptr ||
+        migration_sf == nullptr ||
+        target_dm == nullptr ||
+        target_identities == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    target_identities->clear();
+
+    PetscInt source_start = 0;
+    PetscInt source_end = 0;
+    PetscInt target_start = 0;
+    PetscInt target_end = 0;
+    PetscErrorCode error = DMPlexGetChart(
+        source_dm, &source_start, &source_end);
+    if (error != PETSC_SUCCESS) return error;
+    error = DMPlexGetChart(
+        target_dm, &target_start, &target_end);
+    if (error != PETSC_SUCCESS) return error;
+    if (source_start < 0 || source_end < source_start ||
+        target_start < 0 || target_end < target_start) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    const std::size_t source_count =
+        static_cast<std::size_t>(
+            source_end - source_start);
+    if (source_identities.size() != source_count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    PetscSection source_section = nullptr;
+    PetscSection target_section = nullptr;
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(source_dm)),
+        &source_section);
+    if (error != PETSC_SUCCESS) return error;
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(target_dm)),
+        &target_section);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    error = PetscSectionSetChart(
+        source_section, source_start, source_end);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+    for (PetscInt point = source_start;
+         point < source_end;
+         ++point) {
+        error = PetscSectionSetDof(
+            source_section, point, 2);
+        if (error != PETSC_SUCCESS) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error;
+        }
+    }
+    error = PetscSectionSetUp(source_section);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    PetscInt source_storage = 0;
+    error = PetscSectionGetStorageSize(
+        source_section, &source_storage);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+    if (source_storage < 0 ||
+        source_storage !=
+            static_cast<PetscInt>(
+                source_count * std::size_t{2U})) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return PETSC_ERR_PLIB;
+    }
+
+    std::vector<std::uint8_t> seen(
+        source_count, std::uint8_t{0U});
+    std::vector<std::uint64_t> source_data(
+        static_cast<std::size_t>(source_storage), 0U);
+    for (const auto& identity : source_identities) {
+        if (identity.point < source_start ||
+            identity.point >= source_end) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        const std::size_t position =
+            static_cast<std::size_t>(
+                identity.point - source_start);
+        if (seen[position] != 0U) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        seen[position] = std::uint8_t{1U};
+
+        PetscInt offset = 0;
+        error = PetscSectionGetOffset(
+            source_section, identity.point, &offset);
+        if (error != PETSC_SUCCESS) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error;
+        }
+        if (offset < 0 ||
+            offset + 1 >= source_storage) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_PLIB;
+        }
+        source_data[
+            static_cast<std::size_t>(offset)] =
+            static_cast<std::uint64_t>(identity.kind);
+        source_data[
+            static_cast<std::size_t>(offset + 1)] =
+            identity.global.value();
+    }
+    if (std::find(
+            seen.begin(), seen.end(),
+            std::uint8_t{0U}) != seen.end()) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    void* target_raw = nullptr;
+    error = DMPlexDistributeData(
+        source_dm,
+        migration_sf,
+        source_section,
+        MPI_UINT64_T,
+        source_data.empty()
+            ? nullptr
+            : source_data.data(),
+        target_section,
+        &target_raw);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    PetscInt target_storage = 0;
+    error = PetscSectionGetStorageSize(
+        target_section, &target_storage);
+    if (error != PETSC_SUCCESS) {
+        PetscFree(target_raw);
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    const std::size_t target_count =
+        static_cast<std::size_t>(
+            target_end - target_start);
+    if (target_storage < 0 ||
+        target_storage !=
+            static_cast<PetscInt>(
+                target_count * std::size_t{2U})) {
+        PetscFree(target_raw);
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return PETSC_ERR_PLIB;
+    }
+
+    PetscInt cell_start = -1;
+    PetscInt cell_end = -1;
+    PetscInt face_start = -1;
+    PetscInt face_end = -1;
+    PetscInt vertex_start = -1;
+    PetscInt vertex_end = -1;
+    error = DMPlexGetHeightStratum(
+        target_dm, 0, &cell_start, &cell_end);
+    if (error == PETSC_SUCCESS) {
+        error = DMPlexGetHeightStratum(
+            target_dm, 1, &face_start, &face_end);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = DMPlexGetDepthStratum(
+            target_dm, 0, &vertex_start, &vertex_end);
+    }
+    if (error != PETSC_SUCCESS) {
+        PetscFree(target_raw);
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    auto* target_data =
+        static_cast<std::uint64_t*>(target_raw);
+    target_identities->reserve(target_count);
+    for (PetscInt point = target_start;
+         point < target_end;
+         ++point) {
+        PetscInt dof = 0;
+        PetscInt offset = 0;
+        error = PetscSectionGetDof(
+            target_section, point, &dof);
+        if (error == PETSC_SUCCESS) {
+            error = PetscSectionGetOffset(
+                target_section, point, &offset);
+        }
+        if (error != PETSC_SUCCESS) {
+            target_identities->clear();
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error;
+        }
+        if (dof != 2 || offset < 0 ||
+            offset + 1 >= target_storage) {
+            target_identities->clear();
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_PLIB;
+        }
+
+        const std::uint64_t raw_kind =
+            target_data[
+                static_cast<std::size_t>(offset)];
+        mpmc::mesh::EntityKind kind;
+        PetscInt kind_start = -1;
+        PetscInt kind_end = -1;
+        switch (raw_kind) {
+        case static_cast<std::uint64_t>(
+                 mpmc::mesh::EntityKind::cell):
+            kind = mpmc::mesh::EntityKind::cell;
+            kind_start = cell_start;
+            kind_end = cell_end;
+            break;
+        case static_cast<std::uint64_t>(
+                 mpmc::mesh::EntityKind::face):
+            kind = mpmc::mesh::EntityKind::face;
+            kind_start = face_start;
+            kind_end = face_end;
+            break;
+        case static_cast<std::uint64_t>(
+                 mpmc::mesh::EntityKind::vertex):
+            kind = mpmc::mesh::EntityKind::vertex;
+            kind_start = vertex_start;
+            kind_end = vertex_end;
+            break;
+        default:
+            target_identities->clear();
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        if (point < kind_start || point >= kind_end) {
+            target_identities->clear();
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        const PetscInt local_value =
+            point - kind_start;
+        if (local_value < 0 ||
+            static_cast<std::uint64_t>(local_value) >
+                static_cast<std::uint64_t>(
+                    std::numeric_limits<
+                        mpmc::mesh::LocalIndex::value_type>::max())) {
+            target_identities->clear();
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+
+        target_identities->push_back(
+            DMPlexPointIdentity{
+                point,
+                kind,
+                mpmc::mesh::LocalIndex{
+                    static_cast<
+                        mpmc::mesh::LocalIndex::value_type>(
+                            local_value)},
+                mpmc::mesh::GlobalEntityId{
+                    target_data[
+                        static_cast<std::size_t>(
+                            offset + 1)]}});
+    }
+
+    const PetscErrorCode free_error =
+        PetscFree(target_raw);
+    const PetscErrorCode target_destroy_error =
+        PetscSectionDestroy(&target_section);
+    const PetscErrorCode source_destroy_error =
+        PetscSectionDestroy(&source_section);
+    if (free_error != PETSC_SUCCESS) return free_error;
+    if (target_destroy_error != PETSC_SUCCESS) {
+        return target_destroy_error;
+    }
+    return source_destroy_error;
 }
 
 inline PetscErrorCode create_section_vecs(
