@@ -1,6 +1,7 @@
 #ifndef MPMC_DISCRETIZATION_PETSC_ADAPTER_HPP
 #define MPMC_DISCRETIZATION_PETSC_ADAPTER_HPP
 
+#include <mpmc/discretization/transmissibility_admissibility_3d.hpp>
 #include <mpmc/mesh/tpfa_internal_face_transmissibility_snapshot_3d.hpp>
 #include <mpmc/mesh_petsc/adapter.hpp>
 
@@ -76,9 +77,9 @@ inline PetscErrorCode validate_communicator(
 } // namespace detail
 
 struct StableFaceGatedTpfaSnapshot3D {
-    mpmc::mesh::TransmissibilityGeometryAdmissibilityPolicy3D
+    mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D
         geometry_policy{0.0};
-    mpmc::mesh::KOrthogonalityAdmissibilityPolicy3D
+    mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D
         k_policy{0.0};
     std::vector<mpmc::mesh::GlobalEntityId>
         face_global_ids;
@@ -163,12 +164,10 @@ inline PetscErrorCode make_root_stable_face_gated_tpfa_snapshot_3d(
     }
 
     output->geometry_policy =
-        mpmc::mesh::
-            TransmissibilityGeometryAdmissibilityPolicy3D{
+        mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 policies[0]};
     output->k_policy =
-        mpmc::mesh::
-            KOrthogonalityAdmissibilityPolicy3D{
+        mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D{
                 policies[1]};
 
     if (mpi_rank != root_rank) {
@@ -824,10 +823,9 @@ class TargetLocalGatedTpfaTransmissibilityView3D {
 public:
     TargetLocalGatedTpfaTransmissibilityView3D(
         std::size_t target_face_count,
-        mpmc::mesh::
-            TransmissibilityGeometryAdmissibilityPolicy3D
+        mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D
                 geometry_policy,
-        mpmc::mesh::KOrthogonalityAdmissibilityPolicy3D
+        mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D
             k_policy,
         std::vector<
             TargetLocalGatedTpfaTransmissibilityEntry3D>
@@ -875,14 +873,13 @@ public:
                materialized_face_count_;
     }
 
-    [[nodiscard]] mpmc::mesh::
-        TransmissibilityGeometryAdmissibilityPolicy3D
+    [[nodiscard]] mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D
     geometry_policy() const noexcept {
         return geometry_policy_;
     }
 
     [[nodiscard]]
-    mpmc::mesh::KOrthogonalityAdmissibilityPolicy3D
+    mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D
     k_policy() const noexcept {
         return k_policy_;
     }
@@ -1058,10 +1055,9 @@ private:
     }
 
     std::size_t target_face_count_;
-    mpmc::mesh::
-        TransmissibilityGeometryAdmissibilityPolicy3D
+    mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D
             geometry_policy_;
-    mpmc::mesh::KOrthogonalityAdmissibilityPolicy3D
+    mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D
         k_policy_;
     std::vector<
         TargetLocalGatedTpfaTransmissibilityEntry3D>
