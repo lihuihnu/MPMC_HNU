@@ -1,4 +1,4 @@
-name: Mesh core correctness
+name: Mesh/discretization core correctness
 
 on:
   pull_request:
@@ -6,6 +6,7 @@ on:
     paths:
       - 'modules/mesh/include/**'
       - 'modules/mesh/CMakeLists.txt'
+      - 'modules/discretization/**'
       - 'tests/mesh/core/**'
       - '.github/workflows/mesh_core.yml'
   workflow_dispatch:
@@ -14,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mesh-core-${{ github.workflow }}-${{ github.ref }}
+  group: mesh-discretization-core-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -48,13 +49,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure mesh core tests
+      - name: Configure mesh/discretization core tests
         run: |
           cmake -S tests/mesh/core -B build/mesh-core \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             ${{ matrix.compiler }} \
             -DMPMC_MESH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build mesh core tests
+      - name: Build mesh/discretization core tests
         run: cmake --build build/mesh-core --target mpmc_mesh_core_tests --config ${{ matrix.build_type }} --parallel 2
-      - name: Run mesh core tests
+      - name: Run mesh/discretization core tests
         run: ctest --test-dir build/mesh-core -C ${{ matrix.build_type }} -R '^mesh[.]core[.]' --verbose --no-tests=error
