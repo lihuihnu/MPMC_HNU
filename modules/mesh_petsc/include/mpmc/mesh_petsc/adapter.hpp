@@ -6640,6 +6640,21 @@ make_owned_cell_structural_column_pattern_snapshot_3d(
 
         for (const auto& coupling :
              sparsity.couplings()) {
+            try {
+                if (partition.global_id(
+                        mpmc::mesh::EntityKind::cell,
+                        coupling.first_cell) !=
+                        coupling.first_cell_global ||
+                    partition.global_id(
+                        mpmc::mesh::EntityKind::cell,
+                        coupling.second_cell) !=
+                        coupling.second_cell_global) {
+                    return PETSC_ERR_ARG_INCOMP;
+                }
+            } catch (...) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+
             mpmc::mesh::LocalIndex neighbour{
                 0U};
             bool incident = false;
@@ -6701,17 +6716,27 @@ make_owned_cell_structural_column_pattern_snapshot_3d(
                 off_diagonal_columns.end()),
             off_diagonal_columns.end());
 
-        const auto& structural =
-            sparsity.structural_counts(
-                cell);
-        if (diagonal_nnz[index] < 0 ||
+        const OwnedCellStructuralCounts3D*
+            structural = nullptr;
+        try {
+            structural =
+                &sparsity.structural_counts(
+                    cell);
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        if (structural->cell !=
+                cell ||
+            structural->cell_global !=
+                cell_global ||
+            diagonal_nnz[index] < 0 ||
             off_diagonal_nnz[index] < 0 ||
             diagonal_columns.size() !=
                 structural
-                    .diagonal_block_nnz ||
+                    ->diagonal_block_nnz ||
             off_diagonal_columns.size() !=
                 structural
-                    .off_diagonal_block_nnz ||
+                    ->off_diagonal_block_nnz ||
             diagonal_columns.size() !=
                 static_cast<std::size_t>(
                     diagonal_nnz[index]) ||
