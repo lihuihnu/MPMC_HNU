@@ -2,6 +2,7 @@
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/cell_face_geometric_operator_3d.hpp>
 #include <mpmc/mesh/corner_point_geometry_3d.hpp>
+#include <mpmc/mesh/conductivity_field.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dense_field_registry.hpp>
@@ -3957,6 +3958,318 @@ void permeability_tensor_3d() {
 
 }
 
+
+void symmetric_permeability_tensor_3d() {
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+
+    const auto full_field =
+        mesh::DenseFieldSnapshot::create(
+            processed.topology,
+            mesh::EntityKind::cell,
+            6U,
+            {
+                4.0e-15, 3.0e-15, 2.0e-15,
+                1.0e-15, 0.5e-15, 0.25e-15,
+                1.0e-15, 1.0e-15, 0.0,
+                1.0e-15, 0.0, 0.0,
+            },
+            synthetic_field_metadata(
+                "rock.permeability.full",
+                "m2"));
+    const auto registry =
+        mesh::DenseFieldRegistry::create(
+            processed.topology,
+            {full_field});
+
+    const auto permeability =
+        mesh::make_cell_cartesian_symmetric_permeability_3d(
+            processed.topology,
+            registry,
+            "rock.permeability.full");
+    require(
+        permeability.cell_count() == 2U,
+        "symmetric permeability cell count");
+    require(
+        permeability.basis() ==
+            mesh::CartesianTensorBasis3D::
+                mesh_world_xyz,
+        "symmetric permeability basis");
+
+    const auto first =
+        permeability.tensor(
+            mesh::LocalIndex{0U});
+    require_close(
+        first.kxx_m2,
+        4.0e-15,
+        1.0e-30,
+        "full Kxx");
+    require_close(
+        first.kyy_m2,
+        3.0e-15,
+        1.0e-30,
+        "full Kyy");
+    require_close(
+        first.kzz_m2,
+        2.0e-15,
+        1.0e-30,
+        "full Kzz");
+    require_close(
+        first.kxy_m2,
+        1.0e-15,
+        1.0e-30,
+        "full Kxy");
+    require_close(
+        first.kxz_m2,
+        0.5e-15,
+        1.0e-30,
+        "full Kxz");
+    require_close(
+        first.kyz_m2,
+        0.25e-15,
+        1.0e-30,
+        "full Kyz");
+
+    const auto second =
+        permeability.tensor(
+            mesh::LocalIndex{1U});
+    require_close(
+        second.kxy_m2,
+        1.0e-15,
+        1.0e-30,
+        "semidefinite tensor off-diagonal");
+    require_close(
+        second.kzz_m2,
+        0.0,
+        0.0,
+        "semidefinite zero direction");
+}
+
+void symmetric_permeability_tensor_3d_invalid() {
+    const auto topology =
+        mesh::make_cartesian_topology_2d(
+            1U,
+            1U);
+
+    const auto non_psd =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            6U,
+            {
+                1.0e-15, 1.0e-15, 1.0e-15,
+                2.0e-15, 0.0, 0.0,
+            },
+            synthetic_field_metadata(
+                "bad.full.k",
+                "m2"));
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cell_cartesian_symmetric_permeability_3d(
+                topology,
+                non_psd);
+        });
+
+    const auto wrong_unit =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            6U,
+            {1.0, 1.0, 1.0,
+             0.0, 0.0, 0.0},
+            synthetic_field_metadata(
+                "bad.unit.k",
+                "mD"));
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cell_cartesian_symmetric_permeability_3d(
+                topology,
+                wrong_unit);
+        });
+
+    const auto wrong_width =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            3U,
+            {1.0e-15, 1.0e-15, 1.0e-15},
+            synthetic_field_metadata(
+                "bad.width.k",
+                "m2"));
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cell_cartesian_symmetric_permeability_3d(
+                topology,
+                wrong_width);
+        });
+
+    const auto face_field =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::face,
+            6U,
+            std::vector<double>(
+                topology.entity_count(
+                    mesh::EntityKind::face) *
+                    6U,
+                0.0),
+            synthetic_field_metadata(
+                "bad.location.k",
+                "m2"));
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cell_cartesian_symmetric_permeability_3d(
+                topology,
+                face_field);
+        });
+}
+
+void conductivity_field_contract() {
+    const auto topology =
+        field_contract_topology();
+
+    const auto thermal_cell =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            1U,
+            {2.5},
+            synthetic_field_metadata(
+                "rock.thermal_conductivity",
+                "W/(m*K)"));
+    const auto electrical_edge =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::edge,
+            1U,
+            {10.0, 20.0, 30.0},
+            synthetic_field_metadata(
+                "edge.electrical_conductivity",
+                "S/m"));
+    const auto registry =
+        mesh::DenseFieldRegistry::create(
+            topology,
+            {thermal_cell,
+             electrical_edge});
+
+    const auto& thermal =
+        mesh::require_scalar_conductivity_field(
+            topology,
+            registry,
+            mesh::ScalarConductivityFieldContract{
+                mesh::EntityKind::cell,
+                "rock.thermal_conductivity",
+                "W/(m*K)"});
+    require_close(
+        thermal.value(
+            mesh::LocalIndex{0U},
+            0U),
+        2.5,
+        0.0,
+        "thermal conductivity value");
+
+    const auto& electrical =
+        mesh::require_scalar_conductivity_field(
+            topology,
+            registry,
+            mesh::ScalarConductivityFieldContract{
+                mesh::EntityKind::edge,
+                "edge.electrical_conductivity",
+                "S/m"});
+    require_close(
+        electrical.value(
+            mesh::LocalIndex{2U},
+            0U),
+        30.0,
+        0.0,
+        "electrical conductivity edge value");
+}
+
+void conductivity_field_contract_invalid() {
+    const auto topology =
+        field_contract_topology();
+
+    const auto negative =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            1U,
+            {-0.1},
+            synthetic_field_metadata(
+                "negative.conductivity",
+                "W/(m*K)"));
+    const auto vector_field =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            2U,
+            {1.0, 2.0},
+            synthetic_field_metadata(
+                "vector.conductivity",
+                "W/(m*K)"));
+    const auto registry =
+        mesh::DenseFieldRegistry::create(
+            topology,
+            {negative,
+             vector_field});
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::require_scalar_conductivity_field(
+                topology,
+                registry,
+                mesh::ScalarConductivityFieldContract{
+                    mesh::EntityKind::cell,
+                    "negative.conductivity",
+                    "W/(m*K)"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::require_scalar_conductivity_field(
+                topology,
+                registry,
+                mesh::ScalarConductivityFieldContract{
+                    mesh::EntityKind::cell,
+                    "vector.conductivity",
+                    "W/(m*K)"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::require_scalar_conductivity_field(
+                topology,
+                registry,
+                mesh::ScalarConductivityFieldContract{
+                    mesh::EntityKind::cell,
+                    "vector.conductivity",
+                    "S/m"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::require_scalar_conductivity_field(
+                topology,
+                registry,
+                mesh::ScalarConductivityFieldContract{
+                    static_cast<
+                        mesh::EntityKind>(255U),
+                    "vector.conductivity",
+                    "W/(m*K)"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::require_scalar_conductivity_field(
+                topology,
+                registry,
+                mesh::ScalarConductivityFieldContract{
+                    mesh::EntityKind::cell,
+                    " ",
+                    "W/(m*K)"});
+        });
+}
+
 void permeability_tensor_3d_invalid() {
     const auto processed =
         mesh::process_active_corner_point_grid(
@@ -4960,6 +5273,10 @@ int main(int argc, char** argv) {
         else if (name == "cell_face_geometric_operator_3d_skewed") { cell_face_geometric_operator_3d_skewed(); }
         else if (name == "cell_face_geometric_operator_3d_invalid") { cell_face_geometric_operator_3d_invalid(); }
         else if (name == "permeability_tensor_3d") { permeability_tensor_3d(); }
+        else if (name == "symmetric_permeability_tensor_3d") { symmetric_permeability_tensor_3d(); }
+        else if (name == "symmetric_permeability_tensor_3d_invalid") { symmetric_permeability_tensor_3d_invalid(); }
+        else if (name == "conductivity_field_contract") { conductivity_field_contract(); }
+        else if (name == "conductivity_field_contract_invalid") { conductivity_field_contract_invalid(); }
         else if (name == "permeability_tensor_3d_invalid") { permeability_tensor_3d_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
