@@ -4164,6 +4164,217 @@ void verify_processed_grdecl_cell_field_stage(
         "processed GRDECL migrated field owned/ghost coverage");
 }
 
+mesh::GlobalEntityId
+processed_grdecl_face_owner_global_id(
+    const mesh::ActiveCornerPointGrid& reference,
+    mesh::LocalIndex face) {
+    const auto owner_local =
+        reference.face_geometry.face_owner(face);
+    return reference.topology.global_id(
+        mesh::EntityKind::cell,
+        owner_local);
+}
+
+void verify_stable_owner_face_geometry_stage(
+    const mesh_petsc::StableOwnerFaceGeometry3D& actual,
+    const mesh::ActiveCornerPointGrid& reference,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities) {
+    constexpr double tolerance = 1.0e-12;
+
+    std::size_t face_count = 0U;
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::face) {
+            continue;
+        }
+        ++face_count;
+
+        const auto source_local =
+            reference_local_by_global(
+                reference.topology,
+                mesh::EntityKind::face,
+                identity.global);
+        const std::size_t target_local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        require(
+            target_local < actual.face_count(),
+            "migrated stable-owner face geometry local range");
+
+        const auto actual_centroid =
+            actual.face_centroids_m[target_local];
+        const auto expected_centroid =
+            reference.face_geometry
+                .face_centroid_m(source_local);
+        require(
+            std::abs(
+                actual_centroid.x_m -
+                expected_centroid.x_m) <=
+                    tolerance &&
+                std::abs(
+                    actual_centroid.y_m -
+                    expected_centroid.y_m) <=
+                    tolerance &&
+                std::abs(
+                    actual_centroid.z_m -
+                    expected_centroid.z_m) <=
+                    tolerance,
+            "migrated face centroid by stable face GlobalEntityId");
+
+        require(
+            std::abs(
+                actual.face_areas_m2[target_local] -
+                reference.face_geometry
+                    .face_area_m2(source_local)) <=
+                    tolerance,
+            "migrated face area by stable face GlobalEntityId");
+
+        require(
+            actual.face_owner_global_ids[target_local] ==
+                processed_grdecl_face_owner_global_id(
+                    reference,
+                    source_local),
+            "migrated face owner must remain stable cell GlobalEntityId");
+
+        const auto actual_normal =
+            actual.face_owner_unit_normals[
+                target_local];
+        const auto expected_normal =
+            reference.face_geometry
+                .face_owner_unit_normal(
+                    source_local);
+        require(
+            std::abs(
+                actual_normal.x -
+                expected_normal.x) <=
+                    tolerance &&
+                std::abs(
+                    actual_normal.y -
+                    expected_normal.y) <=
+                    tolerance &&
+                std::abs(
+                    actual_normal.z -
+                    expected_normal.z) <=
+                    tolerance,
+            "migrated owner-relative normal by stable face GlobalEntityId");
+    }
+
+    require(
+        actual.face_count() == face_count &&
+            actual.face_areas_m2.size() == face_count &&
+            actual.face_owner_global_ids.size() == face_count &&
+            actual.face_owner_unit_normals.size() == face_count,
+        "migrated stable-owner face geometry target face count");
+}
+
+void verify_materialized_face_geometry_stage(
+    const mesh::FaceGeometry3D& actual,
+    const mesh_petsc::StableOwnerFaceGeometry3D& stable,
+    const mesh::ActiveCornerPointGrid& reference,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities) {
+    constexpr double tolerance = 1.0e-12;
+    require(
+        actual.face_count() == stable.face_count(),
+        "materialized face geometry face count");
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::face) {
+            continue;
+        }
+        const auto source_local =
+            reference_local_by_global(
+                reference.topology,
+                mesh::EntityKind::face,
+                identity.global);
+        const auto target_face =
+            identity.local;
+        const std::size_t target_local =
+            static_cast<std::size_t>(
+                target_face.value());
+
+        const auto owner_local =
+            actual.face_owner(target_face);
+        const auto owner_identity =
+            std::find_if(
+                identities.begin(),
+                identities.end(),
+                [owner_local](const auto& candidate) {
+                    return candidate.kind ==
+                               mesh::EntityKind::cell &&
+                           candidate.local ==
+                               owner_local;
+                });
+        require(
+            owner_identity != identities.end(),
+            "materialized face owner must resolve to target-local cell identity");
+        require(
+            owner_identity->global ==
+                stable.face_owner_global_ids[
+                    target_local] &&
+                owner_identity->global ==
+                    processed_grdecl_face_owner_global_id(
+                        reference,
+                        source_local),
+            "materialized face owner local index must resolve stable owner cell ID");
+
+        const auto actual_centroid =
+            actual.face_centroid_m(
+                target_face);
+        const auto expected_centroid =
+            reference.face_geometry
+                .face_centroid_m(source_local);
+        require(
+            std::abs(
+                actual_centroid.x_m -
+                expected_centroid.x_m) <=
+                    tolerance &&
+                std::abs(
+                    actual_centroid.y_m -
+                    expected_centroid.y_m) <=
+                    tolerance &&
+                std::abs(
+                    actual_centroid.z_m -
+                    expected_centroid.z_m) <=
+                    tolerance,
+            "materialized face centroid");
+
+        require(
+            std::abs(
+                actual.face_area_m2(
+                    target_face) -
+                reference.face_geometry
+                    .face_area_m2(
+                        source_local)) <=
+                    tolerance,
+            "materialized face area");
+
+        const auto actual_normal =
+            actual.face_owner_unit_normal(
+                target_face);
+        const auto expected_normal =
+            reference.face_geometry
+                .face_owner_unit_normal(
+                    source_local);
+        require(
+            std::abs(
+                actual_normal.x -
+                expected_normal.x) <=
+                    tolerance &&
+                std::abs(
+                    actual_normal.y -
+                expected_normal.y) <=
+                    tolerance &&
+                std::abs(
+                    actual_normal.z -
+                    expected_normal.z) <=
+                    tolerance,
+            "materialized owner-relative face normal");
+    }
+}
+
 void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
     int mpi_rank = -1;
     int mpi_size = -1;
@@ -4307,6 +4518,21 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             "non-root rank must begin with empty processed GRDECL DAG");
     }
 
+    mesh_petsc::StableOwnerFaceGeometry3D
+        source_face_geometry;
+    if (mpi_rank == 0) {
+        require_petsc(
+            mesh_petsc::make_stable_owner_face_geometry_3d(
+                root_processed->face_geometry,
+                source_identities,
+                &source_face_geometry),
+            "freeze processed GRDECL face owners as stable cell IDs");
+        verify_stable_owner_face_geometry_stage(
+            source_face_geometry,
+            field_reference,
+            source_identities);
+    }
+
     PetscPartitioner partitioner = nullptr;
     require_petsc(
         DMPlexGetPartitioner(
@@ -4396,6 +4622,54 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             1U,
             0U);
     }
+
+    mesh_petsc::StableOwnerFaceGeometry3D
+        distributed_face_geometry;
+    require_petsc(
+        mesh_petsc::migrate_stable_owner_face_geometry_3d(
+            source_dm,
+            migration_sf,
+            source_face_geometry,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_face_geometry),
+        "migrate processed GRDECL face geometry after distribute");
+    verify_stable_owner_face_geometry_stage(
+        distributed_face_geometry,
+        field_reference,
+        distributed_identities);
+
+    std::optional<mesh::FaceGeometry3D>
+        distributed_materialized_face_geometry;
+    const PetscErrorCode distributed_materialize_error =
+        mesh_petsc::materialize_face_geometry_3d(
+            distributed_face_geometry,
+            distributed_identities,
+            &distributed_materialized_face_geometry);
+    require(
+        distributed_materialize_error == PETSC_SUCCESS ||
+            distributed_materialize_error ==
+                PETSC_ERR_ARG_WRONGSTATE,
+        "overlap0 face geometry materialization may fail only when canonical owner cell is remote");
+    const int local_unresolved_owner =
+        distributed_materialize_error ==
+                PETSC_ERR_ARG_WRONGSTATE
+            ? 1
+            : 0;
+    int unresolved_owner_ranks = 0;
+    require(
+        MPI_Allreduce(
+            &local_unresolved_owner,
+            &unresolved_owner_ranks,
+            1,
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce unresolved stable face owners");
+    require(
+        unresolved_owner_ranks >= 1,
+        "overlap0 must exercise at least one face whose stable canonical owner is remote");
 
     require_petsc(
         PetscSFDestroy(&migration_sf),
@@ -4523,6 +4797,40 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             1U,
             1U);
     }
+
+    mesh_petsc::StableOwnerFaceGeometry3D
+        overlap_face_geometry;
+    require_petsc(
+        mesh_petsc::migrate_stable_owner_face_geometry_3d(
+            distributed_dm,
+            overlap_migration_sf,
+            distributed_face_geometry,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_face_geometry),
+        "migrate processed GRDECL face geometry into overlap");
+    verify_stable_owner_face_geometry_stage(
+        overlap_face_geometry,
+        field_reference,
+        overlap_identities);
+
+    std::optional<mesh::FaceGeometry3D>
+        overlap_materialized_face_geometry;
+    require_petsc(
+        mesh_petsc::materialize_face_geometry_3d(
+            overlap_face_geometry,
+            overlap_identities,
+            &overlap_materialized_face_geometry),
+        "materialize processed GRDECL overlap FaceGeometry3D");
+    require(
+        overlap_materialized_face_geometry.has_value(),
+        "depth-one overlap must resolve every stable face owner to target-local cell");
+    verify_materialized_face_geometry_stage(
+        *overlap_materialized_face_geometry,
+        overlap_face_geometry,
+        field_reference,
+        overlap_identities);
 
     require_petsc(
         PetscSFDestroy(&overlap_migration_sf),
