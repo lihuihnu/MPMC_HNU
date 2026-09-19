@@ -69,6 +69,8 @@ one-sided TPFA half-connection coefficient contract 现在建立在独立 `tpfa_
 
 half-connection degeneracy/sign contract 也已冻结：K components 必须 finite/non-negative，normal 必须 finite unit length，d 必须 finite 且 `d^T d>0`；`n^T K d` 按 `max(K)*|d|` 构造量纲一致的 `[m3]` floating-point tolerance，显著负值视为 outward-normal/cell->face sign violation 并拒绝，落在零容差内则保留为 `zero_projection` 且 coefficient=`0 m`，而不是把合法 zero permeability 当成几何错误。I-interface regression 固定 owner/neighbour coefficient=`200e-15/400e-15 m`，K-interface 固定 `20e-15/24e-15 m`；skewed interface 分别固定为 `1000/sqrt(29)e-15 m` 与 `2000/sqrt(29)e-15 m`，同时再次确认这些 scalar 虽可计算，strict geometry+K admissibility 仍为 `requires_geometry_and_k_non_orthogonal_treatment`。boundary owner half connection 可单独定义，boundary neighbour half connection 明确拒绝。这里仍没有乘 face area、没有 harmonic combination、没有 two-point transmissibility、没有 Darcy flux/residual。
 
+area-scaled one-sided half transmissibility contract 现在建立在独立 `tpfa_half_transmissibility_3d.hpp` 中，只做 `T_half=A_face*c_half`。结果对象保留原 `TpfaHalfConnectionCoefficient3D`，并附带 `face_area_m2` 与 `half_transmissibility_m3`，因此审计链保持 `n^T K d [m3] -> d^T d [m2] -> c_half [m] -> A_face [m2] -> T_half [m3]`。area 必须 finite 且严格为正；输入 half-connection 的 projection、numerator、denominator 与 coefficient 还会再次做一致性检查，`zero_projection` 必须精确保留为 `0 m3`，positive projection 必须得到 finite positive `T_half`。owner wrapper 直接使用该 face 的 area 与 owner half coefficient；internal neighbour wrapper 对同一 face area 独立缩放 neighbour half coefficient，不做任何 owner/neighbour combine。I-interface area=1 因而 owner/neighbour `T_half=200e-15/400e-15 m3`，K-interface 为 `20e-15/24e-15 m3`；skewed interface 使用 `A=sqrt(29)/5 m2`，把原 `1000/sqrt(29)e-15` 与 `2000/sqrt(29)e-15 m` 分别缩放为 `200e-15/400e-15 m3`。strict geometry+K admissibility 仍保持 non-orthogonal treatment 状态，说明 area scaling 不绕过上游 admissibility。boundary owner half transmissibility 可独立定义，boundary neighbour 继续拒绝。这里仍没有 harmonic combination、没有 two-point face transmissibility、没有 Darcy flux/residual。
+
 `FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。
@@ -152,7 +154,7 @@ active face processor gate 使用两种正交共享方向：`2×1×1` 两 active
 
 后续适配层仍可负责：
 
-- 在已通过的 one-sided coefficient contract 上，下一步建议只增加 area-scaled one-sided half transmissibility contract：定义 `T_half = A_face * c_half [m3]`，继续保留 owner/neighbour 独立值并验证 zero-projection/单位/符号；仍不做 harmonic owner-neighbour combination，不生成 two-point face transmissibility，也不进入 Darcy flux 或 residual；
+- 在已通过的 area-scaled one-sided half transmissibility contract 上，下一步建议只建立 internal-face two-sided combination contract：明确 owner/neighbour 两个 `T_half` 的 harmonic combination、zero-side/degenerate-side 语义、单位与对称性，并继续只输出静态 face transmissibility；仍不引入 pressure、mobility、Darcy flux 或 residual；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
