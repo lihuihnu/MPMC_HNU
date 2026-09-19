@@ -1,5 +1,6 @@
 #include <mpmc/mesh/active_corner_point.hpp>
 #include <mpmc/mesh/cartesian_2d.hpp>
+#include <mpmc/mesh/cell_face_geometric_operator_3d.hpp>
 #include <mpmc/mesh/corner_point_geometry_3d.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/dense_field.hpp>
@@ -3008,6 +3009,346 @@ void active_corner_point_invalid() {
         });
 }
 
+
+mesh::LocalIndex only_shared_face(
+    const mesh::Topology& topology) {
+    const auto& face_cells =
+        topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    std::optional<mesh::LocalIndex> found;
+    for (std::size_t face = 0U;
+         face < topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        if (face_cells.adjacent(local).size() != 2U) {
+            continue;
+        }
+        require(
+            !found.has_value(),
+            "expected exactly one shared face");
+        found = local;
+    }
+    require(
+        found.has_value(),
+        "expected one shared face");
+    return *found;
+}
+
+void require_shared_operator_axis(
+    const mesh::ActiveCornerPointGrid& processed,
+    std::array<double, 3> expected_owner_displacement,
+    std::array<double, 3> expected_neighbour_displacement,
+    std::array<double, 3> expected_normal) {
+    const auto op =
+        mesh::make_cell_face_geometric_operator_3d(
+            processed.topology,
+            processed.vertex_coordinates_m,
+            processed.face_geometry);
+
+    require(
+        op.cell_count() == 2U &&
+            op.face_count() == 11U,
+        "3D cell-face geometric operator counts");
+    require_close(
+        op.cell_centroid_m(
+            mesh::LocalIndex{0U}).x_m,
+        processed_cell_vertex_mean(
+            processed,
+            mesh::LocalIndex{0U}).x_m,
+        0.0,
+        "3D operator owner cell centroid x");
+    require_close(
+        op.cell_centroid_m(
+            mesh::LocalIndex{1U}).z_m,
+        processed_cell_vertex_mean(
+            processed,
+            mesh::LocalIndex{1U}).z_m,
+        0.0,
+        "3D operator neighbour cell centroid z");
+
+    const auto interface =
+        only_shared_face(
+            processed.topology);
+    require(
+        op.face_owner(interface) ==
+            mesh::LocalIndex{0U},
+        "3D operator shared face owner");
+    require(
+        op.face_neighbour(interface).has_value() &&
+            *op.face_neighbour(interface) ==
+                mesh::LocalIndex{1U},
+        "3D operator shared face neighbour");
+
+    const auto owner_displacement =
+        op.owner_to_face_displacement_m(
+            interface);
+    const auto neighbour_displacement =
+        op.neighbour_to_face_displacement_m(
+            interface);
+    require(
+        neighbour_displacement.has_value(),
+        "3D internal face neighbour displacement");
+    require_close(
+        owner_displacement.x_m,
+        expected_owner_displacement[0],
+        1.0e-14,
+        "3D owner displacement x");
+    require_close(
+        owner_displacement.y_m,
+        expected_owner_displacement[1],
+        1.0e-14,
+        "3D owner displacement y");
+    require_close(
+        owner_displacement.z_m,
+        expected_owner_displacement[2],
+        1.0e-14,
+        "3D owner displacement z");
+    require_close(
+        neighbour_displacement->x_m,
+        expected_neighbour_displacement[0],
+        1.0e-14,
+        "3D neighbour displacement x");
+    require_close(
+        neighbour_displacement->y_m,
+        expected_neighbour_displacement[1],
+        1.0e-14,
+        "3D neighbour displacement y");
+    require_close(
+        neighbour_displacement->z_m,
+        expected_neighbour_displacement[2],
+        1.0e-14,
+        "3D neighbour displacement z");
+
+    require_close(
+        op.owner_normal_distance_m(interface),
+        0.5,
+        1.0e-14,
+        "3D owner normal distance");
+    require(
+        op.neighbour_normal_distance_m(
+            interface).has_value(),
+        "3D internal face neighbour distance");
+    require_close(
+        *op.neighbour_normal_distance_m(
+            interface),
+        0.5,
+        1.0e-14,
+        "3D neighbour normal distance");
+
+    const auto inputs =
+        op.transmissibility_geometry(
+            interface);
+    require_close(
+        inputs.area_m2,
+        1.0,
+        1.0e-14,
+        "3D transmissibility geometry area");
+    require_close(
+        inputs.owner_unit_normal.x,
+        expected_normal[0],
+        1.0e-14,
+        "3D transmissibility geometry normal x");
+    require_close(
+        inputs.owner_unit_normal.y,
+        expected_normal[1],
+        1.0e-14,
+        "3D transmissibility geometry normal y");
+    require_close(
+        inputs.owner_unit_normal.z,
+        expected_normal[2],
+        1.0e-14,
+        "3D transmissibility geometry normal z");
+    require_close(
+        inputs.owner_normal_distance_m,
+        0.5,
+        1.0e-14,
+        "3D transmissibility owner distance");
+    require(
+        inputs.neighbour_normal_distance_m.has_value(),
+        "3D transmissibility neighbour distance");
+
+    const auto& face_cells =
+        processed.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    bool found_boundary = false;
+    for (std::size_t face = 0U;
+         face < processed.topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        if (face_cells.adjacent(local).size() != 1U) {
+            continue;
+        }
+        found_boundary = true;
+        require(
+            !op.face_neighbour(local).has_value() &&
+                !op.neighbour_to_face_displacement_m(
+                    local).has_value() &&
+                !op.neighbour_normal_distance_m(
+                    local).has_value(),
+            "3D boundary face has no neighbour geometry");
+        require(
+            op.owner_normal_distance_m(local) > 0.0,
+            "3D boundary owner normal distance positive");
+        break;
+    }
+    require(
+        found_boundary,
+        "3D operator boundary face exists");
+}
+
+void cell_face_geometric_operator_3d() {
+    const auto horizontal =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    require_shared_operator_axis(
+        horizontal,
+        {0.5, 0.0, 0.0},
+        {-0.5, 0.0, 0.0},
+        {1.0, 0.0, 0.0});
+
+    const auto vertical =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_vertical_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    require_shared_operator_axis(
+        vertical,
+        {0.0, 0.0, 0.5},
+        {0.0, 0.0, -0.5},
+        {0.0, 0.0, 1.0});
+}
+
+mesh::FaceGeometry3D modified_face_geometry(
+    const mesh::ActiveCornerPointGrid& processed,
+    std::vector<mesh::Coordinate3D> centroids,
+    std::vector<mesh::UnitVector3D> normals) {
+    return mesh::FaceGeometry3D{
+        processed.face_geometry.cell_count(),
+        std::move(centroids),
+        std::vector<double>{
+            processed.face_geometry.face_areas_m2().begin(),
+            processed.face_geometry.face_areas_m2().end()},
+        std::vector<mesh::LocalIndex>{
+            processed.face_geometry.face_owners().begin(),
+            processed.face_geometry.face_owners().end()},
+        std::move(normals)};
+}
+
+void cell_face_geometric_operator_3d_invalid() {
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_two_cell_all_active_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+    const auto baseline =
+        mesh::make_cell_face_geometric_operator_3d(
+            processed.topology,
+            processed.vertex_coordinates_m,
+            processed.face_geometry);
+    const auto interface =
+        only_shared_face(
+            processed.topology);
+    const std::size_t face =
+        static_cast<std::size_t>(
+            interface.value());
+    const auto owner =
+        baseline.face_owner(interface);
+    const auto neighbour =
+        *baseline.face_neighbour(interface);
+
+    const std::vector<mesh::Coordinate3D>
+        original_centroids{
+            processed.face_geometry.face_centroids_m().begin(),
+            processed.face_geometry.face_centroids_m().end()};
+    const std::vector<mesh::UnitVector3D>
+        original_normals{
+            processed.face_geometry
+                .face_owner_unit_normals()
+                .begin(),
+            processed.face_geometry
+                .face_owner_unit_normals()
+                .end()};
+
+    {
+        auto centroids =
+            original_centroids;
+        centroids[face] =
+            baseline.cell_centroid_m(owner);
+        const auto geometry =
+            modified_face_geometry(
+                processed,
+                std::move(centroids),
+                original_normals);
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::make_cell_face_geometric_operator_3d(
+                    processed.topology,
+                    processed.vertex_coordinates_m,
+                    geometry);
+            });
+    }
+
+    {
+        auto normals =
+            original_normals;
+        normals[face].x =
+            -normals[face].x;
+        normals[face].y =
+            -normals[face].y;
+        normals[face].z =
+            -normals[face].z;
+        const auto geometry =
+            modified_face_geometry(
+                processed,
+                original_centroids,
+                std::move(normals));
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::make_cell_face_geometric_operator_3d(
+                    processed.topology,
+                    processed.vertex_coordinates_m,
+                    geometry);
+            });
+    }
+
+    {
+        auto centroids =
+            original_centroids;
+        centroids[face] =
+            baseline.cell_centroid_m(
+                neighbour);
+        const auto geometry =
+            modified_face_geometry(
+                processed,
+                std::move(centroids),
+                original_normals);
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::make_cell_face_geometric_operator_3d(
+                    processed.topology,
+                    processed.vertex_coordinates_m,
+                    geometry);
+            });
+    }
+}
+
 void dof_layout_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
     const auto layout = mesh::DofLayout::create(
@@ -3942,6 +4283,8 @@ int main(int argc, char** argv) {
         else if (name == "active_corner_point_k_neighbor") { active_corner_point_k_neighbor(); }
         else if (name == "active_corner_point_activity_mapping") { active_corner_point_activity_mapping(); }
         else if (name == "active_corner_point_invalid") { active_corner_point_invalid(); }
+        else if (name == "cell_face_geometric_operator_3d") { cell_face_geometric_operator_3d(); }
+        else if (name == "cell_face_geometric_operator_3d_invalid") { cell_face_geometric_operator_3d_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
