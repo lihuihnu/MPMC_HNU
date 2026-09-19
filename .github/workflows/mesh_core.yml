@@ -55,6 +55,6 @@ jobs:
             ${{ matrix.compiler }} \
             -DMPMC_MESH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Build mesh core tests
-        run: cmake --build build/mesh-core --target mpmc_mesh_core_tests --config ${{ matrix.build_type }} --parallel 2
+        run: cmake --build build/mesh-core --target mpmc_mesh_core_all --config ${{ matrix.build_type }} --parallel 2
       - name: Run mesh core tests
         run: ctest --test-dir build/mesh-core -C ${{ matrix.build_type }} -R '^mesh[.]core[.]' --verbose --no-tests=error
