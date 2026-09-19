@@ -20,8 +20,9 @@ struct UnitVector3D {
     double z;
 };
 
-/// Immutable 3D quad-face metric snapshot aligned to a Topology face ordering.
+/// Immutable 3D linear-face metric snapshot aligned to a Topology face ordering.
 ///
+/// The snapshot stores metrics for supported triangle or quadrilateral faces.
 /// Face centroids use SI metres, areas use square metres, and normals are unit
 /// vectors directed outward from the stored owner cell.
 class FaceGeometry3D {
