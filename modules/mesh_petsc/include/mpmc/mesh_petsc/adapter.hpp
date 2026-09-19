@@ -653,6 +653,25 @@ inline PetscErrorCode create_serial_dmplex_topology(
         mpmc::mesh::EntityKind::face,
         mpmc::mesh::EntityKind::cell);
 
+    std::size_t face_vertex_degree = 0U;
+    for (std::size_t face = 0U; face < face_count; ++face) {
+        const auto local = mpmc::mesh::LocalIndex{
+            static_cast<mpmc::mesh::LocalIndex::value_type>(face)};
+        const auto vertices = face_vertices.adjacent(local);
+        const auto cells = face_cells.adjacent(local);
+        if ((vertices.size() != 2U && vertices.size() != 4U) ||
+            (cells.size() != 1U && cells.size() != 2U)) {
+            return PETSC_ERR_SUP;
+        }
+        if (face_vertex_degree == 0U) {
+            face_vertex_degree = vertices.size();
+        } else if (vertices.size() != face_vertex_degree) {
+            return PETSC_ERR_SUP;
+        }
+    }
+
+    const PetscInt dm_dimension =
+        face_vertex_degree == 2U ? PetscInt{2} : PetscInt{3};
     for (std::size_t cell = 0U; cell < cell_count; ++cell) {
         const auto local = mpmc::mesh::LocalIndex{
             static_cast<mpmc::mesh::LocalIndex::value_type>(cell)};
@@ -660,18 +679,12 @@ inline PetscErrorCode create_serial_dmplex_topology(
             cell_faces.adjacent(local).size();
         const std::size_t vertex_degree =
             cell_vertices.adjacent(local).size();
-        if ((face_degree != 3U && face_degree != 4U) ||
-            vertex_degree != face_degree) {
-            return PETSC_ERR_SUP;
-        }
-    }
-    for (std::size_t face = 0U; face < face_count; ++face) {
-        const auto local = mpmc::mesh::LocalIndex{
-            static_cast<mpmc::mesh::LocalIndex::value_type>(face)};
-        const auto vertices = face_vertices.adjacent(local);
-        const auto cells = face_cells.adjacent(local);
-        if (vertices.size() != 2U ||
-            (cells.size() != 1U && cells.size() != 2U)) {
+        if (dm_dimension == PetscInt{2}) {
+            if ((face_degree != 3U && face_degree != 4U) ||
+                vertex_degree != face_degree) {
+                return PETSC_ERR_SUP;
+            }
+        } else if (face_degree != 6U || vertex_degree != 8U) {
             return PETSC_ERR_SUP;
         }
     }
@@ -702,10 +715,6 @@ inline PetscErrorCode create_serial_dmplex_topology(
                 }
             }
         }
-        if (union_vertices.size() != faces.size()) {
-            return PETSC_ERR_ARG_INCOMP;
-        }
-
         const auto expected_span =
             cell_vertices.adjacent(cell_local);
         std::vector<mpmc::mesh::LocalIndex> expected(
@@ -753,7 +762,7 @@ inline PetscErrorCode create_serial_dmplex_topology(
     error = DMPlexCreate(PETSC_COMM_SELF, &plex);
     if (error != PETSC_SUCCESS) return error;
 
-    error = DMSetDimension(plex, 2);
+    error = DMSetDimension(plex, dm_dimension);
     if (error != PETSC_SUCCESS) {
         DMDestroy(&plex);
         return error;
@@ -790,14 +799,21 @@ inline PetscErrorCode create_serial_dmplex_topology(
         }
     }
     for (std::size_t face = 0U; face < face_count; ++face) {
+        const auto local = mpmc::mesh::LocalIndex{
+            static_cast<mpmc::mesh::LocalIndex::value_type>(face)};
         PetscInt point = 0;
+        PetscInt cone_size = 0;
         error = detail::checked_petsc_int_size(
             face_base + face, &point);
-        if (error != PETSC_SUCCESS) {
-            DMDestroy(&plex);
-            return error;
+        if (error == PETSC_SUCCESS) {
+            error = detail::checked_petsc_int_size(
+                face_vertices.adjacent(local).size(),
+                &cone_size);
         }
-        error = DMPlexSetConeSize(plex, point, 2);
+        if (error == PETSC_SUCCESS) {
+            error = DMPlexSetConeSize(
+                plex, point, cone_size);
+        }
         if (error != PETSC_SUCCESS) {
             DMDestroy(&plex);
             return error;
@@ -843,7 +859,7 @@ inline PetscErrorCode create_serial_dmplex_topology(
         const auto local = mpmc::mesh::LocalIndex{
             static_cast<mpmc::mesh::LocalIndex::value_type>(face)};
         const auto vertices = face_vertices.adjacent(local);
-        std::array<PetscInt, 2> cone{};
+        std::vector<PetscInt> cone(vertices.size());
         for (std::size_t i = 0U; i < cone.size(); ++i) {
             error = detail::checked_petsc_int_size(
                 vertex_base +
