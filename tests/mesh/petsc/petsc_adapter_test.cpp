@@ -4100,6 +4100,162 @@ processed_grdecl_cell_field(
     return *found;
 }
 
+
+mesh::CellCartesianDiagonalPermeability3D
+processed_grdecl_diagonal_permeability(
+    const mesh::ActiveCornerPointGrid& processed) {
+    return mesh::make_cell_cartesian_diagonal_permeability_3d(
+        processed.topology,
+        processed_grdecl_cell_field(
+            processed, "PERMX"),
+        processed_grdecl_cell_field(
+            processed, "PERMY"),
+        processed_grdecl_cell_field(
+            processed, "PERMZ"));
+}
+
+void verify_stable_gated_tpfa_transport_stage(
+    const mesh_petsc::StableFaceGatedTpfaSnapshot3D& actual,
+    const mesh::TpfaInternalFaceTransmissibilitySnapshot3D& reference,
+    const mesh::Topology& reference_topology,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities,
+    const mesh::PartitionSnapshot& partition) {
+    require(
+        actual.geometry_policy
+                .max_direct_normal_projection_angle_rad ==
+            reference.geometry_policy()
+                .max_direct_normal_projection_angle_rad &&
+        actual.k_policy
+                .max_half_face_co_normal_angle_rad ==
+            reference.k_policy()
+                .max_half_face_co_normal_angle_rad,
+        "migrated gated TPFA policies must match source snapshot");
+
+    require(
+        actual.dispositions.size() ==
+                actual.entry_count() &&
+            actual
+                    .materialized_face_transmissibilities_m3
+                    .size() ==
+                actual.entry_count(),
+        "migrated gated TPFA transport array sizes");
+
+    std::size_t expected_entries = 0U;
+    std::uint64_t local_owned = 0U;
+    std::uint64_t local_ghost = 0U;
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::face) {
+            continue;
+        }
+
+        const auto source_local =
+            reference_local_by_global(
+                reference_topology,
+                mesh::EntityKind::face,
+                identity.global);
+        const bool expected_internal =
+            reference.contains_internal_face(
+                source_local);
+        const auto found =
+            std::find(
+                actual.face_global_ids.begin(),
+                actual.face_global_ids.end(),
+                identity.global);
+
+        if (!expected_internal) {
+            require(
+                found ==
+                    actual.face_global_ids.end(),
+                "boundary stable face ID must be absent from gated TPFA transport");
+            continue;
+        }
+
+        ++expected_entries;
+        require(
+            found !=
+                actual.face_global_ids.end(),
+            "internal stable face ID must survive gated TPFA migration");
+        const std::size_t entry =
+            static_cast<std::size_t>(
+                std::distance(
+                    actual.face_global_ids.begin(),
+                    found));
+        const auto& expected =
+            reference.entry(
+                source_local);
+        require(
+            actual.dispositions[entry] ==
+                expected.disposition,
+            "gated TPFA disposition must match by stable face GlobalEntityId");
+
+        if (expected.static_transmissibility.has_value()) {
+            require(
+                actual
+                    .materialized_face_transmissibilities_m3[
+                        entry]
+                    .has_value(),
+                "materialized gated TPFA face must retain numeric T_f after migration");
+            require(
+                *actual
+                     .materialized_face_transmissibilities_m3[
+                         entry] ==
+                    expected
+                        .static_transmissibility
+                        ->face_transmissibility_m3,
+                "materialized gated TPFA T_f must match by stable face GlobalEntityId");
+        } else {
+            require(
+                !actual
+                     .materialized_face_transmissibilities_m3[
+                         entry]
+                     .has_value(),
+                "blocked gated TPFA face must remain value-free after migration");
+        }
+
+        if (partition.is_owned(
+                mesh::EntityKind::face,
+                identity.local)) {
+            ++local_owned;
+        } else {
+            require(
+                partition.is_ghost(
+                    mesh::EntityKind::face,
+                    identity.local),
+                "non-owned gated TPFA internal face copy must be ghost");
+            ++local_ghost;
+        }
+    }
+
+    require(
+        actual.entry_count() ==
+            expected_entries,
+        "gated TPFA transport target internal-face count");
+
+    std::array<std::uint64_t, 3> global_counts{
+        static_cast<std::uint64_t>(
+            expected_entries),
+        local_owned,
+        local_ghost};
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            global_counts.data(),
+            static_cast<int>(
+                global_counts.size()),
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce gated TPFA stable face copy counts");
+    require(
+        global_counts[0] == 2U &&
+            global_counts[1] == 1U &&
+            global_counts[2] == 1U,
+        "one stable internal face must appear as one owner and one ghost copy");
+}
+
 void verify_processed_grdecl_cell_field_stage(
     const mesh::DenseFieldSnapshot& actual,
     const mesh::DenseFieldSnapshot& reference,
@@ -4402,6 +4558,40 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             field_reference);
     }
 
+    const auto reference_operator =
+        mesh::make_cell_face_geometric_operator_3d(
+            field_reference.topology,
+            field_reference.vertex_coordinates_m,
+            field_reference.face_geometry);
+    const auto reference_permeability =
+        processed_grdecl_diagonal_permeability(
+            field_reference);
+    const auto strict_geometry_policy =
+        mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            0.0};
+    const auto strict_k_policy =
+        mesh::KOrthogonalityAdmissibilityPolicy3D{
+            0.0};
+    const auto reference_gated_materialized =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            reference_operator,
+            reference_permeability,
+            strict_geometry_policy,
+            strict_k_policy);
+    const auto zero_permeability =
+        mesh::CellCartesianDiagonalPermeability3D{
+            std::vector<
+                mesh::CartesianDiagonalPermeabilityTensor3D>(
+                field_reference.cell_count(),
+                mesh::CartesianDiagonalPermeabilityTensor3D{
+                    0.0, 0.0, 0.0})};
+    const auto reference_gated_blocked =
+        mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
+            reference_operator,
+            zero_permeability,
+            strict_geometry_policy,
+            strict_k_policy);
+
     const std::array<std::string_view, 4>
         property_ids{
             "PORO", "PERMX", "PERMY", "PERMZ"};
@@ -4533,6 +4723,69 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             source_identities);
     }
 
+    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+        source_gated_materialized;
+    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+        source_gated_blocked;
+    require_petsc(
+        mesh_petsc::make_root_stable_face_gated_tpfa_snapshot_3d(
+            PETSC_COMM_WORLD,
+            0,
+            mpi_rank == 0
+                ? &reference_gated_materialized
+                : nullptr,
+            source_identities,
+            &source_gated_materialized),
+        "freeze materialized gated TPFA snapshot by stable face ID");
+    require_petsc(
+        mesh_petsc::make_root_stable_face_gated_tpfa_snapshot_3d(
+            PETSC_COMM_WORLD,
+            0,
+            mpi_rank == 0
+                ? &reference_gated_blocked
+                : nullptr,
+            source_identities,
+            &source_gated_blocked),
+        "freeze blocked gated TPFA snapshot by stable face ID");
+    require(
+        source_gated_materialized.geometry_policy
+                .max_direct_normal_projection_angle_rad ==
+                0.0 &&
+            source_gated_materialized.k_policy
+                .max_half_face_co_normal_angle_rad ==
+                0.0 &&
+            source_gated_blocked.geometry_policy
+                .max_direct_normal_projection_angle_rad ==
+                0.0 &&
+            source_gated_blocked.k_policy
+                .max_half_face_co_normal_angle_rad ==
+                0.0,
+        "root gated TPFA transport retains strict policies");
+    if (mpi_rank == 0) {
+        require(
+            source_gated_materialized.entry_count() == 1U &&
+                source_gated_materialized
+                    .materialized_face_transmissibilities_m3[
+                        0U]
+                    .has_value(),
+            "root materialized gated TPFA transport");
+        require(
+            source_gated_blocked.entry_count() == 1U &&
+                source_gated_blocked.dispositions[0U] ==
+                    mesh::TpfaInternalFaceTransmissibilityDisposition3D::
+                        blocked_degenerate_permeability_direction &&
+                !source_gated_blocked
+                     .materialized_face_transmissibilities_m3[
+                         0U]
+                     .has_value(),
+            "root blocked gated TPFA transport contains no T_f");
+    } else {
+        require(
+            source_gated_materialized.entry_count() == 0U &&
+                source_gated_blocked.entry_count() == 0U,
+            "non-root rooted gated TPFA transports contain policy only");
+    }
+
     PetscPartitioner partitioner = nullptr;
     require_petsc(
         DMPlexGetPartitioner(
@@ -4587,6 +4840,43 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
                 mesh::EntityKind::cell) == 0U,
         "processed GRDECL overlap0 cell ownership");
     require_processed_grdecl_identity_owner_counts(
+        distributed_partition);
+
+    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+        distributed_gated_materialized;
+    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+        distributed_gated_blocked;
+    require_petsc(
+        mesh_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
+            source_dm,
+            migration_sf,
+            source_gated_materialized,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_gated_materialized),
+        "migrate materialized gated TPFA snapshot after distribute");
+    require_petsc(
+        mesh_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
+            source_dm,
+            migration_sf,
+            source_gated_blocked,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_gated_blocked),
+        "migrate blocked gated TPFA snapshot after distribute");
+    verify_stable_gated_tpfa_transport_stage(
+        distributed_gated_materialized,
+        reference_gated_materialized,
+        field_reference.topology,
+        distributed_identities,
+        distributed_partition);
+    verify_stable_gated_tpfa_transport_stage(
+        distributed_gated_blocked,
+        reference_gated_blocked,
+        field_reference.topology,
+        distributed_identities,
         distributed_partition);
 
     std::array<
@@ -4759,6 +5049,43 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
                 mesh::EntityKind::cell) == 1U,
         "processed GRDECL overlap must contain one owned and one ghost cell");
     require_processed_grdecl_identity_owner_counts(
+        overlap_partition);
+
+    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+        overlap_gated_materialized;
+    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+        overlap_gated_blocked;
+    require_petsc(
+        mesh_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
+            distributed_dm,
+            overlap_migration_sf,
+            distributed_gated_materialized,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_gated_materialized),
+        "migrate materialized gated TPFA snapshot into overlap");
+    require_petsc(
+        mesh_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
+            distributed_dm,
+            overlap_migration_sf,
+            distributed_gated_blocked,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_gated_blocked),
+        "migrate blocked gated TPFA snapshot into overlap");
+    verify_stable_gated_tpfa_transport_stage(
+        overlap_gated_materialized,
+        reference_gated_materialized,
+        field_reference.topology,
+        overlap_identities,
+        overlap_partition);
+    verify_stable_gated_tpfa_transport_stage(
+        overlap_gated_blocked,
+        reference_gated_blocked,
+        field_reference.topology,
+        overlap_identities,
         overlap_partition);
 
     std::array<
