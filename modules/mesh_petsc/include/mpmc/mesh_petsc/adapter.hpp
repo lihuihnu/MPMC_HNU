@@ -1,6 +1,7 @@
 #ifndef MPMC_MESH_PETSC_ADAPTER_HPP
 #define MPMC_MESH_PETSC_ADAPTER_HPP
 
+#include <mpmc/mesh/corner_point_geometry_3d.hpp>
 #include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
