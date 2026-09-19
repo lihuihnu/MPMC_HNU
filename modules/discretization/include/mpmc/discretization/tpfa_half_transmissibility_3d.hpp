@@ -170,7 +170,7 @@ make_owner_area_scaled_tpfa_half_transmissibility_3d(
             permeability,
             face);
     const double face_area_m2 =
-        geometry.transmissibility_geometry(face)
+        geometry.face_connection_geometry(face)
             .area_m2;
     return make_area_scaled_tpfa_half_transmissibility_3d(
         face_area_m2,
@@ -192,7 +192,7 @@ make_neighbour_area_scaled_tpfa_half_transmissibility_3d(
             permeability,
             face);
     const double face_area_m2 =
-        geometry.transmissibility_geometry(face)
+        geometry.face_connection_geometry(face)
             .area_m2;
     return make_area_scaled_tpfa_half_transmissibility_3d(
         face_area_m2,
