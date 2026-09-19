@@ -230,7 +230,7 @@ make_owner_tpfa_half_connection_coefficient_3d(
     const mpmc::mesh::LocalIndex owner =
         geometry.face_owner(face);
     const auto face_geometry =
-        geometry.transmissibility_geometry(face);
+        geometry.face_connection_geometry(face);
     return make_tpfa_half_connection_coefficient_3d(
         permeability.tensor(owner),
         face_geometry.owner_unit_normal,
@@ -264,7 +264,7 @@ make_neighbour_tpfa_half_connection_coefficient_3d(
     }
 
     const auto owner_normal =
-        geometry.transmissibility_geometry(face)
+        geometry.face_connection_geometry(face)
             .owner_unit_normal;
     const mpmc::mesh::UnitVector3D neighbour_normal{
         -owner_normal.x,
