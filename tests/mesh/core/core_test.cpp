@@ -3222,6 +3222,28 @@ void require_shared_operator_axis(
         1.0e-14,
         "3D orthogonal non-orthogonality angle");
 
+    const auto strict_admissibility =
+        mesh::classify_internal_face_transmissibility_geometry(
+            op,
+            interface,
+            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                0.0});
+    require(
+        strict_admissibility.disposition ==
+            mesh::TransmissibilityGeometryDisposition3D::
+                direct_normal_projection_allowed,
+        "orthogonal face allows direct normal projection under strict geometry policy");
+    require_close(
+        strict_admissibility.non_orthogonality_angle_rad,
+        0.0,
+        1.0e-14,
+        "orthogonal admissibility angle");
+    require_close(
+        strict_admissibility.max_direct_normal_projection_angle_rad,
+        0.0,
+        0.0,
+        "orthogonal strict admissibility policy");
+
     const auto& face_cells =
         processed.topology.relation(
             mesh::EntityKind::face,
@@ -3252,6 +3274,14 @@ void require_shared_operator_axis(
         require(
             op.owner_normal_distance_m(local) > 0.0,
             "3D boundary owner normal distance positive");
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::classify_internal_face_transmissibility_geometry(
+                    op,
+                    local,
+                    mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                        0.0});
+            });
         break;
     }
     require(
@@ -3515,6 +3545,43 @@ void cell_face_geometric_operator_3d_skewed() {
         expected_angle,
         1.0e-14,
         "skewed transmissibility non-orthogonality angle");
+
+    const auto strict_admissibility =
+        mesh::classify_internal_face_transmissibility_geometry(
+            op,
+            interface,
+            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                0.0});
+    require(
+        strict_admissibility.disposition ==
+            mesh::TransmissibilityGeometryDisposition3D::
+                requires_non_orthogonal_treatment,
+        "skewed face requires non-orthogonal treatment under strict policy");
+    require_close(
+        strict_admissibility.non_orthogonality_angle_rad,
+        expected_angle,
+        1.0e-14,
+        "skewed admissibility reports actual angle");
+
+    const auto explicit_relaxed_policy =
+        mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            expected_angle + 1.0e-12};
+    const auto relaxed_admissibility =
+        mesh::classify_internal_face_transmissibility_geometry(
+            op,
+            interface,
+            explicit_relaxed_policy);
+    require(
+        relaxed_admissibility.disposition ==
+            mesh::TransmissibilityGeometryDisposition3D::
+                direct_normal_projection_allowed,
+        "skewed face may use direct projection only under explicit relaxed policy");
+    require_close(
+        relaxed_admissibility.max_direct_normal_projection_angle_rad,
+        explicit_relaxed_policy
+            .max_direct_normal_projection_angle_rad,
+        0.0,
+        "skewed explicit policy is preserved in result");
 }
 
 mesh::FaceGeometry3D modified_face_geometry(
@@ -3555,6 +3622,31 @@ void cell_face_geometric_operator_3d_invalid() {
         baseline.face_owner(interface);
     const auto neighbour =
         *baseline.face_neighbour(interface);
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::classify_internal_face_transmissibility_geometry(
+                baseline,
+                interface,
+                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                    -1.0e-6});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::classify_internal_face_transmissibility_geometry(
+                baseline,
+                interface,
+                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                    std::numeric_limits<double>::quiet_NaN()});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::classify_internal_face_transmissibility_geometry(
+                baseline,
+                interface,
+                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                    0.5 * std::acos(-1.0)});
+        });
 
     const std::vector<mesh::Coordinate3D>
         original_centroids{
