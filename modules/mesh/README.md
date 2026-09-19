@@ -172,9 +172,43 @@ active face processor gate 使用两种正交共享方向：`2×1×1` 两 active
 
 当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现通用 partition policy、超过 depth-1 的 overlap、Gmsh binary/high-order/3D、Gmsh NodeData/ElementData/ElementNodeData export、constraint DoF、真实 halo buffer abstraction、矩阵数值系数装配或残差/Jacobian；这些不得由当前 adapter/importer/exporter 冒充完成。
 
+### 6.1 PR #117 mesh / discretization 边界审计
+
+symbolic row/column structure 闭合后已暂停任何 `MatSetValues` 工作，并对当前 PR 新增的 geometry/permeability/TPFA/PETSc 链做依赖审计。结论以“数据/几何事实由 mesh 拥有，离散方法的适用性判据与系数由 discretization 拥有，PETSc 仅作为对应层的可选 adapter”为边界；不能因为某个量尚未进入 residual，就把 TPFA 系数或 transmissibility 继续归入 mesh。
+
+| 当前能力/符号 | 归属结论 | 理由 |
+| --- | --- | --- |
+| topology、stable/local IDs、face/cell adjacency、centroid、area/volume、owner-relative normal、cell↔face displacement、normal distance、center distance、non-orthogonality angle | **保留在 `mesh`** | 都是由网格坐标/拓扑唯一确定的几何事实，不选择 TPFA/MPFA/FEM 等离散方法。 |
+| `DenseFieldSnapshot` 以及 `PERMX/PERMY/PERMZ` 的 cell-aligned SI 字段；`CartesianDiagonalPermeabilityTensor3D`、`CellCartesianDiagonalPermeability3D`、字段→diag(K) 显式映射 | **保留在 `mesh` property contract** | permeability 是网格附着的岩石/材料属性；PR #117 本身要求 scalar/diagonal/symmetric tensor property 能被网格持有。这里仅存储/解释声明过的 basis 与单位，不决定离散公式。 |
+| `TransmissibilityGeometryAdmissibilityPolicy3D`、geometry direct-projection disposition/classification | **迁出到 `discretization`** | “某角度下允许 direct normal projection”是离散方法 policy，不是几何事实；mesh 只应提供实际 angle/metric。 |
+| `DirectionAlignment3D` 中用于 K 判据的诊断、`KOrthogonality*`、center-line K diagnostic、`CombinedTransmissibilityAdmissibility*` 及对应 classify functions | **迁出到 `discretization`** | K-orthogonality 是 TPFA/finite-volume admissibility 判据，联合使用 permeability 与 geometry 后对算法路径作决定。 |
+| `tpfa_half_connection_3d.hpp`、`tpfa_half_transmissibility_3d.hpp`、`tpfa_static_face_transmissibility_3d.hpp`、`tpfa_internal_face_transmissibility_snapshot_3d.hpp` | **整体迁出到 `discretization`** | `n^T K d/(d^T d)`、area scaling、harmonic `T_f` 和 admissibility-gated materialization 都是明确的 TPFA 离散系数，即使尚未乘 pressure/mobility 也已经不是 mesh。 |
+| DMPlex topology/coordinate adapter、stable identity migration、`PartitionSnapshot`/point SF、field/geometry migration、`PetscSection`/Vec 与 mesh DoF mapping | **保留在 `mesh_petsc`** | 这些只适配 mesh identity/geometry/field/ownership 到 PETSc，不依赖具体空间离散。 |
+| `StableFaceGatedTpfaSnapshot3D`、`TargetLocalGatedTpfaTransmissibilityView3D`、`AssemblyReadyInternalConnectionTable3D`、`ParallelOwnedConnectionSchedule3D` | **迁出到后续 `discretization_petsc`** | 它们直接搬运/筛选 materialized `T_f`，并定义未来 assembly execution rows；这是 TPFA 离散的并行适配，不是 mesh migration。 |
+| `CellPairSparsityStencilSnapshot3D`、`PetscMpiAijSymbolicPreallocation3D`、`OwnedCellStructuralColumnPatternSnapshot3D`、empty MPIAIJ helper | **随当前消费链迁出到 `discretization_petsc`** | 这些类型虽不含数值系数，但当前结构只从“通过 TPFA admissibility 后的 active connection schedule”产生，因此代表 discretization stencil/matrix structure，而不是原始 mesh adjacency。未来若出现真正通用线性代数 backend，可再由 solver 层提取通用部分。 |
+
+两个 mixed headers 需要在迁移时拆开，而不是整文件粗暴归类：`cell_face_geometric_operator_3d.hpp` 中 cell/face metric 与 non-orthogonality **数值事实留在 mesh**，其中 `TransmissibilityGeometry*` policy/classification 迁出；`permeability_tensor_3d.hpp` 中 typed permeability storage/field mapping **留在 mesh**，从 `DirectionAlignment3D`、K-orthogonality 到 combined transmissibility admissibility 的算法判据迁出。PR #117 尚未合并，这些均是本 PR 新 API，因此应在 public boundary 固化前完成迁移，不保留仅为兼容 Draft API 的反向依赖或长期 wrapper。
+
+目标依赖冻结为：
+
+```text
+mesh
+  ├─ topology / geometry / fields / material-property snapshots
+  └─ mesh_petsc: DMPlex / Section / SF / Vec / mesh-data migration
+          ↑
+discretization
+  ├─ geometry admissibility / K-orthogonality
+  ├─ TPFA half/static/gated coefficients
+  └─ discretization_petsc: TPFA transport / stencil / MPIAIJ symbolic structure
+          ↑
+solvers   (later)
+```
+
+**硬门禁：在上述 ownership 迁移完成、相关测试按新模块依赖重新通过之前，不新增任何 `MatSetValues`、matrix coefficient insertion、pressure equation、mobility/gravity coupling、Darcy flux 或 residual。** 当前空 MPIAIJ 与 structural column-pattern 仅作为已经验证的 symbolic prototype 保留，不能继续在 `mesh_petsc` 内向数值 assembly 扩展。
+
 后续适配层仍可负责：
 
-- 当前 symbolic row/column structure 已闭合；在进入任何 `MatSetValues` 或物理矩阵系数前，下一步建议先做 PR #117 的 mesh/discretization 边界审计，明确现有 permeability/K-orthogonality/TPFA/transmissibility contracts 哪些仍属于 mesh metric/metadata、哪些应成为后续 `discretization` 消费者，避免把数值离散与 flow assembly 继续扩进 mesh；
+- 边界审计已完成；下一步建议先做 **PETSc-side ownership extraction**：把当前 `adapter.hpp` 中从 `StableFaceGatedTpfaSnapshot3D` 开始的 TPFA transport、active connection schedule、cell-pair stencil、MPIAIJ preallocation/column-pattern 与 empty-Mat symbolic prototype 原样迁到实际被消费的 `discretization_petsc` 模块，使 `mesh_petsc` 重新只依赖 mesh 数据/ownership；保持算法和数值结果不变，仍禁止 `MatSetValues`。
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
