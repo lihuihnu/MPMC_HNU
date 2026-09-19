@@ -35,6 +35,17 @@ void require_close(
     }
 }
 
+bool same_ids(
+    std::span<const mesh::GlobalEntityId> left,
+    std::span<const mesh::GlobalEntityId> right) {
+    return left.size() == right.size() &&
+           std::equal(
+               left.begin(),
+               left.end(),
+               right.begin(),
+               right.end());
+}
+
 std::string gmsh_tetra_hexa_fixture() {
     return R"MSH($MeshFormat
 4.1 0 8
@@ -387,22 +398,25 @@ void verify_gmsh_roundtrip() {
             text,
             1.0);
     require(
-        second.topology.global_ids(
-            mesh::EntityKind::vertex) ==
-            first.topology.global_ids(
+        same_ids(
+            second.topology.global_ids(
                 mesh::EntityKind::vertex),
+            first.topology.global_ids(
+                mesh::EntityKind::vertex)),
         "Gmsh vertex stable IDs roundtrip");
     require(
-        second.topology.global_ids(
-            mesh::EntityKind::face) ==
-            first.topology.global_ids(
+        same_ids(
+            second.topology.global_ids(
                 mesh::EntityKind::face),
+            first.topology.global_ids(
+                mesh::EntityKind::face)),
         "Gmsh face stable IDs roundtrip");
     require(
-        second.topology.global_ids(
-            mesh::EntityKind::cell) ==
-            first.topology.global_ids(
+        same_ids(
+            second.topology.global_ids(
                 mesh::EntityKind::cell),
+            first.topology.global_ids(
+                mesh::EntityKind::cell)),
         "Gmsh cell stable IDs roundtrip");
     require(
         second.physical_names.size() ==
@@ -459,16 +473,18 @@ void verify_vtu_roundtrip() {
         mesh::import_vtu_ascii_3d(
             text);
     require(
-        second.topology.global_ids(
-            mesh::EntityKind::cell) ==
-            first.topology.global_ids(
+        same_ids(
+            second.topology.global_ids(
                 mesh::EntityKind::cell),
+            first.topology.global_ids(
+                mesh::EntityKind::cell)),
         "VTU stable cell IDs roundtrip");
     require(
-        second.topology.global_ids(
-            mesh::EntityKind::face) ==
-            first.topology.global_ids(
+        same_ids(
+            second.topology.global_ids(
                 mesh::EntityKind::face),
+            first.topology.global_ids(
+                mesh::EntityKind::face)),
         "VTU deterministic face IDs roundtrip");
     require(
         second.point_fields.size() == 1U &&
