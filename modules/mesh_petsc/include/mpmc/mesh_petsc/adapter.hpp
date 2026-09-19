@@ -12,6 +12,7 @@
 #include <petscsf.h>
 #include <petscvec.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
