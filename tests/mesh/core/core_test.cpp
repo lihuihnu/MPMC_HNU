@@ -1,3 +1,4 @@
+#include <mpmc/discretization/transmissibility_admissibility_3d.hpp>
 #include <mpmc/mesh/active_corner_point.hpp>
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/cell_face_geometric_operator_3d.hpp>
@@ -38,6 +39,7 @@
 
 namespace {
 namespace mesh = mpmc::mesh;
+namespace discretization = mpmc::discretization;
 
 void require(bool condition,
              std::string_view message,
@@ -3228,14 +3230,14 @@ void require_shared_operator_axis(
         "3D orthogonal non-orthogonality angle");
 
     const auto strict_admissibility =
-        mesh::classify_internal_face_transmissibility_geometry(
+        discretization::classify_internal_face_transmissibility_geometry(
             op,
             interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0});
     require(
         strict_admissibility.disposition ==
-            mesh::TransmissibilityGeometryDisposition3D::
+            discretization::TransmissibilityGeometryDisposition3D::
                 direct_normal_projection_allowed,
         "orthogonal face allows direct normal projection under strict geometry policy");
     require_close(
@@ -3281,10 +3283,10 @@ void require_shared_operator_axis(
             "3D boundary owner normal distance positive");
         expect_throw<std::invalid_argument>(
             [&] {
-                (void)mesh::classify_internal_face_transmissibility_geometry(
+                (void)discretization::classify_internal_face_transmissibility_geometry(
                     op,
                     local,
-                    mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                    discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                         0.0});
             });
         break;
@@ -3552,14 +3554,14 @@ void cell_face_geometric_operator_3d_skewed() {
         "skewed transmissibility non-orthogonality angle");
 
     const auto strict_admissibility =
-        mesh::classify_internal_face_transmissibility_geometry(
+        discretization::classify_internal_face_transmissibility_geometry(
             op,
             interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0});
     require(
         strict_admissibility.disposition ==
-            mesh::TransmissibilityGeometryDisposition3D::
+            discretization::TransmissibilityGeometryDisposition3D::
                 requires_non_orthogonal_treatment,
         "skewed face requires non-orthogonal treatment under strict policy");
     require_close(
@@ -3569,16 +3571,16 @@ void cell_face_geometric_operator_3d_skewed() {
         "skewed admissibility reports actual angle");
 
     const auto explicit_relaxed_policy =
-        mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+        discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
             expected_angle + 1.0e-12};
     const auto relaxed_admissibility =
-        mesh::classify_internal_face_transmissibility_geometry(
+        discretization::classify_internal_face_transmissibility_geometry(
             op,
             interface,
             explicit_relaxed_policy);
     require(
         relaxed_admissibility.disposition ==
-            mesh::TransmissibilityGeometryDisposition3D::
+            discretization::TransmissibilityGeometryDisposition3D::
                 direct_normal_projection_allowed,
         "skewed face may use direct projection only under explicit relaxed policy");
     require_close(
@@ -3630,26 +3632,26 @@ void cell_face_geometric_operator_3d_invalid() {
 
     expect_throw<std::invalid_argument>(
         [&] {
-            (void)mesh::classify_internal_face_transmissibility_geometry(
+            (void)discretization::classify_internal_face_transmissibility_geometry(
                 baseline,
                 interface,
-                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                     -1.0e-6});
         });
     expect_throw<std::invalid_argument>(
         [&] {
-            (void)mesh::classify_internal_face_transmissibility_geometry(
+            (void)discretization::classify_internal_face_transmissibility_geometry(
                 baseline,
                 interface,
-                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                     std::numeric_limits<double>::quiet_NaN()});
         });
     expect_throw<std::invalid_argument>(
         [&] {
-            (void)mesh::classify_internal_face_transmissibility_geometry(
+            (void)discretization::classify_internal_face_transmissibility_geometry(
                 baseline,
                 interface,
-                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                     0.5 * std::acos(-1.0)});
         });
 
@@ -3778,15 +3780,15 @@ void require_strict_k_orthogonal_fixture(
             processed.topology);
 
     const auto k_result =
-        mesh::classify_internal_face_k_orthogonality(
+        discretization::classify_internal_face_k_orthogonality(
             geometry,
             permeability,
             interface,
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         k_result.disposition ==
-            mesh::KOrthogonalityDisposition3D::
+            discretization::KOrthogonalityDisposition3D::
                 k_orthogonal_within_policy,
         "axis-aligned fixture is K-orthogonal under strict policy");
     require(
@@ -3819,17 +3821,17 @@ void require_strict_k_orthogonal_fixture(
         "axis-aligned neighbour K*d_cc diagnostic angle");
 
     const auto combined =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             geometry,
             permeability,
             interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         combined.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 direct_normal_projection_k_orthogonal_candidate,
         "axis-aligned geometry and K-orthogonality combine to direct candidate");
 }
@@ -3923,15 +3925,15 @@ void permeability_tensor_3d() {
         std::atan(0.15);
 
     const auto strict_k =
-        mesh::classify_internal_face_k_orthogonality(
+        discretization::classify_internal_face_k_orthogonality(
             skewed_geometry,
             skewed_permeability,
             interface,
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         strict_k.disposition ==
-            mesh::KOrthogonalityDisposition3D::
+            discretization::KOrthogonalityDisposition3D::
                 requires_k_non_orthogonal_treatment,
         "skewed anisotropic fixture fails strict K-orthogonality");
     require(
@@ -3971,62 +3973,62 @@ void permeability_tensor_3d() {
         "K*d_cc diagnostic must not alias standard K-orthogonality");
 
     const auto strict_both =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             skewed_geometry,
             skewed_permeability,
             interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         strict_both.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 requires_geometry_and_k_non_orthogonal_treatment,
         "strict skewed fixture requires geometry and K treatment");
 
     const auto geometry_relaxed =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             skewed_geometry,
             skewed_permeability,
             interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 geometry_angle + 1.0e-12},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         geometry_relaxed.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 requires_k_non_orthogonal_treatment,
         "relaxed geometry policy isolates K-non-orthogonality");
 
     const auto k_relaxed =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             skewed_geometry,
             skewed_permeability,
             interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 owner_k_angle + 1.0e-12});
     require(
         k_relaxed.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 requires_geometry_non_orthogonal_treatment,
         "relaxed K policy isolates geometry non-orthogonality");
 
     const auto both_relaxed =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             skewed_geometry,
             skewed_permeability,
             interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 geometry_angle + 1.0e-12},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 owner_k_angle + 1.0e-12});
     require(
         both_relaxed.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 direct_normal_projection_k_orthogonal_candidate,
         "explicitly relaxed geometry and K policies produce candidate state");
 }
@@ -4108,29 +4110,29 @@ void permeability_tensor_3d_invalid() {
             good_z);
     expect_throw<std::invalid_argument>(
         [&] {
-            (void)mesh::classify_internal_face_k_orthogonality(
+            (void)discretization::classify_internal_face_k_orthogonality(
                 geometry,
                 good,
                 interface,
-                mesh::KOrthogonalityAdmissibilityPolicy3D{
+                discretization::KOrthogonalityAdmissibilityPolicy3D{
                     -1.0e-6});
         });
     expect_throw<std::invalid_argument>(
         [&] {
-            (void)mesh::classify_internal_face_k_orthogonality(
+            (void)discretization::classify_internal_face_k_orthogonality(
                 geometry,
                 good,
                 interface,
-                mesh::KOrthogonalityAdmissibilityPolicy3D{
+                discretization::KOrthogonalityAdmissibilityPolicy3D{
                     std::numeric_limits<double>::quiet_NaN()});
         });
     expect_throw<std::invalid_argument>(
         [&] {
-            (void)mesh::classify_internal_face_k_orthogonality(
+            (void)discretization::classify_internal_face_k_orthogonality(
                 geometry,
                 good,
                 interface,
-                mesh::KOrthogonalityAdmissibilityPolicy3D{
+                discretization::KOrthogonalityAdmissibilityPolicy3D{
                     0.5 * std::acos(-1.0)});
         });
 
@@ -4150,11 +4152,11 @@ void permeability_tensor_3d_invalid() {
         if (face_cells.adjacent(local).size() == 1U) {
             expect_throw<std::invalid_argument>(
                 [&] {
-                    (void)mesh::classify_internal_face_k_orthogonality(
+                    (void)discretization::classify_internal_face_k_orthogonality(
                         geometry,
                         good,
                         local,
-                        mesh::KOrthogonalityAdmissibilityPolicy3D{
+                        discretization::KOrthogonalityAdmissibilityPolicy3D{
                             0.0});
                 });
             break;
@@ -4186,30 +4188,30 @@ void permeability_tensor_3d_invalid() {
             zero_y,
             zero_z);
     const auto degenerate_k =
-        mesh::classify_internal_face_k_orthogonality(
+        discretization::classify_internal_face_k_orthogonality(
             geometry,
             degenerate,
             interface,
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         degenerate_k.disposition ==
-            mesh::KOrthogonalityDisposition3D::
+            discretization::KOrthogonalityDisposition3D::
                 degenerate_permeability_direction,
         "zero permeability produces explicit degenerate K direction");
 
     const auto combined =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             geometry,
             degenerate,
             interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         combined.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 degenerate_permeability_direction,
         "combined admissibility preserves degenerate permeability state");
 }
@@ -4377,17 +4379,17 @@ void tpfa_half_connection_3d() {
         "skewed neighbour one-sided coefficient");
 
     const auto strict_admissibility =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             skewed_geometry,
             skewed_permeability,
             skewed_interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         strict_admissibility.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 requires_geometry_and_k_non_orthogonal_treatment,
         "skewed one-sided coefficients do not bypass strict admissibility");
 }
@@ -4688,17 +4690,17 @@ void tpfa_half_transmissibility_3d() {
         "skewed neighbour area-scaled half transmissibility");
 
     const auto strict_admissibility =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             skewed_geometry,
             skewed_permeability,
             skewed_interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         strict_admissibility.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 requires_geometry_and_k_non_orthogonal_treatment,
         "area scaling does not bypass strict geometry/K admissibility");
 }
@@ -5027,17 +5029,17 @@ void tpfa_static_face_transmissibility_3d() {
         "skewed harmonic static face transmissibility");
 
     const auto strict_admissibility =
-        mesh::classify_internal_face_transmissibility_admissibility(
+        discretization::classify_internal_face_transmissibility_admissibility(
             skewed_geometry,
             skewed_permeability,
             skewed_interface,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     require(
         strict_admissibility.disposition ==
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 requires_geometry_and_k_non_orthogonal_treatment,
         "static harmonic combination does not bypass strict geometry/K admissibility");
 
@@ -5256,10 +5258,10 @@ void tpfa_internal_face_transmissibility_snapshot_3d() {
             horizontal.topology);
 
     const auto strict_geometry_policy =
-        mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+        discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
             0.0};
     const auto strict_k_policy =
-        mesh::KOrthogonalityAdmissibilityPolicy3D{
+        discretization::KOrthogonalityAdmissibilityPolicy3D{
             0.0};
 
     const auto horizontal_snapshot =
@@ -5302,7 +5304,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d() {
                 mesh::TpfaInternalFaceTransmissibilityDisposition3D::
                     materialized &&
             horizontal_entry.admissibility.disposition ==
-                mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+                discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                     direct_normal_projection_k_orthogonal_candidate &&
             horizontal_entry
                 .static_transmissibility
@@ -5398,7 +5400,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d() {
         mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
             skewed_geometry,
             skewed_permeability,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 geometry_angle + 1.0e-12},
             strict_k_policy);
     require(
@@ -5418,7 +5420,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d() {
             skewed_geometry,
             skewed_permeability,
             strict_geometry_policy,
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 owner_k_angle + 1.0e-12});
     require(
         blocked_geometry.entry(
@@ -5436,9 +5438,9 @@ void tpfa_internal_face_transmissibility_snapshot_3d() {
         mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
             skewed_geometry,
             skewed_permeability,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 geometry_angle + 1.0e-12},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 owner_k_angle + 1.0e-12});
     const auto& relaxed_entry =
         relaxed_both.entry(
@@ -5507,9 +5509,9 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
         mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
             geometry,
             permeability,
-            mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+            discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                 0.0},
-            mesh::KOrthogonalityAdmissibilityPolicy3D{
+            discretization::KOrthogonalityAdmissibilityPolicy3D{
                 0.0});
     const auto valid_entry =
         valid.entry(interface);
@@ -5518,9 +5520,9 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
         [&] {
             (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
                 geometry,
-                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                     -1.0},
-                mesh::KOrthogonalityAdmissibilityPolicy3D{
+                discretization::KOrthogonalityAdmissibilityPolicy3D{
                     0.0},
                 {}};
         });
@@ -5528,9 +5530,9 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
         [&] {
             (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
                 geometry,
-                mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+                discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
                     0.0},
-                mesh::KOrthogonalityAdmissibilityPolicy3D{
+                discretization::KOrthogonalityAdmissibilityPolicy3D{
                     std::numeric_limits<double>::
                         quiet_NaN()},
                 {}};
@@ -5620,7 +5622,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
             mesh::TpfaInternalFaceTransmissibilityDisposition3D::
                 blocked_geometry_non_orthogonal;
         blocked.admissibility.disposition =
-            mesh::CombinedTransmissibilityAdmissibilityDisposition3D::
+            discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                 requires_geometry_non_orthogonal_treatment;
         expect_throw<std::invalid_argument>(
             [&] {
