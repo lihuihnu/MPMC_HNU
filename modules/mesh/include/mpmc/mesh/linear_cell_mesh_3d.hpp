@@ -24,6 +24,8 @@ namespace mpmc::mesh {
 enum class LinearCellType3D : std::uint8_t {
     tetrahedron = 0,
     hexahedron = 1,
+    wedge = 2,
+    pyramid = 3,
 };
 
 struct LinearCell3D {
@@ -250,6 +252,37 @@ struct FaceBuild {
     return key;
 }
 
+[[nodiscard]] inline std::size_t
+cell_vertex_count(LinearCellType3D type) {
+    switch (type) {
+    case LinearCellType3D::tetrahedron:
+        return 4U;
+    case LinearCellType3D::hexahedron:
+        return 8U;
+    case LinearCellType3D::wedge:
+        return 6U;
+    case LinearCellType3D::pyramid:
+        return 5U;
+    }
+    throw std::invalid_argument(
+        "mpmc::mesh::make_linear_mesh_3d: invalid linear 3D cell type");
+}
+
+[[nodiscard]] inline std::size_t
+cell_face_count(LinearCellType3D type) {
+    switch (type) {
+    case LinearCellType3D::tetrahedron:
+        return 4U;
+    case LinearCellType3D::hexahedron:
+        return 6U;
+    case LinearCellType3D::wedge:
+    case LinearCellType3D::pyramid:
+        return 5U;
+    }
+    throw std::invalid_argument(
+        "mpmc::mesh::make_linear_mesh_3d: invalid linear 3D cell type");
+}
+
 template <typename Callback>
 inline void for_each_cell_face(
     const LinearCell3D& cell,
@@ -282,7 +315,95 @@ inline void for_each_cell_face(
         return;
     }
 
-    if (cell.vertices.size() != 8U) {
+    if (cell.type ==
+        LinearCellType3D::wedge) {
+        if (cell.vertices.size() != 6U) {
+            throw std::invalid_argument(
+                "mpmc::mesh::make_linear_mesh_3d: wedge requires six vertices");
+        }
+        constexpr std::array<
+            std::array<std::size_t, 3>, 2>
+            triangle_faces{{
+                {{0U, 2U, 1U}},
+                {{3U, 4U, 5U}},
+            }};
+        for (const auto& slots :
+             triangle_faces) {
+            const std::array<LocalIndex, 3>
+                vertices{
+                    cell.vertices[slots[0]],
+                    cell.vertices[slots[1]],
+                    cell.vertices[slots[2]]};
+            callback(
+                std::span<const LocalIndex>{
+                    vertices.data(),
+                    vertices.size()});
+        }
+        constexpr std::array<
+            std::array<std::size_t, 4>, 3>
+            quad_faces{{
+                {{0U, 1U, 4U, 3U}},
+                {{1U, 2U, 5U, 4U}},
+                {{2U, 0U, 3U, 5U}},
+            }};
+        for (const auto& slots :
+             quad_faces) {
+            const std::array<LocalIndex, 4>
+                vertices{
+                    cell.vertices[slots[0]],
+                    cell.vertices[slots[1]],
+                    cell.vertices[slots[2]],
+                    cell.vertices[slots[3]]};
+            callback(
+                std::span<const LocalIndex>{
+                    vertices.data(),
+                    vertices.size()});
+        }
+        return;
+    }
+
+    if (cell.type ==
+        LinearCellType3D::pyramid) {
+        if (cell.vertices.size() != 5U) {
+            throw std::invalid_argument(
+                "mpmc::mesh::make_linear_mesh_3d: pyramid requires five vertices");
+        }
+        const std::array<LocalIndex, 4>
+            base{
+                cell.vertices[0],
+                cell.vertices[3],
+                cell.vertices[2],
+                cell.vertices[1]};
+        callback(
+            std::span<const LocalIndex>{
+                base.data(),
+                base.size()});
+        constexpr std::array<
+            std::array<std::size_t, 3>, 4>
+            side_faces{{
+                {{0U, 1U, 4U}},
+                {{1U, 2U, 4U}},
+                {{2U, 3U, 4U}},
+                {{3U, 0U, 4U}},
+            }};
+        for (const auto& slots :
+             side_faces) {
+            const std::array<LocalIndex, 3>
+                vertices{
+                    cell.vertices[slots[0]],
+                    cell.vertices[slots[1]],
+                    cell.vertices[slots[2]]};
+            callback(
+                std::span<const LocalIndex>{
+                    vertices.data(),
+                    vertices.size()});
+        }
+        return;
+    }
+
+    if (cell.type !=
+            LinearCellType3D::hexahedron ||
+        cell.vertices.size() != 8U) {
         throw std::invalid_argument(
             "mpmc::mesh::make_linear_mesh_3d: hexahedron requires eight vertices");
     }
@@ -343,6 +464,75 @@ inline void for_each_cell_face(
                 "mpmc::mesh::make_linear_mesh_3d: tetrahedron is inverted or degenerate");
         }
         return volume;
+    }
+
+    if (cell.type ==
+        LinearCellType3D::wedge) {
+        constexpr std::array<
+            std::array<std::size_t, 4>, 3>
+            tetrahedra{{
+                {{0U, 1U, 2U, 3U}},
+                {{1U, 2U, 3U, 4U}},
+                {{2U, 3U, 4U, 5U}},
+            }};
+        double total = 0.0;
+        for (const auto& slots :
+             tetrahedra) {
+            const double volume =
+                signed_tetra_volume(
+                    coordinates[static_cast<std::size_t>(
+                        cell.vertices[slots[0]].value())],
+                    coordinates[static_cast<std::size_t>(
+                        cell.vertices[slots[1]].value())],
+                    coordinates[static_cast<std::size_t>(
+                        cell.vertices[slots[2]].value())],
+                    coordinates[static_cast<std::size_t>(
+                        cell.vertices[slots[3]].value())]);
+            if (!std::isfinite(volume) ||
+                volume <= tolerance) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::make_linear_mesh_3d: wedge is inverted, folded, or degenerate");
+            }
+            total += volume;
+        }
+        return total;
+    }
+
+    if (cell.type ==
+        LinearCellType3D::pyramid) {
+        constexpr std::array<
+            std::array<std::size_t, 4>, 2>
+            tetrahedra{{
+                {{0U, 1U, 2U, 4U}},
+                {{0U, 2U, 3U, 4U}},
+            }};
+        double total = 0.0;
+        for (const auto& slots :
+             tetrahedra) {
+            const double volume =
+                signed_tetra_volume(
+                    coordinates[static_cast<std::size_t>(
+                        cell.vertices[slots[0]].value())],
+                    coordinates[static_cast<std::size_t>(
+                        cell.vertices[slots[1]].value())],
+                    coordinates[static_cast<std::size_t>(
+                        cell.vertices[slots[2]].value())],
+                    coordinates[static_cast<std::size_t>(
+                        cell.vertices[slots[3]].value())]);
+            if (!std::isfinite(volume) ||
+                volume <= tolerance) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::make_linear_mesh_3d: pyramid is inverted, folded, or degenerate");
+            }
+            total += volume;
+        }
+        return total;
+    }
+
+    if (cell.type !=
+        LinearCellType3D::hexahedron) {
+        throw std::invalid_argument(
+            "mpmc::mesh::make_linear_mesh_3d: invalid linear 3D cell type");
     }
 
     constexpr std::array<
@@ -568,10 +758,7 @@ struct FaceMetric {
          ++cell_index) {
         const auto& cell = cells[cell_index];
         const std::size_t expected =
-            cell.type ==
-                    LinearCellType3D::tetrahedron
-                ? 4U
-                : 8U;
+            cell_vertex_count(cell.type);
         if (cell.vertices.size() != expected) {
             throw std::invalid_argument(
                 "mpmc::mesh::make_linear_mesh_3d: cell vertex count does not match linear cell type");
@@ -602,10 +789,7 @@ struct FaceMetric {
 
         std::vector<FaceKey> keys;
         keys.reserve(
-            cell.type ==
-                    LinearCellType3D::tetrahedron
-                ? 4U
-                : 6U);
+            cell_face_count(cell.type));
         const auto cell_local =
             checked_local(
                 cell_index,

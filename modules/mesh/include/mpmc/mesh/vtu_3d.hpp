@@ -308,11 +308,19 @@ import_vtu_ascii_3d(
             type =
                 LinearCellType3D::hexahedron;
             expected = 8U;
+        } else if (types[cell] == 13) {
+            type =
+                LinearCellType3D::wedge;
+            expected = 6U;
+        } else if (types[cell] == 14) {
+            type =
+                LinearCellType3D::pyramid;
+            expected = 5U;
         }
         if (expected == 0U ||
             width != expected) {
             throw std::invalid_argument(
-                "mpmc::mesh::import_vtu_ascii_3d: only VTK_TETRA(10) and VTK_HEXAHEDRON(12) are supported with matching connectivity widths");
+                "mpmc::mesh::import_vtu_ascii_3d: only VTK_TETRA(10), VTK_HEXAHEDRON(12), VTK_WEDGE(13) and VTK_PYRAMID(14) are supported with matching connectivity widths");
         }
 
         std::vector<LocalIndex> vertices;
@@ -631,9 +639,15 @@ export_vtu_ascii_3d(
         } else if (
             vertices.size() == 8U) {
             type = 12;
+        } else if (
+            vertices.size() == 6U) {
+            type = 13;
+        } else if (
+            vertices.size() == 5U) {
+            type = 14;
         } else {
             throw std::invalid_argument(
-                "mpmc::mesh::export_vtu_ascii_3d: only linear tetrahedron/hexahedron cells are supported");
+                "mpmc::mesh::export_vtu_ascii_3d: only linear tetrahedron/hexahedron/wedge/pyramid cells are supported");
         }
         if (connectivity_count >
             std::numeric_limits<

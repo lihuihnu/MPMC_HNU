@@ -630,8 +630,10 @@ inline void parse_nodes(
     if (dimension == 2 && element_type == 3) return 4U;
     if (dimension == 3 && element_type == 4) return 4U;
     if (dimension == 3 && element_type == 5) return 8U;
+    if (dimension == 3 && element_type == 6) return 6U;
+    if (dimension == 3 && element_type == 7) return 5U;
     throw std::invalid_argument(
-        "mpmc::mesh::import_gmsh_4_1_ascii: unsupported element type; baseline accepts point, 2-node line, 3-node triangle, 4-node quad, 4-node tetrahedron and 8-node hexahedron only");
+        "mpmc::mesh::import_gmsh_4_1_ascii: unsupported element type; baseline accepts point, 2-node line, 3-node triangle, 4-node quad, 4-node tetrahedron, 8-node hexahedron, 6-node prism and 5-node pyramid only");
 }
 
 inline void parse_elements(

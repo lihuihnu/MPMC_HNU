@@ -7912,7 +7912,7 @@ void verify_structural_column_pattern_sorting_fixture(
         "multi-neighbour finalized column storage is compact across rows");
 }
 
-void verify_linear_3d_tetra_hexa_dmplex(
+void verify_linear_3d_cell_families_dmplex(
     int mpi_rank,
     int mpi_size) {
     require(
@@ -7933,7 +7933,18 @@ void verify_linear_3d_tetra_hexa_dmplex(
             mesh::GlobalEntityId{9U},
             mesh::GlobalEntityId{10U},
             mesh::GlobalEntityId{11U},
-            mesh::GlobalEntityId{12U}};
+            mesh::GlobalEntityId{12U},
+            mesh::GlobalEntityId{13U},
+            mesh::GlobalEntityId{14U},
+            mesh::GlobalEntityId{15U},
+            mesh::GlobalEntityId{16U},
+            mesh::GlobalEntityId{17U},
+            mesh::GlobalEntityId{18U},
+            mesh::GlobalEntityId{19U},
+            mesh::GlobalEntityId{20U},
+            mesh::GlobalEntityId{21U},
+            mesh::GlobalEntityId{22U},
+            mesh::GlobalEntityId{23U}};
     const std::vector<mesh::Coordinate3D>
         coordinates{
             {0.0, 0.0, 0.0},
@@ -7947,7 +7958,18 @@ void verify_linear_3d_tetra_hexa_dmplex(
             {2.0, 0.0, 1.0},
             {3.0, 0.0, 1.0},
             {3.0, 1.0, 1.0},
-            {2.0, 1.0, 1.0}};
+            {2.0, 1.0, 1.0},
+            {4.0, 0.0, 0.0},
+            {5.0, 0.0, 0.0},
+            {4.0, 1.0, 0.0},
+            {4.0, 0.0, 1.0},
+            {5.0, 0.0, 1.0},
+            {4.0, 1.0, 1.0},
+            {6.0, 0.0, 0.0},
+            {7.0, 0.0, 0.0},
+            {7.0, 1.0, 0.0},
+            {6.0, 1.0, 0.0},
+            {6.5, 0.5, 1.0}};
     const std::vector<mesh::LinearCell3D>
         cells{
             {mesh::GlobalEntityId{101U},
@@ -7965,7 +7987,22 @@ void verify_linear_3d_tetra_hexa_dmplex(
               mesh::LocalIndex{8U},
               mesh::LocalIndex{9U},
               mesh::LocalIndex{10U},
-              mesh::LocalIndex{11U}}}};
+              mesh::LocalIndex{11U}}},
+            {mesh::GlobalEntityId{103U},
+             mesh::LinearCellType3D::wedge,
+             {mesh::LocalIndex{12U},
+              mesh::LocalIndex{13U},
+              mesh::LocalIndex{14U},
+              mesh::LocalIndex{15U},
+              mesh::LocalIndex{16U},
+              mesh::LocalIndex{17U}}},
+            {mesh::GlobalEntityId{104U},
+             mesh::LinearCellType3D::pyramid,
+             {mesh::LocalIndex{18U},
+              mesh::LocalIndex{19U},
+              mesh::LocalIndex{20U},
+              mesh::LocalIndex{21U},
+              mesh::LocalIndex{22U}}}};
     const auto fixture =
         mesh::make_linear_mesh_3d(
             vertex_ids,
@@ -7984,29 +8021,29 @@ void verify_linear_3d_tetra_hexa_dmplex(
                 : nullptr,
             &source_dm,
             &source_identities),
-        "create rooted mixed tetra/hexa DMPlex");
+        "create rooted mixed linear 3D cell families DMPlex");
 
     PetscInt source_dimension = -1;
     require_petsc(
         DMGetDimension(
             source_dm,
             &source_dimension),
-        "mixed tetra/hexa source dimension");
+        "mixed linear 3D cell families source dimension");
     require(
         source_dimension == 3,
-        "mixed tetra/hexa source DMPlex is 3D");
+        "mixed linear 3D cell families source DMPlex is 3D");
 
     PetscPartitioner partitioner = nullptr;
     require_petsc(
         DMPlexGetPartitioner(
             source_dm,
             &partitioner),
-        "mixed tetra/hexa DMPlexGetPartitioner");
+        "mixed linear 3D cell families DMPlexGetPartitioner");
     require_petsc(
         PetscPartitionerSetType(
             partitioner,
             PETSCPARTITIONERSIMPLE),
-        "mixed tetra/hexa simple partitioner");
+        "mixed linear 3D cell families simple partitioner");
 
     PetscSF migration_sf = nullptr;
     DM distributed_dm = nullptr;
@@ -8016,21 +8053,21 @@ void verify_linear_3d_tetra_hexa_dmplex(
             0,
             &migration_sf,
             &distributed_dm),
-        "distribute mixed tetra/hexa DMPlex");
+        "distribute mixed linear 3D cell families DMPlex");
     require(
         migration_sf != nullptr &&
             distributed_dm != nullptr,
-        "mixed tetra/hexa distribution outputs");
+        "mixed linear 3D cell families distribution outputs");
 
     PetscInt distributed_dimension = -1;
     require_petsc(
         DMGetDimension(
             distributed_dm,
             &distributed_dimension),
-        "mixed tetra/hexa distributed dimension");
+        "mixed linear 3D cell families distributed dimension");
     require(
         distributed_dimension == 3,
-        "distributed mixed tetra/hexa DMPlex is 3D");
+        "distributed mixed linear 3D cell families DMPlex is 3D");
 
     PetscInt cell_start = 0;
     PetscInt cell_end = 0;
@@ -8040,7 +8077,7 @@ void verify_linear_3d_tetra_hexa_dmplex(
             0,
             &cell_start,
             &cell_end),
-        "mixed tetra/hexa distributed cell stratum");
+        "mixed linear 3D cell families distributed cell stratum");
     const int local_cells =
         static_cast<int>(
             cell_end - cell_start);
@@ -8054,10 +8091,10 @@ void verify_linear_3d_tetra_hexa_dmplex(
             MPI_SUM,
             PETSC_COMM_WORLD) ==
             MPI_SUCCESS,
-        "mixed tetra/hexa global cell count");
+        "mixed linear 3D cell families global cell count");
     require(
-        global_cells == 2,
-        "mixed tetra/hexa distribution preserves both cells");
+        global_cells == 4,
+        "mixed linear 3D cell families distribution preserves all cells");
 
     PetscSF overlap_sf = nullptr;
     DM overlap_dm = nullptr;
@@ -8067,27 +8104,27 @@ void verify_linear_3d_tetra_hexa_dmplex(
             1,
             &overlap_sf,
             &overlap_dm),
-        "mixed tetra/hexa depth-1 overlap");
+        "mixed linear 3D cell families depth-1 overlap");
     require(
         overlap_sf != nullptr &&
             overlap_dm != nullptr,
-        "mixed tetra/hexa overlap outputs");
+        "mixed linear 3D cell families overlap outputs");
 
     require_petsc(
         PetscSFDestroy(&overlap_sf),
-        "destroy mixed tetra/hexa overlap SF");
+        "destroy mixed linear 3D cell families overlap SF");
     require_petsc(
         DMDestroy(&overlap_dm),
-        "destroy mixed tetra/hexa overlap DM");
+        "destroy mixed linear 3D cell families overlap DM");
     require_petsc(
         PetscSFDestroy(&migration_sf),
-        "destroy mixed tetra/hexa migration SF");
+        "destroy mixed linear 3D cell families migration SF");
     require_petsc(
         DMDestroy(&distributed_dm),
-        "destroy mixed tetra/hexa distributed DM");
+        "destroy mixed linear 3D cell families distributed DM");
     require_petsc(
         DMDestroy(&source_dm),
-        "destroy mixed tetra/hexa source DM");
+        "destroy mixed linear 3D cell families source DM");
 }
 
 void run_two_rank_test() {
@@ -8103,7 +8140,7 @@ void run_two_rank_test() {
     require(mpi_rank == 0 || mpi_rank == 1, "unexpected MPI rank");
 
     const auto rank = static_cast<std::uint32_t>(mpi_rank);
-    verify_linear_3d_tetra_hexa_dmplex(
+    verify_linear_3d_cell_families_dmplex(
         mpi_rank,
         mpi_size);
     const auto topology = two_rank_topology(rank);

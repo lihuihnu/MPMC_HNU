@@ -180,6 +180,128 @@ std::string vtu_tetra_hexa_fixture() {
 )VTU";
 }
 
+
+std::string gmsh_wedge_pyramid_fixture() {
+    return R"MSH($MeshFormat
+4.1 0 8
+$EndMeshFormat
+$PhysicalNames
+2
+3 31 "wedge_region"
+3 32 "pyramid_region"
+$EndPhysicalNames
+$Entities
+11 0 0 2
+1 0 0 0 0
+2 1 0 0 0
+3 0 1 0 0
+4 0 0 1 0
+5 1 0 1 0
+6 0 1 1 0
+7 2 0 0 0
+8 3 0 0 0
+9 3 1 0 0
+10 2 1 0 0
+11 2.5 0.5 1 0
+1 0 0 0 1 1 1 1 31 0
+2 2 0 0 3 1 1 1 32 0
+$EndEntities
+$Nodes
+11 11 1 11
+0 1 0 1
+1
+0 0 0
+0 2 0 1
+2
+1 0 0
+0 3 0 1
+3
+0 1 0
+0 4 0 1
+4
+0 0 1
+0 5 0 1
+5
+1 0 1
+0 6 0 1
+6
+0 1 1
+0 7 0 1
+7
+2 0 0
+0 8 0 1
+8
+3 0 0
+0 9 0 1
+9
+3 1 0
+0 10 0 1
+10
+2 1 0
+0 11 0 1
+11
+2.5 0.5 1
+$EndNodes
+$Elements
+2 2 4001 4002
+3 1 6 1
+4001 1 2 3 4 5 6
+3 2 7 1
+4002 7 8 9 10 11
+$EndElements
+)MSH";
+}
+
+std::string vtu_wedge_pyramid_fixture() {
+    return R"VTU(<?xml version="1.0"?>
+<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian">
+  <UnstructuredGrid>
+    <Piece NumberOfPoints="11" NumberOfCells="2">
+      <PointData>
+        <DataArray type="Float64" Name="point_marker" mpmc_unit="1" format="ascii">
+          0 1 2 3 4 5 6 7 8 9 10
+        </DataArray>
+      </PointData>
+      <CellData>
+        <DataArray type="UInt64" Name="mpmc_global_cell_id" format="ascii">
+          5001 5002
+        </DataArray>
+        <DataArray type="Float64" Name="PORO" mpmc_unit="1" format="ascii">
+          0.3 0.4
+        </DataArray>
+      </CellData>
+      <Points>
+        <DataArray type="Float64" NumberOfComponents="3" format="ascii">
+          0 0 0
+          1 0 0
+          0 1 0
+          0 0 1
+          1 0 1
+          0 1 1
+          2 0 0
+          3 0 0
+          3 1 0
+          2 1 0
+          2.5 0.5 1
+        </DataArray>
+      </Points>
+      <Cells>
+        <DataArray type="Int64" Name="connectivity" format="ascii">
+          0 1 2 3 4 5 6 7 8 9 10
+        </DataArray>
+        <DataArray type="Int64" Name="offsets" format="ascii">
+          6 11
+        </DataArray>
+        <DataArray type="UInt8" Name="types" format="ascii">
+          13 14
+        </DataArray>
+      </Cells>
+    </Piece>
+  </UnstructuredGrid>
+</VTKFile>
+)VTU";
+}
+
 void verify_shared_tetra_face() {
     const std::vector<mesh::GlobalEntityId>
         vertex_ids{
@@ -359,6 +481,162 @@ void verify_shared_hexa_face() {
     require(
         found_internal,
         "hexa shared face must be materialized");
+}
+
+
+void verify_wedge_pyramid_geometry() {
+    const auto imported =
+        mesh::import_vtu_ascii_3d(
+            vtu_wedge_pyramid_fixture());
+    require(
+        imported.topology.entity_count(
+            mesh::EntityKind::cell) == 2U &&
+            imported.topology.entity_count(
+                mesh::EntityKind::face) == 10U &&
+            imported.topology.entity_count(
+                mesh::EntityKind::vertex) == 11U,
+        "wedge/pyramid entity counts");
+    require_close(
+        imported.cell_volumes_m3[0],
+        0.5,
+        1.0e-14,
+        "wedge volume");
+    require_close(
+        imported.cell_volumes_m3[1],
+        1.0 / 3.0,
+        1.0e-14,
+        "pyramid volume");
+
+    const auto& face_vertices =
+        imported.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::vertex);
+    std::size_t triangle_faces = 0U;
+    std::size_t quad_faces = 0U;
+    for (std::size_t face = 0U;
+         face <
+         imported.topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        const auto degree =
+            face_vertices.adjacent(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                        face)})
+                .size();
+        if (degree == 3U) {
+            ++triangle_faces;
+        } else if (degree == 4U) {
+            ++quad_faces;
+        }
+    }
+    require(
+        triangle_faces == 6U &&
+            quad_faces == 4U,
+        "wedge/pyramid triangle/quad face families");
+}
+
+void verify_gmsh_wedge_pyramid_roundtrip() {
+    const auto first =
+        mesh::import_gmsh_4_1_ascii_3d(
+            gmsh_wedge_pyramid_fixture(),
+            1.0);
+    require(
+        first.topology.entity_count(
+            mesh::EntityKind::cell) == 2U &&
+            first.physical_names.size() == 2U &&
+            first.cell_physical_groups.size() == 2U,
+        "Gmsh wedge/pyramid physical metadata");
+    require_close(
+        first.cell_volumes_m3[0],
+        0.5,
+        1.0e-14,
+        "Gmsh wedge volume");
+    require_close(
+        first.cell_volumes_m3[1],
+        1.0 / 3.0,
+        1.0e-14,
+        "Gmsh pyramid volume");
+
+    const auto text =
+        mesh::export_gmsh_4_1_ascii_3d(
+            first);
+    const auto second =
+        mesh::import_gmsh_4_1_ascii_3d(
+            text,
+            1.0);
+    require(
+        same_ids(
+            second.topology.global_ids(
+                mesh::EntityKind::face),
+            first.topology.global_ids(
+                mesh::EntityKind::face)) &&
+            same_ids(
+                second.topology.global_ids(
+                    mesh::EntityKind::cell),
+                first.topology.global_ids(
+                    mesh::EntityKind::cell)),
+        "Gmsh wedge/pyramid stable IDs roundtrip");
+    require(
+        second.physical_names.size() ==
+                first.physical_names.size() &&
+            second.cell_physical_groups.size() ==
+                first.cell_physical_groups.size(),
+        "Gmsh wedge/pyramid metadata roundtrip");
+}
+
+void verify_vtu_wedge_pyramid_roundtrip() {
+    const auto first =
+        mesh::import_vtu_ascii_3d(
+            vtu_wedge_pyramid_fixture());
+    require(
+        first.point_fields.size() == 1U &&
+            first.cell_fields.size() == 1U,
+        "VTU wedge/pyramid fields imported");
+    require_close(
+        first.cell_fields[0].value(
+            mesh::LocalIndex{0U},
+            0U),
+        0.3,
+        1.0e-14,
+        "VTU wedge PORO");
+    require_close(
+        first.cell_fields[0].value(
+            mesh::LocalIndex{1U},
+            0U),
+        0.4,
+        1.0e-14,
+        "VTU pyramid PORO");
+
+    const auto text =
+        mesh::export_vtu_ascii_3d(
+            first);
+    const auto second =
+        mesh::import_vtu_ascii_3d(
+            text);
+    require(
+        same_ids(
+            second.topology.global_ids(
+                mesh::EntityKind::cell),
+            first.topology.global_ids(
+                mesh::EntityKind::cell)) &&
+            same_ids(
+                second.topology.global_ids(
+                    mesh::EntityKind::face),
+                first.topology.global_ids(
+                    mesh::EntityKind::face)),
+        "VTU wedge/pyramid stable IDs roundtrip");
+    require_close(
+        second.cell_volumes_m3[0],
+        0.5,
+        1.0e-14,
+        "VTU wedge roundtrip volume");
+    require_close(
+        second.cell_volumes_m3[1],
+        1.0 / 3.0,
+        1.0e-14,
+        "VTU pyramid roundtrip volume");
 }
 
 void verify_gmsh_roundtrip() {
@@ -554,17 +832,92 @@ void verify_invalid_cases() {
     unsupported.replace(
         position,
         5U,
-        "13 12");
-    bool wedge_rejected = false;
+        "15 12");
+    bool unsupported_cell_rejected = false;
     try {
         (void)mesh::import_vtu_ascii_3d(
             unsupported);
     } catch (const std::invalid_argument&) {
-        wedge_rejected = true;
+        unsupported_cell_rejected = true;
     }
     require(
-        wedge_rejected,
-        "unsupported VTK wedge must be rejected");
+        unsupported_cell_rejected,
+        "unsupported VTK 3D cell type must be rejected");
+
+    const std::vector<mesh::GlobalEntityId>
+        wedge_ids{
+            mesh::GlobalEntityId{1U},
+            mesh::GlobalEntityId{2U},
+            mesh::GlobalEntityId{3U},
+            mesh::GlobalEntityId{4U},
+            mesh::GlobalEntityId{5U},
+            mesh::GlobalEntityId{6U}};
+    const std::vector<mesh::Coordinate3D>
+        wedge_coordinates{
+            {0.0, 0.0, 0.0},
+            {1.0, 0.0, 0.0},
+            {0.0, 1.0, 0.0},
+            {0.0, 0.0, 1.0},
+            {1.0, 0.0, 1.0},
+            {0.0, 1.0, 1.0}};
+    const std::vector<mesh::LinearCell3D>
+        inverted_wedge{
+            {mesh::GlobalEntityId{1U},
+             mesh::LinearCellType3D::wedge,
+             {mesh::LocalIndex{0U},
+              mesh::LocalIndex{2U},
+              mesh::LocalIndex{1U},
+              mesh::LocalIndex{3U},
+              mesh::LocalIndex{5U},
+              mesh::LocalIndex{4U}}}};
+    bool inverted_wedge_rejected = false;
+    try {
+        (void)mesh::make_linear_mesh_3d(
+            wedge_ids,
+            wedge_coordinates,
+            inverted_wedge);
+    } catch (const std::invalid_argument&) {
+        inverted_wedge_rejected = true;
+    }
+    require(
+        inverted_wedge_rejected,
+        "inverted wedge must be rejected");
+
+    const std::vector<mesh::GlobalEntityId>
+        pyramid_ids{
+            mesh::GlobalEntityId{1U},
+            mesh::GlobalEntityId{2U},
+            mesh::GlobalEntityId{3U},
+            mesh::GlobalEntityId{4U},
+            mesh::GlobalEntityId{5U}};
+    const std::vector<mesh::Coordinate3D>
+        pyramid_coordinates{
+            {0.0, 0.0, 0.0},
+            {1.0, 0.0, 0.0},
+            {1.0, 1.0, 0.0},
+            {0.0, 1.0, 0.0},
+            {0.5, 0.5, 1.0}};
+    const std::vector<mesh::LinearCell3D>
+        inverted_pyramid{
+            {mesh::GlobalEntityId{1U},
+             mesh::LinearCellType3D::pyramid,
+             {mesh::LocalIndex{0U},
+              mesh::LocalIndex{3U},
+              mesh::LocalIndex{2U},
+              mesh::LocalIndex{1U},
+              mesh::LocalIndex{4U}}}};
+    bool inverted_pyramid_rejected = false;
+    try {
+        (void)mesh::make_linear_mesh_3d(
+            pyramid_ids,
+            pyramid_coordinates,
+            inverted_pyramid);
+    } catch (const std::invalid_argument&) {
+        inverted_pyramid_rejected = true;
+    }
+    require(
+        inverted_pyramid_rejected,
+        "inverted pyramid must be rejected");
 }
 
 } // namespace
@@ -573,8 +926,11 @@ int main() {
     try {
         verify_shared_tetra_face();
         verify_shared_hexa_face();
+        verify_wedge_pyramid_geometry();
         verify_gmsh_roundtrip();
+        verify_gmsh_wedge_pyramid_roundtrip();
         verify_vtu_roundtrip();
+        verify_vtu_wedge_pyramid_roundtrip();
         verify_invalid_cases();
         std::cout
             << "[PASS] mesh.core.io_3d\n";

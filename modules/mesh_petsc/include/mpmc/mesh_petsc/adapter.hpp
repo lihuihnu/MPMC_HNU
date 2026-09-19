@@ -699,7 +699,14 @@ inline PetscErrorCode create_serial_dmplex_topology(
                 face_degree == 4U && vertex_degree == 4U;
             const bool hexahedron =
                 face_degree == 6U && vertex_degree == 8U;
-            if (!tetrahedron && !hexahedron) {
+            const bool wedge =
+                face_degree == 5U && vertex_degree == 6U;
+            const bool pyramid =
+                face_degree == 5U && vertex_degree == 5U;
+            if (!tetrahedron &&
+                !hexahedron &&
+                !wedge &&
+                !pyramid) {
                 return PETSC_ERR_SUP;
             }
         }

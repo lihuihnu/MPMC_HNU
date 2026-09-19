@@ -288,7 +288,7 @@ import_gmsh_4_1_ascii_3d(
     }
     if (volume_elements.empty()) {
         throw std::invalid_argument(
-            "mpmc::mesh::import_gmsh_4_1_ascii_3d: no tetrahedron/hexahedron volume cells found");
+            "mpmc::mesh::import_gmsh_4_1_ascii_3d: no supported linear 3D volume cells found");
     }
 
     std::sort(
@@ -327,9 +327,19 @@ import_gmsh_4_1_ascii_3d(
             element.node_tags.size() == 8U) {
             type =
                 LinearCellType3D::hexahedron;
+        } else if (
+            element.element_type == 6 &&
+            element.node_tags.size() == 6U) {
+            type =
+                LinearCellType3D::wedge;
+        } else if (
+            element.element_type == 7 &&
+            element.node_tags.size() == 5U) {
+            type =
+                LinearCellType3D::pyramid;
         } else {
             throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii_3d: volume baseline supports only linear tetrahedron and hexahedron");
+                "mpmc::mesh::import_gmsh_4_1_ascii_3d: volume baseline supports only linear tetrahedron, hexahedron, prism/wedge and pyramid");
         }
 
         std::vector<LocalIndex> vertices;
@@ -766,9 +776,11 @@ export_gmsh_4_1_ascii_3d(
         const auto vertices =
             cell_vertices.adjacent(local);
         if (vertices.size() != 4U &&
+            vertices.size() != 5U &&
+            vertices.size() != 6U &&
             vertices.size() != 8U) {
             throw std::invalid_argument(
-                "mpmc::mesh::export_gmsh_4_1_ascii_3d: cells must be linear tetrahedra or hexahedra");
+                "mpmc::mesh::export_gmsh_4_1_ascii_3d: cells must be linear tetrahedra, pyramids, prisms/wedges or hexahedra");
         }
         const auto box =
             bounds(
@@ -868,10 +880,19 @@ export_gmsh_4_1_ascii_3d(
                 "mpmc::mesh::export_gmsh_4_1_ascii_3d: cell local index overflow");
         const auto vertices =
             cell_vertices.adjacent(local);
-        const int element_type =
-            vertices.size() == 4U
-                ? 4
-                : 5;
+        int element_type = 0;
+        if (vertices.size() == 4U) {
+            element_type = 4;
+        } else if (vertices.size() == 8U) {
+            element_type = 5;
+        } else if (vertices.size() == 6U) {
+            element_type = 6;
+        } else if (vertices.size() == 5U) {
+            element_type = 7;
+        } else {
+            throw std::logic_error(
+                "mpmc::mesh::export_gmsh_4_1_ascii_3d: validated cell width drift");
+        }
         output << "3 " << (cell + 1U)
                << ' ' << element_type
                << " 1\n"
