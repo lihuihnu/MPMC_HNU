@@ -118,6 +118,14 @@ porosity、permeability、conductivity 等科研属性建立在该通用容器�
 
 若某格式只实现声明的子集，必须在解析器入口与文档中显式拒绝未支持特性；不得“读取成功”后丢失高阶节点、物理组、inactive cell 或字段。
 
+### 4.1 外部真实网格兼容性 gate
+
+`.github/workflows/mesh_external_compatibility.yml` 使用官方 GitHub-hosted Ubuntu runner，在测试时临时下载固定上游 commit 的真实公开网格，并用 Git blob SHA 校验字节内容；第三方数据不复制进本仓库。当前固定样例包括 deal.II 的 Gmsh 4.1 ASCII 2D quad / 3D hexa 文件、deal.II 的 ASCII VTU quad+hexa 输出，以及 OPM 的 `tube.grdecl` 和 `27cellsAniso.grdecl`。
+
+兼容性 driver 对 deal.II Gmsh 2D/3D 与 VTU 2D/3D 执行 `external import -> MPMC export -> MPMC re-import`，核对 entity counts、stable IDs、volume/field 等关键不变量。OPM `tube.grdecl` 原文件直接进入严格 GRDECL importer 和 active shared-topology processor，再执行 `GRDECL -> core -> VTU 3D export -> re-import`；由于 standalone 文件本身没有声明长度/渗透率单位，该 gate 使用显式 scale=1 仅验证格式/拓扑数据链，不把它作为物理单位验证。仓库当前没有 native GRDECL exporter，因此测试明确报告 `grdecl_native_export=not_implemented`，不冒充 round-trip 能力。
+
+OPM `27cellsAniso.grdecl` 包含顶层 `GRID` wrapper，而当前最小 GRDECL parser 只接受八个已声明关键词，因此 raw 文件必须明确以 `unsupported keyword 'GRID'` 拒绝；测试不先 strip wrapper 再宣称原文件兼容。这个 external gate 用于发现真实生态文件与当前声明子集的差异，不替代 checked-in synthetic/software correctness fixtures，也不允许为了某个外部文件而静默接受 high-order/binary/fault/NNC/未知 keyword。
+
 ## 5. 求解变量与拓扑索引
 
 最小 `DofLayout` 已实现 local scalar indexing 基线。每个 `DofVariable` 只包含稳定 ID、location 与 component count；location 当前支持 cell/face/vertex，component count 必须大于零，变量 ID 必须唯一。布局固定为 `[cell block][face block][vertex block]`；每个 location 内按 `entity-major -> variable declaration order -> component` 排列。同一实体上的变量 DoF 因此连续，且 location block 也连续。
