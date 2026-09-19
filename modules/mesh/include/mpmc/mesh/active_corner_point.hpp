@@ -1094,7 +1094,11 @@ process_active_corner_point_grid(
                 field.metadata()));
     }
 
-
+    for (std::size_t cell = 0U;
+         cell < processed_cell_count;
+         ++cell) {
+        const auto local =
+            checked_local(
                 cell,
                 "mpmc::mesh::process_active_corner_point_grid: processed cell local index overflow");
         if (topology.global_id(
