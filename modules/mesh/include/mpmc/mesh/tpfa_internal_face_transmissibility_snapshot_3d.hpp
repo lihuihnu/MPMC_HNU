@@ -1,6 +1,7 @@
 #ifndef MPMC_MESH_TPFA_INTERNAL_FACE_TRANSMISSIBILITY_SNAPSHOT_3D_HPP
 #define MPMC_MESH_TPFA_INTERNAL_FACE_TRANSMISSIBILITY_SNAPSHOT_3D_HPP
 
+#include <mpmc/discretization/transmissibility_admissibility_3d.hpp>
 #include <mpmc/mesh/permeability_tensor_3d.hpp>
 #include <mpmc/mesh/tpfa_static_face_transmissibility_3d.hpp>
 
@@ -30,7 +31,7 @@ enum class TpfaInternalFaceTransmissibilityDisposition3D {
 struct TpfaInternalFaceTransmissibilityEntry3D {
     LocalIndex face;
     TpfaInternalFaceTransmissibilityDisposition3D disposition;
-    CombinedTransmissibilityAdmissibility3D admissibility;
+    mpmc::discretization::CombinedTransmissibilityAdmissibility3D admissibility;
     std::optional<TpfaStaticFaceTransmissibility3D>
         static_transmissibility;
 };
@@ -48,9 +49,9 @@ class TpfaInternalFaceTransmissibilitySnapshot3D {
 public:
     TpfaInternalFaceTransmissibilitySnapshot3D(
         const CellFaceGeometricOperator3D& geometry,
-        TransmissibilityGeometryAdmissibilityPolicy3D
+        mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D
             geometry_policy,
-        KOrthogonalityAdmissibilityPolicy3D
+        mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D
             k_policy,
         std::vector<TpfaInternalFaceTransmissibilityEntry3D>
             entries)
@@ -88,12 +89,12 @@ public:
         return entries_.size() - materialized_face_count_;
     }
 
-    [[nodiscard]] TransmissibilityGeometryAdmissibilityPolicy3D
+    [[nodiscard]] mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D
     geometry_policy() const noexcept {
         return geometry_policy_;
     }
 
-    [[nodiscard]] KOrthogonalityAdmissibilityPolicy3D
+    [[nodiscard]] mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D
     k_policy() const noexcept {
         return k_policy_;
     }
@@ -181,7 +182,7 @@ private:
             case TpfaInternalFaceTransmissibilityDisposition3D::
                 materialized:
                 if (entry.admissibility.disposition !=
-                        CombinedTransmissibilityAdmissibilityDisposition3D::
+                        mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                             direct_normal_projection_k_orthogonal_candidate ||
                     !entry.static_transmissibility.has_value() ||
                     entry.static_transmissibility->disposition !=
@@ -208,28 +209,28 @@ private:
                 blocked_geometry_non_orthogonal:
                 require_blocked(
                     entry,
-                    CombinedTransmissibilityAdmissibilityDisposition3D::
+                    mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                         requires_geometry_non_orthogonal_treatment);
                 break;
             case TpfaInternalFaceTransmissibilityDisposition3D::
                 blocked_k_non_orthogonal:
                 require_blocked(
                     entry,
-                    CombinedTransmissibilityAdmissibilityDisposition3D::
+                    mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                         requires_k_non_orthogonal_treatment);
                 break;
             case TpfaInternalFaceTransmissibilityDisposition3D::
                 blocked_geometry_and_k_non_orthogonal:
                 require_blocked(
                     entry,
-                    CombinedTransmissibilityAdmissibilityDisposition3D::
+                    mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                         requires_geometry_and_k_non_orthogonal_treatment);
                 break;
             case TpfaInternalFaceTransmissibilityDisposition3D::
                 blocked_degenerate_permeability_direction:
                 require_blocked(
                     entry,
-                    CombinedTransmissibilityAdmissibilityDisposition3D::
+                    mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
                         degenerate_permeability_direction);
                 break;
             default:
@@ -275,7 +276,7 @@ private:
 
     static void require_blocked(
         const TpfaInternalFaceTransmissibilityEntry3D& entry,
-        CombinedTransmissibilityAdmissibilityDisposition3D
+        mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D
             expected) {
         if (entry.admissibility.disposition != expected ||
             entry.static_transmissibility.has_value()) {
@@ -285,9 +286,9 @@ private:
     }
 
     std::size_t total_face_count_;
-    TransmissibilityGeometryAdmissibilityPolicy3D
+    mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D
         geometry_policy_;
-    KOrthogonalityAdmissibilityPolicy3D
+    mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D
         k_policy_;
     std::vector<TpfaInternalFaceTransmissibilityEntry3D>
         entries_;
@@ -298,26 +299,26 @@ private:
 
 [[nodiscard]] inline TpfaInternalFaceTransmissibilityDisposition3D
 gated_disposition(
-    CombinedTransmissibilityAdmissibilityDisposition3D
+    mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D
         disposition) {
     switch (disposition) {
-    case CombinedTransmissibilityAdmissibilityDisposition3D::
+    case mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
         direct_normal_projection_k_orthogonal_candidate:
         return TpfaInternalFaceTransmissibilityDisposition3D::
             materialized;
-    case CombinedTransmissibilityAdmissibilityDisposition3D::
+    case mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
         requires_geometry_non_orthogonal_treatment:
         return TpfaInternalFaceTransmissibilityDisposition3D::
             blocked_geometry_non_orthogonal;
-    case CombinedTransmissibilityAdmissibilityDisposition3D::
+    case mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
         requires_k_non_orthogonal_treatment:
         return TpfaInternalFaceTransmissibilityDisposition3D::
             blocked_k_non_orthogonal;
-    case CombinedTransmissibilityAdmissibilityDisposition3D::
+    case mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
         requires_geometry_and_k_non_orthogonal_treatment:
         return TpfaInternalFaceTransmissibilityDisposition3D::
             blocked_geometry_and_k_non_orthogonal;
-    case CombinedTransmissibilityAdmissibilityDisposition3D::
+    case mpmc::discretization::CombinedTransmissibilityAdmissibilityDisposition3D::
         degenerate_permeability_direction:
         return TpfaInternalFaceTransmissibilityDisposition3D::
             blocked_degenerate_permeability_direction;
@@ -336,9 +337,9 @@ gated_disposition(
 make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
     const CellFaceGeometricOperator3D& geometry,
     const CellCartesianDiagonalPermeability3D& permeability,
-    TransmissibilityGeometryAdmissibilityPolicy3D
+    mpmc::discretization::TransmissibilityGeometryAdmissibilityPolicy3D
         geometry_policy,
-    KOrthogonalityAdmissibilityPolicy3D
+    mpmc::discretization::KOrthogonalityAdmissibilityPolicy3D
         k_policy) {
     if (geometry.cell_count() !=
         permeability.cell_count()) {
@@ -361,7 +362,7 @@ make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
         }
 
         const auto admissibility =
-            classify_internal_face_transmissibility_admissibility(
+            mpmc::discretization::classify_internal_face_transmissibility_admissibility(
                 geometry,
                 permeability,
                 local,
