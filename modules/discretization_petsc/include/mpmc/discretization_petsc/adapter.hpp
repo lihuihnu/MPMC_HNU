@@ -2,7 +2,7 @@
 #define MPMC_DISCRETIZATION_PETSC_ADAPTER_HPP
 
 #include <mpmc/discretization/transmissibility_admissibility_3d.hpp>
-#include <mpmc/mesh/tpfa_internal_face_transmissibility_snapshot_3d.hpp>
+#include <mpmc/discretization/tpfa_internal_face_transmissibility_snapshot_3d.hpp>
 #include <mpmc/mesh_petsc/adapter.hpp>
 
 #include <petscdmplex.h>
@@ -84,7 +84,7 @@ struct StableFaceGatedTpfaSnapshot3D {
     std::vector<mpmc::mesh::GlobalEntityId>
         face_global_ids;
     std::vector<
-        mpmc::mesh::TpfaInternalFaceTransmissibilityDisposition3D>
+        mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D>
         dispositions;
     std::vector<std::optional<double>>
         materialized_face_transmissibilities_m3;
@@ -98,7 +98,7 @@ struct StableFaceGatedTpfaSnapshot3D {
 inline PetscErrorCode make_root_stable_face_gated_tpfa_snapshot_3d(
     MPI_Comm comm,
     PetscMPIInt root_rank,
-    const mpmc::mesh::TpfaInternalFaceTransmissibilitySnapshot3D*
+    const mpmc::discretization::TpfaInternalFaceTransmissibilitySnapshot3D*
         root_snapshot,
     std::span<const DMPlexPointIdentity> root_identities,
     StableFaceGatedTpfaSnapshot3D* output) {
@@ -808,7 +808,7 @@ inline PetscErrorCode migrate_stable_face_gated_tpfa_snapshot_3d(
 struct TargetLocalGatedTpfaTransmissibilityEntry3D {
     mpmc::mesh::LocalIndex face;
     mpmc::mesh::GlobalEntityId global;
-    mpmc::mesh::TpfaInternalFaceTransmissibilityDisposition3D
+    mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D
         disposition;
     std::optional<double> transmissibility_m3;
 };
