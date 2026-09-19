@@ -4426,12 +4426,15 @@ void dof_layout_snapshot() {
 
     require(layout.entity_count(mesh::EntityKind::cell) == 2U, "cell entity count");
     require(layout.entity_count(mesh::EntityKind::face) == 7U, "face entity count");
+    require(layout.entity_count(mesh::EntityKind::edge) == 0U, "edge entity count");
     require(layout.entity_count(mesh::EntityKind::vertex) == 6U, "vertex entity count");
 
     require(layout.dofs_per_entity(mesh::EntityKind::cell) == 3U,
             "cell DoFs per entity");
     require(layout.dofs_per_entity(mesh::EntityKind::face) == 2U,
             "face DoFs per entity");
+    require(layout.dofs_per_entity(mesh::EntityKind::edge) == 0U,
+            "empty edge DoFs per entity");
     require(layout.dofs_per_entity(mesh::EntityKind::vertex) == 1U,
             "vertex DoFs per entity");
 
@@ -4441,6 +4444,10 @@ void dof_layout_snapshot() {
     require(layout.location_offset(mesh::EntityKind::face) == 6U, "face block offset");
     require(layout.location_scalar_count(mesh::EntityKind::face) == 14U,
             "face block size");
+    require(layout.location_offset(mesh::EntityKind::edge) == 20U,
+            "zero-width edge block offset");
+    require(layout.location_scalar_count(mesh::EntityKind::edge) == 0U,
+            "zero-width edge block size");
     require(layout.location_offset(mesh::EntityKind::vertex) == 20U,
             "vertex block offset");
     require(layout.location_scalar_count(mesh::EntityKind::vertex) == 6U,
@@ -4485,6 +4492,32 @@ void dof_layout_snapshot() {
 
     // The snapshot owns its variable IDs and remains usable after input destruction.
     require(layout.variables().front().id == "cell.primary", "owned variable metadata");
+
+    const auto edge_topology =
+        field_contract_topology();
+    const auto edge_layout =
+        mesh::DofLayout::create(
+            edge_topology,
+            {
+                {"cell.e", mesh::EntityKind::cell, 1U},
+                {"face.e", mesh::EntityKind::face, 1U},
+                {"edge.e", mesh::EntityKind::edge, 2U},
+                {"vertex.e", mesh::EntityKind::vertex, 1U},
+            });
+    require(edge_layout.total_dof_count() == 13U,
+            "edge-aware total DoF count");
+    require(edge_layout.entity_count(mesh::EntityKind::edge) == 3U &&
+                edge_layout.dofs_per_entity(mesh::EntityKind::edge) == 2U,
+            "edge entity/DoF contract");
+    require(edge_layout.location_offset(mesh::EntityKind::cell) == 0U &&
+                edge_layout.location_offset(mesh::EntityKind::face) == 1U &&
+                edge_layout.location_offset(mesh::EntityKind::edge) == 3U &&
+                edge_layout.location_offset(mesh::EntityKind::vertex) == 9U,
+            "cell-face-edge-vertex block order");
+    require(edge_layout.scalar_offset("edge.e", mesh::LocalIndex{0U}, 0U) == 3U &&
+                edge_layout.scalar_offset("edge.e", mesh::LocalIndex{2U}, 1U) == 8U &&
+                edge_layout.scalar_offset("vertex.e", mesh::LocalIndex{0U}, 0U) == 9U,
+            "edge scalar offsets");
 }
 
 void dof_layout_invalid() {
@@ -4517,10 +4550,6 @@ void dof_layout_invalid() {
     });
     expect_throw<std::invalid_argument>([&] {
         (void)mesh::DofLayout::create(
-            topology, {{"edge", mesh::EntityKind::edge, 1U}});
-    });
-    expect_throw<std::invalid_argument>([&] {
-        (void)mesh::DofLayout::create(
             topology,
             {{"bad-kind", static_cast<mesh::EntityKind>(255U), 1U}});
     });
@@ -4550,8 +4579,9 @@ void dof_layout_invalid() {
         [&] { (void)layout.scalar_offset(0U, mesh::LocalIndex{0U}, 2U); });
     expect_throw<std::out_of_range>(
         [&] { (void)layout.scalar_offset(1U, mesh::LocalIndex{0U}, 0U); });
-    expect_throw<std::invalid_argument>(
-        [&] { (void)layout.dofs_per_entity(mesh::EntityKind::edge); });
+    require(layout.dofs_per_entity(mesh::EntityKind::edge) == 0U &&
+                layout.location_offset(mesh::EntityKind::edge) == 2U,
+            "empty edge block remains queryable");
     expect_throw<std::invalid_argument>([&] {
         (void)layout.location_offset(static_cast<mesh::EntityKind>(255U));
     });
@@ -4762,6 +4792,8 @@ void dof_numbering_serial() {
             "serial global cell count");
     require(numbering.global_entity_count(mesh::EntityKind::face) == 7U,
             "serial global face count");
+    require(numbering.global_entity_count(mesh::EntityKind::edge) == 0U,
+            "serial global edge count");
     require(numbering.global_entity_count(mesh::EntityKind::vertex) == 6U,
             "serial global vertex count");
 
@@ -4771,6 +4803,9 @@ void dof_numbering_serial() {
             "serial cell global block size");
     require(numbering.global_location_offset(mesh::EntityKind::face) == 6U,
             "serial face global block");
+    require(numbering.global_location_offset(mesh::EntityKind::edge) == 13U &&
+                numbering.global_location_dof_count(mesh::EntityKind::edge) == 0U,
+            "serial empty edge global block");
     require(numbering.global_location_offset(mesh::EntityKind::vertex) == 13U,
             "serial vertex global block");
 
@@ -4786,6 +4821,38 @@ void dof_numbering_serial() {
                 "serial local scalar must be owned");
         require(!numbering.is_ghost(local),
                 "serial local scalar cannot be ghost");
+    }
+
+    const auto edge_topology =
+        field_contract_topology();
+    const auto edge_partition =
+        mesh::make_serial_partition_snapshot(
+            edge_topology);
+    const auto edge_layout =
+        mesh::DofLayout::create(
+            edge_topology,
+            {
+                {"cell.e", mesh::EntityKind::cell, 1U},
+                {"face.e", mesh::EntityKind::face, 1U},
+                {"edge.e", mesh::EntityKind::edge, 2U},
+                {"vertex.e", mesh::EntityKind::vertex, 1U},
+            });
+    const auto edge_numbering =
+        mesh::DofNumberingSnapshot::create_serial(
+            edge_layout,
+            edge_partition);
+    require(edge_numbering.global_entity_count(mesh::EntityKind::edge) == 3U,
+            "serial edge global entity count");
+    require(edge_numbering.global_location_offset(mesh::EntityKind::edge) == 3U &&
+                edge_numbering.global_location_dof_count(mesh::EntityKind::edge) == 6U &&
+                edge_numbering.global_location_offset(mesh::EntityKind::vertex) == 9U,
+            "serial edge global block");
+    for (std::size_t local = 0U;
+         local < edge_layout.total_dof_count();
+         ++local) {
+        require(edge_numbering.global_index(local).value() ==
+                    static_cast<std::uint64_t>(local),
+                "serial edge numbering local/global identity");
     }
 }
 
@@ -4885,6 +4952,70 @@ void dof_numbering_local() {
         [&] { (void)numbering.local_scalar(mesh::GlobalDofIndex{0U}); });
     expect_throw<std::out_of_range>(
         [&] { (void)numbering.local_scalar(mesh::GlobalDofIndex{25U}); });
+
+    mesh::Topology::EntityIds edge_ids;
+    edge_ids.edges = {
+        mesh::GlobalEntityId{20U},
+        mesh::GlobalEntityId{21U},
+        mesh::GlobalEntityId{22U}};
+    const mesh::Topology edge_topology{
+        std::move(edge_ids),
+        {}};
+    mesh::EntityOwnerRanks edge_owners;
+    edge_owners.edges = {
+        mesh::PartitionRank{1U},
+        mesh::PartitionRank{0U},
+        mesh::PartitionRank{2U}};
+    const auto edge_partition =
+        mesh::PartitionSnapshot::create(
+            edge_topology,
+            mesh::PartitionRank{1U},
+            3U,
+            std::move(edge_owners));
+    const auto edge_layout =
+        mesh::DofLayout::create(
+            edge_topology,
+            {{"edge.v", mesh::EntityKind::edge, 2U}});
+
+    mesh::GlobalEntityNumberingInput edge_input;
+    edge_input.global_edge_count = 5U;
+    edge_input.edges = {
+        {mesh::GlobalEntityId{20U}, mesh::GlobalEntityOrdinal{4U}},
+        {mesh::GlobalEntityId{21U}, mesh::GlobalEntityOrdinal{1U}},
+        {mesh::GlobalEntityId{22U}, mesh::GlobalEntityOrdinal{3U}}};
+    const auto edge_numbering =
+        mesh::DofNumberingSnapshot::create_local(
+            edge_layout,
+            edge_partition,
+            std::move(edge_input));
+    require(edge_numbering.local_dof_count() == 6U &&
+                edge_numbering.global_dof_count() == 10U &&
+                edge_numbering.owned_dof_count() == 2U &&
+                edge_numbering.ghost_dof_count() == 4U,
+            "edge local/global ownership counts");
+    const std::array<std::uint64_t, 6> edge_expected_global{
+        8U, 9U, 2U, 3U, 6U, 7U};
+    for (std::size_t local = 0U;
+         local < edge_expected_global.size();
+         ++local) {
+        require(edge_numbering.global_index(local).value() ==
+                    edge_expected_global[local],
+                "edge local-to-global numbering");
+        require(edge_numbering.ownership(local) ==
+                    (local < 2U
+                         ? mesh::EntityOwnership::owned
+                         : mesh::EntityOwnership::ghost),
+                "edge DoF ownership");
+        require(edge_numbering.local_scalar(
+                    mesh::GlobalDofIndex{
+                        edge_expected_global[local]}) ==
+                    local,
+                "edge global-to-local numbering");
+    }
+    require(edge_numbering.global_entity_count(mesh::EntityKind::edge) == 5U &&
+                edge_numbering.global_location_offset(mesh::EntityKind::edge) == 0U &&
+                edge_numbering.global_location_dof_count(mesh::EntityKind::edge) == 10U,
+            "edge global location block");
 }
 
 void dof_numbering_invalid() {
@@ -5040,9 +5171,8 @@ void dof_numbering_invalid() {
         [&] { (void)numbering.global_index(numbering.local_dof_count()); });
     expect_throw<std::out_of_range>(
         [&] { (void)numbering.ownership(numbering.local_dof_count()); });
-    expect_throw<std::invalid_argument>([&] {
-        (void)numbering.global_entity_count(mesh::EntityKind::edge);
-    });
+    require(numbering.global_entity_count(mesh::EntityKind::edge) == 0U,
+            "zero-edge numbering query");
     expect_throw<std::invalid_argument>([&] {
         (void)numbering.global_location_offset(
             static_cast<mesh::EntityKind>(255U));

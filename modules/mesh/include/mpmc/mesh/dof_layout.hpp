@@ -27,7 +27,7 @@ struct DofVariable {
 /// Immutable local scalar layout for logical variables attached to mesh entities.
 ///
 /// Scalar ordering is fixed as:
-///   [cell block][face block][vertex block]
+///   [cell block][face block][edge block][vertex block]
 ///
 /// Within one location the order is:
 ///   entity-major -> variable declaration order -> component.
@@ -54,7 +54,7 @@ public:
         std::map<std::string, std::size_t, std::less<>> indices;
         std::vector<std::size_t> component_offsets;
         component_offsets.reserve(variables.size());
-        std::array<LocationLayout, 3> locations{};
+        std::array<LocationLayout, 4> locations{};
 
         for (std::size_t variable_index = 0; variable_index < variables.size();
              ++variable_index) {
@@ -84,7 +84,8 @@ public:
 
         std::size_t total_dof_count = 0U;
         for (const EntityKind location_kind :
-             {EntityKind::cell, EntityKind::face, EntityKind::vertex}) {
+             {EntityKind::cell, EntityKind::face,
+              EntityKind::edge, EntityKind::vertex}) {
             auto& location = locations[location_index(location_kind)];
             location.entity_count = topology.entity_count(location_kind);
             location.base_offset = total_dof_count;
@@ -197,7 +198,7 @@ private:
     DofLayout(std::vector<DofVariable> variables,
               std::vector<std::size_t> component_offsets,
               std::map<std::string, std::size_t, std::less<>> variable_indices,
-              std::array<LocationLayout, 3> locations,
+              std::array<LocationLayout, 4> locations,
               std::size_t total_dof_count)
         : variables_(std::move(variables)),
           component_offsets_(std::move(component_offsets)),
@@ -218,10 +219,8 @@ private:
         switch (location) {
         case EntityKind::cell: return 0U;
         case EntityKind::face: return 1U;
-        case EntityKind::vertex: return 2U;
-        case EntityKind::edge:
-            throw std::invalid_argument(
-                "mpmc::mesh::DofLayout: edge variables are not supported by this contract");
+        case EntityKind::edge: return 2U;
+        case EntityKind::vertex: return 3U;
         }
         throw std::invalid_argument(
             "mpmc::mesh::DofLayout: invalid variable location");
@@ -234,7 +233,7 @@ private:
     std::vector<DofVariable> variables_;
     std::vector<std::size_t> component_offsets_;
     std::map<std::string, std::size_t, std::less<>> variable_indices_;
-    std::array<LocationLayout, 3> locations_;
+    std::array<LocationLayout, 4> locations_;
     std::size_t total_dof_count_;
 };
 

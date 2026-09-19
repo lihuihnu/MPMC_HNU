@@ -1475,6 +1475,27 @@ void verify_serial_dmplex_topology() {
         "DMPlex adapter must reject missing core relations");
     require(dm == nullptr && identities.empty(),
             "failed DMPlex creation must leave clean outputs");
+
+    mesh::Topology::EntityIds edge_ids;
+    edge_ids.edges = {
+        mesh::GlobalEntityId{77U}};
+    const mesh::Topology explicit_edges{
+        std::move(edge_ids),
+        {}};
+    identities.push_back(
+        mesh_petsc::DMPlexPointIdentity{
+            0,
+            mesh::EntityKind::edge,
+            mesh::LocalIndex{0U},
+            mesh::GlobalEntityId{77U}});
+    const PetscErrorCode edge_error =
+        mesh_petsc::create_serial_dmplex_topology(
+            explicit_edges, &dm, &identities);
+    require(
+        edge_error == PETSC_ERR_SUP,
+        "partial-interpolated DMPlex adapter must reject materialized core edges");
+    require(dm == nullptr && identities.empty(),
+            "unsupported edge DMPlex creation must leave clean outputs");
 }
 
 mesh::Topology two_rank_topology(std::uint32_t rank) {
@@ -1579,6 +1600,202 @@ mesh::GlobalEntityNumberingInput global_entity_numbering(
     append(mesh::EntityKind::face, input.faces, 100U, 200U);
     append(mesh::EntityKind::vertex, input.vertices, 10U, 20U);
     return input;
+}
+
+void verify_edge_dof_section_and_point_sf(
+    int mpi_rank) {
+    mesh::Topology::EntityIds ids;
+    if (mpi_rank == 0) {
+        ids.edges = {
+            mesh::GlobalEntityId{300U},
+            mesh::GlobalEntityId{400U}};
+    } else {
+        ids.edges = {
+            mesh::GlobalEntityId{400U},
+            mesh::GlobalEntityId{300U}};
+    }
+    const mesh::Topology topology{
+        std::move(ids),
+        {}};
+
+    mesh::EntityOwnerRanks owners;
+    if (mpi_rank == 0) {
+        owners.edges = {
+            mesh::PartitionRank{0U},
+            mesh::PartitionRank{1U}};
+    } else {
+        owners.edges = {
+            mesh::PartitionRank{1U},
+            mesh::PartitionRank{0U}};
+    }
+    const auto partition =
+        mesh::PartitionSnapshot::create(
+            topology,
+            mesh::PartitionRank{
+                static_cast<std::uint32_t>(
+                    mpi_rank)},
+            2U,
+            std::move(owners));
+
+    const std::vector<mesh::SharedEntityLink>
+        links{
+            {mesh::EntityKind::edge,
+             mesh::GlobalEntityId{300U},
+             mesh::PartitionRank{0U},
+             mesh::LocalIndex{0U},
+             mesh::PartitionRank{1U},
+             mesh::LocalIndex{1U}},
+            {mesh::EntityKind::edge,
+             mesh::GlobalEntityId{400U},
+             mesh::PartitionRank{1U},
+             mesh::LocalIndex{0U},
+             mesh::PartitionRank{0U},
+             mesh::LocalIndex{1U}},
+        };
+    const auto plan =
+        mesh::SharedEntityPlan::create(
+            partition,
+            links);
+
+    const auto layout =
+        mesh::DofLayout::create(
+            topology,
+            {{"edge.trace",
+              mesh::EntityKind::edge,
+              2U}});
+
+    mesh::GlobalEntityNumberingInput input;
+    input.global_edge_count = 2U;
+    const auto edge_ids =
+        partition.global_ids(
+            mesh::EntityKind::edge);
+    for (const auto id : edge_ids) {
+        input.edges.push_back(
+            {id,
+             mesh::GlobalEntityOrdinal{
+                 id.value() == 300U
+                     ? 0U
+                     : 1U}});
+    }
+    const auto numbering =
+        mesh::DofNumberingSnapshot::create_local(
+            layout,
+            partition,
+            std::move(input));
+    require(
+        numbering.local_dof_count() == 4U &&
+            numbering.global_dof_count() == 4U &&
+            numbering.owned_dof_count() == 2U &&
+            numbering.ghost_dof_count() == 2U,
+        "edge PETSc fixture DoF counts");
+
+    PetscSection section = nullptr;
+    std::vector<PetscInt> local_to_global;
+    require_petsc(
+        mesh_petsc::create_section_mapping(
+            PETSC_COMM_WORLD,
+            layout,
+            numbering,
+            &section,
+            &local_to_global),
+        "edge create_section_mapping");
+
+    PetscInt chart_start = -1;
+    PetscInt chart_end = -1;
+    require_petsc(
+        PetscSectionGetChart(
+            section,
+            &chart_start,
+            &chart_end),
+        "edge PetscSectionGetChart");
+    require(
+        chart_start == 0 &&
+            chart_end == 2,
+        "edge PetscSection chart");
+
+    for (PetscInt point = 0;
+         point < 2;
+         ++point) {
+        PetscInt dof = -1;
+        PetscInt offset = -1;
+        require_petsc(
+            PetscSectionGetDof(
+                section,
+                point,
+                &dof),
+            "edge PetscSectionGetDof");
+        require_petsc(
+            PetscSectionGetOffset(
+                section,
+                point,
+                &offset),
+            "edge PetscSectionGetOffset");
+        require(
+            dof == 2 &&
+                offset == 2 * point,
+            "edge PetscSection point layout");
+    }
+    const std::array<PetscInt, 4>
+        rank0_expected{
+            0, 1, 2, 3};
+    const std::array<PetscInt, 4>
+        rank1_expected{
+            2, 3, 0, 1};
+    const auto& expected =
+        mpi_rank == 0
+            ? rank0_expected
+            : rank1_expected;
+    require(
+        local_to_global.size() ==
+            expected.size(),
+        "edge local-to-global size");
+    for (std::size_t local = 0U;
+         local < expected.size();
+         ++local) {
+        require(
+            local_to_global[local] ==
+                expected[local],
+            "edge PETSc local-to-global map");
+    }
+
+    PetscSF sf = nullptr;
+    require_petsc(
+        mesh_petsc::create_point_sf(
+            PETSC_COMM_WORLD,
+            layout,
+            partition,
+            plan,
+            &sf),
+        "edge create_point_sf");
+    PetscInt nroots = -1;
+    PetscInt nleaves = -1;
+    const PetscInt* ilocal = nullptr;
+    const PetscSFNode* remote = nullptr;
+    require_petsc(
+        PetscSFGetGraph(
+            sf,
+            &nroots,
+            &nleaves,
+            &ilocal,
+            &remote),
+        "edge PetscSFGetGraph");
+    require(
+        nroots == 2 &&
+            nleaves == 1 &&
+            ilocal != nullptr &&
+            ilocal[0] == 1 &&
+            remote != nullptr &&
+            remote[0].rank ==
+                (mpi_rank == 0 ? 1 : 0) &&
+            remote[0].index == 0,
+        "edge point SF owner/ghost mapping");
+
+    require_petsc(
+        PetscSFDestroy(&sf),
+        "edge PetscSFDestroy");
+    require_petsc(
+        PetscSectionDestroy(&section),
+        "edge PetscSectionDestroy");
 }
 
 void verify_section(
@@ -8338,6 +8555,8 @@ void run_two_rank_test() {
     verify_dmplex_distribute_overlap_identity();
     verify_processed_grdecl_3d_dmplex_distribute_overlap();
     verify_gmsh_import_through_dmplex_chain();
+    verify_edge_dof_section_and_point_sf(
+        mpi_rank);
     verify_section(layout, numbering, mpi_rank);
     verify_sf(partition, plan, mpi_rank);
     verify_global_section_and_section_sf(

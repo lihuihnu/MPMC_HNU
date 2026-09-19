@@ -54,10 +54,12 @@ struct GlobalEntityOrdinalRecord {
 
 struct GlobalEntityNumberingInput {
     std::uint64_t global_vertex_count{0U};
+    std::uint64_t global_edge_count{0U};
     std::uint64_t global_face_count{0U};
     std::uint64_t global_cell_count{0U};
 
     std::vector<GlobalEntityOrdinalRecord> vertices;
+    std::vector<GlobalEntityOrdinalRecord> edges;
     std::vector<GlobalEntityOrdinalRecord> faces;
     std::vector<GlobalEntityOrdinalRecord> cells;
 };
@@ -65,7 +67,7 @@ struct GlobalEntityNumberingInput {
 /// Immutable partition-aware mapping between local and contiguous global scalar DoFs.
 ///
 /// Global ordering mirrors DofLayout:
-///   [cell block][face block][vertex block]
+///   [cell block][face block][edge block][vertex block]
 ///
 /// Within a global location block:
 ///   global entity ordinal -> variable declaration order -> component.
@@ -114,11 +116,14 @@ public:
             static_cast<std::uint64_t>(partition.entity_count(EntityKind::cell));
         numbering.global_face_count =
             static_cast<std::uint64_t>(partition.entity_count(EntityKind::face));
+        numbering.global_edge_count =
+            static_cast<std::uint64_t>(partition.entity_count(EntityKind::edge));
         numbering.global_vertex_count =
             static_cast<std::uint64_t>(partition.entity_count(EntityKind::vertex));
 
         append_serial_records(partition, EntityKind::cell, numbering.cells);
         append_serial_records(partition, EntityKind::face, numbering.faces);
+        append_serial_records(partition, EntityKind::edge, numbering.edges);
         append_serial_records(partition, EntityKind::vertex, numbering.vertices);
 
         return create_local(layout, partition, std::move(numbering));
@@ -128,7 +133,7 @@ public:
         const DofLayout& layout,
         const PartitionSnapshot& partition,
         GlobalEntityNumberingInput numbering) {
-        std::array<LocationNumbering, 3> locations{};
+        std::array<LocationNumbering, 4> locations{};
         std::uint64_t global_scalar_base = 0U;
         std::size_t owned_dof_count = 0U;
         std::size_t ghost_dof_count = 0U;
@@ -142,9 +147,13 @@ public:
             numbering.global_face_count, std::move(numbering.faces),
             global_scalar_base, owned_dof_count, ghost_dof_count, locations[1]);
         initialize_location(
+            layout, partition, EntityKind::edge,
+            numbering.global_edge_count, std::move(numbering.edges),
+            global_scalar_base, owned_dof_count, ghost_dof_count, locations[2]);
+        initialize_location(
             layout, partition, EntityKind::vertex,
             numbering.global_vertex_count, std::move(numbering.vertices),
-            global_scalar_base, owned_dof_count, ghost_dof_count, locations[2]);
+            global_scalar_base, owned_dof_count, ghost_dof_count, locations[3]);
 
         if (owned_dof_count >
             std::numeric_limits<std::size_t>::max() - ghost_dof_count) {
@@ -248,7 +257,7 @@ private:
     DofNumberingSnapshot(
         PartitionRank local_rank,
         std::uint32_t rank_count,
-        std::array<LocationNumbering, 3> locations,
+        std::array<LocationNumbering, 4> locations,
         std::size_t local_dof_count,
         std::uint64_t global_dof_count,
         std::size_t owned_dof_count,
@@ -265,10 +274,8 @@ private:
         switch (location) {
         case EntityKind::cell: return 0U;
         case EntityKind::face: return 1U;
-        case EntityKind::vertex: return 2U;
-        case EntityKind::edge:
-            throw std::invalid_argument(
-                "mpmc::mesh::DofNumberingSnapshot: edge DoFs are not supported by DofLayout");
+        case EntityKind::edge: return 2U;
+        case EntityKind::vertex: return 3U;
         }
         throw std::invalid_argument(
             "mpmc::mesh::DofNumberingSnapshot: invalid DoF location");
@@ -497,7 +504,7 @@ private:
 
     PartitionRank local_rank_;
     std::uint32_t rank_count_;
-    std::array<LocationNumbering, 3> locations_;
+    std::array<LocationNumbering, 4> locations_;
     std::size_t local_dof_count_;
     std::uint64_t global_dof_count_;
     std::size_t owned_dof_count_;

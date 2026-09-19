@@ -82,6 +82,7 @@ inline PetscErrorCode validate_communicator(
 struct PointRanges {
     std::size_t cell_begin{0U};
     std::size_t face_begin{0U};
+    std::size_t edge_begin{0U};
     std::size_t vertex_begin{0U};
     std::size_t end{0U};
 };
@@ -93,6 +94,7 @@ inline PetscErrorCode point_ranges(
 
     const std::size_t cells = layout.entity_count(mpmc::mesh::EntityKind::cell);
     const std::size_t faces = layout.entity_count(mpmc::mesh::EntityKind::face);
+    const std::size_t edges = layout.entity_count(mpmc::mesh::EntityKind::edge);
     const std::size_t vertices =
         layout.entity_count(mpmc::mesh::EntityKind::vertex);
 
@@ -100,7 +102,12 @@ inline PetscErrorCode point_ranges(
         return PETSC_ERR_ARG_OUTOFRANGE;
     }
     const std::size_t face_begin = cells;
-    const std::size_t vertex_begin = cells + faces;
+    const std::size_t edge_begin = cells + faces;
+    if (edges >
+        std::numeric_limits<std::size_t>::max() - edge_begin) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    const std::size_t vertex_begin = edge_begin + edges;
     if (vertices >
         std::numeric_limits<std::size_t>::max() - vertex_begin) {
         return PETSC_ERR_ARG_OUTOFRANGE;
@@ -108,6 +115,7 @@ inline PetscErrorCode point_ranges(
 
     ranges->cell_begin = 0U;
     ranges->face_begin = face_begin;
+    ranges->edge_begin = edge_begin;
     ranges->vertex_begin = vertex_begin;
     ranges->end = vertex_begin + vertices;
     return PETSC_SUCCESS;
@@ -121,10 +129,10 @@ inline std::size_t point_base(
         return ranges.cell_begin;
     case mpmc::mesh::EntityKind::face:
         return ranges.face_begin;
+    case mpmc::mesh::EntityKind::edge:
+        return ranges.edge_begin;
     case mpmc::mesh::EntityKind::vertex:
         return ranges.vertex_begin;
-    case mpmc::mesh::EntityKind::edge:
-        break;
     }
     return std::numeric_limits<std::size_t>::max();
 }
@@ -232,6 +240,7 @@ inline PetscErrorCode create_section_mapping(
     for (const auto kind :
          {mpmc::mesh::EntityKind::cell,
           mpmc::mesh::EntityKind::face,
+          mpmc::mesh::EntityKind::edge,
           mpmc::mesh::EntityKind::vertex}) {
         const std::size_t base = detail::point_base(ranges, kind);
         const std::size_t entity_count = layout.entity_count(kind);
@@ -320,7 +329,7 @@ inline PetscErrorCode create_section_mapping(
 
 /// Create one flattened point PetscSF matching create_section_mapping()'s chart.
 ///
-/// The local point space is [cell points][face points][vertex points]. SharedEntityPlan
+/// The local point space is [cell points][face points][edge points][vertex points]. SharedEntityPlan
 /// stores remote indices within each EntityKind, so the adapter collectively gathers
 /// each rank's local point counts to recover the remote chart base without changing
 /// the core halo contract.
@@ -345,6 +354,7 @@ inline PetscErrorCode create_point_sf(
     for (const auto kind :
          {mpmc::mesh::EntityKind::cell,
           mpmc::mesh::EntityKind::face,
+          mpmc::mesh::EntityKind::edge,
           mpmc::mesh::EntityKind::vertex}) {
         if (layout.entity_count(kind) != partition.entity_count(kind)) {
             return PETSC_ERR_ARG_SIZ;
@@ -355,25 +365,27 @@ inline PetscErrorCode create_point_sf(
     error = detail::point_ranges(layout, &local_ranges);
     if (error != PETSC_SUCCESS) return error;
 
-    const std::array<std::uint64_t, 3> local_counts{
+    const std::array<std::uint64_t, 4> local_counts{
         static_cast<std::uint64_t>(
             partition.entity_count(mpmc::mesh::EntityKind::cell)),
         static_cast<std::uint64_t>(
             partition.entity_count(mpmc::mesh::EntityKind::face)),
+        static_cast<std::uint64_t>(
+            partition.entity_count(mpmc::mesh::EntityKind::edge)),
         static_cast<std::uint64_t>(
             partition.entity_count(mpmc::mesh::EntityKind::vertex))};
 
     const std::size_t rank_count =
         static_cast<std::size_t>(partition.rank_count());
     if (rank_count >
-        std::numeric_limits<std::size_t>::max() / std::size_t{3U}) {
+        std::numeric_limits<std::size_t>::max() / std::size_t{4U}) {
         return PETSC_ERR_ARG_OUTOFRANGE;
     }
-    std::vector<std::uint64_t> all_counts(rank_count * std::size_t{3U});
+    std::vector<std::uint64_t> all_counts(rank_count * std::size_t{4U});
 
     if (MPI_Allgather(
-            local_counts.data(), 3, MPI_UINT64_T,
-            all_counts.data(), 3, MPI_UINT64_T,
+            local_counts.data(), 4, MPI_UINT64_T,
+            all_counts.data(), 4, MPI_UINT64_T,
             comm) != MPI_SUCCESS) {
         return PETSC_ERR_MPI;
     }
@@ -394,18 +406,31 @@ inline PetscErrorCode create_point_sf(
 
         const std::size_t remote_slot =
             static_cast<std::size_t>(neighbor.rank.value()) *
-            std::size_t{3U};
+            std::size_t{4U};
         const std::uint64_t remote_cells = all_counts[remote_slot];
         const std::uint64_t remote_faces = all_counts[remote_slot + 1U];
-        const std::uint64_t remote_vertices = all_counts[remote_slot + 2U];
+        const std::uint64_t remote_edges = all_counts[remote_slot + 2U];
+        const std::uint64_t remote_vertices = all_counts[remote_slot + 3U];
 
         if (remote_faces >
             std::numeric_limits<std::uint64_t>::max() - remote_cells) {
             return PETSC_ERR_ARG_OUTOFRANGE;
         }
         const std::uint64_t remote_face_base = remote_cells;
+        if (remote_edges >
+            std::numeric_limits<std::uint64_t>::max() -
+                remote_face_base - remote_faces) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        const std::uint64_t remote_edge_base =
+            remote_face_base + remote_faces;
+        if (remote_vertices >
+            std::numeric_limits<std::uint64_t>::max() -
+                remote_edge_base - remote_edges) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
         const std::uint64_t remote_vertex_base =
-            remote_cells + remote_faces;
+            remote_edge_base + remote_edges;
 
         for (const auto& entity :
              plan.receive_entities_from(neighbor.rank)) {
@@ -424,13 +449,16 @@ inline PetscErrorCode create_point_sf(
                 remote_base = remote_face_base;
                 remote_count = remote_faces;
                 break;
+            case mpmc::mesh::EntityKind::edge:
+                local_base = local_ranges.edge_begin;
+                remote_base = remote_edge_base;
+                remote_count = remote_edges;
+                break;
             case mpmc::mesh::EntityKind::vertex:
                 local_base = local_ranges.vertex_begin;
                 remote_base = remote_vertex_base;
                 remote_count = remote_vertices;
                 break;
-            case mpmc::mesh::EntityKind::edge:
-                continue;
             }
 
             if (!partition.is_ghost(entity.kind, entity.local) ||
