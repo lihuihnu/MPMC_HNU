@@ -1,4 +1,5 @@
 #include <mpmc/thermodynamics/cpa_pt_phase.hpp>
+#include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
 
 #include "test_support.hpp"
 
@@ -225,6 +226,41 @@ void associating_component_permutation() {
             "CPA fugacity coefficients changed under component permutation");
 }
 
+
+void selected_phase_fugacity_contract() {
+    const auto parameters = cpa_pt_test::nonassociating_pure();
+    const auto phase = th::CpaPtPhase::from_parameters(parameters);
+    const Vec x{1.0};
+    constexpr double pressure = 1.0e5;
+    constexpr double temperature = 200.0;
+    const auto roots = phase.roots(pressure, temperature, x);
+    require(roots.status == th::CpaPtRootStatus::success &&
+                roots.roots.size() == 3U,
+            "CPA selected-phase fugacity root fixture");
+    constexpr std::size_t root_index = 2U;
+    const auto wrapped = th::evaluate_selected_phase_fugacity(
+        phase, pressure, temperature, std::span<const double>{x},
+        th::CpaSelectedPhase{root_index, {}});
+    require(wrapped.ln_phi.size() == roots.roots[root_index].ln_phi.size(),
+            "CPA selected-phase fugacity size changed");
+    for (std::size_t i = 0U; i < wrapped.ln_phi.size(); ++i) {
+        require(std::abs(wrapped.ln_phi[i] - roots.roots[root_index].ln_phi[i]) < 1.0e-14,
+                "CPA selected-phase fugacity changed selected root value");
+    }
+    bool caught = false;
+    try {
+        (void)th::evaluate_selected_phase_fugacity(
+            phase, pressure, temperature, std::span<const double>{x},
+            th::CpaSelectedPhase{3U, {}});
+    } catch (const std::out_of_range&) {
+        caught = true;
+    }
+    require(caught, "CPA selected-phase fugacity silently changed invalid root index");
+    static_assert(
+        th::SelectedPhaseFugacityCapabilities<th::CpaPtPhase>::derivative_support ==
+        th::SelectedPhaseFugacityDerivativeSupport::value_only);
+}
+
 void evaluation_budget_is_explicit() {
     const auto parameters = cpa_pt_test::nonassociating_pure();
     const auto phase = th::CpaPtPhase::from_parameters(parameters);
@@ -242,6 +278,7 @@ constexpr Test tests[]{
     {"nonassociating_three_roots", nonassociating_srk_three_roots},
     {"associating_helmholtz", associating_helmholtz_chemical_potential},
     {"component_permutation", associating_component_permutation},
+    {"selected_phase_fugacity", selected_phase_fugacity_contract},
     {"evaluation_budget", evaluation_budget_is_explicit}};
 
 } // namespace

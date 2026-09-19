@@ -6,6 +6,7 @@ on:
     paths:
       - 'tests/support/sw92/test_support.hpp'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/pr76_roots.hpp'
       - 'modules/thermodynamics/CMakeLists.txt'

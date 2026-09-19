@@ -28,3 +28,15 @@
 | CPA 缔合 / PT | [cpa_baseline](../../tests/thermodynamics/cpa_baseline/)、[cpa_pt_phase](../../tests/thermodynamics/cpa_pt_phase/) |
 
 具体命令、参考生成器及必要下游范围在对应专题中。公共物性或导数修改须覆盖受影响的 stability、flash 和 physics 回归；规则见 [AGENTS.md](../../AGENTS.md)。原参数契约文档中的阶段性“尚未实现”和资料缺口保留为历史记录，当前 SW92/CPA 状态以各自专题为准。
+
+## Selected-phase fugacity contract for compositional flow
+
+`selected_phase_fugacity.hpp` is the thermodynamics-owned bridge used by later natural-variable flow code. It does not select phases or roots. Callers must supply an already chosen branch:
+
+- PR76: selected algebraic root index;
+- SW92: selected family, NaCl molality and algebraic root index;
+- CPA: selected PT density-root index.
+
+The common output is ordered `ln(phi_i)` at the exact supplied `p,T,x`. PR76 and SW92 advertise `scalar_generic_first_order` because their selected-root phase kernels already preserve the caller scalar type and reject unreliable root derivatives. CPA currently advertises `value_only`: its PT density-root/association path is scientifically valid for fugacity values, but the repository does not yet contain the association-state and density-root IFT derivatives required for a complete `p,T,x` Jacobian. The contract therefore forbids presenting CPA as differentiable until that missing derivative layer is implemented and independently validated.
+
+CPA `near_multiple`/tangent root topology is rejected by the selected-phase façade, and an out-of-range selected root is an error; the bridge never silently changes root identity.

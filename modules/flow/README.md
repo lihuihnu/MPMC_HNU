@@ -498,13 +498,13 @@ That first slice intentionally did **not** evaluate fugacity or create equilibri
 
 ### 19.1 Cross-module audit
 
-The existing thermodynamic kernels do not yet expose one uniform differentiable phase-fugacity interface across all configured EOS families.
+The EoS layer now exposes a common selected-phase fugacity façade in `mpmc/thermodynamics/selected_phase_fugacity.hpp`. It is deliberately a fixed-branch property interface, not a phase/root selector.
 
-- **PR76:** `Pr76Phase::evaluate_full/evaluate_reduced<Number>()` accepts scalar-generic `p,T,x` on an explicitly selected algebraic root and returns scalar-generic `ln_phi`. Its selected-root implicit derivative remains explicit and errors on unresolved/ill-conditioned roots.
-- **SW92:** `Sw92Phase::evaluate_full/evaluate_reduced<Number>()` has the same scalar-generic `p,T,x -> ln_phi` property path, with explicit SW phase family, molality and selected root supplied by the caller.
-- **CPA:** the current `CpaPtPhase::roots()` path evaluates PT roots and `ln_phi` in `double` through the density-root search. It does not currently provide the same scalar-generic differentiable phase interface as PR76/SW92.
+- **PR76:** selected algebraic root + exact `p,T,x` -> scalar-generic `ln_phi`; derivative capability is `scalar_generic_first_order`.
+- **SW92:** selected family/molality/root + exact `p,T,x` -> scalar-generic `ln_phi`; derivative capability is `scalar_generic_first_order`.
+- **CPA:** selected PT density-root index + exact `p,T,x` -> `double` `ln_phi`; derivative capability is explicitly `value_only`. The current repository does not yet contain the association-state and density-root IFT derivative layer needed for a scientifically complete CPA `p,T,x` Jacobian.
 
-Because those capabilities are asymmetric, this slice does **not** add a hard public `mpmc::flow -> mpmc::thermodynamics` CMake dependency or pretend that CPA is already differentiable. Instead, flow freezes the model-neutral scalar-generic evaluator boundary that concrete thermodynamic adapters must satisfy later. This keeps EOS branch/family/root selection in thermodynamics/adapter code and keeps the flow residual independent of a particular EOS.
+The façade never chooses a different root, family or phase on behalf of flow. CPA near-multiple/tangent topology is rejected, and an invalid selected root index is an error. Flow still consumes the model-neutral evaluator boundary below; a concrete flow-to-EoS adapter can wrap this thermodynamics façade without moving branch selection into the residual.
 
 The evaluator contract is:
 
