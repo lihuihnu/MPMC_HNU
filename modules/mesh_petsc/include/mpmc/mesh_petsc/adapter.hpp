@@ -6,6 +6,7 @@
 #include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
+#include <mpmc/mesh/face_geometry_3d.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
@@ -2510,6 +2511,638 @@ inline PetscErrorCode migrate_face_boundary_snapshot(
         return target_destroy_error;
     }
     return source_destroy_error;
+}
+
+struct StableOwnerFaceGeometry3D {
+    std::vector<mpmc::mesh::Coordinate3D>
+        face_centroids_m;
+    std::vector<double>
+        face_areas_m2;
+    std::vector<mpmc::mesh::GlobalEntityId>
+        face_owner_global_ids;
+    std::vector<mpmc::mesh::UnitVector3D>
+        face_owner_unit_normals;
+
+    [[nodiscard]] std::size_t
+    face_count() const noexcept {
+        return face_centroids_m.size();
+    }
+};
+
+inline PetscErrorCode make_stable_owner_face_geometry_3d(
+    const mpmc::mesh::FaceGeometry3D& source_geometry,
+    std::span<const DMPlexPointIdentity> source_identities,
+    StableOwnerFaceGeometry3D* output) {
+    if (output == nullptr) return PETSC_ERR_ARG_NULL;
+    *output = StableOwnerFaceGeometry3D{};
+
+    const std::size_t face_count =
+        source_geometry.face_count();
+    if (source_geometry.face_centroids_m().size() != face_count ||
+        source_geometry.face_areas_m2().size() != face_count ||
+        source_geometry.face_owners().size() != face_count ||
+        source_geometry.face_owner_unit_normals().size() != face_count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    std::vector<mpmc::mesh::GlobalEntityId>
+        cell_global_ids(
+            source_geometry.cell_count(),
+            mpmc::mesh::GlobalEntityId{0U});
+    std::vector<std::uint8_t> cell_seen(
+        source_geometry.cell_count(),
+        std::uint8_t{0U});
+    std::vector<std::uint8_t> face_seen(
+        face_count,
+        std::uint8_t{0U});
+
+    for (const auto& identity : source_identities) {
+        if (identity.kind ==
+            mpmc::mesh::EntityKind::cell) {
+            const std::size_t local =
+                static_cast<std::size_t>(
+                    identity.local.value());
+            if (local >= cell_global_ids.size() ||
+                cell_seen[local] != std::uint8_t{0U}) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+            cell_seen[local] = std::uint8_t{1U};
+            cell_global_ids[local] = identity.global;
+        } else if (identity.kind ==
+                   mpmc::mesh::EntityKind::face) {
+            const std::size_t local =
+                static_cast<std::size_t>(
+                    identity.local.value());
+            if (local >= face_count ||
+                face_seen[local] != std::uint8_t{0U}) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+            face_seen[local] = std::uint8_t{1U};
+        }
+    }
+
+    if (std::find(
+            cell_seen.begin(),
+            cell_seen.end(),
+            std::uint8_t{0U}) != cell_seen.end() ||
+        std::find(
+            face_seen.begin(),
+            face_seen.end(),
+            std::uint8_t{0U}) != face_seen.end()) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    output->face_centroids_m.assign(
+        source_geometry.face_centroids_m().begin(),
+        source_geometry.face_centroids_m().end());
+    output->face_areas_m2.assign(
+        source_geometry.face_areas_m2().begin(),
+        source_geometry.face_areas_m2().end());
+    output->face_owner_unit_normals.assign(
+        source_geometry.face_owner_unit_normals().begin(),
+        source_geometry.face_owner_unit_normals().end());
+    output->face_owner_global_ids.reserve(face_count);
+
+    for (std::size_t face = 0U;
+         face < face_count;
+         ++face) {
+        const auto owner =
+            source_geometry.face_owner(
+                mpmc::mesh::LocalIndex{
+                    static_cast<
+                        mpmc::mesh::LocalIndex::value_type>(
+                            face)});
+        const std::size_t owner_local =
+            static_cast<std::size_t>(
+                owner.value());
+        if (owner_local >= cell_global_ids.size()) {
+            *output = StableOwnerFaceGeometry3D{};
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        output->face_owner_global_ids.push_back(
+            cell_global_ids[owner_local]);
+    }
+
+    return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode migrate_stable_owner_face_geometry_3d(
+    DM source_dm,
+    PetscSF migration_sf,
+    const StableOwnerFaceGeometry3D& source_geometry,
+    std::span<const DMPlexPointIdentity> source_identities,
+    DM target_dm,
+    std::span<const DMPlexPointIdentity> target_identities,
+    StableOwnerFaceGeometry3D* target_geometry) {
+    if (source_dm == nullptr ||
+        migration_sf == nullptr ||
+        target_dm == nullptr ||
+        target_geometry == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    *target_geometry = StableOwnerFaceGeometry3D{};
+
+    const std::size_t source_face_count =
+        source_geometry.face_count();
+    if (source_geometry.face_areas_m2.size() != source_face_count ||
+        source_geometry.face_owner_global_ids.size() != source_face_count ||
+        source_geometry.face_owner_unit_normals.size() != source_face_count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    PetscInt source_start = 0;
+    PetscInt source_end = 0;
+    PetscErrorCode error =
+        DMPlexGetChart(
+            source_dm, &source_start, &source_end);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscSection metric_source_section = nullptr;
+    PetscSection metric_target_section = nullptr;
+    PetscSection owner_source_section = nullptr;
+    PetscSection owner_target_section = nullptr;
+
+    auto destroy_sections = [&]() {
+        PetscSectionDestroy(&owner_target_section);
+        PetscSectionDestroy(&owner_source_section);
+        PetscSectionDestroy(&metric_target_section);
+        PetscSectionDestroy(&metric_source_section);
+    };
+
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(source_dm)),
+        &metric_source_section);
+    if (error != PETSC_SUCCESS) return error;
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(target_dm)),
+        &metric_target_section);
+    if (error != PETSC_SUCCESS) {
+        destroy_sections();
+        return error;
+    }
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(source_dm)),
+        &owner_source_section);
+    if (error != PETSC_SUCCESS) {
+        destroy_sections();
+        return error;
+    }
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(target_dm)),
+        &owner_target_section);
+    if (error != PETSC_SUCCESS) {
+        destroy_sections();
+        return error;
+    }
+
+    for (PetscSection section :
+         {metric_source_section,
+          owner_source_section}) {
+        error = PetscSectionSetChart(
+            section, source_start, source_end);
+        if (error != PETSC_SUCCESS) {
+            destroy_sections();
+            return error;
+        }
+    }
+
+    std::vector<std::uint8_t>
+        source_face_seen(
+            source_face_count,
+            std::uint8_t{0U});
+    for (const auto& identity : source_identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::face) {
+            continue;
+        }
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        if (identity.point < source_start ||
+            identity.point >= source_end ||
+            local >= source_face_count ||
+            source_face_seen[local] != std::uint8_t{0U}) {
+            destroy_sections();
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        source_face_seen[local] = std::uint8_t{1U};
+
+        error = PetscSectionSetDof(
+            metric_source_section,
+            identity.point,
+            7);
+        if (error == PETSC_SUCCESS) {
+            error = PetscSectionSetDof(
+                owner_source_section,
+                identity.point,
+                1);
+        }
+        if (error != PETSC_SUCCESS) {
+            destroy_sections();
+            return error;
+        }
+    }
+    if (std::find(
+            source_face_seen.begin(),
+            source_face_seen.end(),
+            std::uint8_t{0U}) !=
+        source_face_seen.end()) {
+        destroy_sections();
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    error = PetscSectionSetUp(metric_source_section);
+    if (error == PETSC_SUCCESS) {
+        error = PetscSectionSetUp(owner_source_section);
+    }
+    if (error != PETSC_SUCCESS) {
+        destroy_sections();
+        return error;
+    }
+
+    PetscInt metric_source_storage = 0;
+    PetscInt owner_source_storage = 0;
+    error = PetscSectionGetStorageSize(
+        metric_source_section,
+        &metric_source_storage);
+    if (error == PETSC_SUCCESS) {
+        error = PetscSectionGetStorageSize(
+            owner_source_section,
+            &owner_source_storage);
+    }
+    if (error != PETSC_SUCCESS ||
+        metric_source_storage < 0 ||
+        owner_source_storage < 0) {
+        destroy_sections();
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+
+    std::vector<double> metric_source_data(
+        static_cast<std::size_t>(
+            metric_source_storage),
+        0.0);
+    std::vector<std::uint64_t> owner_source_data(
+        static_cast<std::size_t>(
+            owner_source_storage),
+        0U);
+
+    for (const auto& identity : source_identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::face) {
+            continue;
+        }
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        PetscInt metric_offset = -1;
+        PetscInt owner_offset = -1;
+        error = PetscSectionGetOffset(
+            metric_source_section,
+            identity.point,
+            &metric_offset);
+        if (error == PETSC_SUCCESS) {
+            error = PetscSectionGetOffset(
+                owner_source_section,
+                identity.point,
+                &owner_offset);
+        }
+        if (error != PETSC_SUCCESS ||
+            metric_offset < 0 ||
+            metric_offset + 6 >= metric_source_storage ||
+            owner_offset < 0 ||
+            owner_offset >= owner_source_storage) {
+            destroy_sections();
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+
+        const auto centroid =
+            source_geometry.face_centroids_m[local];
+        const double area =
+            source_geometry.face_areas_m2[local];
+        const auto normal =
+            source_geometry
+                .face_owner_unit_normals[local];
+
+        metric_source_data[
+            static_cast<std::size_t>(
+                metric_offset)] = centroid.x_m;
+        metric_source_data[
+            static_cast<std::size_t>(
+                metric_offset + 1)] = centroid.y_m;
+        metric_source_data[
+            static_cast<std::size_t>(
+                metric_offset + 2)] = centroid.z_m;
+        metric_source_data[
+            static_cast<std::size_t>(
+                metric_offset + 3)] = area;
+        metric_source_data[
+            static_cast<std::size_t>(
+                metric_offset + 4)] = normal.x;
+        metric_source_data[
+            static_cast<std::size_t>(
+                metric_offset + 5)] = normal.y;
+        metric_source_data[
+            static_cast<std::size_t>(
+                metric_offset + 6)] = normal.z;
+        owner_source_data[
+            static_cast<std::size_t>(
+                owner_offset)] =
+            source_geometry
+                .face_owner_global_ids[local]
+                .value();
+    }
+
+    void* metric_target_raw = nullptr;
+    void* owner_target_raw = nullptr;
+    error = DMPlexDistributeData(
+        source_dm,
+        migration_sf,
+        metric_source_section,
+        MPI_DOUBLE,
+        metric_source_data.empty()
+            ? nullptr
+            : metric_source_data.data(),
+        metric_target_section,
+        &metric_target_raw);
+    if (error == PETSC_SUCCESS) {
+        error = DMPlexDistributeData(
+            source_dm,
+            migration_sf,
+            owner_source_section,
+            MPI_UINT64_T,
+            owner_source_data.empty()
+                ? nullptr
+                : owner_source_data.data(),
+            owner_target_section,
+            &owner_target_raw);
+    }
+    if (error != PETSC_SUCCESS) {
+        PetscFree(metric_target_raw);
+        PetscFree(owner_target_raw);
+        destroy_sections();
+        return error;
+    }
+
+    PetscInt face_start = -1;
+    PetscInt face_end = -1;
+    error = DMPlexGetHeightStratum(
+        target_dm, 1, &face_start, &face_end);
+    if (error != PETSC_SUCCESS ||
+        face_start < 0 ||
+        face_end < face_start) {
+        PetscFree(metric_target_raw);
+        PetscFree(owner_target_raw);
+        destroy_sections();
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+    const std::size_t target_face_count =
+        static_cast<std::size_t>(
+            face_end - face_start);
+
+    target_geometry->face_centroids_m.resize(
+        target_face_count);
+    target_geometry->face_areas_m2.resize(
+        target_face_count);
+    target_geometry->face_owner_global_ids.resize(
+        target_face_count);
+    target_geometry->face_owner_unit_normals.resize(
+        target_face_count);
+    std::vector<std::uint8_t> target_seen(
+        target_face_count,
+        std::uint8_t{0U});
+
+    auto* metric_target_data =
+        static_cast<double*>(
+            metric_target_raw);
+    auto* owner_target_data =
+        static_cast<std::uint64_t*>(
+            owner_target_raw);
+
+    for (const auto& identity : target_identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::face) {
+            continue;
+        }
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        if (local >= target_face_count ||
+            target_seen[local] != std::uint8_t{0U}) {
+            *target_geometry =
+                StableOwnerFaceGeometry3D{};
+            PetscFree(metric_target_raw);
+            PetscFree(owner_target_raw);
+            destroy_sections();
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        PetscInt metric_dof = 0;
+        PetscInt owner_dof = 0;
+        PetscInt metric_offset = -1;
+        PetscInt owner_offset = -1;
+        error = PetscSectionGetDof(
+            metric_target_section,
+            identity.point,
+            &metric_dof);
+        if (error == PETSC_SUCCESS) {
+            error = PetscSectionGetDof(
+                owner_target_section,
+                identity.point,
+                &owner_dof);
+        }
+        if (error == PETSC_SUCCESS) {
+            error = PetscSectionGetOffset(
+                metric_target_section,
+                identity.point,
+                &metric_offset);
+        }
+        if (error == PETSC_SUCCESS) {
+            error = PetscSectionGetOffset(
+                owner_target_section,
+                identity.point,
+                &owner_offset);
+        }
+        if (error != PETSC_SUCCESS ||
+            metric_dof != 7 ||
+            owner_dof != 1 ||
+            metric_offset < 0 ||
+            owner_offset < 0) {
+            *target_geometry =
+                StableOwnerFaceGeometry3D{};
+            PetscFree(metric_target_raw);
+            PetscFree(owner_target_raw);
+            destroy_sections();
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+
+        const auto metric_base =
+            static_cast<std::size_t>(
+                metric_offset);
+        target_geometry
+            ->face_centroids_m[local] =
+            mpmc::mesh::Coordinate3D{
+                metric_target_data[
+                    metric_base],
+                metric_target_data[
+                    metric_base + 1U],
+                metric_target_data[
+                    metric_base + 2U]};
+        target_geometry
+            ->face_areas_m2[local] =
+            metric_target_data[
+                metric_base + 3U];
+        target_geometry
+            ->face_owner_unit_normals[local] =
+            mpmc::mesh::UnitVector3D{
+                metric_target_data[
+                    metric_base + 4U],
+                metric_target_data[
+                    metric_base + 5U],
+                metric_target_data[
+                    metric_base + 6U]};
+        target_geometry
+            ->face_owner_global_ids[local] =
+            mpmc::mesh::GlobalEntityId{
+                owner_target_data[
+                    static_cast<std::size_t>(
+                        owner_offset)]};
+        target_seen[local] = std::uint8_t{1U};
+    }
+
+    if (std::find(
+            target_seen.begin(),
+            target_seen.end(),
+            std::uint8_t{0U}) !=
+        target_seen.end()) {
+        *target_geometry =
+            StableOwnerFaceGeometry3D{};
+        PetscFree(metric_target_raw);
+        PetscFree(owner_target_raw);
+        destroy_sections();
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    for (std::size_t face = 0U;
+         face < target_face_count;
+         ++face) {
+        const auto centroid =
+            target_geometry
+                ->face_centroids_m[face];
+        const double area =
+            target_geometry
+                ->face_areas_m2[face];
+        const auto normal =
+            target_geometry
+                ->face_owner_unit_normals[face];
+        const double normal_magnitude =
+            std::sqrt(
+                normal.x * normal.x +
+                normal.y * normal.y +
+                normal.z * normal.z);
+        if (!std::isfinite(centroid.x_m) ||
+            !std::isfinite(centroid.y_m) ||
+            !std::isfinite(centroid.z_m) ||
+            !std::isfinite(area) ||
+            area <= 0.0 ||
+            !std::isfinite(normal_magnitude) ||
+            std::abs(normal_magnitude - 1.0) >
+                128.0 *
+                std::numeric_limits<double>::epsilon()) {
+            *target_geometry =
+                StableOwnerFaceGeometry3D{};
+            PetscFree(metric_target_raw);
+            PetscFree(owner_target_raw);
+            destroy_sections();
+            return PETSC_ERR_FP;
+        }
+    }
+
+    const PetscErrorCode metric_free_error =
+        PetscFree(metric_target_raw);
+    const PetscErrorCode owner_free_error =
+        PetscFree(owner_target_raw);
+    destroy_sections();
+    if (metric_free_error != PETSC_SUCCESS) {
+        return metric_free_error;
+    }
+    return owner_free_error;
+}
+
+inline PetscErrorCode materialize_face_geometry_3d(
+    const StableOwnerFaceGeometry3D& source_geometry,
+    std::span<const DMPlexPointIdentity> target_identities,
+    mpmc::mesh::FaceGeometry3D* target_geometry) {
+    if (target_geometry == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    const std::size_t face_count =
+        source_geometry.face_count();
+    if (source_geometry.face_areas_m2.size() != face_count ||
+        source_geometry.face_owner_global_ids.size() != face_count ||
+        source_geometry.face_owner_unit_normals.size() != face_count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    std::size_t cell_count = 0U;
+    for (const auto& identity : target_identities) {
+        if (identity.kind ==
+            mpmc::mesh::EntityKind::cell) {
+            cell_count = std::max(
+                cell_count,
+                static_cast<std::size_t>(
+                    identity.local.value()) +
+                    std::size_t{1U});
+        }
+    }
+
+    std::vector<mpmc::mesh::LocalIndex>
+        owners;
+    owners.reserve(face_count);
+    for (const auto owner_global :
+         source_geometry.face_owner_global_ids) {
+        const auto found =
+            std::find_if(
+                target_identities.begin(),
+                target_identities.end(),
+                [owner_global](
+                    const DMPlexPointIdentity& identity) {
+                    return identity.kind ==
+                               mpmc::mesh::EntityKind::cell &&
+                           identity.global ==
+                               owner_global;
+                });
+        if (found == target_identities.end()) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+        owners.push_back(found->local);
+    }
+
+    try {
+        *target_geometry =
+            mpmc::mesh::FaceGeometry3D{
+                cell_count,
+                source_geometry.face_centroids_m,
+                source_geometry.face_areas_m2,
+                std::move(owners),
+                source_geometry
+                    .face_owner_unit_normals};
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    return PETSC_SUCCESS;
 }
 
 inline PetscErrorCode migrate_dense_field_snapshot(
