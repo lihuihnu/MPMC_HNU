@@ -2244,6 +2244,9 @@ void verify_dmplex_distribute_overlap_identity() {
 
     const auto root_topology =
         two_by_one_cartesian_with_stable_ids();
+    const auto reference_geometry =
+        two_by_one_reference_geometry(
+            root_topology);
 
     DM source_dm = nullptr;
     std::vector<mesh_petsc::DMPlexPointIdentity>
@@ -2258,6 +2261,20 @@ void verify_dmplex_distribute_overlap_identity() {
         "create_root_dmplex_topology");
     require(source_dm != nullptr,
             "rooted DMPlex source");
+
+    require_petsc(
+        mesh_petsc::attach_root_geometry2d_coordinates(
+            source_dm,
+            0,
+            mpi_rank == 0
+                ? &reference_geometry
+                : nullptr,
+            source_identities),
+        "attach Geometry2D coordinates to rooted DMPlex");
+    verify_dmplex_geometry_against_core(
+        source_dm,
+        source_identities,
+        reference_geometry);
 
     PetscInt source_start = -1;
     PetscInt source_end = -1;
@@ -2316,6 +2333,10 @@ void verify_dmplex_distribute_overlap_identity() {
             distributed_dm,
             &distributed_identities),
         "migrate DMPlex identities after distribute");
+    verify_dmplex_geometry_against_core(
+        distributed_dm,
+        distributed_identities,
+        reference_geometry);
 
     require_petsc(
         PetscSFDestroy(&migration_sf),
@@ -2456,6 +2477,10 @@ void verify_dmplex_distribute_overlap_identity() {
             overlap_dm,
             &overlap_identities),
         "migrate DMPlex identities into overlap");
+    verify_dmplex_geometry_against_core(
+        overlap_dm,
+        overlap_identities,
+        reference_geometry);
 
     require_petsc(
         PetscSFDestroy(&overlap_migration_sf),
