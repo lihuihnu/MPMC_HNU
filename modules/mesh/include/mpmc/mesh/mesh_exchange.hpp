@@ -500,10 +500,160 @@ private:
         logical_corner_point_;
 };
 
+namespace mesh_exchange_detail {
+
+[[nodiscard]] inline bool has_supported_generic_topology(
+    const MeshExchangeDocument& document) {
+    const auto& topology =
+        document.topology();
+    if (topology.entity_count(
+            EntityKind::vertex) == 0U ||
+        topology.entity_count(
+            EntityKind::cell) == 0U ||
+        topology.entity_count(
+            EntityKind::edge) != 0U ||
+        !topology.has_relation(
+            EntityKind::cell,
+            EntityKind::vertex)) {
+        return false;
+    }
+
+    const auto& cell_vertices =
+        topology.relation(
+            EntityKind::cell,
+            EntityKind::vertex);
+    for (std::size_t cell = 0U;
+         cell < topology.entity_count(
+             EntityKind::cell);
+         ++cell) {
+        const auto vertices =
+            cell_vertices.adjacent(
+                LocalIndex{
+                    static_cast<
+                        LocalIndex::value_type>(
+                        cell)});
+        if (document.dimension() == 2) {
+            if (vertices.size() != 3U &&
+                vertices.size() != 4U) {
+                return false;
+            }
+        } else if (
+            vertices.size() != 4U &&
+            vertices.size() != 5U &&
+            vertices.size() != 6U &&
+            vertices.size() != 8U) {
+            return false;
+        }
+    }
+
+    if (topology.entity_count(
+            EntityKind::face) == 0U ||
+        !topology.has_relation(
+            EntityKind::cell,
+            EntityKind::face) ||
+        !topology.has_relation(
+            EntityKind::face,
+            EntityKind::vertex) ||
+        !topology.has_relation(
+            EntityKind::face,
+            EntityKind::cell)) {
+        return false;
+    }
+
+    const auto& face_vertices =
+        topology.relation(
+            EntityKind::face,
+            EntityKind::vertex);
+    for (std::size_t face = 0U;
+         face < topology.entity_count(
+             EntityKind::face);
+         ++face) {
+        const auto vertices =
+            face_vertices.adjacent(
+                LocalIndex{
+                    static_cast<
+                        LocalIndex::value_type>(
+                        face)});
+        if (document.dimension() == 2) {
+            if (vertices.size() != 2U) {
+                return false;
+            }
+        } else if (
+            vertices.size() != 3U &&
+            vertices.size() != 4U) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] inline bool has_tagged_faces(
+    const MeshExchangeDocument& document) {
+    if (!document.face_boundary()
+             .has_value()) {
+        return false;
+    }
+    const auto tags =
+        document.face_boundary()->
+            physical_tags();
+    return std::any_of(
+        tags.begin(),
+        tags.end(),
+        [](PhysicalTag tag) {
+            return tag.is_tagged();
+        });
+}
+
+[[nodiscard]] inline bool gmsh_ids_require_remap(
+    const Topology& topology) {
+    for (const auto id :
+         topology.global_ids(
+             EntityKind::vertex)) {
+        if (id.value() == 0U) {
+            return true;
+        }
+    }
+
+    std::vector<
+        GlobalEntityId::value_type>
+        element_ids;
+    const auto faces =
+        topology.global_ids(
+            EntityKind::face);
+    const auto cells =
+        topology.global_ids(
+            EntityKind::cell);
+    element_ids.reserve(
+        faces.size() + cells.size());
+    for (const auto id : faces) {
+        if (id.value() == 0U) {
+            return true;
+        }
+        element_ids.push_back(id.value());
+    }
+    for (const auto id : cells) {
+        if (id.value() == 0U) {
+            return true;
+        }
+        element_ids.push_back(id.value());
+    }
+    std::sort(
+        element_ids.begin(),
+        element_ids.end());
+    return std::adjacent_find(
+               element_ids.begin(),
+               element_ids.end()) !=
+           element_ids.end();
+}
+
+} // namespace mesh_exchange_detail
+
 [[nodiscard]] inline ConversionReport
 analyze_conversion(
     const MeshExchangeDocument& document,
     MeshExchangeFormat target_format) {
+    using namespace mesh_exchange_detail;
+
     ConversionReport report{target_format};
 
     if (target_format ==
@@ -522,89 +672,15 @@ analyze_conversion(
             return report;
         }
 
-        const auto& corner_point =
-            *document.logical_corner_point();
-        const std::size_t logical_cells =
-            corner_point.active.size();
-        const std::size_t logical_vertices =
-            corner_point.zcorn_m.size();
-        const auto& topology =
-            document.topology();
-        const bool raw_topology_shape =
-            topology.entity_count(
-                EntityKind::edge) == 0U &&
-            topology.entity_count(
-                EntityKind::face) == 0U &&
-            topology.entity_count(
-                EntityKind::cell) ==
-                logical_cells &&
-            topology.entity_count(
-                EntityKind::vertex) ==
-                logical_vertices &&
-            topology.relation_count() == 1U &&
-            topology.has_relation(
-                EntityKind::cell,
-                EntityKind::vertex);
-        if (!raw_topology_shape) {
-            report.note_lossy(
-                "grdecl.generic_topology_not_representable",
-                "minimal GRDECL writer preserves the logical corner-point snapshot but cannot serialize additional generic topology entities/relations");
-        } else {
-            const auto cell_ids =
-                topology.global_ids(
-                    EntityKind::cell);
-            const auto vertex_ids =
-                topology.global_ids(
-                    EntityKind::vertex);
-            bool canonical_ids = true;
-            for (std::size_t index = 0U;
-                 index < cell_ids.size();
-                 ++index) {
-                canonical_ids =
-                    canonical_ids &&
-                    cell_ids[index].value() ==
-                        static_cast<
-                            GlobalEntityId::value_type>(
-                            index + 1U);
-            }
-            for (std::size_t index = 0U;
-                 index < vertex_ids.size();
-                 ++index) {
-                canonical_ids =
-                    canonical_ids &&
-                    vertex_ids[index].value() ==
-                        static_cast<
-                            GlobalEntityId::value_type>(
-                            index + 1U);
-            }
-            if (!canonical_ids) {
-                report.note_lossy(
-                    "grdecl.generic_ids_not_representable",
-                    "minimal GRDECL baseline regenerates logical cell/corner IDs from IJK ordering");
-            }
-        }
-
         if (!document.groups().empty()) {
             report.note_lossy(
                 "grdecl.groups_not_representable",
                 "minimal GRDECL baseline does not serialize generic named/physical groups");
         }
-
-        if (document.face_boundary()
-                .has_value()) {
-            const auto tags =
-                document.face_boundary()->
-                    physical_tags();
-            if (std::any_of(
-                    tags.begin(),
-                    tags.end(),
-                    [](PhysicalTag tag) {
-                        return tag.is_tagged();
-                    })) {
-                report.note_lossy(
-                    "grdecl.face_tags_not_representable",
-                    "minimal GRDECL baseline does not serialize generic face physical tags");
-            }
+        if (has_tagged_faces(document)) {
+            report.note_lossy(
+                "grdecl.face_tags_not_representable",
+                "minimal GRDECL baseline does not serialize generic face physical tags");
         }
 
         for (const auto& field :
@@ -626,9 +702,84 @@ analyze_conversion(
         return report;
     }
 
+    if (!has_supported_generic_topology(
+            document)) {
+        report.note_unsupported(
+            "generic.linear_topology_required",
+            "Gmsh/VTU canonical writers require a supported linear 2D/3D topology with materialized faces");
+        return report;
+    }
+
+    if (target_format ==
+        MeshExchangeFormat::gmsh_4_1_ascii) {
+        if (!document.fields().empty()) {
+            report.note_lossy(
+                "gmsh.fields_not_serialized",
+                "current Gmsh writer bridge does not emit NodeData/ElementData; canonical fields are omitted");
+        }
+        if (document.logical_corner_point()
+                .has_value()) {
+            report.note_lossy(
+                "gmsh.logical_corner_point_not_serialized",
+                "Gmsh output contains the active generic mesh but not GRDECL logical corner-point/ACTNUM semantics");
+        }
+        for (const auto& group :
+             document.groups()) {
+            if (group.location !=
+                    EntityKind::face &&
+                group.location !=
+                    EntityKind::cell) {
+                report.note_lossy(
+                    "gmsh.group_location_not_serialized",
+                    "current Gmsh bridge serializes only face/cell physical groups");
+                break;
+            }
+        }
+        if (gmsh_ids_require_remap(
+                document.topology())) {
+            report.note_lossy(
+                "gmsh.entity_ids_remapped",
+                "Gmsh requires positive node tags and globally unique face/cell element tags; conflicting canonical IDs are deterministically remapped");
+        }
+        return report;
+    }
+
+    if (target_format ==
+        MeshExchangeFormat::vtu_ascii) {
+        if (!document.groups().empty()) {
+            report.note_lossy(
+                "vtu.groups_not_serialized",
+                "current VTU bridge does not encode canonical named/physical groups");
+        }
+        if (has_tagged_faces(document)) {
+            report.note_lossy(
+                "vtu.face_tags_not_serialized",
+                "current VTU bridge writes volume/surface topology fields but not boundary face PhysicalTag metadata");
+        }
+        if (document.logical_corner_point()
+                .has_value()) {
+            report.note_lossy(
+                "vtu.logical_corner_point_not_serialized",
+                "VTU output contains the active generic mesh but not GRDECL logical corner-point/ACTNUM semantics");
+        }
+        for (const auto& field :
+             document.fields().fields()) {
+            if (field.location() !=
+                    EntityKind::vertex &&
+                field.location() !=
+                    EntityKind::cell) {
+                report.note_lossy(
+                    "vtu.non_point_cell_field_not_serialized",
+                    "current VTU bridge serializes only vertex PointData and cell CellData fields");
+                break;
+            }
+        }
+        return report;
+    }
+
     report.note_unsupported(
-        "canonical_writer_bridge_pending",
-        "this baseline connects import results to the canonical exchange document; canonical Gmsh/VTU writer bridges are intentionally deferred");
+        "unknown_target_format",
+        "unsupported canonical target format");
     return report;
 }
 

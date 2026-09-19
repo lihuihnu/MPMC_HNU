@@ -61,6 +61,61 @@ field(
     return *found;
 }
 
+std::string_view gmsh_group_fixture() {
+    return R"msh($MeshFormat
+4.1 0 8
+$EndMeshFormat
+$PhysicalNames
+5
+1 11 "left"
+1 12 "bottom"
+1 13 "right"
+1 14 "top"
+2 21 "domain"
+$EndPhysicalNames
+$Entities
+0 5 1 0
+1 0 0 0 1 0 0 1 12 0
+2 0 0 0 1 1 0 1 11 0
+3 1 0 0 3 0 0 1 12 0
+4 3 0 0 3 1 0 1 13 0
+5 1 1 0 3 1 0 1 14 0
+100 0 0 0 3 1 0 1 21 5 1 2 3 4 5
+$EndEntities
+$Nodes
+1 5 10 50
+2 100 0 5
+50
+10
+40
+20
+30
+3 1 0
+0 0 0
+3 0 0
+1 0 0
+1 1 0
+$EndNodes
+$Elements
+7 7 101 202
+1 1 1 1
+101 10 20
+1 2 1 1
+103 30 10
+1 3 1 1
+104 20 40
+1 4 1 1
+105 40 50
+1 5 1 1
+106 50 30
+2 100 2 1
+201 10 20 30
+2 100 3 1
+202 20 40 50 30
+$EndElements
+)msh";
+}
+
 std::string_view grdecl_fixture() {
     return R"GRDECL(SPECGRID
 1 1 1 1 F /
@@ -162,6 +217,79 @@ void verify_grdecl_canonical_roundtrip() {
                 1.0e-28),
             "GRDECL property roundtrip");
     }
+
+    const auto as_vtu =
+        mesh::export_vtu_ascii(
+            document);
+    require(
+        as_vtu.exported() &&
+            as_vtu.report.disposition() ==
+                mesh::ConversionDisposition::lossy,
+        "GRDECL canonical VTU export");
+    const auto vtu_second =
+        mesh::import_vtu_ascii_3d(
+            *as_vtu.content);
+    require(
+        vtu_second.topology.entity_count(
+            mesh::EntityKind::cell) == 1U &&
+            vtu_second.cell_fields.size() == 4U,
+        "GRDECL canonical VTU re-import");
+
+    const auto as_gmsh =
+        mesh::export_gmsh_4_1_ascii(
+            document);
+    require(
+        as_gmsh.exported() &&
+            as_gmsh.report.disposition() ==
+                mesh::ConversionDisposition::lossy,
+        "GRDECL canonical Gmsh export");
+    const auto gmsh_second =
+        mesh::import_gmsh_4_1_ascii_3d(
+            *as_gmsh.content,
+            1.0);
+    require(
+        gmsh_second.topology.entity_count(
+            mesh::EntityKind::cell) == 1U,
+        "GRDECL canonical Gmsh re-import");
+}
+
+void verify_gmsh_group_bridge() {
+    const auto first =
+        mesh::import_gmsh_4_1_ascii(
+            gmsh_group_fixture(),
+            1.0);
+    const auto document =
+        mesh::make_mesh_exchange_document(
+            first);
+    const auto exported =
+        mesh::export_gmsh_4_1_ascii(
+            document);
+    require(
+        exported.exported() &&
+            exported.report.lossless(),
+        "Gmsh group bridge must be lossless");
+    const auto second =
+        mesh::import_gmsh_4_1_ascii(
+            *exported.content,
+            1.0);
+    require(
+        second.physical_names.size() ==
+            first.physical_names.size() &&
+            second.cell_physical_groups.size() ==
+                first.cell_physical_groups.size(),
+        "Gmsh physical group bridge");
+    const auto first_tags =
+        first.face_boundary.physical_tags();
+    const auto second_tags =
+        second.face_boundary.physical_tags();
+    require(
+        first_tags.size() ==
+                second_tags.size() &&
+            std::equal(
+                first_tags.begin(),
+                first_tags.end(),
+                second_tags.begin()),
+        "Gmsh boundary tags bridge");
 }
 
 void verify_non_corner_point_report() {
@@ -189,6 +317,39 @@ void verify_non_corner_point_report() {
     const auto document =
         mesh::make_mesh_exchange_document(
             source);
+    const auto vtu_export =
+        mesh::export_vtu_ascii(
+            document);
+    require(
+        vtu_export.exported() &&
+            vtu_export.report.lossless(),
+        "VTU canonical VTU bridge");
+    const auto vtu_roundtrip =
+        mesh::import_vtu_ascii_3d(
+            *vtu_export.content);
+    require(
+        vtu_roundtrip.topology.entity_count(
+            mesh::EntityKind::cell) == 1U,
+        "VTU canonical VTU re-import");
+
+    const auto gmsh_export =
+        mesh::export_gmsh_4_1_ascii(
+            document);
+    require(
+        gmsh_export.exported() &&
+            gmsh_export.report.disposition() !=
+                mesh::ConversionDisposition::
+                    unsupported,
+        "VTU canonical Gmsh bridge");
+    const auto gmsh_roundtrip =
+        mesh::import_gmsh_4_1_ascii_3d(
+            *gmsh_export.content,
+            1.0);
+    require(
+        gmsh_roundtrip.topology.entity_count(
+            mesh::EntityKind::cell) == 1U,
+        "VTU canonical Gmsh re-import");
+
     const auto report =
         mesh::analyze_conversion(
             document,
@@ -219,6 +380,7 @@ void verify_non_corner_point_report() {
 int main() {
     try {
         verify_grdecl_canonical_roundtrip();
+        verify_gmsh_group_bridge();
         verify_non_corner_point_report();
         std::cout
             << "[PASS] mesh.core.exchange_io\n";
