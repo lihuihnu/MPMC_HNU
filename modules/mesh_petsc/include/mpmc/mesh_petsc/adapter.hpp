@@ -6262,19 +6262,22 @@ struct OwnedCellStructuralColumnPatternRow3D {
     mpmc::mesh::LocalIndex cell;
     mpmc::mesh::GlobalEntityId cell_global;
     PetscInt global_row;
-    std::vector<PetscInt>
-        diagonal_global_columns;
-    std::vector<PetscInt>
-        off_diagonal_global_columns;
+    std::size_t diagonal_column_offset;
+    std::size_t diagonal_column_count;
+    std::size_t off_diagonal_column_offset;
+    std::size_t off_diagonal_column_count;
 };
 
 /// Immutable exact PETSc global-column pattern for locally owned cell rows.
 ///
-/// Each row is stored in the same PETSc/stable-cell order as
-/// PetscMpiAijSymbolicPreallocation3D. diagonal_global_columns contains the
-/// self column and all locally owned neighbours. off_diagonal_global_columns
-/// contains remote-owned neighbours visible as local ghosts. Both sets are
-/// strictly sorted and deduplicated.
+/// Rows are stored in the same PETSc/stable-cell order as
+/// PetscMpiAijSymbolicPreallocation3D. Finalized column storage is compact:
+/// row metadata carries offsets/counts into one flat diagonal-column array and
+/// one flat off-diagonal-column array. There is no per-row heap allocation.
+///
+/// Diagonal columns contain self plus locally owned neighbours. Off-diagonal
+/// columns contain remote-owned neighbours visible as local ghosts. Each row's
+/// two spans are strictly sorted and deduplicated.
 ///
 /// This snapshot is structural only: it does not own or modify a Mat and does
 /// not store any numerical matrix coefficient or physical quantity.
@@ -6289,7 +6292,11 @@ public:
         PetscInt global_row_count,
         std::vector<
             OwnedCellStructuralColumnPatternRow3D>
-            rows)
+            rows,
+        std::vector<PetscInt>
+            diagonal_global_columns,
+        std::vector<PetscInt>
+            off_diagonal_global_columns)
         : local_rank_(local_rank),
           rank_count_(rank_count),
           local_cell_count_(local_cell_count),
@@ -6297,6 +6304,12 @@ public:
           global_row_end_(global_row_end),
           global_row_count_(global_row_count),
           rows_(std::move(rows)),
+          diagonal_global_columns_(
+              std::move(
+                  diagonal_global_columns)),
+          off_diagonal_global_columns_(
+              std::move(
+                  off_diagonal_global_columns)),
           local_cell_to_row_(local_cell_count) {
         validate_and_index();
     }
@@ -6357,6 +6370,16 @@ public:
         return rows_;
     }
 
+    [[nodiscard]] std::span<const PetscInt>
+    diagonal_column_storage() const noexcept {
+        return diagonal_global_columns_;
+    }
+
+    [[nodiscard]] std::span<const PetscInt>
+    off_diagonal_column_storage() const noexcept {
+        return off_diagonal_global_columns_;
+    }
+
     [[nodiscard]] bool contains_owned_cell(
         mpmc::mesh::LocalIndex cell) const {
         const std::size_t local =
@@ -6373,6 +6396,37 @@ public:
     [[nodiscard]]
     const OwnedCellStructuralColumnPatternRow3D&
     row(mpmc::mesh::LocalIndex cell) const {
+        return rows_.at(
+            row_index(cell));
+    }
+
+    [[nodiscard]] std::span<const PetscInt>
+    diagonal_global_columns(
+        mpmc::mesh::LocalIndex cell) const {
+        const auto& pattern =
+            rows_.at(
+                row_index(cell));
+        return std::span<const PetscInt>{
+            diagonal_global_columns_.data() +
+                pattern.diagonal_column_offset,
+            pattern.diagonal_column_count};
+    }
+
+    [[nodiscard]] std::span<const PetscInt>
+    off_diagonal_global_columns(
+        mpmc::mesh::LocalIndex cell) const {
+        const auto& pattern =
+            rows_.at(
+                row_index(cell));
+        return std::span<const PetscInt>{
+            off_diagonal_global_columns_.data() +
+                pattern.off_diagonal_column_offset,
+            pattern.off_diagonal_column_count};
+    }
+
+private:
+    [[nodiscard]] std::size_t row_index(
+        mpmc::mesh::LocalIndex cell) const {
         const std::size_t local =
             static_cast<std::size_t>(
                 cell.value());
@@ -6386,10 +6440,9 @@ public:
             throw std::invalid_argument(
                 "mpmc::mesh_petsc::OwnedCellStructuralColumnPatternSnapshot3D: column pattern is defined only for locally owned cells");
         }
-        return rows_.at(*mapped);
+        return *mapped;
     }
 
-private:
     void validate_and_index() {
         if (rank_count_ == 0U ||
             local_rank_.value() >= rank_count_ ||
@@ -6403,6 +6456,9 @@ private:
             throw std::invalid_argument(
                 "mpmc::mesh_petsc::OwnedCellStructuralColumnPatternSnapshot3D: invalid PETSc row ownership metadata");
         }
+
+        std::size_t expected_diagonal_offset = 0U;
+        std::size_t expected_off_diagonal_offset = 0U;
 
         for (std::size_t index = 0U;
              index < rows_.size();
@@ -6425,44 +6481,49 @@ private:
                 pattern.global_row < 0 ||
                 pattern.global_row >=
                     global_row_count_ ||
-                pattern.diagonal_global_columns
-                    .empty()) {
+                pattern.diagonal_column_offset !=
+                    expected_diagonal_offset ||
+                pattern.off_diagonal_column_offset !=
+                    expected_off_diagonal_offset ||
+                pattern.diagonal_column_count == 0U ||
+                pattern.diagonal_column_count >
+                    diagonal_global_columns_.size() -
+                        pattern.diagonal_column_offset ||
+                pattern.off_diagonal_column_count >
+                    off_diagonal_global_columns_.size() -
+                        pattern.off_diagonal_column_offset) {
                 throw std::invalid_argument(
-                    "mpmc::mesh_petsc::OwnedCellStructuralColumnPatternSnapshot3D: invalid or duplicate owned-cell row");
+                    "mpmc::mesh_petsc::OwnedCellStructuralColumnPatternSnapshot3D: invalid row identity or compact column range");
             }
 
+            const auto diagonal_columns =
+                std::span<const PetscInt>{
+                    diagonal_global_columns_.data() +
+                        pattern.diagonal_column_offset,
+                    pattern.diagonal_column_count};
+            const auto off_diagonal_columns =
+                std::span<const PetscInt>{
+                    off_diagonal_global_columns_.data() +
+                        pattern.off_diagonal_column_offset,
+                    pattern.off_diagonal_column_count};
+
             if (!std::is_sorted(
-                    pattern
-                        .diagonal_global_columns
-                        .begin(),
-                    pattern
-                        .diagonal_global_columns
-                        .end()) ||
+                    diagonal_columns.begin(),
+                    diagonal_columns.end()) ||
                 std::adjacent_find(
-                    pattern
-                        .diagonal_global_columns
-                        .begin(),
-                    pattern
-                        .diagonal_global_columns
-                        .end()) !=
-                    pattern
-                        .diagonal_global_columns
-                        .end() ||
+                    diagonal_columns.begin(),
+                    diagonal_columns.end()) !=
+                    diagonal_columns.end() ||
                 !std::binary_search(
-                    pattern
-                        .diagonal_global_columns
-                        .begin(),
-                    pattern
-                        .diagonal_global_columns
-                        .end(),
+                    diagonal_columns.begin(),
+                    diagonal_columns.end(),
                     pattern.global_row)) {
                 throw std::invalid_argument(
                     "mpmc::mesh_petsc::OwnedCellStructuralColumnPatternSnapshot3D: diagonal columns must be sorted, unique, and include the self row");
             }
 
             for (const PetscInt column :
-                 pattern
-                     .diagonal_global_columns) {
+                 diagonal_columns) {
                 if (column <
                         global_row_start_ ||
                     column >=
@@ -6473,29 +6534,18 @@ private:
             }
 
             if (!std::is_sorted(
-                    pattern
-                        .off_diagonal_global_columns
-                        .begin(),
-                    pattern
-                        .off_diagonal_global_columns
-                        .end()) ||
+                    off_diagonal_columns.begin(),
+                    off_diagonal_columns.end()) ||
                 std::adjacent_find(
-                    pattern
-                        .off_diagonal_global_columns
-                        .begin(),
-                    pattern
-                        .off_diagonal_global_columns
-                        .end()) !=
-                    pattern
-                        .off_diagonal_global_columns
-                        .end()) {
+                    off_diagonal_columns.begin(),
+                    off_diagonal_columns.end()) !=
+                    off_diagonal_columns.end()) {
                 throw std::invalid_argument(
                     "mpmc::mesh_petsc::OwnedCellStructuralColumnPatternSnapshot3D: off-diagonal columns must be sorted and unique");
             }
 
             for (const PetscInt column :
-                 pattern
-                     .off_diagonal_global_columns) {
+                 off_diagonal_columns) {
                 if (column < 0 ||
                     column >=
                         global_row_count_ ||
@@ -6516,8 +6566,20 @@ private:
                     "mpmc::mesh_petsc::OwnedCellStructuralColumnPatternSnapshot3D: owned stable cell IDs must follow PETSc row order");
             }
 
+            expected_diagonal_offset +=
+                pattern.diagonal_column_count;
+            expected_off_diagonal_offset +=
+                pattern.off_diagonal_column_count;
             local_cell_to_row_[local] =
                 index;
+        }
+
+        if (expected_diagonal_offset !=
+                diagonal_global_columns_.size() ||
+            expected_off_diagonal_offset !=
+                off_diagonal_global_columns_.size()) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::OwnedCellStructuralColumnPatternSnapshot3D: compact column storage has unreferenced tail data");
         }
     }
 
@@ -6530,6 +6592,10 @@ private:
     std::vector<
         OwnedCellStructuralColumnPatternRow3D>
         rows_;
+    std::vector<PetscInt>
+        diagonal_global_columns_;
+    std::vector<PetscInt>
+        off_diagonal_global_columns_;
     std::vector<std::optional<std::size_t>>
         local_cell_to_row_;
 };
@@ -6540,7 +6606,8 @@ private:
 /// self is always a diagonal-block column. Every unique sparsity neighbour is
 /// mapped through bridge.global_row(); locally owned neighbours enter the
 /// diagonal block and ghost/remote-owned neighbours enter the off-diagonal
-/// block. Both column sets are sorted and deduplicated.
+/// block. Each row's column spans are sorted and deduplicated before being
+/// appended to compact flat storage.
 ///
 /// The final row cardinalities must exactly equal the frozen d_nnz/o_nnz
 /// counts. No Mat is created or modified and no transmissibility/value/physics
@@ -6601,10 +6668,47 @@ make_owned_cell_structural_column_pattern_snapshot_3d(
         return PETSC_ERR_ARG_INCOMP;
     }
 
+    std::size_t total_diagonal_columns = 0U;
+    std::size_t total_off_diagonal_columns = 0U;
+    for (std::size_t index = 0U;
+         index < owned_count;
+         ++index) {
+        if (diagonal_nnz[index] <= 0 ||
+            off_diagonal_nnz[index] < 0) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        const auto diagonal_count =
+            static_cast<std::size_t>(
+                diagonal_nnz[index]);
+        const auto off_diagonal_count =
+            static_cast<std::size_t>(
+                off_diagonal_nnz[index]);
+        if (diagonal_count >
+                std::numeric_limits<std::size_t>::max() -
+                    total_diagonal_columns ||
+            off_diagonal_count >
+                std::numeric_limits<std::size_t>::max() -
+                    total_off_diagonal_columns) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        total_diagonal_columns +=
+            diagonal_count;
+        total_off_diagonal_columns +=
+            off_diagonal_count;
+    }
+
     std::vector<
         OwnedCellStructuralColumnPatternRow3D>
         patterns;
+    std::vector<PetscInt>
+        flat_diagonal_columns;
+    std::vector<PetscInt>
+        flat_off_diagonal_columns;
     patterns.reserve(owned_count);
+    flat_diagonal_columns.reserve(
+        total_diagonal_columns);
+    flat_off_diagonal_columns.reserve(
+        total_off_diagonal_columns);
 
     for (std::size_t index = 0U;
          index < owned_count;
@@ -6729,8 +6833,6 @@ make_owned_cell_structural_column_pattern_snapshot_3d(
                 cell ||
             structural->cell_global !=
                 cell_global ||
-            diagonal_nnz[index] < 0 ||
-            off_diagonal_nnz[index] < 0 ||
             diagonal_columns.size() !=
                 structural
                     ->diagonal_block_nnz ||
@@ -6751,15 +6853,36 @@ make_owned_cell_structural_column_pattern_snapshot_3d(
             return PETSC_ERR_ARG_INCOMP;
         }
 
+        const std::size_t diagonal_offset =
+            flat_diagonal_columns.size();
+        const std::size_t off_diagonal_offset =
+            flat_off_diagonal_columns.size();
+
+        flat_diagonal_columns.insert(
+            flat_diagonal_columns.end(),
+            diagonal_columns.begin(),
+            diagonal_columns.end());
+        flat_off_diagonal_columns.insert(
+            flat_off_diagonal_columns.end(),
+            off_diagonal_columns.begin(),
+            off_diagonal_columns.end());
+
         patterns.push_back(
             OwnedCellStructuralColumnPatternRow3D{
                 cell,
                 cell_global,
                 global_row,
-                std::move(
-                    diagonal_columns),
-                std::move(
-                    off_diagonal_columns)});
+                diagonal_offset,
+                diagonal_columns.size(),
+                off_diagonal_offset,
+                off_diagonal_columns.size()});
+    }
+
+    if (flat_diagonal_columns.size() !=
+            total_diagonal_columns ||
+        flat_off_diagonal_columns.size() !=
+            total_off_diagonal_columns) {
+        return PETSC_ERR_PLIB;
     }
 
     try {
@@ -6771,7 +6894,9 @@ make_owned_cell_structural_column_pattern_snapshot_3d(
             bridge.global_row_start(),
             bridge.global_row_end(),
             bridge.global_row_count(),
-            std::move(patterns));
+            std::move(patterns),
+            std::move(flat_diagonal_columns),
+            std::move(flat_off_diagonal_columns));
     } catch (...) {
         output->reset();
         return PETSC_ERR_ARG_INCOMP;
