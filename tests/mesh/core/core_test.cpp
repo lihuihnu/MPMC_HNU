@@ -1,3 +1,4 @@
+#include <mpmc/mesh/active_corner_point.hpp>
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/corner_point_geometry_3d.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
@@ -2350,6 +2351,388 @@ void grdecl_invalid() {
         });
 }
 
+std::string grdecl_two_cell_all_active_fixture() {
+    auto content =
+        grdecl_two_cell_fixture();
+    const auto where =
+        content.find("ACTNUM\n  1 0");
+    require(
+        where != std::string::npos,
+        "active face-processor ACTNUM marker");
+    content.replace(
+        where,
+        std::string{"ACTNUM\n  1 0"}.size(),
+        "ACTNUM\n  1 1");
+    return content;
+}
+
+std::string grdecl_second_cell_only_fixture() {
+    auto content =
+        grdecl_two_cell_fixture();
+    const auto where =
+        content.find("ACTNUM\n  1 0");
+    require(
+        where != std::string::npos,
+        "filtered face-processor ACTNUM marker");
+    content.replace(
+        where,
+        std::string{"ACTNUM\n  1 0"}.size(),
+        "ACTNUM\n  0 1");
+    return content;
+}
+
+std::string grdecl_vertical_two_cell_fixture() {
+    return R"grdecl(SPECGRID
+  1 1 2 1 F /
+COORD
+  0 0 0   0 0 2
+  1 0 0   1 0 2
+  0 1 0   0 1 2
+  1 1 0   1 1 2 /
+ZCORN
+  4*0 8*1 4*2 /
+ACTNUM
+  2*1 /
+PORO
+  0.20 0.30 /
+PERMX
+  100 110 /
+PERMY
+  90 95 /
+PERMZ
+  10 12 /
+)grdecl";
+}
+
+std::string grdecl_fault_split_two_cell_fixture() {
+    return R"grdecl(SPECGRID
+  2 1 1 1 F /
+COORD
+  0 0 0   0 0 2
+  1 0 0   1 0 2
+  2 0 0   2 0 2
+  0 1 0   0 1 2
+  1 1 0   1 1 2
+  2 1 0   2 1 2 /
+ZCORN
+  0 0 0.1 0
+  0 0 0.1 0
+  1 1 1.1 1
+  1 1 1.1 1 /
+ACTNUM
+  2*1 /
+PORO
+  0.20 0.25 /
+PERMX
+  100 120 /
+PERMY
+  80 90 /
+PERMZ
+  10 11 /
+)grdecl";
+}
+
+std::size_t shared_face_count(
+    const mesh::Topology& topology) {
+    const auto& face_cells =
+        topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    std::size_t shared = 0U;
+    for (std::size_t face = 0U;
+         face < topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        if (face_cells.adjacent(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            face)})
+                .size() == 2U) {
+            ++shared;
+        }
+    }
+    return shared;
+}
+
+void require_active_processor_shape(
+    const mesh::ActiveCornerPointGrid& processed) {
+    const auto& topology =
+        processed.topology;
+    require(
+        topology.entity_count(
+            mesh::EntityKind::cell) == 2U &&
+        topology.entity_count(
+            mesh::EntityKind::vertex) == 12U &&
+        topology.entity_count(
+            mesh::EntityKind::face) == 11U &&
+        topology.entity_count(
+            mesh::EntityKind::edge) == 0U,
+        "active corner-point merged entity counts");
+    require(
+        topology.relation_count() == 4U,
+        "active corner-point four core relations");
+    require(
+        shared_face_count(topology) == 1U,
+        "active corner-point exactly one shared face");
+    require(
+        processed.source_logical_cell_ids.size() == 2U &&
+        processed.source_logical_cell_ids[0].value() == 1U &&
+        processed.source_logical_cell_ids[1].value() == 2U,
+        "active corner-point source logical mapping");
+    require(
+        topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{0U}).value() == 1U &&
+        topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{1U}).value() == 2U,
+        "active corner-point processed cell identities");
+
+    const auto& cell_vertices =
+        topology.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::vertex);
+    const auto& cell_faces =
+        topology.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::face);
+    const auto& face_vertices =
+        topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::vertex);
+    const auto& face_cells =
+        topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    for (std::size_t cell = 0U;
+         cell < 2U;
+         ++cell) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        cell)};
+        require(
+            cell_vertices.adjacent(local).size() == 8U,
+            "processed hexa cell has eight shared vertices");
+        require(
+            cell_faces.adjacent(local).size() == 6U,
+            "processed hexa cell has six faces");
+    }
+    for (std::size_t face = 0U;
+         face < topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        require(
+            face_vertices.adjacent(local).size() == 4U,
+            "processed quad face has four vertices");
+        const auto support =
+            face_cells.adjacent(local).size();
+        require(
+            support == 1U || support == 2U,
+            "processed face support cardinality");
+    }
+}
+
+void active_corner_point_i_neighbor() {
+    const auto raw =
+        mesh::import_grdecl(
+            grdecl_two_cell_all_active_fixture(),
+            mesh::GrdeclImportOptions{
+                1.0, 1.0e-15});
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            raw);
+    require_active_processor_shape(
+        processed);
+    require_close(
+        processed.cell_volumes_m3[0],
+        1.0,
+        1.0e-14,
+        "processed I-neighbor first volume");
+    require_close(
+        processed.cell_volumes_m3[1],
+        1.0,
+        1.0e-14,
+        "processed I-neighbor second volume");
+
+    const auto& face_cells =
+        processed.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    const auto& face_vertices =
+        processed.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::vertex);
+    bool found_interface = false;
+    for (std::size_t face = 0U;
+         face < processed.topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        if (face_cells.adjacent(local).size() != 2U) {
+            continue;
+        }
+        found_interface = true;
+        for (const auto vertex :
+             face_vertices.adjacent(local)) {
+            require_close(
+                processed.vertex_coordinates_m[
+                    static_cast<std::size_t>(
+                        vertex.value())]
+                    .x_m,
+                1.0,
+                0.0,
+                "processed I-interface x coordinate");
+        }
+    }
+    require(
+        found_interface,
+        "processed I-interface face exists");
+
+    const auto repeated =
+        mesh::process_active_corner_point_grid(
+            raw);
+    require_topology_equal(
+        repeated.topology,
+        processed.topology);
+    require(
+        repeated.vertex_coordinates_m ==
+            processed.vertex_coordinates_m,
+        "active corner-point deterministic vertex ordering");
+}
+
+void active_corner_point_k_neighbor() {
+    const auto raw =
+        mesh::import_grdecl(
+            grdecl_vertical_two_cell_fixture(),
+            mesh::GrdeclImportOptions{
+                1.0, 1.0e-15});
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            raw);
+    require_active_processor_shape(
+        processed);
+
+    const auto& face_cells =
+        processed.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    const auto& face_vertices =
+        processed.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::vertex);
+    bool found_interface = false;
+    for (std::size_t face = 0U;
+         face < processed.topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        if (face_cells.adjacent(local).size() != 2U) {
+            continue;
+        }
+        found_interface = true;
+        for (const auto vertex :
+             face_vertices.adjacent(local)) {
+            require_close(
+                processed.vertex_coordinates_m[
+                    static_cast<std::size_t>(
+                        vertex.value())]
+                    .z_m,
+                1.0,
+                0.0,
+                "processed K-interface z coordinate");
+        }
+    }
+    require(
+        found_interface,
+        "processed K-interface face exists");
+}
+
+void active_corner_point_activity_mapping() {
+    const auto raw =
+        mesh::import_grdecl(
+            grdecl_second_cell_only_fixture(),
+            mesh::GrdeclImportOptions{
+                1.0, 1.0e-15});
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            raw);
+
+    require(
+        processed.cell_count() == 1U &&
+        processed.topology.entity_count(
+            mesh::EntityKind::cell) == 1U &&
+        processed.topology.entity_count(
+            mesh::EntityKind::vertex) == 8U &&
+        processed.topology.entity_count(
+            mesh::EntityKind::face) == 6U,
+        "active processor filters inactive logical cell");
+    require(
+        processed.source_logical_cell_id(
+            mesh::LocalIndex{0U}).value() == 2U &&
+        processed.topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{0U}).value() == 2U,
+        "processed local cell maps to original logical GlobalEntityId");
+
+    const auto& face_cells =
+        processed.topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    for (std::size_t face = 0U;
+         face < 6U;
+         ++face) {
+        require(
+            face_cells.adjacent(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            face)})
+                .size() == 1U,
+            "active-inactive interface becomes processed boundary");
+    }
+}
+
+void active_corner_point_invalid() {
+    const auto faulted_raw =
+        mesh::import_grdecl(
+            grdecl_fault_split_two_cell_fixture(),
+            mesh::GrdeclImportOptions{
+                1.0, 1.0e-15});
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::process_active_corner_point_grid(
+                faulted_raw);
+        });
+
+    const auto no_active =
+        mesh::import_grdecl(
+            grdecl_single_cell_fixture(
+                "4*0 4*1", 0),
+            mesh::GrdeclImportOptions{
+                1.0, 1.0e-15});
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::process_active_corner_point_grid(
+                no_active);
+        });
+}
+
 void dof_layout_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
     const auto layout = mesh::DofLayout::create(
@@ -3280,6 +3663,10 @@ int main(int argc, char** argv) {
         else if (name == "grdecl_import") { grdecl_import(); }
         else if (name == "grdecl_inactive_degenerate") { grdecl_inactive_degenerate(); }
         else if (name == "grdecl_invalid") { grdecl_invalid(); }
+        else if (name == "active_corner_point_i_neighbor") { active_corner_point_i_neighbor(); }
+        else if (name == "active_corner_point_k_neighbor") { active_corner_point_k_neighbor(); }
+        else if (name == "active_corner_point_activity_mapping") { active_corner_point_activity_mapping(); }
+        else if (name == "active_corner_point_invalid") { active_corner_point_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
