@@ -4885,6 +4885,584 @@ make_parallel_owned_connection_schedule_3d(
     return PETSC_SUCCESS;
 }
 
+
+struct CellPairCoupling3D {
+    mpmc::mesh::LocalIndex first_cell;
+    mpmc::mesh::GlobalEntityId first_cell_global;
+    mpmc::mesh::LocalIndex second_cell;
+    mpmc::mesh::GlobalEntityId second_cell_global;
+};
+
+struct OwnedCellStructuralCounts3D {
+    mpmc::mesh::LocalIndex cell;
+    mpmc::mesh::GlobalEntityId cell_global;
+
+    /// Structural columns in the local diagonal block:
+    /// one self column plus unique neighbouring cells owned by this rank.
+    std::size_t diagonal_block_nnz;
+
+    /// Structural columns in the off-diagonal block:
+    /// unique neighbouring cells owned by remote ranks and present as ghosts.
+    std::size_t off_diagonal_block_nnz;
+};
+
+/// Immutable local cell-pair sparsity/stencil snapshot.
+///
+/// The global unique coupling graph is reconstructed collectively from
+/// schedule.assembly_rows() ONLY. schedule.ghost_rows() are deliberately not
+/// consumed. Each rank then retains only unique pairs incident to at least one
+/// locally owned cell, which is exactly the structural information needed to
+/// preallocate that rank's owned cell rows.
+///
+/// No transmissibility value, pressure variable, matrix coefficient, flux, or
+/// residual is stored in this snapshot.
+class CellPairSparsityStencilSnapshot3D {
+public:
+    CellPairSparsityStencilSnapshot3D(
+        mpmc::mesh::PartitionRank local_rank,
+        std::uint32_t rank_count,
+        std::size_t local_cell_count,
+        std::vector<CellPairCoupling3D> couplings,
+        std::vector<OwnedCellStructuralCounts3D>
+            owned_cell_counts)
+        : local_rank_(local_rank),
+          rank_count_(rank_count),
+          local_cell_count_(local_cell_count),
+          couplings_(std::move(couplings)),
+          owned_cell_counts_(
+              std::move(owned_cell_counts)),
+          owned_cell_to_counts_(local_cell_count) {
+        validate_and_index();
+    }
+
+    CellPairSparsityStencilSnapshot3D(
+        const CellPairSparsityStencilSnapshot3D&) =
+        default;
+    CellPairSparsityStencilSnapshot3D(
+        CellPairSparsityStencilSnapshot3D&&) noexcept =
+        default;
+    CellPairSparsityStencilSnapshot3D& operator=(
+        const CellPairSparsityStencilSnapshot3D&) =
+        delete;
+    CellPairSparsityStencilSnapshot3D& operator=(
+        CellPairSparsityStencilSnapshot3D&&) =
+        delete;
+    ~CellPairSparsityStencilSnapshot3D() = default;
+
+    [[nodiscard]] mpmc::mesh::PartitionRank
+    local_rank() const noexcept {
+        return local_rank_;
+    }
+
+    [[nodiscard]] std::uint32_t
+    rank_count() const noexcept {
+        return rank_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    local_cell_count() const noexcept {
+        return local_cell_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    coupling_count() const noexcept {
+        return couplings_.size();
+    }
+
+    [[nodiscard]] std::size_t
+    owned_cell_count() const noexcept {
+        return owned_cell_counts_.size();
+    }
+
+    [[nodiscard]] std::span<const CellPairCoupling3D>
+    couplings() const noexcept {
+        return couplings_;
+    }
+
+    [[nodiscard]] std::span<
+        const OwnedCellStructuralCounts3D>
+    owned_cell_counts() const noexcept {
+        return owned_cell_counts_;
+    }
+
+    [[nodiscard]] bool contains_owned_cell(
+        mpmc::mesh::LocalIndex cell) const {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                cell.value());
+        if (local >= local_cell_count_) {
+            throw std::out_of_range(
+                "mpmc::mesh_petsc::CellPairSparsityStencilSnapshot3D: cell index out of range");
+        }
+        return owned_cell_to_counts_[local].has_value();
+    }
+
+    [[nodiscard]]
+    const OwnedCellStructuralCounts3D&
+    structural_counts(
+        mpmc::mesh::LocalIndex cell) const {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                cell.value());
+        if (local >= local_cell_count_) {
+            throw std::out_of_range(
+                "mpmc::mesh_petsc::CellPairSparsityStencilSnapshot3D: cell index out of range");
+        }
+        const auto mapped =
+            owned_cell_to_counts_[local];
+        if (!mapped.has_value()) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::CellPairSparsityStencilSnapshot3D: structural counts are defined only for locally owned cells");
+        }
+        return owned_cell_counts_.at(*mapped);
+    }
+
+private:
+    void validate_and_index() {
+        if (rank_count_ == 0U ||
+            local_rank_.value() >= rank_count_) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::CellPairSparsityStencilSnapshot3D: invalid rank metadata");
+        }
+
+        for (std::size_t index = 0U;
+             index < couplings_.size();
+             ++index) {
+            const auto& pair =
+                couplings_[index];
+            const std::size_t first =
+                static_cast<std::size_t>(
+                    pair.first_cell.value());
+            const std::size_t second =
+                static_cast<std::size_t>(
+                    pair.second_cell.value());
+            if (first >= local_cell_count_ ||
+                second >= local_cell_count_ ||
+                first == second ||
+                pair.first_cell_global ==
+                    pair.second_cell_global ||
+                !(pair.first_cell_global <
+                  pair.second_cell_global)) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::CellPairSparsityStencilSnapshot3D: coupling must use two distinct local cells ordered by stable GlobalEntityId");
+            }
+            for (std::size_t prior = 0U;
+                 prior < index;
+                 ++prior) {
+                if (couplings_[prior]
+                            .first_cell_global ==
+                        pair.first_cell_global &&
+                    couplings_[prior]
+                            .second_cell_global ==
+                        pair.second_cell_global) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh_petsc::CellPairSparsityStencilSnapshot3D: duplicate stable cell pair");
+                }
+            }
+        }
+
+        for (std::size_t index = 0U;
+             index < owned_cell_counts_.size();
+             ++index) {
+            const auto& counts =
+                owned_cell_counts_[index];
+            const std::size_t local =
+                static_cast<std::size_t>(
+                    counts.cell.value());
+            if (local >= local_cell_count_ ||
+                counts.diagonal_block_nnz == 0U ||
+                owned_cell_to_counts_[local]
+                    .has_value()) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::CellPairSparsityStencilSnapshot3D: invalid or duplicate owned-cell structural counts");
+            }
+            owned_cell_to_counts_[local] =
+                index;
+        }
+    }
+
+    mpmc::mesh::PartitionRank local_rank_;
+    std::uint32_t rank_count_;
+    std::size_t local_cell_count_;
+    std::vector<CellPairCoupling3D> couplings_;
+    std::vector<OwnedCellStructuralCounts3D>
+        owned_cell_counts_;
+    std::vector<std::optional<std::size_t>>
+        owned_cell_to_counts_;
+};
+
+namespace cell_pair_sparsity_detail {
+
+struct StableCellPair {
+    std::uint64_t first;
+    std::uint64_t second;
+};
+
+[[nodiscard]] inline StableCellPair
+canonical_pair(
+    mpmc::mesh::GlobalEntityId left,
+    mpmc::mesh::GlobalEntityId right) {
+    const std::uint64_t a = left.value();
+    const std::uint64_t b = right.value();
+    if (a == b) {
+        throw std::invalid_argument(
+            "mpmc::mesh_petsc::cell_pair_sparsity: self coupling is invalid");
+    }
+    return a < b
+               ? StableCellPair{a, b}
+               : StableCellPair{b, a};
+}
+
+[[nodiscard]] inline bool pair_less(
+    const StableCellPair& left,
+    const StableCellPair& right) noexcept {
+    return left.first < right.first ||
+           (left.first == right.first &&
+            left.second < right.second);
+}
+
+[[nodiscard]] inline bool pair_equal(
+    const StableCellPair& left,
+    const StableCellPair& right) noexcept {
+    return left.first == right.first &&
+           left.second == right.second;
+}
+
+} // namespace cell_pair_sparsity_detail
+
+/// Collectively build the local owned-row cell-pair sparsity snapshot.
+///
+/// Only schedule.assembly_rows() are serialized. This matters when the
+/// authoritative face rank differs from one of the cell-row owner ranks:
+/// collective reconstruction gives every cell owner the structural adjacency
+/// it needs without consuming duplicated ghost connection rows.
+///
+/// PETSc/MPI diagonal-block counts follow standard distributed sparse-matrix
+/// preallocation semantics:
+///   diagonal_block_nnz = 1 self + unique neighbours owned by this rank
+///   off_diagonal_block_nnz = unique neighbours owned by remote ranks
+inline PetscErrorCode
+make_cell_pair_sparsity_stencil_snapshot_3d(
+    MPI_Comm comm,
+    const ParallelOwnedConnectionSchedule3D& schedule,
+    const mpmc::mesh::PartitionSnapshot& partition,
+    std::optional<CellPairSparsityStencilSnapshot3D>*
+        output) {
+    if (output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+
+    PetscErrorCode error =
+        detail::validate_communicator(
+            comm,
+            schedule.local_rank(),
+            schedule.rank_count());
+    if (error != PETSC_SUCCESS) return error;
+    if (partition.local_rank() !=
+            schedule.local_rank() ||
+        partition.rank_count() !=
+            schedule.rank_count()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    const std::size_t local_pair_count =
+        schedule.assembly_rows().size();
+    if (local_pair_count >
+        static_cast<std::size_t>(
+            std::numeric_limits<int>::max() /
+            2)) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    std::vector<std::uint64_t> local_words;
+    local_words.reserve(
+        local_pair_count * 2U);
+    try {
+        for (const auto& row :
+             schedule.assembly_rows()) {
+            const auto pair =
+                cell_pair_sparsity_detail::
+                    canonical_pair(
+                        row.owner_cell_global,
+                        row.neighbour_cell_global);
+            local_words.push_back(
+                pair.first);
+            local_words.push_back(
+                pair.second);
+        }
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    const int local_word_count =
+        static_cast<int>(
+            local_words.size());
+    int mpi_size = 0;
+    if (MPI_Comm_size(
+            comm,
+            &mpi_size) != MPI_SUCCESS ||
+        mpi_size <= 0) {
+        return PETSC_ERR_MPI;
+    }
+
+    std::vector<int> word_counts(
+        static_cast<std::size_t>(mpi_size),
+        0);
+    if (MPI_Allgather(
+            &local_word_count,
+            1,
+            MPI_INT,
+            word_counts.data(),
+            1,
+            MPI_INT,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+
+    std::vector<int> displacements(
+        static_cast<std::size_t>(mpi_size),
+        0);
+    int total_words = 0;
+    for (int rank = 0;
+         rank < mpi_size;
+         ++rank) {
+        const int count =
+            word_counts[
+                static_cast<std::size_t>(
+                    rank)];
+        if (count < 0 ||
+            count % 2 != 0 ||
+            count >
+                std::numeric_limits<int>::max() -
+                    total_words) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        displacements[
+            static_cast<std::size_t>(
+                rank)] =
+            total_words;
+        total_words += count;
+    }
+
+    std::vector<std::uint64_t> all_words(
+        static_cast<std::size_t>(
+            total_words));
+    if (MPI_Allgatherv(
+            local_words.empty()
+                ? nullptr
+                : local_words.data(),
+            local_word_count,
+            MPI_UINT64_T,
+            all_words.empty()
+                ? nullptr
+                : all_words.data(),
+            word_counts.data(),
+            displacements.data(),
+            MPI_UINT64_T,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+
+    std::vector<
+        cell_pair_sparsity_detail::StableCellPair>
+            unique_pairs;
+    unique_pairs.reserve(
+        all_words.size() / 2U);
+    for (std::size_t offset = 0U;
+         offset < all_words.size();
+         offset += 2U) {
+        const auto first =
+            all_words[offset];
+        const auto second =
+            all_words[offset + 1U];
+        if (first == second) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        unique_pairs.push_back(
+            first < second
+                ? cell_pair_sparsity_detail::
+                      StableCellPair{
+                          first, second}
+                : cell_pair_sparsity_detail::
+                      StableCellPair{
+                          second, first});
+    }
+    std::sort(
+        unique_pairs.begin(),
+        unique_pairs.end(),
+        cell_pair_sparsity_detail::
+            pair_less);
+    unique_pairs.erase(
+        std::unique(
+            unique_pairs.begin(),
+            unique_pairs.end(),
+            cell_pair_sparsity_detail::
+                pair_equal),
+        unique_pairs.end());
+
+    const std::size_t local_cell_count =
+        partition.entity_count(
+            mpmc::mesh::EntityKind::cell);
+    std::vector<CellPairCoupling3D>
+        local_couplings;
+    local_couplings.reserve(
+        unique_pairs.size());
+
+    for (const auto pair :
+         unique_pairs) {
+        const auto first_global =
+            mpmc::mesh::GlobalEntityId{
+                pair.first};
+        const auto second_global =
+            mpmc::mesh::GlobalEntityId{
+                pair.second};
+
+        const bool first_local =
+            partition.contains_global(
+                mpmc::mesh::EntityKind::cell,
+                first_global);
+        const bool second_local =
+            partition.contains_global(
+                mpmc::mesh::EntityKind::cell,
+                second_global);
+
+        bool first_owned = false;
+        bool second_owned = false;
+        mpmc::mesh::LocalIndex first_local_index{
+            0U};
+        mpmc::mesh::LocalIndex second_local_index{
+            0U};
+
+        if (first_local) {
+            try {
+                first_local_index =
+                    partition.local_index(
+                        mpmc::mesh::EntityKind::cell,
+                        first_global);
+                first_owned =
+                    partition.is_owned(
+                        mpmc::mesh::EntityKind::cell,
+                        first_local_index);
+            } catch (...) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        }
+        if (second_local) {
+            try {
+                second_local_index =
+                    partition.local_index(
+                        mpmc::mesh::EntityKind::cell,
+                        second_global);
+                second_owned =
+                    partition.is_owned(
+                        mpmc::mesh::EntityKind::cell,
+                        second_local_index);
+            } catch (...) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        }
+
+        if (!first_owned &&
+            !second_owned) {
+            continue;
+        }
+        if (!first_local ||
+            !second_local) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+
+        local_couplings.push_back(
+            CellPairCoupling3D{
+                first_local_index,
+                first_global,
+                second_local_index,
+                second_global});
+    }
+
+    std::vector<OwnedCellStructuralCounts3D>
+        owned_counts;
+    owned_counts.reserve(
+        partition.owned_count(
+            mpmc::mesh::EntityKind::cell));
+
+    for (std::size_t local = 0U;
+         local < local_cell_count;
+         ++local) {
+        const auto cell =
+            mpmc::mesh::LocalIndex{
+                static_cast<
+                    mpmc::mesh::LocalIndex::value_type>(
+                        local)};
+        if (!partition.is_owned(
+                mpmc::mesh::EntityKind::cell,
+                cell)) {
+            continue;
+        }
+
+        std::size_t diagonal_block_nnz = 1U;
+        std::size_t off_diagonal_block_nnz = 0U;
+
+        for (const auto& pair :
+             local_couplings) {
+            mpmc::mesh::LocalIndex neighbour{
+                0U};
+            bool incident = false;
+            if (pair.first_cell == cell) {
+                neighbour = pair.second_cell;
+                incident = true;
+            } else if (
+                pair.second_cell == cell) {
+                neighbour = pair.first_cell;
+                incident = true;
+            }
+            if (!incident) continue;
+
+            if (partition.is_owned(
+                    mpmc::mesh::EntityKind::cell,
+                    neighbour)) {
+                ++diagonal_block_nnz;
+            } else if (
+                partition.is_ghost(
+                    mpmc::mesh::EntityKind::cell,
+                    neighbour)) {
+                ++off_diagonal_block_nnz;
+            } else {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        }
+
+        owned_counts.push_back(
+            OwnedCellStructuralCounts3D{
+                cell,
+                partition.global_id(
+                    mpmc::mesh::EntityKind::cell,
+                    cell),
+                diagonal_block_nnz,
+                off_diagonal_block_nnz});
+    }
+
+    if (owned_counts.size() !=
+        partition.owned_count(
+            mpmc::mesh::EntityKind::cell)) {
+        return PETSC_ERR_PLIB;
+    }
+
+    try {
+        output->emplace(
+            partition.local_rank(),
+            partition.rank_count(),
+            local_cell_count,
+            std::move(local_couplings),
+            std::move(owned_counts));
+    } catch (...) {
+        output->reset();
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    return PETSC_SUCCESS;
+}
+
 inline PetscErrorCode migrate_dense_field_snapshot(
     DM source_dm,
     PetscSF migration_sf,
