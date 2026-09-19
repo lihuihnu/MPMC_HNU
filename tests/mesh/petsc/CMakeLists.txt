@@ -27,3 +27,15 @@ add_test(
 set_tests_properties(
     mesh.petsc.synthetic_2rank
     PROPERTIES LABELS "mesh;mesh.petsc;integration;mpi" TIMEOUT 60)
+
+add_test(
+    NAME mesh.petsc.sparsity_owner_targeted_3rank
+    COMMAND
+        ${MPIEXEC_EXECUTABLE}
+        ${MPIEXEC_NUMPROC_FLAG} 3
+        ${MPIEXEC_PREFLAGS}
+        $<TARGET_FILE:mpmc_mesh_petsc_tests>
+        ${MPIEXEC_POSTFLAGS})
+set_tests_properties(
+    mesh.petsc.sparsity_owner_targeted_3rank
+    PROPERTIES LABELS "mesh;mesh.petsc;integration;mpi;sparsity" TIMEOUT 60)
