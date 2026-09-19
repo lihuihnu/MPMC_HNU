@@ -224,15 +224,6 @@ TestVector3D subtract(
         left.z_m - right.z_m};
 }
 
-TestVector3D subtract(
-    mesh::Coordinate3D left,
-    TestVector3D right) {
-    return TestVector3D{
-        left.x_m - right.x,
-        left.y_m - right.y,
-        left.z_m - right.z};
-}
-
 TestVector3D cross(
     TestVector3D left,
     TestVector3D right) {
@@ -917,10 +908,6 @@ void verify_serial_dmplex_processed_grdecl() {
     for (std::size_t cell = 0U;
          cell < 2U;
          ++cell) {
-        const auto local = mesh::LocalIndex{
-            static_cast<
-                mesh::LocalIndex::value_type>(
-                    cell)};
         const double actual_volume =
             serial_cell_volume_3d(
                 dm,
