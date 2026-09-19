@@ -37,6 +37,9 @@ struct GrdeclImportResult {
     CornerPointGeometry3D geometry;
     std::vector<std::uint8_t> active;
     std::vector<DenseFieldSnapshot> cell_fields;
+    std::vector<double> coord_m;
+    std::vector<double> zcorn_m;
+    GrdeclImportOptions source_options;
 
     [[nodiscard]] std::size_t cell_count() const noexcept {
         return active.size();
@@ -745,6 +748,29 @@ import_grdecl(
         }
     }
 
+    std::vector<double> coord_m;
+    coord_m.reserve(coord.size());
+    for (const double value : coord) {
+        const double scaled =
+            value * options.coordinate_scale_to_m;
+        if (!std::isfinite(scaled)) {
+            throw std::invalid_argument(
+                "mpmc::mesh::import_grdecl: scaled COORD value is non-finite");
+        }
+        coord_m.push_back(scaled);
+    }
+    std::vector<double> zcorn_m;
+    zcorn_m.reserve(zcorn.size());
+    for (const double value : zcorn) {
+        const double scaled =
+            value * options.coordinate_scale_to_m;
+        if (!std::isfinite(scaled)) {
+            throw std::invalid_argument(
+                "mpmc::mesh::import_grdecl: scaled ZCORN value is non-finite");
+        }
+        zcorn_m.push_back(scaled);
+    }
+
     std::vector<Pillar> pillars;
     pillars.reserve(pillar_count);
     for (std::size_t pillar = 0U;
@@ -755,19 +781,13 @@ import_grdecl(
         pillars.push_back(
             Pillar{
                 Coordinate3D{
-                    coord[base] *
-                        options.coordinate_scale_to_m,
-                    coord[base + 1U] *
-                        options.coordinate_scale_to_m,
-                    coord[base + 2U] *
-                        options.coordinate_scale_to_m},
+                    coord_m[base],
+                    coord_m[base + 1U],
+                    coord_m[base + 2U]},
                 Coordinate3D{
-                    coord[base + 3U] *
-                        options.coordinate_scale_to_m,
-                    coord[base + 4U] *
-                        options.coordinate_scale_to_m,
-                    coord[base + 5U] *
-                        options.coordinate_scale_to_m}});
+                    coord_m[base + 3U],
+                    coord_m[base + 4U],
+                    coord_m[base + 5U]}});
     }
 
     std::vector<std::uint8_t> active;
@@ -906,8 +926,7 @@ import_grdecl(
                             "mpmc::mesh::import_grdecl: internal ZCORN index overflow");
                     }
                     const double z_m =
-                        zcorn[z_index] *
-                        options.coordinate_scale_to_m;
+                        zcorn_m[z_index];
                     const std::size_t pillar_slot =
                         local_i +
                         2U * local_j;
@@ -1012,7 +1031,10 @@ import_grdecl(
         std::move(topology),
         std::move(geometry),
         std::move(active),
-        std::move(fields)};
+        std::move(fields),
+        std::move(coord_m),
+        std::move(zcorn_m),
+        options};
 }
 
 } // namespace mpmc::mesh

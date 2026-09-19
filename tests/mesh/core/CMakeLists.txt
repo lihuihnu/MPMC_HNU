@@ -29,6 +29,8 @@ add_executable(mpmc_mesh_core_tests
     conductivity_field_header_self_contained.cpp
     dense_field_header_self_contained.cpp
     dense_field_registry_header_self_contained.cpp
+    mesh_exchange_header_self_contained.cpp
+    mesh_exchange_io_header_self_contained.cpp
     dof_layout_header_self_contained.cpp
     partition_snapshot_header_self_contained.cpp
     dof_numbering_header_self_contained.cpp
@@ -45,10 +47,17 @@ target_link_libraries(
     mpmc_mesh_cartesian_structured_tests
     PRIVATE mpmc::mesh)
 
+add_executable(mpmc_mesh_exchange_io_tests
+    exchange_io_test.cpp)
+target_link_libraries(
+    mpmc_mesh_exchange_io_tests
+    PRIVATE mpmc::mesh)
+
 foreach(target IN ITEMS
         mpmc_mesh_core_tests
         mpmc_mesh_io3d_tests
-        mpmc_mesh_cartesian_structured_tests)
+        mpmc_mesh_cartesian_structured_tests
+        mpmc_mesh_exchange_io_tests)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
 
     if(MSVC)
@@ -69,7 +78,8 @@ if(MPMC_MESH_ENABLE_SANITIZERS)
     foreach(target IN ITEMS
             mpmc_mesh_core_tests
             mpmc_mesh_io3d_tests
-            mpmc_mesh_cartesian_structured_tests)
+            mpmc_mesh_cartesian_structured_tests
+            mpmc_mesh_exchange_io_tests)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -101,9 +111,19 @@ set_tests_properties(
         LABELS "mesh;mesh.core;cartesian;structured;unit"
         TIMEOUT 30)
 
+add_test(
+    NAME mesh.core.exchange_io
+    COMMAND mpmc_mesh_exchange_io_tests)
+set_tests_properties(
+    mesh.core.exchange_io
+    PROPERTIES
+        LABELS "mesh;mesh.core;io;exchange;unit"
+        TIMEOUT 30)
+
 add_custom_target(
     mpmc_mesh_core_all
     DEPENDS
         mpmc_mesh_core_tests
         mpmc_mesh_io3d_tests
-        mpmc_mesh_cartesian_structured_tests)
+        mpmc_mesh_cartesian_structured_tests
+        mpmc_mesh_exchange_io_tests)

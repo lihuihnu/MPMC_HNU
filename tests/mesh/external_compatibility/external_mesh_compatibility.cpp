@@ -2,6 +2,7 @@
 #include <mpmc/mesh/gmsh_4_1.hpp>
 #include <mpmc/mesh/gmsh_4_1_3d.hpp>
 #include <mpmc/mesh/grdecl.hpp>
+#include <mpmc/mesh/mesh_exchange_io.hpp>
 #include <mpmc/mesh/vtu.hpp>
 #include <mpmc/mesh/vtu_3d.hpp>
 
@@ -123,6 +124,24 @@ void verify_gmsh_2d(
                 mesh::EntityKind::cell) == 1U,
         "deal.II Gmsh 2D entity counts");
 
+    const auto canonical =
+        mesh::make_mesh_exchange_document(
+            first);
+    require(
+        canonical.source_format() ==
+                mesh::MeshExchangeFormat::
+                    gmsh_4_1_ascii &&
+            canonical.dimension() == 2,
+        "deal.II Gmsh 2D canonical adapter");
+    require(
+        mesh::analyze_conversion(
+            canonical,
+            mesh::MeshExchangeFormat::grdecl)
+                .disposition() ==
+            mesh::ConversionDisposition::
+                unsupported,
+        "generic Gmsh 2D must not silently become GRDECL");
+
     const auto exported =
         mesh::export_gmsh_4_1_ascii(
             first);
@@ -171,6 +190,24 @@ void verify_gmsh_3d(
         1.0e-14,
         "deal.II Gmsh 3D unit-cube volume");
 
+    const auto canonical =
+        mesh::make_mesh_exchange_document(
+            first);
+    require(
+        canonical.source_format() ==
+                mesh::MeshExchangeFormat::
+                    gmsh_4_1_ascii &&
+            canonical.dimension() == 3,
+        "deal.II Gmsh 3D canonical adapter");
+    require(
+        mesh::analyze_conversion(
+            canonical,
+            mesh::MeshExchangeFormat::grdecl)
+                .disposition() ==
+            mesh::ConversionDisposition::
+                unsupported,
+        "generic Gmsh 3D must not silently become GRDECL");
+
     const auto exported =
         mesh::export_gmsh_4_1_ascii_3d(
             first);
@@ -218,6 +255,18 @@ void verify_vtu_bundle(
                 mesh::EntityKind::cell) == 1U &&
             first_2d.point_fields.size() == 2U,
         "deal.II VTU 2D quad import");
+    const auto canonical_2d =
+        mesh::make_mesh_exchange_document(
+            first_2d);
+    require(
+        canonical_2d.source_format() ==
+                mesh::MeshExchangeFormat::vtu_ascii &&
+            canonical_2d.dimension() == 2 &&
+            canonical_2d.fields().size() ==
+                first_2d.point_fields.size() +
+                    first_2d.cell_fields.size(),
+        "deal.II VTU 2D canonical adapter");
+
     const auto exported_2d =
         mesh::export_vtu_ascii(
             first_2d);
@@ -248,6 +297,26 @@ void verify_vtu_bundle(
         1.0,
         1.0e-14,
         "deal.II VTU 3D unit-cube volume");
+
+    const auto canonical_3d =
+        mesh::make_mesh_exchange_document(
+            first_3d);
+    require(
+        canonical_3d.source_format() ==
+                mesh::MeshExchangeFormat::vtu_ascii &&
+            canonical_3d.dimension() == 3 &&
+            canonical_3d.fields().size() ==
+                first_3d.point_fields.size() +
+                    first_3d.cell_fields.size(),
+        "deal.II VTU 3D canonical adapter");
+    require(
+        mesh::analyze_conversion(
+            canonical_3d,
+            mesh::MeshExchangeFormat::grdecl)
+                .disposition() ==
+            mesh::ConversionDisposition::
+                unsupported,
+        "generic VTU 3D must not silently become GRDECL");
 
     const auto exported_3d =
         mesh::export_vtu_ascii_3d(
@@ -288,6 +357,96 @@ void verify_grdecl_tube(
             raw.dimensions[2] == 2U &&
             raw.cell_count() == 6U,
         "OPM tube.grdecl dimensions");
+
+    const auto canonical =
+        mesh::make_mesh_exchange_document(
+            raw);
+    const auto native_report =
+        mesh::analyze_conversion(
+            canonical,
+            mesh::MeshExchangeFormat::grdecl);
+    require(
+        native_report.lossless() &&
+            native_report.issues().empty(),
+        "OPM tube canonical GRDECL report");
+
+    const auto native_export =
+        mesh::export_grdecl_ascii(
+            canonical);
+    require(
+        native_export.exported() &&
+            native_export.report.lossless(),
+        "OPM tube native GRDECL export");
+    const auto native_second =
+        mesh::import_grdecl(
+            *native_export.content,
+            raw.source_options);
+    require(
+        native_second.dimensions ==
+                raw.dimensions &&
+            native_second.active ==
+                raw.active &&
+            native_second.coord_m.size() ==
+                raw.coord_m.size() &&
+            native_second.zcorn_m.size() ==
+                raw.zcorn_m.size(),
+        "OPM native GRDECL structural roundtrip");
+    for (std::size_t index = 0U;
+         index < raw.coord_m.size();
+         ++index) {
+        require_close(
+            native_second.coord_m[index],
+            raw.coord_m[index],
+            1.0e-12,
+            "OPM native GRDECL COORD roundtrip");
+    }
+    for (std::size_t index = 0U;
+         index < raw.zcorn_m.size();
+         ++index) {
+        require_close(
+            native_second.zcorn_m[index],
+            raw.zcorn_m[index],
+            1.0e-12,
+            "OPM native GRDECL ZCORN roundtrip");
+    }
+    for (const auto id :
+         {"PORO", "PERMX", "PERMY", "PERMZ"}) {
+        const auto find_field =
+            [&](const mesh::GrdeclImportResult& value)
+                -> const mesh::DenseFieldSnapshot& {
+                const auto found =
+                    std::find_if(
+                        value.cell_fields.begin(),
+                        value.cell_fields.end(),
+                        [&](const auto& candidate) {
+                            return candidate.metadata().id ==
+                                id;
+                        });
+                if (found ==
+                    value.cell_fields.end()) {
+                    throw std::runtime_error(
+                        "OPM native GRDECL field missing");
+                }
+                return *found;
+            };
+        const auto& expected =
+            find_field(raw);
+        const auto& actual =
+            find_field(native_second);
+        require(
+            expected.values().size() ==
+                actual.values().size(),
+            "OPM native GRDECL field size");
+        for (std::size_t index = 0U;
+             index < expected.values().size();
+             ++index) {
+            require_close(
+                actual.values()[index],
+                expected.values()[index],
+                1.0e-12,
+                "OPM native GRDECL property roundtrip");
+        }
+    }
 
     const auto processed =
         mesh::process_active_corner_point_grid(
@@ -342,10 +501,13 @@ void verify_grdecl_tube(
     }
 
     std::cout
+        << "[PASS] external.grdecl.opm_tube_native_roundtrip"
+        << '\n';
+    std::cout
         << "[PASS] external.grdecl.opm_tube_to_vtu"
         << '\n';
     std::cout
-        << "grdecl_native_export=not_implemented"
+        << "grdecl_native_export=implemented_minimal_baseline"
         << '\n';
     std::cout
         << "grdecl_test_scale_assumption=coordinate:1,permeability:1"

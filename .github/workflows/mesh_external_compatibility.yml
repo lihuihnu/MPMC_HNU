@@ -9,6 +9,8 @@ on:
       - 'modules/mesh/include/mpmc/mesh/vtu.hpp'
       - 'modules/mesh/include/mpmc/mesh/vtu_3d.hpp'
       - 'modules/mesh/include/mpmc/mesh/grdecl.hpp'
+      - 'modules/mesh/include/mpmc/mesh/mesh_exchange.hpp'
+      - 'modules/mesh/include/mpmc/mesh/mesh_exchange_io.hpp'
       - 'modules/mesh/include/mpmc/mesh/active_corner_point.hpp'
       - 'tests/mesh/external_compatibility/**'
       - '.github/workflows/mesh_external_compatibility.yml'
@@ -94,7 +96,37 @@ jobs:
 
           grep -q '^\[PASS\] external.mesh.compatibility$' \
             build/external-compatibility.txt
-          grep -q '^grdecl_native_export=not_implemented$' \
+          grep -q '^\[PASS\] external.grdecl.opm_tube_native_roundtrip
+
+      - name: Publish compatibility summary
+        shell: bash
+        run: |
+          {
+            echo '## External mesh compatibility'
+            echo
+            echo 'Pinned upstream samples are downloaded only for this run and verified by Git blob SHA.'
+            echo
+            echo '```text'
+            cat build/external-compatibility.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+ \
+            build/external-compatibility.txt
+          grep -q '^grdecl_native_export=implemented_minimal_baseline
+
+      - name: Publish compatibility summary
+        shell: bash
+        run: |
+          {
+            echo '## External mesh compatibility'
+            echo
+            echo 'Pinned upstream samples are downloaded only for this run and verified by Git blob SHA.'
+            echo
+            echo '```text'
+            cat build/external-compatibility.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+ \
             build/external-compatibility.txt
 
       - name: Publish compatibility summary
