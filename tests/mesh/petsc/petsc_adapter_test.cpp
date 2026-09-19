@@ -1,3 +1,4 @@
+#include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
@@ -7,6 +8,7 @@
 
 #include <petscsys.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -35,6 +37,417 @@ void require_petsc(PetscErrorCode error, std::string_view message) {
             std::string(message) + " PETSc error=" +
             std::to_string(static_cast<long long>(error)));
     }
+}
+
+mesh::Topology two_by_one_cartesian_with_stable_ids() {
+    const auto base = mesh::make_cartesian_topology_2d(2U, 1U);
+
+    mesh::Topology::EntityIds ids;
+    for (std::size_t i = 0U;
+         i < base.entity_count(mesh::EntityKind::vertex);
+         ++i) {
+        ids.vertices.emplace_back(
+            5000000000ULL + static_cast<std::uint64_t>(i));
+    }
+    for (std::size_t i = 0U;
+         i < base.entity_count(mesh::EntityKind::face);
+         ++i) {
+        ids.faces.emplace_back(
+            6000000000ULL + static_cast<std::uint64_t>(i));
+    }
+    for (std::size_t i = 0U;
+         i < base.entity_count(mesh::EntityKind::cell);
+         ++i) {
+        ids.cells.emplace_back(
+            7000000000ULL + static_cast<std::uint64_t>(i));
+    }
+
+    std::vector<mesh::CsrAdjacency> relations;
+    relations.emplace_back(
+        base.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::vertex));
+    relations.emplace_back(
+        base.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::face));
+    relations.emplace_back(
+        base.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::vertex));
+    relations.emplace_back(
+        base.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell));
+
+    return mesh::Topology{
+        std::move(ids), std::move(relations)};
+}
+
+void verify_serial_dmplex_topology() {
+    const auto topology =
+        two_by_one_cartesian_with_stable_ids();
+
+    DM dm = nullptr;
+    std::vector<mesh_petsc::DMPlexPointIdentity> identities;
+    require_petsc(
+        mesh_petsc::create_serial_dmplex_topology(
+            topology, &dm, &identities),
+        "create_serial_dmplex_topology");
+
+    PetscBool is_plex = PETSC_FALSE;
+    require_petsc(
+        PetscObjectTypeCompare(
+            reinterpret_cast<PetscObject>(dm),
+            DMPLEX,
+            &is_plex),
+        "DMPlex object type");
+    require(is_plex == PETSC_TRUE,
+            "serial topology adapter must create DMPLEX");
+
+    MPI_Comm dm_comm = MPI_COMM_NULL;
+    require_petsc(
+        PetscObjectGetComm(
+            reinterpret_cast<PetscObject>(dm),
+            &dm_comm),
+        "DMPlex communicator");
+    int dm_size = -1;
+    require(
+        MPI_Comm_size(dm_comm, &dm_size) == MPI_SUCCESS,
+        "DMPlex communicator size");
+    require(dm_size == 1,
+            "serial DMPlex must live on PETSC_COMM_SELF");
+
+    PetscInt dimension = -1;
+    PetscInt depth = -1;
+    require_petsc(
+        DMGetDimension(dm, &dimension),
+        "DMGetDimension");
+    require_petsc(
+        DMPlexGetDepth(dm, &depth),
+        "DMPlexGetDepth");
+    require(dimension == 2 && depth == 2,
+            "2D fully interpolated DMPlex depth");
+
+    PetscInt chart_start = -1;
+    PetscInt chart_end = -1;
+    require_petsc(
+        DMPlexGetChart(dm, &chart_start, &chart_end),
+        "DMPlexGetChart");
+    require(chart_start == 0 && chart_end == 15,
+            "2x1 quad DMPlex chart");
+
+    PetscInt cell_start = -1;
+    PetscInt cell_end = -1;
+    PetscInt face_start = -1;
+    PetscInt face_end = -1;
+    PetscInt vertex_start = -1;
+    PetscInt vertex_end = -1;
+    require_petsc(
+        DMPlexGetHeightStratum(
+            dm, 0, &cell_start, &cell_end),
+        "DMPlex cell stratum");
+    require_petsc(
+        DMPlexGetHeightStratum(
+            dm, 1, &face_start, &face_end),
+        "DMPlex face stratum");
+    require_petsc(
+        DMPlexGetDepthStratum(
+            dm, 0, &vertex_start, &vertex_end),
+        "DMPlex vertex stratum");
+
+    require(cell_start == 0 && cell_end == 2,
+            "DMPlex cell points");
+    require(face_start == 2 && face_end == 9,
+            "DMPlex face points");
+    require(vertex_start == 9 && vertex_end == 15,
+            "DMPlex vertex points");
+
+    require(identities.size() == 15U,
+            "DMPlex identity map size");
+    for (std::size_t point = 0U;
+         point < identities.size();
+         ++point) {
+        const auto& identity = identities[point];
+        require(
+            identity.point ==
+                static_cast<PetscInt>(point),
+            "identity map point alignment");
+
+        mesh::EntityKind expected_kind =
+            mesh::EntityKind::cell;
+        std::size_t expected_local = point;
+        if (point >= 9U) {
+            expected_kind = mesh::EntityKind::vertex;
+            expected_local = point - 9U;
+        } else if (point >= 2U) {
+            expected_kind = mesh::EntityKind::face;
+            expected_local = point - 2U;
+        }
+
+        require(identity.kind == expected_kind,
+                "DMPlex stable identity kind");
+        require(
+            identity.local.value() ==
+                static_cast<mesh::LocalIndex::value_type>(
+                    expected_local),
+            "DMPlex stable identity local index");
+        require(
+            identity.global ==
+                topology.global_id(
+                    expected_kind,
+                    mesh::LocalIndex{
+                        static_cast<
+                            mesh::LocalIndex::value_type>(
+                                expected_local)}),
+            "DMPlex stable GlobalEntityId");
+        require(identity.global.value() > 4000000000ULL,
+                "stable ID regression must exercise 64-bit identity");
+    }
+
+    for (PetscInt cell = cell_start;
+         cell < cell_end;
+         ++cell) {
+        DMPolytopeType type = DM_POLYTOPE_UNKNOWN;
+        require_petsc(
+            DMPlexGetCellType(dm, cell, &type),
+            "DMPlex quadrilateral cell type");
+        require(type == DM_POLYTOPE_QUADRILATERAL,
+                "DMPlex cell must be quadrilateral");
+    }
+    for (PetscInt face = face_start;
+         face < face_end;
+         ++face) {
+        DMPolytopeType type = DM_POLYTOPE_UNKNOWN;
+        require_petsc(
+            DMPlexGetCellType(dm, face, &type),
+            "DMPlex segment face type");
+        require(type == DM_POLYTOPE_SEGMENT,
+                "DMPlex face must be segment");
+    }
+    for (PetscInt vertex = vertex_start;
+         vertex < vertex_end;
+         ++vertex) {
+        DMPolytopeType type = DM_POLYTOPE_UNKNOWN;
+        require_petsc(
+            DMPlexGetCellType(dm, vertex, &type),
+            "DMPlex point vertex type");
+        require(type == DM_POLYTOPE_POINT,
+                "DMPlex vertex must be point");
+    }
+
+    const auto& cell_faces = topology.relation(
+        mesh::EntityKind::cell,
+        mesh::EntityKind::face);
+    const auto& face_vertices = topology.relation(
+        mesh::EntityKind::face,
+        mesh::EntityKind::vertex);
+    const auto& face_cells = topology.relation(
+        mesh::EntityKind::face,
+        mesh::EntityKind::cell);
+
+    for (std::size_t cell = 0U; cell < 2U; ++cell) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(
+                cell)};
+        const auto expected = cell_faces.adjacent(local);
+
+        PetscInt cone_size = -1;
+        const PetscInt* cone = nullptr;
+        require_petsc(
+            DMPlexGetConeSize(
+                dm,
+                static_cast<PetscInt>(cell),
+                &cone_size),
+            "DMPlex cell cone size");
+        require_petsc(
+            DMPlexGetCone(
+                dm,
+                static_cast<PetscInt>(cell),
+                &cone),
+            "DMPlex cell cone");
+        require(cone_size == 4 && cone != nullptr,
+                "DMPlex cell cone width");
+        for (std::size_t i = 0U; i < 4U; ++i) {
+            require(
+                cone[i] ==
+                    2 + static_cast<PetscInt>(
+                        expected[i].value()),
+                "DMPlex cell-to-face cone identity");
+        }
+    }
+
+    for (std::size_t face = 0U; face < 7U; ++face) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(
+                face)};
+        const auto expected_vertices =
+            face_vertices.adjacent(local);
+
+        PetscInt cone_size = -1;
+        const PetscInt* cone = nullptr;
+        require_petsc(
+            DMPlexGetConeSize(
+                dm,
+                2 + static_cast<PetscInt>(face),
+                &cone_size),
+            "DMPlex face cone size");
+        require_petsc(
+            DMPlexGetCone(
+                dm,
+                2 + static_cast<PetscInt>(face),
+                &cone),
+            "DMPlex face cone");
+        require(cone_size == 2 && cone != nullptr,
+                "DMPlex face cone width");
+        require(
+            cone[0] ==
+                    9 + static_cast<PetscInt>(
+                        expected_vertices[0].value()) &&
+                cone[1] ==
+                    9 + static_cast<PetscInt>(
+                        expected_vertices[1].value()),
+            "DMPlex face-to-vertex cone identity");
+
+        PetscInt support_size = -1;
+        const PetscInt* support = nullptr;
+        require_petsc(
+            DMPlexGetSupportSize(
+                dm,
+                2 + static_cast<PetscInt>(face),
+                &support_size),
+            "DMPlex face support size");
+        require_petsc(
+            DMPlexGetSupport(
+                dm,
+                2 + static_cast<PetscInt>(face),
+                &support),
+            "DMPlex face support");
+
+        const auto expected_cells =
+            face_cells.adjacent(local);
+        require(
+            support_size ==
+                static_cast<PetscInt>(
+                    expected_cells.size()),
+            "DMPlex face-to-cell support width");
+
+        std::vector<PetscInt> actual_support(
+            support,
+            support +
+                static_cast<std::ptrdiff_t>(
+                    support_size));
+        std::vector<PetscInt> expected_support;
+        for (const auto expected_cell :
+             expected_cells) {
+            expected_support.push_back(
+                static_cast<PetscInt>(
+                    expected_cell.value()));
+        }
+        std::sort(
+            actual_support.begin(),
+            actual_support.end());
+        std::sort(
+            expected_support.begin(),
+            expected_support.end());
+        require(
+            actual_support == expected_support,
+            "DMPlex face-to-cell support identity");
+    }
+
+    for (std::size_t vertex = 0U;
+         vertex < 6U;
+         ++vertex) {
+        std::vector<PetscInt> expected_faces;
+        for (std::size_t face = 0U;
+             face < 7U;
+             ++face) {
+            const auto face_local = mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+            for (const auto incident_vertex :
+                 face_vertices.adjacent(face_local)) {
+                if (incident_vertex.value() ==
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            vertex)) {
+                    expected_faces.push_back(
+                        2 + static_cast<PetscInt>(
+                            face));
+                }
+            }
+        }
+
+        PetscInt support_size = -1;
+        const PetscInt* support = nullptr;
+        require_petsc(
+            DMPlexGetSupportSize(
+                dm,
+                9 + static_cast<PetscInt>(vertex),
+                &support_size),
+            "DMPlex vertex support size");
+        require_petsc(
+            DMPlexGetSupport(
+                dm,
+                9 + static_cast<PetscInt>(vertex),
+                &support),
+            "DMPlex vertex support");
+        require(
+            support_size ==
+                static_cast<PetscInt>(
+                    expected_faces.size()),
+            "DMPlex vertex-to-face support width");
+
+        std::vector<PetscInt> actual_support(
+            support,
+            support +
+                static_cast<std::ptrdiff_t>(
+                    support_size));
+        std::sort(
+            actual_support.begin(),
+            actual_support.end());
+        std::sort(
+            expected_faces.begin(),
+            expected_faces.end());
+        require(
+            actual_support == expected_faces,
+            "DMPlex vertex-to-face support identity");
+    }
+
+    require_petsc(
+        DMDestroy(&dm),
+        "DMDestroy serial DMPlex");
+    require(dm == nullptr,
+            "DMDestroy must clear serial DMPlex handle");
+
+    mesh::Topology::EntityIds invalid_ids;
+    invalid_ids.vertices = {
+        mesh::GlobalEntityId{1U},
+        mesh::GlobalEntityId{2U},
+        mesh::GlobalEntityId{3U},
+        mesh::GlobalEntityId{4U}};
+    invalid_ids.faces = {
+        mesh::GlobalEntityId{5U}};
+    invalid_ids.cells = {
+        mesh::GlobalEntityId{6U}};
+    const mesh::Topology missing_relations{
+        std::move(invalid_ids), {}};
+
+    identities.push_back(
+        mesh_petsc::DMPlexPointIdentity{
+            0,
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{0U},
+            mesh::GlobalEntityId{0U}});
+    const PetscErrorCode invalid_error =
+        mesh_petsc::create_serial_dmplex_topology(
+            missing_relations, &dm, &identities);
+    require(
+        invalid_error == PETSC_ERR_ARG_INCOMP,
+        "DMPlex adapter must reject missing core relations");
+    require(dm == nullptr && identities.empty(),
+            "failed DMPlex creation must leave clean outputs");
 }
 
 mesh::Topology two_rank_topology(std::uint32_t rank) {
@@ -927,6 +1340,7 @@ void run_two_rank_test() {
             layout, partition,
             global_entity_numbering(partition));
 
+    verify_serial_dmplex_topology();
     verify_section(layout, numbering, mpi_rank);
     verify_sf(partition, plan, mpi_rank);
     verify_global_section_and_section_sf(
