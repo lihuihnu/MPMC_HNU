@@ -524,7 +524,7 @@ export_gmsh_4_1_ascii_3d(
         throw std::invalid_argument(
             "mpmc::mesh::export_gmsh_4_1_ascii_3d: topology and 3D geometry snapshots are not aligned");
     }
-    for (const auto relation :
+    for (const auto& relation :
          {std::pair{EntityKind::cell,
                     EntityKind::vertex},
           std::pair{EntityKind::cell,
@@ -681,20 +681,6 @@ export_gmsh_4_1_ascii_3d(
                 "mpmc::mesh::export_gmsh_4_1_ascii_3d: PhysicalName has no represented group membership");
         }
     }
-
-    const auto coordinate =
-        [&](LocalIndex vertex) {
-            const std::size_t local =
-                static_cast<std::size_t>(
-                    vertex.value());
-            if (local >=
-                mesh.vertex_coordinates_m.size()) {
-                throw std::out_of_range(
-                    "mpmc::mesh::export_gmsh_4_1_ascii_3d: vertex index out of range");
-            }
-            return mesh
-                .vertex_coordinates_m[local];
-        };
 
     std::ostringstream output;
     output << std::setprecision(
