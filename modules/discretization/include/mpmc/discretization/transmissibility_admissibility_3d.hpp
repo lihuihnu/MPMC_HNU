@@ -41,7 +41,7 @@ struct TransmissibilityGeometryAdmissibility3D {
 
 
 [[nodiscard]] inline TransmissibilityGeometryAdmissibility3D
-classify_internal_face_transmissibility_geometry(
+classify_internal_face_face_connection_geometry(
     const mpmc::mesh::CellFaceGeometricOperator3D& geometry,
     mpmc::mesh::LocalIndex face,
     TransmissibilityGeometryAdmissibilityPolicy3D policy) {
@@ -303,7 +303,7 @@ classify_internal_face_k_orthogonality(
     const auto neighbour_tensor =
         permeability.tensor(*neighbour);
     const auto owner_normal =
-        geometry.transmissibility_geometry(face)
+        geometry.face_connection_geometry(face)
             .owner_unit_normal;
     const mpmc::mesh::UnitVector3D neighbour_normal{
         -owner_normal.x,
@@ -409,7 +409,7 @@ classify_internal_face_transmissibility_admissibility(
         geometry_policy,
     KOrthogonalityAdmissibilityPolicy3D k_policy) {
     const auto geometry_result =
-        classify_internal_face_transmissibility_geometry(
+        classify_internal_face_face_connection_geometry(
             geometry,
             face,
             geometry_policy);
