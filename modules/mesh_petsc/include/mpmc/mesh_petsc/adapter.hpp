@@ -4908,11 +4908,11 @@ struct OwnedCellStructuralCounts3D {
 
 /// Immutable local cell-pair sparsity/stencil snapshot.
 ///
-/// The global unique coupling graph is reconstructed collectively from
-/// schedule.assembly_rows() ONLY. schedule.ghost_rows() are deliberately not
-/// consumed. Each rank then retains only unique pairs incident to at least one
-/// locally owned cell, which is exactly the structural information needed to
-/// preallocate that rank's owned cell rows.
+/// Only schedule.assembly_rows() contribute structural pairs. Each pair is
+/// owner-targeted to its endpoint cell owner rank(s), then locally deduplicated;
+/// schedule.ghost_rows() are deliberately not consumed. A rank therefore stores
+/// only couplings needed by its locally owned cell rows, never a replicated
+/// global coupling graph.
 ///
 /// No transmissibility value, pressure variable, matrix coefficient, flux, or
 /// residual is stored in this snapshot.
@@ -5128,14 +5128,38 @@ canonical_pair(
            left.second == right.second;
 }
 
+struct TargetedStableCellPair {
+    std::uint32_t target_rank;
+    StableCellPair pair;
+};
+
+[[nodiscard]] inline bool targeted_pair_less(
+    const TargetedStableCellPair& left,
+    const TargetedStableCellPair& right) noexcept {
+    return left.target_rank < right.target_rank ||
+           (left.target_rank == right.target_rank &&
+            pair_less(left.pair, right.pair));
+}
+
+[[nodiscard]] inline bool targeted_pair_equal(
+    const TargetedStableCellPair& left,
+    const TargetedStableCellPair& right) noexcept {
+    return left.target_rank == right.target_rank &&
+           pair_equal(left.pair, right.pair);
+}
+
 } // namespace cell_pair_sparsity_detail
 
 /// Collectively build the local owned-row cell-pair sparsity snapshot.
 ///
-/// Only schedule.assembly_rows() are serialized. This matters when the
-/// authoritative face rank differs from one of the cell-row owner ranks:
-/// collective reconstruction gives every cell owner the structural adjacency
-/// it needs without consuming duplicated ghost connection rows.
+/// Only schedule.assembly_rows() are consumed. Every authoritative stable cell
+/// pair is routed only to the owner rank of each endpoint cell; when both cells
+/// share one owner rank the pair is sent once. schedule.ghost_rows() remain
+/// diagnostics-only and never participate in the structural graph.
+///
+/// The exchange is owner-targeted: MPI_Alltoall communicates only per-rank word
+/// counts, and MPI_Alltoallv transfers pair payloads solely to endpoint owner
+/// ranks. No rank reconstructs or temporarily stores the global cell-pair graph.
 ///
 /// PETSc/MPI diagonal-block counts follow standard distributed sparse-matrix
 /// preallocation semantics:
@@ -5166,99 +5190,204 @@ make_cell_pair_sparsity_stencil_snapshot_3d(
         return PETSC_ERR_ARG_INCOMP;
     }
 
+    int mpi_size = 0;
+    if (MPI_Comm_size(
+            comm,
+            &mpi_size) != MPI_SUCCESS ||
+        mpi_size <= 0 ||
+        static_cast<std::uint32_t>(mpi_size) !=
+            partition.rank_count()) {
+        return PETSC_ERR_MPI;
+    }
+    const std::size_t rank_count =
+        static_cast<std::size_t>(mpi_size);
+
     const std::size_t local_pair_count =
         schedule.assembly_rows().size();
     if (local_pair_count >
+        std::numeric_limits<std::size_t>::max() /
+            2U) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    std::vector<
+        cell_pair_sparsity_detail::
+            TargetedStableCellPair>
+        outbound_pairs;
+    outbound_pairs.reserve(
+        local_pair_count * 2U);
+
+    try {
+        for (const auto& row :
+             schedule.assembly_rows()) {
+            if (partition.global_id(
+                    mpmc::mesh::EntityKind::cell,
+                    row.owner_cell) !=
+                    row.owner_cell_global ||
+                partition.global_id(
+                    mpmc::mesh::EntityKind::cell,
+                    row.neighbour_cell) !=
+                    row.neighbour_cell_global) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+
+            const auto pair =
+                cell_pair_sparsity_detail::
+                    canonical_pair(
+                        row.owner_cell_global,
+                        row.neighbour_cell_global);
+            const auto owner_rank =
+                partition.owner_rank(
+                    mpmc::mesh::EntityKind::cell,
+                    row.owner_cell);
+            const auto neighbour_rank =
+                partition.owner_rank(
+                    mpmc::mesh::EntityKind::cell,
+                    row.neighbour_cell);
+
+            outbound_pairs.push_back(
+                cell_pair_sparsity_detail::
+                    TargetedStableCellPair{
+                        owner_rank.value(),
+                        pair});
+            if (neighbour_rank !=
+                owner_rank) {
+                outbound_pairs.push_back(
+                    cell_pair_sparsity_detail::
+                        TargetedStableCellPair{
+                            neighbour_rank.value(),
+                            pair});
+            }
+        }
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    std::sort(
+        outbound_pairs.begin(),
+        outbound_pairs.end(),
+        cell_pair_sparsity_detail::
+            targeted_pair_less);
+    outbound_pairs.erase(
+        std::unique(
+            outbound_pairs.begin(),
+            outbound_pairs.end(),
+            cell_pair_sparsity_detail::
+                targeted_pair_equal),
+        outbound_pairs.end());
+
+    if (outbound_pairs.size() >
         static_cast<std::size_t>(
             std::numeric_limits<int>::max() /
             2)) {
         return PETSC_ERR_ARG_OUTOFRANGE;
     }
 
-    std::vector<std::uint64_t> local_words;
-    local_words.reserve(
-        local_pair_count * 2U);
-    try {
-        for (const auto& row :
-             schedule.assembly_rows()) {
-            const auto pair =
-                cell_pair_sparsity_detail::
-                    canonical_pair(
-                        row.owner_cell_global,
-                        row.neighbour_cell_global);
-            local_words.push_back(
-                pair.first);
-            local_words.push_back(
-                pair.second);
-        }
-    } catch (...) {
-        return PETSC_ERR_ARG_INCOMP;
-    }
-
-    const int local_word_count =
-        static_cast<int>(
-            local_words.size());
-    int mpi_size = 0;
-    if (MPI_Comm_size(
-            comm,
-            &mpi_size) != MPI_SUCCESS ||
-        mpi_size <= 0) {
-        return PETSC_ERR_MPI;
-    }
-
-    std::vector<int> word_counts(
-        static_cast<std::size_t>(mpi_size),
+    std::vector<int> send_word_counts(
+        rank_count,
         0);
-    if (MPI_Allgather(
-            &local_word_count,
+    for (const auto& targeted :
+         outbound_pairs) {
+        const std::size_t target =
+            static_cast<std::size_t>(
+                targeted.target_rank);
+        if (target >= rank_count ||
+            send_word_counts[target] >
+                std::numeric_limits<int>::max() -
+                    2) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        send_word_counts[target] += 2;
+    }
+
+    std::vector<int> send_displacements(
+        rank_count,
+        0);
+    int total_send_words = 0;
+    for (std::size_t rank = 0U;
+         rank < rank_count;
+         ++rank) {
+        const int count =
+            send_word_counts[rank];
+        if (count < 0 ||
+            count % 2 != 0 ||
+            count >
+                std::numeric_limits<int>::max() -
+                    total_send_words) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        send_displacements[rank] =
+            total_send_words;
+        total_send_words += count;
+    }
+
+    std::vector<std::uint64_t> send_words;
+    send_words.reserve(
+        static_cast<std::size_t>(
+            total_send_words));
+    for (const auto& targeted :
+         outbound_pairs) {
+        send_words.push_back(
+            targeted.pair.first);
+        send_words.push_back(
+            targeted.pair.second);
+    }
+    if (send_words.size() !=
+        static_cast<std::size_t>(
+            total_send_words)) {
+        return PETSC_ERR_PLIB;
+    }
+
+    std::vector<int> receive_word_counts(
+        rank_count,
+        0);
+    if (MPI_Alltoall(
+            send_word_counts.data(),
             1,
             MPI_INT,
-            word_counts.data(),
+            receive_word_counts.data(),
             1,
             MPI_INT,
             comm) != MPI_SUCCESS) {
         return PETSC_ERR_MPI;
     }
 
-    std::vector<int> displacements(
-        static_cast<std::size_t>(mpi_size),
+    std::vector<int> receive_displacements(
+        rank_count,
         0);
-    int total_words = 0;
-    for (int rank = 0;
-         rank < mpi_size;
+    int total_receive_words = 0;
+    for (std::size_t rank = 0U;
+         rank < rank_count;
          ++rank) {
         const int count =
-            word_counts[
-                static_cast<std::size_t>(
-                    rank)];
+            receive_word_counts[rank];
         if (count < 0 ||
             count % 2 != 0 ||
             count >
                 std::numeric_limits<int>::max() -
-                    total_words) {
+                    total_receive_words) {
             return PETSC_ERR_ARG_INCOMP;
         }
-        displacements[
-            static_cast<std::size_t>(
-                rank)] =
-            total_words;
-        total_words += count;
+        receive_displacements[rank] =
+            total_receive_words;
+        total_receive_words += count;
     }
 
-    std::vector<std::uint64_t> all_words(
+    std::vector<std::uint64_t> received_words(
         static_cast<std::size_t>(
-            total_words));
-    if (MPI_Allgatherv(
-            local_words.empty()
+            total_receive_words));
+    if (MPI_Alltoallv(
+            send_words.empty()
                 ? nullptr
-                : local_words.data(),
-            local_word_count,
+                : send_words.data(),
+            send_word_counts.data(),
+            send_displacements.data(),
             MPI_UINT64_T,
-            all_words.empty()
+            received_words.empty()
                 ? nullptr
-                : all_words.data(),
-            word_counts.data(),
-            displacements.data(),
+                : received_words.data(),
+            receive_word_counts.data(),
+            receive_displacements.data(),
             MPI_UINT64_T,
             comm) != MPI_SUCCESS) {
         return PETSC_ERR_MPI;
@@ -5268,25 +5397,21 @@ make_cell_pair_sparsity_stencil_snapshot_3d(
         cell_pair_sparsity_detail::StableCellPair>
             unique_pairs;
     unique_pairs.reserve(
-        all_words.size() / 2U);
+        received_words.size() / 2U);
     for (std::size_t offset = 0U;
-         offset < all_words.size();
+         offset < received_words.size();
          offset += 2U) {
         const auto first =
-            all_words[offset];
+            received_words[offset];
         const auto second =
-            all_words[offset + 1U];
-        if (first == second) {
+            received_words[offset + 1U];
+        if (first >= second) {
             return PETSC_ERR_ARG_INCOMP;
         }
         unique_pairs.push_back(
-            first < second
-                ? cell_pair_sparsity_detail::
-                      StableCellPair{
-                          first, second}
-                : cell_pair_sparsity_detail::
-                      StableCellPair{
-                          second, first});
+            cell_pair_sparsity_detail::
+                StableCellPair{
+                    first, second});
     }
     std::sort(
         unique_pairs.begin(),
@@ -5318,58 +5443,45 @@ make_cell_pair_sparsity_stencil_snapshot_3d(
             mpmc::mesh::GlobalEntityId{
                 pair.second};
 
-        const bool first_local =
-            partition.contains_global(
+        if (!partition.contains_global(
                 mpmc::mesh::EntityKind::cell,
-                first_global);
-        const bool second_local =
-            partition.contains_global(
+                first_global) ||
+            !partition.contains_global(
                 mpmc::mesh::EntityKind::cell,
-                second_global);
+                second_global)) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
 
-        bool first_owned = false;
-        bool second_owned = false;
         mpmc::mesh::LocalIndex first_local_index{
             0U};
         mpmc::mesh::LocalIndex second_local_index{
             0U};
-
-        if (first_local) {
-            try {
-                first_local_index =
-                    partition.local_index(
-                        mpmc::mesh::EntityKind::cell,
-                        first_global);
-                first_owned =
-                    partition.is_owned(
-                        mpmc::mesh::EntityKind::cell,
-                        first_local_index);
-            } catch (...) {
-                return PETSC_ERR_ARG_INCOMP;
-            }
-        }
-        if (second_local) {
-            try {
-                second_local_index =
-                    partition.local_index(
-                        mpmc::mesh::EntityKind::cell,
-                        second_global);
-                second_owned =
-                    partition.is_owned(
-                        mpmc::mesh::EntityKind::cell,
-                        second_local_index);
-            } catch (...) {
-                return PETSC_ERR_ARG_INCOMP;
-            }
+        bool first_owned = false;
+        bool second_owned = false;
+        try {
+            first_local_index =
+                partition.local_index(
+                    mpmc::mesh::EntityKind::cell,
+                    first_global);
+            second_local_index =
+                partition.local_index(
+                    mpmc::mesh::EntityKind::cell,
+                    second_global);
+            first_owned =
+                partition.is_owned(
+                    mpmc::mesh::EntityKind::cell,
+                    first_local_index);
+            second_owned =
+                partition.is_owned(
+                    mpmc::mesh::EntityKind::cell,
+                    second_local_index);
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
         }
 
         if (!first_owned &&
             !second_owned) {
-            continue;
-        }
-        if (!first_local ||
-            !second_local) {
-            return PETSC_ERR_ARG_WRONGSTATE;
+            return PETSC_ERR_ARG_INCOMP;
         }
 
         local_couplings.push_back(
@@ -5462,7 +5574,6 @@ make_cell_pair_sparsity_stencil_snapshot_3d(
 
     return PETSC_SUCCESS;
 }
-
 
 class PetscMpiAijSymbolicPreallocation3D {
 public:
