@@ -1,8 +1,10 @@
 #ifndef MPMC_MESH_PETSC_ADAPTER_HPP
 #define MPMC_MESH_PETSC_ADAPTER_HPP
 
+#include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
+#include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
@@ -18,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -1641,6 +1644,614 @@ inline PetscErrorCode migrate_dmplex_identities(
                         static_cast<std::size_t>(
                             offset + 1)]}});
     }
+
+    const PetscErrorCode free_error =
+        PetscFree(target_raw);
+    const PetscErrorCode target_destroy_error =
+        PetscSectionDestroy(&target_section);
+    const PetscErrorCode source_destroy_error =
+        PetscSectionDestroy(&source_section);
+    if (free_error != PETSC_SUCCESS) return free_error;
+    if (target_destroy_error != PETSC_SUCCESS) {
+        return target_destroy_error;
+    }
+    return source_destroy_error;
+}
+
+inline PetscErrorCode migrate_face_boundary_snapshot(
+    DM source_dm,
+    PetscSF migration_sf,
+    const mpmc::mesh::FaceBoundarySnapshot& source_boundary,
+    std::span<const DMPlexPointIdentity> source_identities,
+    DM target_dm,
+    std::span<const DMPlexPointIdentity> target_identities,
+    std::optional<mpmc::mesh::FaceBoundarySnapshot>* target_boundary) {
+    if (source_dm == nullptr ||
+        migration_sf == nullptr ||
+        target_dm == nullptr ||
+        target_boundary == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    target_boundary->reset();
+
+    PetscInt source_start = 0;
+    PetscInt source_end = 0;
+    PetscErrorCode error =
+        DMPlexGetChart(
+            source_dm, &source_start, &source_end);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscSection source_section = nullptr;
+    PetscSection target_section = nullptr;
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(source_dm)),
+        &source_section);
+    if (error != PETSC_SUCCESS) return error;
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(target_dm)),
+        &target_section);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    error = PetscSectionSetChart(
+        source_section, source_start, source_end);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+    for (const auto& identity : source_identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::face) {
+            continue;
+        }
+        if (identity.point < source_start ||
+            identity.point >= source_end ||
+            static_cast<std::size_t>(
+                identity.local.value()) >=
+                source_boundary.face_count()) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_SIZ;
+        }
+        error = PetscSectionSetDof(
+            source_section, identity.point, 2);
+        if (error != PETSC_SUCCESS) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error;
+        }
+    }
+    error = PetscSectionSetUp(source_section);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    PetscInt source_storage = 0;
+    error = PetscSectionGetStorageSize(
+        source_section, &source_storage);
+    if (error != PETSC_SUCCESS || source_storage < 0) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+
+    std::vector<std::uint32_t> source_data(
+        static_cast<std::size_t>(source_storage), 0U);
+    for (const auto& identity : source_identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::face) {
+            continue;
+        }
+        PetscInt offset = -1;
+        error = PetscSectionGetOffset(
+            source_section,
+            identity.point,
+            &offset);
+        if (error != PETSC_SUCCESS ||
+            offset < 0 ||
+            offset + 1 >= source_storage) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+        const auto classification =
+            source_boundary.classification(
+                identity.local);
+        const auto tag =
+            source_boundary.physical_tag(
+                identity.local);
+        source_data[
+            static_cast<std::size_t>(offset)] =
+            static_cast<std::uint32_t>(
+                classification);
+        source_data[
+            static_cast<std::size_t>(offset + 1)] =
+            tag.value();
+    }
+
+    void* target_raw = nullptr;
+    error = DMPlexDistributeData(
+        source_dm,
+        migration_sf,
+        source_section,
+        MPI_UINT32_T,
+        source_data.empty()
+            ? nullptr
+            : source_data.data(),
+        target_section,
+        &target_raw);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    PetscInt face_start = -1;
+    PetscInt face_end = -1;
+    error = DMPlexGetHeightStratum(
+        target_dm, 1, &face_start, &face_end);
+    if (error != PETSC_SUCCESS ||
+        face_start < 0 ||
+        face_end < face_start) {
+        PetscFree(target_raw);
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+    const std::size_t face_count =
+        static_cast<std::size_t>(
+            face_end - face_start);
+
+    std::vector<mpmc::mesh::FaceClassification>
+        classifications(
+            face_count,
+            mpmc::mesh::FaceClassification::interior);
+    std::vector<mpmc::mesh::PhysicalTag>
+        physical_tags(
+            face_count,
+            mpmc::mesh::PhysicalTag{0U});
+    std::vector<std::uint8_t> seen(
+        face_count, std::uint8_t{0U});
+
+    auto* target_data =
+        static_cast<std::uint32_t*>(target_raw);
+    for (const auto& identity : target_identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::face) {
+            continue;
+        }
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        if (local >= face_count ||
+            seen[local] != 0U) {
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        PetscInt dof = 0;
+        PetscInt offset = -1;
+        error = PetscSectionGetDof(
+            target_section,
+            identity.point,
+            &dof);
+        if (error == PETSC_SUCCESS) {
+            error = PetscSectionGetOffset(
+                target_section,
+                identity.point,
+                &offset);
+        }
+        if (error != PETSC_SUCCESS ||
+            dof != 2 ||
+            offset < 0) {
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+
+        const std::uint32_t raw_classification =
+            target_data[
+                static_cast<std::size_t>(offset)];
+        mpmc::mesh::FaceClassification classification;
+        if (raw_classification ==
+            static_cast<std::uint32_t>(
+                mpmc::mesh::FaceClassification::interior)) {
+            classification =
+                mpmc::mesh::FaceClassification::interior;
+        } else if (
+            raw_classification ==
+            static_cast<std::uint32_t>(
+                mpmc::mesh::FaceClassification::boundary)) {
+            classification =
+                mpmc::mesh::FaceClassification::boundary;
+        } else {
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        const auto tag =
+            mpmc::mesh::PhysicalTag{
+                target_data[
+                    static_cast<std::size_t>(
+                        offset + 1)]};
+        if (classification ==
+                mpmc::mesh::FaceClassification::interior &&
+            tag.is_tagged()) {
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        classifications[local] = classification;
+        physical_tags[local] = tag;
+        seen[local] = std::uint8_t{1U};
+    }
+
+    if (std::find(
+            seen.begin(),
+            seen.end(),
+            std::uint8_t{0U}) != seen.end()) {
+        PetscFree(target_raw);
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    target_boundary->emplace(
+        std::move(classifications),
+        std::move(physical_tags));
+
+    const PetscErrorCode free_error =
+        PetscFree(target_raw);
+    const PetscErrorCode target_destroy_error =
+        PetscSectionDestroy(&target_section);
+    const PetscErrorCode source_destroy_error =
+        PetscSectionDestroy(&source_section);
+    if (free_error != PETSC_SUCCESS) return free_error;
+    if (target_destroy_error != PETSC_SUCCESS) {
+        return target_destroy_error;
+    }
+    return source_destroy_error;
+}
+
+inline PetscErrorCode migrate_dense_field_snapshot(
+    DM source_dm,
+    PetscSF migration_sf,
+    const mpmc::mesh::DenseFieldSnapshot& source_field,
+    std::span<const DMPlexPointIdentity> source_identities,
+    DM target_dm,
+    std::span<const DMPlexPointIdentity> target_identities,
+    std::optional<mpmc::mesh::DenseFieldSnapshot>* target_field) {
+    if (source_dm == nullptr ||
+        migration_sf == nullptr ||
+        target_dm == nullptr ||
+        target_field == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    target_field->reset();
+
+    const auto location = source_field.location();
+    if (location == mpmc::mesh::EntityKind::edge) {
+        return PETSC_ERR_SUP;
+    }
+    const std::size_t component_count =
+        source_field.component_count();
+    PetscInt component_count_petsc = 0;
+    PetscErrorCode error =
+        detail::checked_petsc_int_size(
+            component_count,
+            &component_count_petsc);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscInt source_start = 0;
+    PetscInt source_end = 0;
+    error = DMPlexGetChart(
+        source_dm, &source_start, &source_end);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscSection source_section = nullptr;
+    PetscSection target_section = nullptr;
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(source_dm)),
+        &source_section);
+    if (error != PETSC_SUCCESS) return error;
+    error = PetscSectionCreate(
+        PetscObjectComm(
+            reinterpret_cast<PetscObject>(target_dm)),
+        &target_section);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    error = PetscSectionSetChart(
+        source_section, source_start, source_end);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+    for (const auto& identity : source_identities) {
+        if (identity.kind != location) continue;
+        if (identity.point < source_start ||
+            identity.point >= source_end ||
+            static_cast<std::size_t>(
+                identity.local.value()) >=
+                source_field.entity_count()) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_SIZ;
+        }
+        error = PetscSectionSetDof(
+            source_section,
+            identity.point,
+            component_count_petsc);
+        if (error != PETSC_SUCCESS) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error;
+        }
+    }
+    error = PetscSectionSetUp(source_section);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    PetscInt source_storage = 0;
+    error = PetscSectionGetStorageSize(
+        source_section, &source_storage);
+    if (error != PETSC_SUCCESS ||
+        source_storage < 0) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+
+    std::vector<double> source_data(
+        static_cast<std::size_t>(source_storage),
+        0.0);
+    for (const auto& identity : source_identities) {
+        if (identity.kind != location) continue;
+        PetscInt offset = -1;
+        error = PetscSectionGetOffset(
+            source_section,
+            identity.point,
+            &offset);
+        if (error != PETSC_SUCCESS ||
+            offset < 0 ||
+            component_count_petsc >
+                source_storage - offset) {
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+        const auto values =
+            source_field.entity_values(
+                identity.local);
+        for (std::size_t component = 0U;
+             component < component_count;
+             ++component) {
+            source_data[
+                static_cast<std::size_t>(offset) +
+                component] =
+                values[component];
+        }
+    }
+
+    void* target_raw = nullptr;
+    error = DMPlexDistributeData(
+        source_dm,
+        migration_sf,
+        source_section,
+        MPI_DOUBLE,
+        source_data.empty()
+            ? nullptr
+            : source_data.data(),
+        target_section,
+        &target_raw);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error;
+    }
+
+    PetscInt kind_start = -1;
+    PetscInt kind_end = -1;
+    switch (location) {
+    case mpmc::mesh::EntityKind::cell:
+        error = DMPlexGetHeightStratum(
+            target_dm, 0, &kind_start, &kind_end);
+        break;
+    case mpmc::mesh::EntityKind::face:
+        error = DMPlexGetHeightStratum(
+            target_dm, 1, &kind_start, &kind_end);
+        break;
+    case mpmc::mesh::EntityKind::vertex:
+        error = DMPlexGetDepthStratum(
+            target_dm, 0, &kind_start, &kind_end);
+        break;
+    case mpmc::mesh::EntityKind::edge:
+        error = PETSC_ERR_SUP;
+        break;
+    }
+    if (error != PETSC_SUCCESS ||
+        kind_start < 0 ||
+        kind_end < kind_start) {
+        PetscFree(target_raw);
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+
+    const std::size_t entity_count =
+        static_cast<std::size_t>(
+            kind_end - kind_start);
+    if (entity_count != 0U &&
+        component_count >
+            std::numeric_limits<std::size_t>::max() /
+                entity_count) {
+        PetscFree(target_raw);
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    std::vector<double> values(
+        entity_count * component_count,
+        0.0);
+    std::vector<std::uint8_t> seen(
+        entity_count, std::uint8_t{0U});
+
+    auto* target_data =
+        static_cast<double*>(target_raw);
+    for (const auto& identity : target_identities) {
+        if (identity.kind != location) continue;
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        if (local >= entity_count ||
+            seen[local] != 0U) {
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        PetscInt dof = 0;
+        PetscInt offset = -1;
+        error = PetscSectionGetDof(
+            target_section,
+            identity.point,
+            &dof);
+        if (error == PETSC_SUCCESS) {
+            error = PetscSectionGetOffset(
+                target_section,
+                identity.point,
+                &offset);
+        }
+        if (error != PETSC_SUCCESS ||
+            dof != component_count_petsc ||
+            offset < 0) {
+            PetscFree(target_raw);
+            PetscSectionDestroy(&target_section);
+            PetscSectionDestroy(&source_section);
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+
+        for (std::size_t component = 0U;
+             component < component_count;
+             ++component) {
+            values[
+                local * component_count +
+                component] =
+                target_data[
+                    static_cast<std::size_t>(offset) +
+                    component];
+        }
+        seen[local] = std::uint8_t{1U};
+    }
+
+    if (std::find(
+            seen.begin(),
+            seen.end(),
+            std::uint8_t{0U}) != seen.end()) {
+        PetscFree(target_raw);
+        PetscSectionDestroy(&target_section);
+        PetscSectionDestroy(&source_section);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    mpmc::mesh::Topology::EntityIds ids;
+    ids.cells.resize(
+        location == mpmc::mesh::EntityKind::cell
+            ? entity_count
+            : 0U);
+    ids.faces.resize(
+        location == mpmc::mesh::EntityKind::face
+            ? entity_count
+            : 0U);
+    ids.vertices.resize(
+        location == mpmc::mesh::EntityKind::vertex
+            ? entity_count
+            : 0U);
+
+    auto assign_id =
+        [&](const DMPlexPointIdentity& identity) {
+            const std::size_t local =
+                static_cast<std::size_t>(
+                    identity.local.value());
+            switch (identity.kind) {
+            case mpmc::mesh::EntityKind::cell:
+                if (location ==
+                    mpmc::mesh::EntityKind::cell) {
+                    ids.cells[local] =
+                        identity.global;
+                }
+                break;
+            case mpmc::mesh::EntityKind::face:
+                if (location ==
+                    mpmc::mesh::EntityKind::face) {
+                    ids.faces[local] =
+                        identity.global;
+                }
+                break;
+            case mpmc::mesh::EntityKind::vertex:
+                if (location ==
+                    mpmc::mesh::EntityKind::vertex) {
+                    ids.vertices[local] =
+                        identity.global;
+                }
+                break;
+            case mpmc::mesh::EntityKind::edge:
+                break;
+            }
+        };
+    for (const auto& identity : target_identities) {
+        if (identity.kind == location) {
+            assign_id(identity);
+        }
+    }
+
+    const mpmc::mesh::Topology target_topology{
+        std::move(ids), {}};
+    target_field->emplace(
+        mpmc::mesh::DenseFieldSnapshot::create(
+            target_topology,
+            location,
+            component_count,
+            std::move(values),
+            source_field.metadata()));
 
     const PetscErrorCode free_error =
         PetscFree(target_raw);
