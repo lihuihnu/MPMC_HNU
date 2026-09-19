@@ -5093,6 +5093,9 @@ void verify_owned_cell_structural_column_pattern_stage(
             owned_cells.size(),
         "column-pattern row count follows symbolic bridge");
 
+    std::size_t expected_diagonal_storage = 0U;
+    std::size_t expected_off_diagonal_storage = 0U;
+
     for (std::size_t index = 0U;
          index < snapshot.rows().size();
          ++index) {
@@ -5100,6 +5103,12 @@ void verify_owned_cell_structural_column_pattern_stage(
             snapshot.rows()[index];
         const auto cell =
             owned_cells[index];
+        const auto diagonal_columns =
+            snapshot.diagonal_global_columns(
+                cell);
+        const auto off_diagonal_columns =
+            snapshot.off_diagonal_global_columns(
+                cell);
 
         require(
             snapshot.contains_owned_cell(
@@ -5111,25 +5120,29 @@ void verify_owned_cell_structural_column_pattern_stage(
                 pattern.cell_global ==
                     owned_ids[index] &&
                 pattern.global_row ==
-                    owned_rows[index],
+                    owned_rows[index] &&
+                pattern.diagonal_column_count ==
+                    diagonal_columns.size() &&
+                pattern.off_diagonal_column_count ==
+                    off_diagonal_columns.size(),
             "column-pattern row preserves owned stable-cell PETSc row identity");
 
         const auto& structural =
             sparsity.structural_counts(
                 cell);
         require(
-            pattern.diagonal_global_columns.size() ==
+            diagonal_columns.size() ==
                     structural.diagonal_block_nnz &&
-                pattern.off_diagonal_global_columns.size() ==
+                off_diagonal_columns.size() ==
                     structural.off_diagonal_block_nnz &&
-                pattern.diagonal_global_columns.size() ==
+                diagonal_columns.size() ==
                     static_cast<std::size_t>(
                         d_nnz[index]) &&
-                pattern.off_diagonal_global_columns.size() ==
+                off_diagonal_columns.size() ==
                     static_cast<std::size_t>(
                         o_nnz[index]) &&
-                pattern.diagonal_global_columns.size() +
-                        pattern.off_diagonal_global_columns.size() ==
+                diagonal_columns.size() +
+                        off_diagonal_columns.size() ==
                     static_cast<std::size_t>(
                         d_nnz[index] +
                         o_nnz[index]),
@@ -5137,35 +5150,20 @@ void verify_owned_cell_structural_column_pattern_stage(
 
         require(
             std::is_sorted(
-                pattern
-                    .diagonal_global_columns
-                    .begin(),
-                pattern
-                    .diagonal_global_columns
-                    .end()) &&
+                diagonal_columns.begin(),
+                diagonal_columns.end()) &&
                 std::adjacent_find(
-                    pattern
-                        .diagonal_global_columns
-                        .begin(),
-                    pattern
-                        .diagonal_global_columns
-                        .end()) ==
-                    pattern
-                        .diagonal_global_columns
-                        .end() &&
+                    diagonal_columns.begin(),
+                    diagonal_columns.end()) ==
+                    diagonal_columns.end() &&
                 std::binary_search(
-                    pattern
-                        .diagonal_global_columns
-                        .begin(),
-                    pattern
-                        .diagonal_global_columns
-                        .end(),
+                    diagonal_columns.begin(),
+                    diagonal_columns.end(),
                     pattern.global_row),
             "diagonal structural columns are sorted, unique, and include self");
 
         for (const PetscInt column :
-             pattern
-                 .diagonal_global_columns) {
+             diagonal_columns) {
             require(
                 column >=
                         bridge.global_row_start() &&
@@ -5176,27 +5174,16 @@ void verify_owned_cell_structural_column_pattern_stage(
 
         require(
             std::is_sorted(
-                pattern
-                    .off_diagonal_global_columns
-                    .begin(),
-                pattern
-                    .off_diagonal_global_columns
-                    .end()) &&
+                off_diagonal_columns.begin(),
+                off_diagonal_columns.end()) &&
                 std::adjacent_find(
-                    pattern
-                        .off_diagonal_global_columns
-                        .begin(),
-                    pattern
-                        .off_diagonal_global_columns
-                        .end()) ==
-                    pattern
-                        .off_diagonal_global_columns
-                        .end(),
+                    off_diagonal_columns.begin(),
+                    off_diagonal_columns.end()) ==
+                    off_diagonal_columns.end(),
             "off-diagonal structural columns are sorted and unique");
 
         for (const PetscInt column :
-             pattern
-                 .off_diagonal_global_columns) {
+             off_diagonal_columns) {
             require(
                 column >= 0 &&
                     column <
@@ -5209,17 +5196,28 @@ void verify_owned_cell_structural_column_pattern_stage(
         }
 
         require(
-            pattern.diagonal_global_columns.size() ==
+            diagonal_columns.size() ==
                     1U &&
-                pattern.diagonal_global_columns
-                    .front() ==
+                diagonal_columns.front() ==
                     pattern.global_row &&
-                pattern.off_diagonal_global_columns.size() ==
+                off_diagonal_columns.size() ==
                     (expect_remote_coupling
                          ? 1U
                          : 0U),
             "two-cell fixture structural column pattern");
+
+        expected_diagonal_storage +=
+            diagonal_columns.size();
+        expected_off_diagonal_storage +=
+            off_diagonal_columns.size();
     }
+
+    require(
+        snapshot.diagonal_column_storage().size() ==
+                expected_diagonal_storage &&
+            snapshot.off_diagonal_column_storage().size() ==
+                expected_off_diagonal_storage,
+        "finalized column-pattern storage is compact and has no unreferenced entries");
 
     mesh::LocalIndex ghost_cell{0U};
     bool found_ghost = false;
@@ -7828,51 +7826,100 @@ void verify_structural_column_pattern_sorting_fixture(
             snapshot->row_count() == 2U,
         "multi-neighbour structural column-pattern row count");
 
+    const auto matches =
+        [](std::span<const PetscInt> actual,
+           std::span<const PetscInt> expected) {
+            return actual.size() ==
+                       expected.size() &&
+                   std::equal(
+                       actual.begin(),
+                       actual.end(),
+                       expected.begin(),
+                       expected.end());
+        };
+
     if (rank == 0U) {
+        const std::array<PetscInt, 2>
+            first_diagonal{0, 1};
+        const std::array<PetscInt, 2>
+            first_off_diagonal{2, 3};
+        const std::array<PetscInt, 2>
+            second_diagonal{0, 1};
+        const std::array<PetscInt, 1>
+            second_off_diagonal{3};
         require(
-            snapshot->rows()[0]
-                    .diagonal_global_columns ==
-                std::vector<PetscInt>{0, 1} &&
-            snapshot->rows()[0]
-                    .off_diagonal_global_columns ==
-                std::vector<PetscInt>{2, 3} &&
-            snapshot->rows()[1]
-                    .diagonal_global_columns ==
-                std::vector<PetscInt>{0, 1} &&
-            snapshot->rows()[1]
-                    .off_diagonal_global_columns ==
-                std::vector<PetscInt>{3},
+            matches(
+                snapshot->diagonal_global_columns(
+                    snapshot->rows()[0].cell),
+                first_diagonal) &&
+            matches(
+                snapshot->off_diagonal_global_columns(
+                    snapshot->rows()[0].cell),
+                first_off_diagonal) &&
+            matches(
+                snapshot->diagonal_global_columns(
+                    snapshot->rows()[1].cell),
+                second_diagonal) &&
+            matches(
+                snapshot->off_diagonal_global_columns(
+                    snapshot->rows()[1].cell),
+                second_off_diagonal),
             "rank 0 structural columns are globally sorted and block-classified");
     } else {
+        const std::array<PetscInt, 2>
+            first_diagonal{2, 3};
+        const std::array<PetscInt, 1>
+            first_off_diagonal{0};
+        const std::array<PetscInt, 2>
+            second_diagonal{2, 3};
+        const std::array<PetscInt, 2>
+            second_off_diagonal{0, 1};
         require(
-            snapshot->rows()[0]
-                    .diagonal_global_columns ==
-                std::vector<PetscInt>{2, 3} &&
-            snapshot->rows()[0]
-                    .off_diagonal_global_columns ==
-                std::vector<PetscInt>{0} &&
-            snapshot->rows()[1]
-                    .diagonal_global_columns ==
-                std::vector<PetscInt>{2, 3} &&
-            snapshot->rows()[1]
-                    .off_diagonal_global_columns ==
-                std::vector<PetscInt>{0, 1},
+            matches(
+                snapshot->diagonal_global_columns(
+                    snapshot->rows()[0].cell),
+                first_diagonal) &&
+            matches(
+                snapshot->off_diagonal_global_columns(
+                    snapshot->rows()[0].cell),
+                first_off_diagonal) &&
+            matches(
+                snapshot->diagonal_global_columns(
+                    snapshot->rows()[1].cell),
+                second_diagonal) &&
+            matches(
+                snapshot->off_diagonal_global_columns(
+                    snapshot->rows()[1].cell),
+                second_off_diagonal),
             "rank 1 structural columns are globally sorted and block-classified");
     }
 
     for (std::size_t index = 0U;
          index < snapshot->rows().size();
          ++index) {
-        const auto& row =
-            snapshot->rows()[index];
+        const auto cell =
+            snapshot->rows()[index].cell;
+        const auto diagonal_columns =
+            snapshot->diagonal_global_columns(
+                cell);
+        const auto off_diagonal_columns =
+            snapshot->off_diagonal_global_columns(
+                cell);
         require(
-            row.diagonal_global_columns.size() +
-                    row.off_diagonal_global_columns.size() ==
+            diagonal_columns.size() +
+                    off_diagonal_columns.size() ==
                 static_cast<std::size_t>(
                     bridge.diagonal_nnz()[index] +
                     bridge.off_diagonal_nnz()[index]),
             "multi-neighbour N_columns,row equals d_nnz + o_nnz");
     }
+
+    require(
+        snapshot->diagonal_column_storage().size() ==
+                4U &&
+            snapshot->off_diagonal_column_storage().size() ==
+                3U,
+        "multi-neighbour finalized column storage is compact across rows");
 }
 
 void run_two_rank_test() {
