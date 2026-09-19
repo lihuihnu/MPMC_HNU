@@ -2236,13 +2236,15 @@ grdecl_field(const mesh::GrdeclImportResult& imported,
 }
 
 void grdecl_import() {
+    constexpr double coordinate_scale =
+        2.0;
     constexpr double permeability_scale =
         1.0e-15;
     const auto imported =
         mesh::import_grdecl(
             grdecl_two_cell_fixture(),
             mesh::GrdeclImportOptions{
-                2.0,
+                coordinate_scale,
                 permeability_scale});
 
     require(
