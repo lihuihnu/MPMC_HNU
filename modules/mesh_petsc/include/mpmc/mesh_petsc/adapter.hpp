@@ -3083,10 +3083,11 @@ inline PetscErrorCode migrate_stable_owner_face_geometry_3d(
 inline PetscErrorCode materialize_face_geometry_3d(
     const StableOwnerFaceGeometry3D& source_geometry,
     std::span<const DMPlexPointIdentity> target_identities,
-    mpmc::mesh::FaceGeometry3D* target_geometry) {
+    std::optional<mpmc::mesh::FaceGeometry3D>* target_geometry) {
     if (target_geometry == nullptr) {
         return PETSC_ERR_ARG_NULL;
     }
+    target_geometry->reset();
 
     const std::size_t face_count =
         source_geometry.face_count();
@@ -3131,15 +3132,14 @@ inline PetscErrorCode materialize_face_geometry_3d(
     }
 
     try {
-        *target_geometry =
-            mpmc::mesh::FaceGeometry3D{
-                cell_count,
-                source_geometry.face_centroids_m,
-                source_geometry.face_areas_m2,
-                std::move(owners),
-                source_geometry
-                    .face_owner_unit_normals};
+        target_geometry->emplace(
+            cell_count,
+            source_geometry.face_centroids_m,
+            source_geometry.face_areas_m2,
+            std::move(owners),
+            source_geometry.face_owner_unit_normals);
     } catch (...) {
+        target_geometry->reset();
         return PETSC_ERR_ARG_INCOMP;
     }
     return PETSC_SUCCESS;
