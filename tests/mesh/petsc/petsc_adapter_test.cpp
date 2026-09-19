@@ -1,5 +1,7 @@
 #include <mpmc/mesh/cartesian_2d.hpp>
+#include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
+#include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
@@ -1878,6 +1880,271 @@ shared_links_from_dm_point_sf(
                             all_words[offset + 5U])}});
     }
     return links;
+}
+
+mesh::FaceBoundarySnapshot two_by_one_reference_boundary(
+    const mesh::Topology& topology) {
+    const std::array<mesh::PhysicalTag, 7> tags{
+        mesh::PhysicalTag{101U},
+        mesh::PhysicalTag{0U},
+        mesh::PhysicalTag{102U},
+        mesh::PhysicalTag{103U},
+        mesh::PhysicalTag{104U},
+        mesh::PhysicalTag{105U},
+        mesh::PhysicalTag{106U}};
+    return mesh::make_face_boundary_snapshot(
+        topology, tags);
+}
+
+mesh::DenseFieldMetadata migration_metadata(
+    std::string id,
+    std::string unit,
+    std::string locator) {
+    return mesh::DenseFieldMetadata{
+        std::move(id),
+        std::move(unit),
+        mesh::FieldSourceMetadata{
+            mesh::FieldSourceKind::synthetic_test,
+            "mpmc.mesh_petsc.distributed_boundary_property_gate",
+            "gate-v1",
+            std::move(locator)}};
+}
+
+mesh::DenseFieldSnapshot reference_cell_scalar_field(
+    const mesh::Topology& topology) {
+    std::vector<double> values;
+    values.reserve(
+        topology.entity_count(
+            mesh::EntityKind::cell));
+    for (std::size_t i = 0U;
+         i < topology.entity_count(
+             mesh::EntityKind::cell);
+         ++i) {
+        values.push_back(
+            10.0 +
+            static_cast<double>(i) * 0.5);
+    }
+    return mesh::DenseFieldSnapshot::create(
+        topology,
+        mesh::EntityKind::cell,
+        1U,
+        std::move(values),
+        migration_metadata(
+            "cell.synthetic.scalar",
+            "Pa",
+            "cell/scalar"));
+}
+
+mesh::DenseFieldSnapshot reference_face_vector_field(
+    const mesh::Topology& topology) {
+    std::vector<double> values;
+    values.reserve(
+        topology.entity_count(
+            mesh::EntityKind::face) *
+        2U);
+    for (std::size_t i = 0U;
+         i < topology.entity_count(
+             mesh::EntityKind::face);
+         ++i) {
+        values.push_back(
+            100.0 +
+            static_cast<double>(i));
+        values.push_back(
+            -200.0 -
+            static_cast<double>(i) * 2.0);
+    }
+    return mesh::DenseFieldSnapshot::create(
+        topology,
+        mesh::EntityKind::face,
+        2U,
+        std::move(values),
+        migration_metadata(
+            "face.synthetic.vector",
+            "m/s",
+            "face/vector2"));
+}
+
+mesh::DenseFieldSnapshot reference_vertex_vector_field(
+    const mesh::Topology& topology) {
+    std::vector<double> values;
+    values.reserve(
+        topology.entity_count(
+            mesh::EntityKind::vertex) *
+        3U);
+    for (std::size_t i = 0U;
+         i < topology.entity_count(
+             mesh::EntityKind::vertex);
+         ++i) {
+        values.push_back(
+            1000.0 +
+            static_cast<double>(i));
+        values.push_back(
+            2000.0 +
+            static_cast<double>(i) * 3.0);
+        values.push_back(
+            -3000.0 -
+            static_cast<double>(i) * 5.0);
+    }
+    return mesh::DenseFieldSnapshot::create(
+        topology,
+        mesh::EntityKind::vertex,
+        3U,
+        std::move(values),
+        migration_metadata(
+            "vertex.synthetic.vector",
+            "kg/mol",
+            "vertex/vector3"));
+}
+
+std::uint64_t stable_id_base(
+    mesh::EntityKind kind) {
+    switch (kind) {
+    case mesh::EntityKind::vertex:
+        return 5000000000ULL;
+    case mesh::EntityKind::face:
+        return 6000000000ULL;
+    case mesh::EntityKind::cell:
+        return 7000000000ULL;
+    case mesh::EntityKind::edge:
+        break;
+    }
+    throw std::runtime_error(
+        "unsupported stable ID kind");
+}
+
+void require_metadata_equal(
+    const mesh::DenseFieldMetadata& actual,
+    const mesh::DenseFieldMetadata& expected) {
+    require(actual.id == expected.id,
+            "migrated field metadata id");
+    require(actual.unit == expected.unit,
+            "migrated field metadata unit");
+    require(
+        actual.source.kind ==
+            expected.source.kind,
+        "migrated field metadata source kind");
+    require(
+        actual.source.reference ==
+            expected.source.reference,
+        "migrated field metadata reference");
+    require(
+        actual.source.revision ==
+            expected.source.revision,
+        "migrated field metadata revision");
+    require(
+        actual.source.locator ==
+            expected.source.locator,
+        "migrated field metadata locator");
+}
+
+void verify_migrated_dense_field(
+    const mesh::DenseFieldSnapshot& actual,
+    const mesh::DenseFieldSnapshot& reference,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities) {
+    require(
+        actual.location() ==
+            reference.location(),
+        "migrated field location");
+    require(
+        actual.component_count() ==
+            reference.component_count(),
+        "migrated field component count");
+    require_metadata_equal(
+        actual.metadata(),
+        reference.metadata());
+
+    std::size_t expected_entity_count = 0U;
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            actual.location()) {
+            continue;
+        }
+        ++expected_entity_count;
+
+        const std::uint64_t base =
+            stable_id_base(identity.kind);
+        require(
+            identity.global.value() >= base,
+            "migrated field stable ID base");
+        const std::uint64_t ordinal =
+            identity.global.value() - base;
+        require(
+            ordinal <
+                static_cast<std::uint64_t>(
+                    reference.entity_count()),
+            "migrated field stable ID range");
+
+        const auto source_local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        ordinal)};
+        for (std::size_t component = 0U;
+             component <
+                 actual.component_count();
+             ++component) {
+            require(
+                actual.value(
+                    identity.local,
+                    component) ==
+                    reference.value(
+                        source_local,
+                        component),
+                "migrated DenseFieldSnapshot value by stable GlobalEntityId");
+        }
+    }
+    require(
+        actual.entity_count() ==
+            expected_entity_count,
+        "migrated field target entity count");
+}
+
+void verify_migrated_boundary(
+    const mesh::FaceBoundarySnapshot& actual,
+    const mesh::FaceBoundarySnapshot& reference,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities) {
+    std::size_t face_count = 0U;
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::face) {
+            continue;
+        }
+        ++face_count;
+        require(
+            identity.global.value() >=
+                6000000000ULL,
+            "migrated boundary stable face ID base");
+        const std::uint64_t ordinal =
+            identity.global.value() -
+            6000000000ULL;
+        require(
+            ordinal <
+                static_cast<std::uint64_t>(
+                    reference.face_count()),
+            "migrated boundary stable face ID range");
+        const auto source_face =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        ordinal)};
+        require(
+            actual.classification(
+                identity.local) ==
+                reference.classification(
+                    source_face),
+            "migrated face classification by stable GlobalEntityId");
+        require(
+            actual.physical_tag(
+                identity.local) ==
+                reference.physical_tag(
+                    source_face),
+            "migrated PhysicalTag by stable GlobalEntityId");
+    }
+    require(
+        actual.face_count() == face_count,
+        "migrated FaceBoundarySnapshot face count");
 }
 
 mesh::Geometry2D two_by_one_reference_geometry(
