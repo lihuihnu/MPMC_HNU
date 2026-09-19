@@ -2913,8 +2913,9 @@ inline PetscErrorCode migrate_stable_owner_face_geometry_3d(
         target_face_count);
     target_geometry->face_areas_m2.resize(
         target_face_count);
-    target_geometry->face_owner_global_ids.resize(
-        target_face_count);
+    target_geometry->face_owner_global_ids.assign(
+        target_face_count,
+        mpmc::mesh::GlobalEntityId{0U});
     target_geometry->face_owner_unit_normals.resize(
         target_face_count);
     std::vector<std::uint8_t> target_seen(
