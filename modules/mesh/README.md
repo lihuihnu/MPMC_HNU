@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已能创建 local/global `PetscSection`、PETSc-width local-to-global scalar map、entity/point/section SF，以及与这些 section 尺寸一致的真实 global `VECMPI` 与 local `VECSEQ`。2-rank gate 验证 global→local broadcast 与 local→global SUM/ADD：每个 shared DoF 只由唯一 owner 持有 global storage，owner+ghost local contributions 各累加一次，并能再次广播回全部 local slots。core 仍不依赖 PETSc/MPI；不含 DMPlex、Mat、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已能创建 local/global `PetscSection`、PETSc-width local-to-global scalar map、entity/point/section SF、真实 global/local Vec，并新增最小 serial DMPlex topology adapter。该 adapter 在 `PETSC_COMM_SELF` 上把 2D quad core DAG 直接映射为 `[cells][faces][vertices]` DMPlex point space，并单独保存 PETSc point 到 core `(EntityKind, LocalIndex, GlobalEntityId)` 的 64-bit stable identity map。core 仍不依赖 PETSc/MPI；不含 DMPlex distribute、Mat、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -92,11 +92,15 @@
 
 在此基础上，adapter 新增 `create_section_vecs()`、`global_to_local()` 与 `local_to_global_add()`。global Vec 使用 communicator 上的 `VECMPI`，其每 rank local size 严格等于 global section owned storage；local Vec 使用 `PETSC_COMM_SELF` 的 `VECSEQ`，size 等于 local section 全 storage。global→local 直接以 section-SF + `MPIU_SCALAR/MPI_REPLACE` 将 owner storage 广播到 owner/ghost local slots。local→global ADD 不把已有 global 值覆盖掉：先把 local `PetscScalar` contributions 通过 section-SF + `MPIU_SUM` reduce 到临时 global Vec，再用 `VecAXPY` 加回目标 global Vec。synthetic 2-rank fixture 显式确认每个 core global DoF 恰有两份 local copy，并用不同 rank 的 contribution 编码验证 owner 与 ghost 各参与一次、没有重复计数或 ownership 错位。
 
-当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现 DMPlex、constraint DoF、真实 halo buffer abstraction、Mat integration、残差/Jacobian 或 PETSc partitioner；这些不得由当前 adapter 冒充完成。
+新增 `create_serial_dmplex_topology()` 作为 topology-only DMPlex 基线。它不让 PETSc 从 cell list 自动插值并重新生成 face，而是直接用 core `cell->face` 作为 cell cone、`face->vertex` 作为 face cone，再调用 `DMPlexSymmetrize()` 生成 support、`DMPlexStratify()` 建立 strata、`DMPlexComputeCellTypes()` 推导 quad/segment/point 类型。当前 point numbering 明确固定为 `[cells][faces][vertices]`，并返回独立 `DMPlexPointIdentity[]`：stable `GlobalEntityId` 保留为 core 的 64-bit 类型，不压入 `DMLabel/PetscInt`。构建前会拒绝 edge entity、缺失四类必要 relation、非 4-face/4-vertex cell、非 2-vertex face，以及 `cell->face` / `face->cell` 或 cell vertex closure 不一致。
+
+synthetic serial 回归使用现有 `2×1` Cartesian quad connectivity，但把 vertex/face/cell stable IDs 分别提升到 5/6/7×10^9 量级，严格核对 DMPlex chart/height/depth strata、quadrilateral/segment/point cell type、cell cone、face cone、face support、vertex support，以及每个 PETSc point 的 64-bit core identity。测试虽运行在现有 2-rank executable 中，但每个 rank 都在自己的 `PETSC_COMM_SELF` 上独立构造 serial DMPlex；没有执行 distribute，也没有给 topology 注入伪造坐标或 metric geometry。
+
+当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现 DMPlex distribute/overlap、DMPlex geometry/coordinates、constraint DoF、真实 halo buffer abstraction、Mat integration、残差/Jacobian 或 PETSc partitioner；这些不得由当前 adapter 冒充完成。
 
 后续适配层仍可负责：
 
-- 从核心拓扑创建或填充 DMPlex；
+- 在已有 serial DMPlex 基线上加入 DMPlex distribute/overlap，并核对 distributed stable identity 与 core partition/halo contract；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
