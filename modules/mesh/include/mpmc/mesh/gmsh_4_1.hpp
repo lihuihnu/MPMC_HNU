@@ -1429,6 +1429,639 @@ entity_physical_tags(
         std::move(cell_physical_groups)};
 }
 
+
+namespace gmsh41_detail {
+
+[[nodiscard]] inline std::int64_t export_entity_tag(
+    std::size_t local,
+    const char* message) {
+    if (local >=
+        static_cast<std::size_t>(
+            std::numeric_limits<std::int64_t>::max())) {
+        throw std::length_error(message);
+    }
+    return static_cast<std::int64_t>(local + 1U);
+}
+
+inline void require_export_name(
+    const std::string& name) {
+    if (name.empty() ||
+        name.find('\0') != std::string::npos ||
+        name.find('\n') != std::string::npos ||
+        name.find('\r') != std::string::npos) {
+        throw std::invalid_argument(
+            "mpmc::mesh::export_gmsh_4_1_ascii: physical-group names must be nonempty single-line text");
+    }
+}
+
+[[nodiscard]] inline bool same_unordered_pair(
+    std::span<const LocalIndex> vertices,
+    LocalIndex first,
+    LocalIndex second) {
+    return vertices.size() == 2U &&
+           ((vertices[0] == first &&
+             vertices[1] == second) ||
+            (vertices[0] == second &&
+             vertices[1] == first));
+}
+
+struct ExportCellBoundary {
+    std::vector<std::size_t> face_locals;
+    std::vector<int> orientations;
+};
+
+} // namespace gmsh41_detail
+
+[[nodiscard]] inline std::string export_gmsh_4_1_ascii(
+    const Gmsh41ImportResult& mesh) {
+    using namespace gmsh41_detail;
+
+    const auto& topology = mesh.topology;
+    const auto& geometry = mesh.geometry;
+    const auto& boundary = mesh.face_boundary;
+
+    const std::size_t vertex_count =
+        topology.entity_count(EntityKind::vertex);
+    const std::size_t face_count =
+        topology.entity_count(EntityKind::face);
+    const std::size_t cell_count =
+        topology.entity_count(EntityKind::cell);
+    if (vertex_count == 0U ||
+        face_count == 0U ||
+        cell_count == 0U) {
+        throw std::invalid_argument(
+            "mpmc::mesh::export_gmsh_4_1_ascii: mesh must contain vertices, faces and cells");
+    }
+    if (topology.entity_count(EntityKind::edge) != 0U) {
+        throw std::invalid_argument(
+            "mpmc::mesh::export_gmsh_4_1_ascii: core edge entities are unsupported by the 2D baseline");
+    }
+    if (geometry.vertex_count() != vertex_count ||
+        geometry.face_count() != face_count ||
+        geometry.cell_count() != cell_count ||
+        boundary.face_count() != face_count) {
+        throw std::invalid_argument(
+            "mpmc::mesh::export_gmsh_4_1_ascii: topology, geometry and boundary snapshots are not aligned");
+    }
+
+    for (const auto relation :
+         {std::pair{EntityKind::cell, EntityKind::vertex},
+          std::pair{EntityKind::cell, EntityKind::face},
+          std::pair{EntityKind::face, EntityKind::vertex},
+          std::pair{EntityKind::face, EntityKind::cell}}) {
+        if (!topology.has_relation(
+                relation.first, relation.second)) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: required 2D topology relation is missing");
+        }
+    }
+
+    const auto& cell_vertices =
+        topology.relation(
+            EntityKind::cell, EntityKind::vertex);
+    const auto& cell_faces =
+        topology.relation(
+            EntityKind::cell, EntityKind::face);
+    const auto& face_vertices =
+        topology.relation(
+            EntityKind::face, EntityKind::vertex);
+    const auto& face_cells =
+        topology.relation(
+            EntityKind::face, EntityKind::cell);
+
+    const auto vertex_ids =
+        topology.global_ids(EntityKind::vertex);
+    const auto face_ids =
+        topology.global_ids(EntityKind::face);
+    const auto cell_ids =
+        topology.global_ids(EntityKind::cell);
+
+    for (const auto id : vertex_ids) {
+        if (id.value() == 0U) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: node GlobalEntityId must be positive");
+        }
+    }
+
+    std::set<std::uint64_t> element_tags;
+    for (const auto id : face_ids) {
+        if (id.value() == 0U ||
+            !element_tags.insert(id.value()).second) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: face/cell GlobalEntityIds must be globally unique positive element tags");
+        }
+    }
+    for (const auto id : cell_ids) {
+        if (id.value() == 0U ||
+            !element_tags.insert(id.value()).second) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: face/cell GlobalEntityIds must be globally unique positive element tags");
+        }
+    }
+
+    std::map<std::uint64_t, std::vector<std::uint32_t>>
+        cell_groups_by_id;
+    for (const auto& record :
+         mesh.cell_physical_groups) {
+        const std::uint64_t id =
+            record.cell_global_id.value();
+        if (id == 0U ||
+            !cell_groups_by_id
+                 .emplace(id, record.physical_tags)
+                 .second) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: duplicate or zero cell physical-group identity");
+        }
+        auto& tags =
+            cell_groups_by_id.at(id);
+        for (const auto tag : tags) {
+            if (tag == 0U) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::export_gmsh_4_1_ascii: surface Physical Group tags must be positive");
+            }
+        }
+        std::sort(tags.begin(), tags.end());
+        if (std::adjacent_find(
+                tags.begin(), tags.end()) !=
+            tags.end()) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: duplicate surface Physical Group tag on cell");
+        }
+    }
+    if (cell_groups_by_id.size() != cell_count) {
+        throw std::invalid_argument(
+            "mpmc::mesh::export_gmsh_4_1_ascii: exactly one cell physical-group record is required per cell");
+    }
+    for (const auto id : cell_ids) {
+        if (!cell_groups_by_id.contains(id.value())) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: missing cell physical-group record");
+        }
+    }
+
+    std::set<std::uint32_t> used_curve_groups;
+    for (std::size_t face = 0U;
+         face < face_count;
+         ++face) {
+        const auto local =
+            checked_local(
+                face,
+                "mpmc::mesh::export_gmsh_4_1_ascii: face local index overflow");
+        const auto adjacent =
+            face_cells.adjacent(local);
+        if (adjacent.size() != 1U &&
+            adjacent.size() != 2U) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: each face must have one or two adjacent cells");
+        }
+        const bool expected_boundary =
+            adjacent.size() == 1U;
+        if (boundary.is_boundary(local) !=
+            expected_boundary) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: FaceBoundarySnapshot classification disagrees with face->cell topology");
+        }
+        const auto tag =
+            boundary.physical_tag(local);
+        if (tag.is_tagged()) {
+            if (!expected_boundary) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::export_gmsh_4_1_ascii: interior face cannot carry a PhysicalTag");
+            }
+            used_curve_groups.insert(tag.value());
+        }
+
+        if (face_vertices.adjacent(local).size() !=
+            2U) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: every exported face must have exactly two vertices");
+        }
+    }
+
+    std::set<std::uint32_t> used_surface_groups;
+    for (const auto& [id, tags] :
+         cell_groups_by_id) {
+        (void)id;
+        used_surface_groups.insert(
+            tags.begin(), tags.end());
+    }
+
+    std::vector<GmshPhysicalName>
+        physical_names =
+            mesh.physical_names;
+    std::sort(
+        physical_names.begin(),
+        physical_names.end(),
+        [](const GmshPhysicalName& left,
+           const GmshPhysicalName& right) {
+            return std::tie(
+                       left.dimension, left.tag) <
+                   std::tie(
+                       right.dimension, right.tag);
+        });
+    for (std::size_t i = 0U;
+         i < physical_names.size();
+         ++i) {
+        const auto& name =
+            physical_names[i];
+        if ((name.dimension != 1 &&
+             name.dimension != 2) ||
+            name.tag == 0U) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: export supports PhysicalNames only for represented 1D/2D groups");
+        }
+        require_export_name(name.name);
+        if (i > 0U &&
+            physical_names[i - 1U].dimension ==
+                name.dimension &&
+            physical_names[i - 1U].tag ==
+                name.tag) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: duplicate PhysicalName key");
+        }
+        const bool represented =
+            name.dimension == 1
+                ? used_curve_groups.contains(
+                      name.tag)
+                : used_surface_groups.contains(
+                      name.tag);
+        if (!represented) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: PhysicalName has no represented group membership");
+        }
+    }
+
+    std::vector<ExportCellBoundary>
+        export_cell_boundaries;
+    export_cell_boundaries.reserve(
+        cell_count);
+    for (std::size_t cell = 0U;
+         cell < cell_count;
+         ++cell) {
+        const auto local =
+            checked_local(
+                cell,
+                "mpmc::mesh::export_gmsh_4_1_ascii: cell local index overflow");
+        const auto vertices =
+            cell_vertices.adjacent(local);
+        const auto faces =
+            cell_faces.adjacent(local);
+        if ((vertices.size() != 3U &&
+             vertices.size() != 4U) ||
+            faces.size() != vertices.size()) {
+            throw std::invalid_argument(
+                "mpmc::mesh::export_gmsh_4_1_ascii: only linear triangle/quad cells are exportable");
+        }
+
+        ExportCellBoundary cell_boundary;
+        cell_boundary.face_locals.reserve(
+            vertices.size());
+        cell_boundary.orientations.reserve(
+            vertices.size());
+        std::set<std::size_t>
+            used_cell_faces;
+
+        for (std::size_t edge = 0U;
+             edge < vertices.size();
+             ++edge) {
+            const auto first =
+                vertices[edge];
+            const auto second =
+                vertices[
+                    (edge + 1U) %
+                    vertices.size()];
+            std::optional<std::size_t>
+                matched_face;
+            int orientation = 0;
+
+            for (const auto face_local :
+                 faces) {
+                const std::size_t face =
+                    static_cast<std::size_t>(
+                        face_local.value());
+                const auto face_row =
+                    face_vertices.adjacent(
+                        face_local);
+                if (!same_unordered_pair(
+                        face_row,
+                        first,
+                        second)) {
+                    continue;
+                }
+                if (matched_face.has_value()) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh::export_gmsh_4_1_ascii: multiple cell faces match the same polygon edge");
+                }
+                matched_face = face;
+                orientation =
+                    face_row[0] == first &&
+                            face_row[1] == second
+                        ? 1
+                        : -1;
+            }
+
+            if (!matched_face.has_value() ||
+                !used_cell_faces
+                     .insert(*matched_face)
+                     .second) {
+                throw std::invalid_argument(
+                    "mpmc::mesh::export_gmsh_4_1_ascii: cell->face relation does not match consecutive cell vertices");
+            }
+            cell_boundary.face_locals.push_back(
+                *matched_face);
+            cell_boundary.orientations.push_back(
+                orientation);
+        }
+        export_cell_boundaries.push_back(
+            std::move(cell_boundary));
+    }
+
+    const auto coordinate =
+        [&](std::size_t vertex) {
+            return geometry.vertex_coordinate_m(
+                checked_local(
+                    vertex,
+                    "mpmc::mesh::export_gmsh_4_1_ascii: vertex local index overflow"));
+        };
+
+    std::ostringstream output;
+    output << std::setprecision(
+        std::numeric_limits<double>::max_digits10);
+
+    output << "$MeshFormat\n"
+           << "4.1 0 8\n"
+           << "$EndMeshFormat\n";
+
+    if (!physical_names.empty()) {
+        output << "$PhysicalNames\n"
+               << physical_names.size()
+               << '\n';
+        for (const auto& name :
+             physical_names) {
+            output << name.dimension << ' '
+                   << name.tag << ' '
+                   << std::quoted(name.name)
+                   << '\n';
+        }
+        output << "$EndPhysicalNames\n";
+    }
+
+    output << "$Entities\n"
+           << vertex_count << ' '
+           << face_count << ' '
+           << cell_count << " 0\n";
+
+    for (std::size_t vertex = 0U;
+         vertex < vertex_count;
+         ++vertex) {
+        const auto point_tag =
+            export_entity_tag(
+                vertex,
+                "mpmc::mesh::export_gmsh_4_1_ascii: point entity tag overflow");
+        const auto value =
+            coordinate(vertex);
+        output << point_tag << ' '
+               << value.x_m << ' '
+               << value.y_m
+               << " 0 0\n";
+    }
+
+    for (std::size_t face = 0U;
+         face < face_count;
+         ++face) {
+        const auto local =
+            checked_local(
+                face,
+                "mpmc::mesh::export_gmsh_4_1_ascii: face local index overflow");
+        const auto vertices =
+            face_vertices.adjacent(local);
+        const auto a =
+            coordinate(
+                static_cast<std::size_t>(
+                    vertices[0].value()));
+        const auto b =
+            coordinate(
+                static_cast<std::size_t>(
+                    vertices[1].value()));
+        const auto curve_tag =
+            export_entity_tag(
+                face,
+                "mpmc::mesh::export_gmsh_4_1_ascii: curve entity tag overflow");
+        const auto first_point_tag =
+            export_entity_tag(
+                static_cast<std::size_t>(
+                    vertices[0].value()),
+                "mpmc::mesh::export_gmsh_4_1_ascii: point entity tag overflow");
+        const auto second_point_tag =
+            export_entity_tag(
+                static_cast<std::size_t>(
+                    vertices[1].value()),
+                "mpmc::mesh::export_gmsh_4_1_ascii: point entity tag overflow");
+        const auto physical_tag =
+            boundary.physical_tag(local);
+
+        output << curve_tag << ' '
+               << std::min(a.x_m, b.x_m)
+               << ' '
+               << std::min(a.y_m, b.y_m)
+               << " 0 "
+               << std::max(a.x_m, b.x_m)
+               << ' '
+               << std::max(a.y_m, b.y_m)
+               << " 0 ";
+        if (physical_tag.is_tagged()) {
+            output << "1 "
+                   << physical_tag.value();
+        } else {
+            output << '0';
+        }
+        output << " 2 "
+               << -first_point_tag << ' '
+               << second_point_tag
+               << '\n';
+    }
+
+    for (std::size_t cell = 0U;
+         cell < cell_count;
+         ++cell) {
+        const auto local =
+            checked_local(
+                cell,
+                "mpmc::mesh::export_gmsh_4_1_ascii: cell local index overflow");
+        const auto vertices =
+            cell_vertices.adjacent(local);
+        double min_x =
+            std::numeric_limits<double>::infinity();
+        double min_y =
+            std::numeric_limits<double>::infinity();
+        double max_x =
+            -std::numeric_limits<double>::infinity();
+        double max_y =
+            -std::numeric_limits<double>::infinity();
+        for (const auto vertex_local :
+             vertices) {
+            const auto value =
+                coordinate(
+                    static_cast<std::size_t>(
+                        vertex_local.value()));
+            min_x = std::min(min_x, value.x_m);
+            min_y = std::min(min_y, value.y_m);
+            max_x = std::max(max_x, value.x_m);
+            max_y = std::max(max_y, value.y_m);
+        }
+
+        const auto surface_tag =
+            export_entity_tag(
+                cell,
+                "mpmc::mesh::export_gmsh_4_1_ascii: surface entity tag overflow");
+        const auto& groups =
+            cell_groups_by_id.at(
+                cell_ids[cell].value());
+        output << surface_tag << ' '
+               << min_x << ' '
+               << min_y << " 0 "
+               << max_x << ' '
+               << max_y << " 0 "
+               << groups.size();
+        for (const auto tag : groups) {
+            output << ' ' << tag;
+        }
+
+        const auto& cell_boundary =
+            export_cell_boundaries[cell];
+        output << ' '
+               << cell_boundary.face_locals.size();
+        for (std::size_t edge = 0U;
+             edge <
+             cell_boundary.face_locals.size();
+             ++edge) {
+            const auto curve_tag =
+                export_entity_tag(
+                    cell_boundary
+                        .face_locals[edge],
+                    "mpmc::mesh::export_gmsh_4_1_ascii: curve entity tag overflow");
+            output << ' '
+                   << (cell_boundary
+                               .orientations[edge] >
+                           0
+                           ? curve_tag
+                           : -curve_tag);
+        }
+        output << '\n';
+    }
+    output << "$EndEntities\n";
+
+    const auto [node_minimum, node_maximum] =
+        std::minmax_element(
+            vertex_ids.begin(),
+            vertex_ids.end(),
+            [](GlobalEntityId left,
+               GlobalEntityId right) {
+                return left.value() <
+                       right.value();
+            });
+    output << "$Nodes\n"
+           << vertex_count << ' '
+           << vertex_count << ' '
+           << node_minimum->value()
+           << ' '
+           << node_maximum->value()
+           << '\n';
+    for (std::size_t vertex = 0U;
+         vertex < vertex_count;
+         ++vertex) {
+        const auto point_tag =
+            export_entity_tag(
+                vertex,
+                "mpmc::mesh::export_gmsh_4_1_ascii: point entity tag overflow");
+        const auto value =
+            coordinate(vertex);
+        output << "0 " << point_tag
+               << " 0 1\n"
+               << vertex_ids[vertex].value()
+               << '\n'
+               << value.x_m << ' '
+               << value.y_m
+               << " 0\n";
+    }
+    output << "$EndNodes\n";
+
+    const auto [element_minimum, element_maximum] =
+        std::minmax_element(
+            element_tags.begin(),
+            element_tags.end());
+    output << "$Elements\n"
+           << (face_count + cell_count)
+           << ' '
+           << (face_count + cell_count)
+           << ' '
+           << *element_minimum << ' '
+           << *element_maximum
+           << '\n';
+
+    for (std::size_t face = 0U;
+         face < face_count;
+         ++face) {
+        const auto local =
+            checked_local(
+                face,
+                "mpmc::mesh::export_gmsh_4_1_ascii: face local index overflow");
+        const auto vertices =
+            face_vertices.adjacent(local);
+        const auto curve_tag =
+            export_entity_tag(
+                face,
+                "mpmc::mesh::export_gmsh_4_1_ascii: curve entity tag overflow");
+        output << "1 " << curve_tag
+               << " 1 1\n"
+               << face_ids[face].value()
+               << ' '
+               << vertex_ids[
+                      static_cast<std::size_t>(
+                          vertices[0].value())]
+                      .value()
+               << ' '
+               << vertex_ids[
+                      static_cast<std::size_t>(
+                          vertices[1].value())]
+                      .value()
+               << '\n';
+    }
+
+    for (std::size_t cell = 0U;
+         cell < cell_count;
+         ++cell) {
+        const auto local =
+            checked_local(
+                cell,
+                "mpmc::mesh::export_gmsh_4_1_ascii: cell local index overflow");
+        const auto vertices =
+            cell_vertices.adjacent(local);
+        const int element_type =
+            vertices.size() == 3U ? 2 : 3;
+        const auto surface_tag =
+            export_entity_tag(
+                cell,
+                "mpmc::mesh::export_gmsh_4_1_ascii: surface entity tag overflow");
+        output << "2 " << surface_tag
+               << ' ' << element_type
+               << " 1\n"
+               << cell_ids[cell].value();
+        for (const auto vertex_local :
+             vertices) {
+            output << ' '
+                   << vertex_ids[
+                          static_cast<std::size_t>(
+                              vertex_local.value())]
+                          .value();
+        }
+        output << '\n';
+    }
+    output << "$EndElements\n";
+
+    return output.str();
+}
+
 } // namespace mpmc::mesh
 
 #endif // MPMC_MESH_GMSH_4_1_HPP
