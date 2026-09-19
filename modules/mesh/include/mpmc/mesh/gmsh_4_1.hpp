@@ -1504,7 +1504,7 @@ struct ExportCellBoundary {
             "mpmc::mesh::export_gmsh_4_1_ascii: topology, geometry and boundary snapshots are not aligned");
     }
 
-    for (const auto relation :
+    for (const auto& relation :
          {std::pair{EntityKind::cell, EntityKind::vertex},
           std::pair{EntityKind::cell, EntityKind::face},
           std::pair{EntityKind::face, EntityKind::vertex},
