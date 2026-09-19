@@ -10,6 +10,7 @@
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
 #include <mpmc/mesh/topology.hpp>
+#include <mpmc/mesh/vtu.hpp>
 
 #include <array>
 #include <cmath>
@@ -1480,6 +1481,434 @@ void gmsh_4_1_invalid() {
     }
 }
 
+std::string vtu_mixed_triangle_quad_fixture() {
+    return R"vtu(<?xml version="1.0"?>
+<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian">
+  <UnstructuredGrid>
+    <Piece NumberOfPoints="5" NumberOfCells="2">
+      <PointData>
+        <DataArray type="Float32" Name="point.velocity" NumberOfComponents="2" format="ascii"
+                   mpmc_unit="m/s"
+                   mpmc_source_kind="synthetic_test"
+                   mpmc_source_reference="vtu&amp;fixture"
+                   mpmc_source_revision="r1"
+                   mpmc_source_locator="PointData/velocity">
+          1 2
+          3 4
+          5 6
+          7 8
+          9 10
+        </DataArray>
+      </PointData>
+      <CellData>
+        <DataArray type="UInt64" Name="mpmc_global_cell_id" format="ascii">
+          9223372036854775813 7000000003
+        </DataArray>
+        <DataArray type="Float64" Name="cell.state" NumberOfComponents="2" format="ascii"
+                   mpmc_unit="Pa"
+                   mpmc_source_kind="user_supplied"
+                   mpmc_source_reference="lab-run"
+                   mpmc_source_revision="v2"
+                   mpmc_source_locator="CellData/state">
+          101.5 0.25
+          202.5 0.75
+        </DataArray>
+      </CellData>
+      <Points>
+        <DataArray type="Float64" NumberOfComponents="3" format="ascii">
+          0 0 0
+          1 0 0
+          1 1 0
+          3 0 0
+          3 1 0
+        </DataArray>
+      </Points>
+      <Cells>
+        <DataArray type="Int64" Name="connectivity" format="ascii">
+          0 1 2
+          1 3 4 2
+        </DataArray>
+        <DataArray type="Int64" Name="offsets" format="ascii">
+          3 7
+        </DataArray>
+        <DataArray type="UInt8" Name="types" format="ascii">
+          5 9
+        </DataArray>
+      </Cells>
+    </Piece>
+  </UnstructuredGrid>
+</VTKFile>
+)vtu";
+}
+
+void require_dense_field_equal(
+    const mesh::DenseFieldSnapshot& actual,
+    const mesh::DenseFieldSnapshot& expected) {
+    require(
+        actual.location() ==
+            expected.location(),
+        "VTU round-trip field location");
+    require(
+        actual.entity_count() ==
+            expected.entity_count(),
+        "VTU round-trip field entity count");
+    require(
+        actual.component_count() ==
+            expected.component_count(),
+        "VTU round-trip field component count");
+    require(
+        actual.values().size() ==
+            expected.values().size(),
+        "VTU round-trip field value count");
+    for (std::size_t i = 0U;
+         i < actual.values().size();
+         ++i) {
+        require_close(
+            actual.values()[i],
+            expected.values()[i],
+            1.0e-14,
+            "VTU round-trip field value");
+    }
+
+    const auto& a = actual.metadata();
+    const auto& e = expected.metadata();
+    require(
+        a.id == e.id &&
+            a.unit == e.unit &&
+            a.source.kind ==
+                e.source.kind &&
+            a.source.reference ==
+                e.source.reference &&
+            a.source.revision ==
+                e.source.revision &&
+            a.source.locator ==
+                e.source.locator,
+        "VTU round-trip field metadata");
+}
+
+void require_vtu_fields_equal(
+    const std::vector<mesh::DenseFieldSnapshot>& actual,
+    const std::vector<mesh::DenseFieldSnapshot>& expected) {
+    require(
+        actual.size() == expected.size(),
+        "VTU round-trip field array count");
+    for (std::size_t i = 0U;
+         i < actual.size();
+         ++i) {
+        require_dense_field_equal(
+            actual[i], expected[i]);
+    }
+}
+
+void vtu_ascii_import() {
+    const auto imported =
+        mesh::import_vtu_ascii(
+            vtu_mixed_triangle_quad_fixture());
+
+    const auto& topology = imported.topology;
+    require(
+        topology.entity_count(
+            mesh::EntityKind::vertex) == 5U &&
+        topology.entity_count(
+            mesh::EntityKind::face) == 6U &&
+        topology.entity_count(
+            mesh::EntityKind::cell) == 2U &&
+        topology.entity_count(
+            mesh::EntityKind::edge) == 0U,
+        "VTU imported entity counts");
+
+    require(
+        topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{0U}).value() ==
+                9223372036854775813ULL &&
+        topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{1U}).value() ==
+                7000000003ULL,
+        "VTU UInt64 stable cell IDs");
+
+    const auto& cell_vertices =
+        topology.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::vertex);
+    require(
+        cell_vertices.adjacent(
+            mesh::LocalIndex{0U}).size() == 3U &&
+        cell_vertices.adjacent(
+            mesh::LocalIndex{1U}).size() == 4U,
+        "VTU triangle/quad connectivity widths");
+
+    const auto& face_cells =
+        topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    std::size_t interior_faces = 0U;
+    for (std::size_t face = 0U;
+         face < topology.entity_count(
+             mesh::EntityKind::face);
+         ++face) {
+        if (face_cells.adjacent(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            face)})
+                .size() == 2U) {
+            ++interior_faces;
+        }
+    }
+    require(
+        interior_faces == 1U,
+        "VTU reconstructed shared face");
+
+    const auto& geometry = imported.geometry;
+    require_close(
+        geometry.cell_area_m2(
+            mesh::LocalIndex{0U}),
+        0.5,
+        1.0e-14,
+        "VTU triangle area");
+    require_close(
+        geometry.cell_area_m2(
+            mesh::LocalIndex{1U}),
+        2.0,
+        1.0e-14,
+        "VTU quad area");
+    const auto triangle_centroid =
+        geometry.cell_centroid_m(
+            mesh::LocalIndex{0U});
+    require_close(
+        triangle_centroid.x_m,
+        2.0 / 3.0,
+        1.0e-14,
+        "VTU triangle centroid x");
+    require_close(
+        triangle_centroid.y_m,
+        1.0 / 3.0,
+        1.0e-14,
+        "VTU triangle centroid y");
+
+    require(
+        imported.point_fields.size() == 1U &&
+        imported.cell_fields.size() == 1U,
+        "VTU imported point/cell field counts");
+    const auto& point_field =
+        imported.point_fields.front();
+    require(
+        point_field.location() ==
+            mesh::EntityKind::vertex &&
+        point_field.component_count() == 2U &&
+        point_field.entity_count() == 5U,
+        "VTU point field layout");
+    require_close(
+        point_field.value(
+            mesh::LocalIndex{4U}, 1U),
+        10.0,
+        0.0,
+        "VTU point field value");
+    require(
+        point_field.metadata().unit == "m/s" &&
+        point_field.metadata().source.kind ==
+            mesh::FieldSourceKind::synthetic_test &&
+        point_field.metadata().source.reference ==
+            "vtu&fixture",
+        "VTU point field metadata/unescape");
+
+    const auto& cell_field =
+        imported.cell_fields.front();
+    require(
+        cell_field.location() ==
+            mesh::EntityKind::cell &&
+        cell_field.component_count() == 2U &&
+        cell_field.entity_count() == 2U,
+        "VTU cell field layout");
+    require_close(
+        cell_field.value(
+            mesh::LocalIndex{1U}, 1U),
+        0.75,
+        0.0,
+        "VTU cell field value");
+}
+
+void vtu_ascii_roundtrip() {
+    const auto first =
+        mesh::import_vtu_ascii(
+            vtu_mixed_triangle_quad_fixture());
+    const std::string exported =
+        mesh::export_vtu_ascii(first);
+
+    require(
+        exported.find(
+            "<VTKFile type=\"UnstructuredGrid\"") !=
+            std::string::npos,
+        "VTU export root type");
+    require(
+        exported.find(
+            "Name=\"mpmc_global_cell_id\"") !=
+            std::string::npos,
+        "VTU export stable cell identity array");
+    require(
+        exported.find(
+            "9223372036854775813") !=
+            std::string::npos,
+        "VTU export full UInt64 cell ID");
+    require(
+        exported.find(
+            "mpmc_source_reference=\"vtu&amp;fixture\"") !=
+            std::string::npos,
+        "VTU export XML-escaped provenance");
+
+    const auto second =
+        mesh::import_vtu_ascii(exported);
+
+    require_topology_equal(
+        second.topology,
+        first.topology);
+    require_geometry_equal(
+        second.geometry,
+        first.geometry);
+    require_vtu_fields_equal(
+        second.point_fields,
+        first.point_fields);
+    require_vtu_fields_equal(
+        second.cell_fields,
+        first.cell_fields);
+}
+
+void vtu_ascii_invalid() {
+    const auto valid =
+        vtu_mixed_triangle_quad_fixture();
+
+    {
+        auto appended = valid;
+        const auto where =
+            appended.find("format=\"ascii\"");
+        require(
+            where != std::string::npos,
+            "VTU appended marker");
+        appended.replace(
+            where,
+            std::string{"format=\"ascii\""}.size(),
+            "format=\"appended\"");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_vtu_ascii(
+                appended);
+        });
+    }
+
+    {
+        auto compressed = valid;
+        const auto where =
+            compressed.find(
+                "byte_order=\"LittleEndian\"");
+        require(
+            where != std::string::npos,
+            "VTU compressor marker");
+        compressed.replace(
+            where,
+            std::string{
+                "byte_order=\"LittleEndian\""}.size(),
+            "byte_order=\"LittleEndian\" compressor=\"vtkZLibDataCompressor\"");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_vtu_ascii(
+                compressed);
+        });
+    }
+
+    {
+        auto unsupported = valid;
+        const auto where =
+            unsupported.find("5 9");
+        require(
+            where != std::string::npos,
+            "VTU unsupported type marker");
+        unsupported.replace(
+            where,
+            std::string{"5 9"}.size(),
+            "5 10");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_vtu_ascii(
+                unsupported);
+        });
+    }
+
+    {
+        auto nonplanar = valid;
+        const auto where =
+            nonplanar.find("3 1 0");
+        require(
+            where != std::string::npos,
+            "VTU nonplanar point marker");
+        nonplanar.replace(
+            where,
+            std::string{"3 1 0"}.size(),
+            "3 1 0.5");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_vtu_ascii(
+                nonplanar);
+        });
+    }
+
+    {
+        auto bad_offsets = valid;
+        const auto where =
+            bad_offsets.find("3 7");
+        require(
+            where != std::string::npos,
+            "VTU offsets marker");
+        bad_offsets.replace(
+            where,
+            std::string{"3 7"}.size(),
+            "3 6");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_vtu_ascii(
+                bad_offsets);
+        });
+    }
+
+    {
+        auto duplicate_ids = valid;
+        const auto where =
+            duplicate_ids.find(
+                "9223372036854775813 7000000003");
+        require(
+            where != std::string::npos,
+            "VTU stable ID marker");
+        duplicate_ids.replace(
+            where,
+            std::string{
+                "9223372036854775813 7000000003"}.size(),
+            "7000000003 7000000003");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_vtu_ascii(
+                duplicate_ids);
+        });
+    }
+
+    {
+        auto imported =
+            mesh::import_vtu_ascii(valid);
+        imported.cell_fields.push_back(
+            mesh::DenseFieldSnapshot::create(
+                imported.topology,
+                mesh::EntityKind::cell,
+                1U,
+                {1.0, 2.0},
+                mesh::DenseFieldMetadata{
+                    "mpmc_global_cell_id",
+                    "1",
+                    mesh::FieldSourceMetadata{
+                        mesh::FieldSourceKind::synthetic_test,
+                        "reserved-name-test",
+                        "v1",
+                        "CellData"}}));
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::export_vtu_ascii(
+                imported);
+        });
+    }
+}
+
 void dof_layout_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
     const auto layout = mesh::DofLayout::create(
@@ -2404,6 +2833,9 @@ int main(int argc, char** argv) {
         else if (name == "gmsh_4_1_import") { gmsh_4_1_import(); }
         else if (name == "gmsh_4_1_roundtrip") { gmsh_4_1_roundtrip(); }
         else if (name == "gmsh_4_1_invalid") { gmsh_4_1_invalid(); }
+        else if (name == "vtu_ascii_import") { vtu_ascii_import(); }
+        else if (name == "vtu_ascii_roundtrip") { vtu_ascii_roundtrip(); }
+        else if (name == "vtu_ascii_invalid") { vtu_ascii_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
