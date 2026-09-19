@@ -1,6 +1,7 @@
 #ifndef MPMC_MESH_ACTIVE_CORNER_POINT_HPP
 #define MPMC_MESH_ACTIVE_CORNER_POINT_HPP
 
+#include <mpmc/mesh/face_geometry_3d.hpp>
 #include <mpmc/mesh/grdecl.hpp>
 
 #include <algorithm>
@@ -22,6 +23,8 @@ struct ActiveCornerPointGrid {
     Topology topology;
     std::vector<Coordinate3D> vertex_coordinates_m;
     std::vector<double> cell_volumes_m3;
+    FaceGeometry3D face_geometry;
+    std::vector<DenseFieldSnapshot> cell_fields;
     std::vector<GlobalEntityId> source_logical_cell_ids;
 
     [[nodiscard]] std::size_t cell_count() const noexcept {
@@ -134,6 +137,211 @@ struct FaceBuild {
         throw std::length_error(message);
     }
     return left * right;
+}
+
+struct Vector3D {
+    double x;
+    double y;
+    double z;
+};
+
+[[nodiscard]] inline Vector3D subtract(
+    Coordinate3D left,
+    Coordinate3D right) {
+    return Vector3D{
+        left.x_m - right.x_m,
+        left.y_m - right.y_m,
+        left.z_m - right.z_m};
+}
+
+[[nodiscard]] inline Vector3D cross(
+    Vector3D left,
+    Vector3D right) {
+    return Vector3D{
+        left.y * right.z - left.z * right.y,
+        left.z * right.x - left.x * right.z,
+        left.x * right.y - left.y * right.x};
+}
+
+[[nodiscard]] inline double dot(
+    Vector3D left,
+    Vector3D right) {
+    return left.x * right.x +
+           left.y * right.y +
+           left.z * right.z;
+}
+
+[[nodiscard]] inline double magnitude(
+    Vector3D value) {
+    return std::sqrt(dot(value, value));
+}
+
+[[nodiscard]] inline Coordinate3D triangle_centroid(
+    Coordinate3D a,
+    Coordinate3D b,
+    Coordinate3D c) {
+    return Coordinate3D{
+        (a.x_m + b.x_m + c.x_m) / 3.0,
+        (a.y_m + b.y_m + c.y_m) / 3.0,
+        (a.z_m + b.z_m + c.z_m) / 3.0};
+}
+
+[[nodiscard]] inline Coordinate3D cell_vertex_mean(
+    const std::array<std::size_t, 8>& vertices,
+    std::span<const Coordinate3D> coordinates) {
+    Coordinate3D centroid{0.0, 0.0, 0.0};
+    for (const auto vertex : vertices) {
+        if (vertex >= coordinates.size()) {
+            throw std::out_of_range(
+                "mpmc::mesh::process_active_corner_point_grid: cell vertex index out of range while computing centroid");
+        }
+        centroid.x_m += coordinates[vertex].x_m;
+        centroid.y_m += coordinates[vertex].y_m;
+        centroid.z_m += coordinates[vertex].z_m;
+    }
+    centroid.x_m /= 8.0;
+    centroid.y_m /= 8.0;
+    centroid.z_m /= 8.0;
+    return centroid;
+}
+
+struct QuadMetric {
+    Coordinate3D centroid;
+    double area_m2;
+    UnitVector3D unit_normal;
+};
+
+[[nodiscard]] inline QuadMetric quad_metric(
+    const std::array<std::size_t, 4>& vertices,
+    std::span<const Coordinate3D> coordinates,
+    Coordinate3D owner_centroid) {
+    std::array<Coordinate3D, 4> points{};
+    for (std::size_t i = 0U; i < 4U; ++i) {
+        if (vertices[i] >= coordinates.size()) {
+            throw std::out_of_range(
+                "mpmc::mesh::process_active_corner_point_grid: face vertex index out of range while computing metric");
+        }
+        points[i] = coordinates[vertices[i]];
+    }
+
+    double max_edge = 0.0;
+    for (std::size_t i = 0U; i < 4U; ++i) {
+        const auto edge =
+            subtract(
+                points[(i + 1U) % 4U],
+                points[i]);
+        const double length =
+            magnitude(edge);
+        if (!std::isfinite(length)) {
+            throw std::invalid_argument(
+                "mpmc::mesh::process_active_corner_point_grid: non-finite quad edge length");
+        }
+        max_edge =
+            std::max(max_edge, length);
+    }
+    if (max_edge <= 0.0) {
+        throw std::invalid_argument(
+            "mpmc::mesh::process_active_corner_point_grid: zero-size quad face");
+    }
+
+    const Vector3D doubled_area0 =
+        cross(
+            subtract(points[1], points[0]),
+            subtract(points[2], points[0]));
+    const Vector3D doubled_area1 =
+        cross(
+            subtract(points[2], points[0]),
+            subtract(points[3], points[0]));
+    const double magnitude0 =
+        magnitude(doubled_area0);
+    const double magnitude1 =
+        magnitude(doubled_area1);
+    const double area_tolerance =
+        4096.0 *
+        std::numeric_limits<double>::epsilon() *
+        max_edge * max_edge;
+    if (!std::isfinite(magnitude0) ||
+        !std::isfinite(magnitude1) ||
+        magnitude0 <= area_tolerance ||
+        magnitude1 <= area_tolerance) {
+        throw std::invalid_argument(
+            "mpmc::mesh::process_active_corner_point_grid: degenerate triangle in quad face");
+    }
+
+    const double fold_tolerance =
+        4096.0 *
+        std::numeric_limits<double>::epsilon() *
+        magnitude0 * magnitude1;
+    if (dot(doubled_area0, doubled_area1) <
+        -fold_tolerance) {
+        throw std::invalid_argument(
+            "mpmc::mesh::process_active_corner_point_grid: folded quad face has opposing triangle normals");
+    }
+
+    const double area0 =
+        0.5 * magnitude0;
+    const double area1 =
+        0.5 * magnitude1;
+    const double area =
+        area0 + area1;
+    const auto centroid0 =
+        triangle_centroid(
+            points[0], points[1], points[2]);
+    const auto centroid1 =
+        triangle_centroid(
+            points[0], points[2], points[3]);
+    const Coordinate3D centroid{
+        (area0 * centroid0.x_m +
+         area1 * centroid1.x_m) / area,
+        (area0 * centroid0.y_m +
+         area1 * centroid1.y_m) / area,
+        (area0 * centroid0.z_m +
+         area1 * centroid1.z_m) / area};
+
+    Vector3D area_vector{
+        doubled_area0.x + doubled_area1.x,
+        doubled_area0.y + doubled_area1.y,
+        doubled_area0.z + doubled_area1.z};
+    const double area_vector_magnitude =
+        magnitude(area_vector);
+    if (!std::isfinite(area_vector_magnitude) ||
+        area_vector_magnitude <= area_tolerance) {
+        throw std::invalid_argument(
+            "mpmc::mesh::process_active_corner_point_grid: quad face has near-zero resultant area vector");
+    }
+
+    Vector3D normal{
+        area_vector.x / area_vector_magnitude,
+        area_vector.y / area_vector_magnitude,
+        area_vector.z / area_vector_magnitude};
+    const Vector3D owner_to_face{
+        centroid.x_m - owner_centroid.x_m,
+        centroid.y_m - owner_centroid.y_m,
+        centroid.z_m - owner_centroid.z_m};
+    const double orientation =
+        dot(normal, owner_to_face);
+    const double orientation_tolerance =
+        4096.0 *
+        std::numeric_limits<double>::epsilon() *
+        max_edge;
+    if (std::abs(orientation) <=
+        orientation_tolerance) {
+        throw std::invalid_argument(
+            "mpmc::mesh::process_active_corner_point_grid: cannot orient quad normal away from owner cell");
+    }
+    if (orientation < 0.0) {
+        normal.x = -normal.x;
+        normal.y = -normal.y;
+        normal.z = -normal.z;
+    }
+
+    return QuadMetric{
+        centroid,
+        area,
+        UnitVector3D{
+            normal.x,
+            normal.y,
+            normal.z}};
 }
 
 [[nodiscard]] inline std::array<std::size_t, 4>
