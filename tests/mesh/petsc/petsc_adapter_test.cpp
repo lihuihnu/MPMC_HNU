@@ -4604,8 +4604,7 @@ void verify_parallel_owned_connection_schedule_stage(
         "parallel owned connection schedule rank metadata and local copy count");
 
     const auto verify_row_against_table =
-        [&](const mesh_petsc::
-                AssemblyReadyInternalConnectionRow3D& row,
+        [&](const discretization_petsc::AssemblyReadyInternalConnectionRow3D& row,
             bool should_be_owned) {
             require(
                 table.contains_face(
@@ -5054,8 +5053,7 @@ void verify_petsc_mpiaij_symbolic_preallocation_stage(
 }
 
 void verify_owned_cell_structural_column_pattern_stage(
-    const mesh_petsc::
-        OwnedCellStructuralColumnPatternSnapshot3D& snapshot,
+    const discretization_petsc::OwnedCellStructuralColumnPatternSnapshot3D& snapshot,
     const discretization_petsc::PetscMpiAijSymbolicPreallocation3D& bridge,
     const discretization_petsc::CellPairSparsityStencilSnapshot3D& sparsity,
     const mesh::PartitionSnapshot& partition,
@@ -6549,24 +6547,20 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         false);
 
     std::optional<
-        mesh_petsc::
-            OwnedCellStructuralColumnPatternSnapshot3D>
+        discretization_petsc::OwnedCellStructuralColumnPatternSnapshot3D>
         materialized_column_pattern;
     std::optional<
-        mesh_petsc::
-            OwnedCellStructuralColumnPatternSnapshot3D>
+        discretization_petsc::OwnedCellStructuralColumnPatternSnapshot3D>
         blocked_column_pattern;
     require_petsc(
-        mesh_petsc::
-            make_owned_cell_structural_column_pattern_snapshot_3d(
+        discretization_petsc::make_owned_cell_structural_column_pattern_snapshot_3d(
                 *materialized_sparsity,
                 *materialized_preallocation,
                 overlap_partition,
                 &materialized_column_pattern),
         "build materialized owned-cell structural column pattern");
     require_petsc(
-        mesh_petsc::
-            make_owned_cell_structural_column_pattern_snapshot_3d(
+        discretization_petsc::make_owned_cell_structural_column_pattern_snapshot_3d(
                 *blocked_sparsity,
                 *blocked_preallocation,
                 overlap_partition,
@@ -6593,8 +6587,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
 
     Mat materialized_symbolic_matrix = nullptr;
     require_petsc(
-        mesh_petsc::
-            create_empty_petsc_mpiaij_symbolic_matrix_3d(
+        discretization_petsc::create_empty_petsc_mpiaij_symbolic_matrix_3d(
                 PETSC_COMM_WORLD,
                 *materialized_preallocation,
                 &materialized_symbolic_matrix),
@@ -6609,8 +6602,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
 
     Mat blocked_symbolic_matrix = nullptr;
     require_petsc(
-        mesh_petsc::
-            create_empty_petsc_mpiaij_symbolic_matrix_3d(
+        discretization_petsc::create_empty_petsc_mpiaij_symbolic_matrix_3d(
                 PETSC_COMM_WORLD,
                 *blocked_preallocation,
                 &blocked_symbolic_matrix),
@@ -7515,8 +7507,7 @@ void run_three_rank_sparsity_test() {
         [](mesh::LocalIndex face,
            std::uint64_t face_global,
            double transmissibility_m3) {
-            return mesh_petsc::
-                AssemblyReadyInternalConnectionRow3D{
+            return discretization_petsc::AssemblyReadyInternalConnectionRow3D{
                     face,
                     mesh::GlobalEntityId{
                         face_global},
@@ -7569,8 +7560,7 @@ void run_three_rank_sparsity_test() {
         discretization_petsc::CellPairSparsityStencilSnapshot3D>
         snapshot;
     require_petsc(
-        mesh_petsc::
-            make_cell_pair_sparsity_stencil_snapshot_3d(
+        discretization_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
                 PETSC_COMM_WORLD,
                 schedule,
                 partition,
@@ -7708,8 +7698,7 @@ void verify_structural_column_pattern_sorting_fixture(
            std::uint64_t first_global,
            std::uint32_t second_local,
            std::uint64_t second_global) {
-            return mesh_petsc::
-                CellPairCoupling3D{
+            return discretization_petsc::CellPairCoupling3D{
                     mesh::LocalIndex{
                         first_local},
                     mesh::GlobalEntityId{
@@ -7787,8 +7776,7 @@ void verify_structural_column_pattern_sorting_fixture(
         o_nnz = {1, 2};
     }
 
-    const mesh_petsc::
-        CellPairSparsityStencilSnapshot3D
+    const discretization_petsc::CellPairSparsityStencilSnapshot3D
         sparsity{
             mesh::PartitionRank{rank},
             2U,
@@ -7796,8 +7784,7 @@ void verify_structural_column_pattern_sorting_fixture(
             std::move(couplings),
             std::move(counts)};
 
-    const mesh_petsc::
-        PetscMpiAijSymbolicPreallocation3D
+    const discretization_petsc::PetscMpiAijSymbolicPreallocation3D
         bridge{
             mesh::PartitionRank{rank},
             2U,
@@ -7812,12 +7799,10 @@ void verify_structural_column_pattern_sorting_fixture(
             {0, 2, 1, 3}};
 
     std::optional<
-        mesh_petsc::
-            OwnedCellStructuralColumnPatternSnapshot3D>
+        discretization_petsc::OwnedCellStructuralColumnPatternSnapshot3D>
         snapshot;
     require_petsc(
-        mesh_petsc::
-            make_owned_cell_structural_column_pattern_snapshot_3d(
+        discretization_petsc::make_owned_cell_structural_column_pattern_snapshot_3d(
                 sparsity,
                 bridge,
                 partition,
