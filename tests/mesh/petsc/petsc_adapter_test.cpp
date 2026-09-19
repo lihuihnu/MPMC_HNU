@@ -1,9 +1,11 @@
+#include <mpmc/mesh/active_corner_point.hpp>
 #include <mpmc/mesh/cartesian_2d.hpp>
 #include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/gmsh_4_1.hpp>
+#include <mpmc/mesh/grdecl.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
@@ -87,6 +89,316 @@ mesh::Topology two_by_one_cartesian_with_stable_ids() {
 
     return mesh::Topology{
         std::move(ids), std::move(relations)};
+}
+
+
+mesh::ActiveCornerPointGrid processed_grdecl_two_by_one_all_active() {
+    constexpr std::string_view deck = R"grdecl(
+SPECGRID
+  2 1 1 1 F /
+COORD
+  0 0 0   0 0 1
+  1 0 0   1 0 1
+  2 0 0   2 0 1
+  0 1 0   0 1 1
+  1 1 0   1 1 1
+  2 1 0   2 1 1 /
+ZCORN
+  8*0 8*1 /
+ACTNUM
+  2*1 /
+PORO
+  0.20 0.35 /
+PERMX
+  100 200 /
+PERMY
+  50 75 /
+PERMZ
+  10 20 /
+)grdecl";
+
+    const auto raw = mesh::import_grdecl(
+        deck,
+        mesh::GrdeclImportOptions{
+            1.0,
+            1.0e-15});
+    return mesh::process_active_corner_point_grid(raw);
+}
+
+void verify_serial_dmplex_processed_grdecl() {
+    const auto processed =
+        processed_grdecl_two_by_one_all_active();
+    const auto& topology = processed.topology;
+
+    require(
+        topology.entity_count(mesh::EntityKind::cell) == 2U &&
+        topology.entity_count(mesh::EntityKind::face) == 11U &&
+        topology.entity_count(mesh::EntityKind::vertex) == 12U &&
+        topology.entity_count(mesh::EntityKind::edge) == 0U,
+        "processed GRDECL 2x1x1 entity counts");
+
+    DM dm = nullptr;
+    std::vector<mesh_petsc::DMPlexPointIdentity> identities;
+    require_petsc(
+        mesh_petsc::create_serial_dmplex_topology(
+            topology, &dm, &identities),
+        "create_serial_dmplex_topology processed GRDECL");
+
+    PetscInt dimension = -1;
+    PetscInt depth = -1;
+    require_petsc(
+        DMGetDimension(dm, &dimension),
+        "processed GRDECL DM dimension");
+    require_petsc(
+        DMPlexGetDepth(dm, &depth),
+        "processed GRDECL DMPlex depth");
+    require(
+        dimension == 3 && depth == 2,
+        "processed GRDECL must form a 3D partially interpolated DMPlex");
+
+    PetscInt chart_start = -1;
+    PetscInt chart_end = -1;
+    require_petsc(
+        DMPlexGetChart(dm, &chart_start, &chart_end),
+        "processed GRDECL DMPlex chart");
+    require(
+        chart_start == 0 && chart_end == 25,
+        "processed GRDECL DMPlex chart size");
+
+    PetscInt cell_start = -1;
+    PetscInt cell_end = -1;
+    PetscInt face_start = -1;
+    PetscInt face_end = -1;
+    PetscInt vertex_start = -1;
+    PetscInt vertex_end = -1;
+    require_petsc(
+        DMPlexGetHeightStratum(
+            dm, 0, &cell_start, &cell_end),
+        "processed GRDECL cell stratum");
+    require_petsc(
+        DMPlexGetHeightStratum(
+            dm, 1, &face_start, &face_end),
+        "processed GRDECL face stratum");
+    require_petsc(
+        DMPlexGetDepthStratum(
+            dm, 0, &vertex_start, &vertex_end),
+        "processed GRDECL vertex stratum");
+    require(
+        cell_start == 0 && cell_end == 2,
+        "processed GRDECL hexa cell points");
+    require(
+        face_start == 2 && face_end == 13,
+        "processed GRDECL quad face points");
+    require(
+        vertex_start == 13 && vertex_end == 25,
+        "processed GRDECL vertex points");
+
+    require(
+        identities.size() == 25U,
+        "processed GRDECL DMPlex identity count");
+    for (std::size_t point = 0U;
+         point < identities.size();
+         ++point) {
+        const auto& identity = identities[point];
+        require(
+            identity.point == static_cast<PetscInt>(point),
+            "processed GRDECL identity point alignment");
+
+        mesh::EntityKind expected_kind =
+            mesh::EntityKind::cell;
+        std::size_t expected_local = point;
+        if (point >= 13U) {
+            expected_kind = mesh::EntityKind::vertex;
+            expected_local = point - 13U;
+        } else if (point >= 2U) {
+            expected_kind = mesh::EntityKind::face;
+            expected_local = point - 2U;
+        }
+
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(
+                expected_local)};
+        require(
+            identity.kind == expected_kind &&
+            identity.local == local &&
+            identity.global ==
+                topology.global_id(expected_kind, local),
+            "processed GRDECL DMPlex stable identity");
+    }
+
+    for (std::size_t cell = 0U; cell < 2U; ++cell) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(cell)};
+        require(
+            processed.source_logical_cell_id(local) ==
+                topology.global_id(mesh::EntityKind::cell, local),
+            "processed GRDECL cell identity must remain source logical identity");
+
+        DMPolytopeType type = DM_POLYTOPE_UNKNOWN;
+        require_petsc(
+            DMPlexGetCellType(
+                dm, static_cast<PetscInt>(cell), &type),
+            "processed GRDECL hexa cell type");
+        require(
+            type == DM_POLYTOPE_HEXAHEDRON,
+            "processed GRDECL cell must be hexahedron");
+    }
+    for (PetscInt face = face_start;
+         face < face_end;
+         ++face) {
+        DMPolytopeType type = DM_POLYTOPE_UNKNOWN;
+        require_petsc(
+            DMPlexGetCellType(dm, face, &type),
+            "processed GRDECL quad face type");
+        require(
+            type == DM_POLYTOPE_QUADRILATERAL,
+            "processed GRDECL face must be quadrilateral");
+    }
+    for (PetscInt vertex = vertex_start;
+         vertex < vertex_end;
+         ++vertex) {
+        DMPolytopeType type = DM_POLYTOPE_UNKNOWN;
+        require_petsc(
+            DMPlexGetCellType(dm, vertex, &type),
+            "processed GRDECL point type");
+        require(
+            type == DM_POLYTOPE_POINT,
+            "processed GRDECL vertex must be point");
+    }
+
+    const auto& cell_faces = topology.relation(
+        mesh::EntityKind::cell,
+        mesh::EntityKind::face);
+    const auto& face_vertices = topology.relation(
+        mesh::EntityKind::face,
+        mesh::EntityKind::vertex);
+    const auto& face_cells = topology.relation(
+        mesh::EntityKind::face,
+        mesh::EntityKind::cell);
+
+    for (std::size_t cell = 0U; cell < 2U; ++cell) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(cell)};
+        const auto expected_faces =
+            cell_faces.adjacent(local);
+
+        PetscInt cone_size = -1;
+        const PetscInt* cone = nullptr;
+        require_petsc(
+            DMPlexGetConeSize(
+                dm,
+                static_cast<PetscInt>(cell),
+                &cone_size),
+            "processed GRDECL cell cone size");
+        require_petsc(
+            DMPlexGetCone(
+                dm,
+                static_cast<PetscInt>(cell),
+                &cone),
+            "processed GRDECL cell cone");
+        require(
+            cone_size == 6 && cone != nullptr,
+            "processed GRDECL hexa must have six face cone points");
+        for (std::size_t i = 0U;
+             i < expected_faces.size();
+             ++i) {
+            require(
+                cone[i] ==
+                    2 + static_cast<PetscInt>(
+                            expected_faces[i].value()),
+                "processed GRDECL cell-to-face cone identity");
+        }
+    }
+
+    std::size_t shared_face_count = 0U;
+    for (std::size_t face = 0U; face < 11U; ++face) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(face)};
+        const auto expected_vertices =
+            face_vertices.adjacent(local);
+        const auto expected_cells =
+            face_cells.adjacent(local);
+
+        PetscInt cone_size = -1;
+        const PetscInt* cone = nullptr;
+        require_petsc(
+            DMPlexGetConeSize(
+                dm,
+                2 + static_cast<PetscInt>(face),
+                &cone_size),
+            "processed GRDECL face cone size");
+        require_petsc(
+            DMPlexGetCone(
+                dm,
+                2 + static_cast<PetscInt>(face),
+                &cone),
+            "processed GRDECL face cone");
+        require(
+            cone_size == 4 && cone != nullptr,
+            "processed GRDECL quad must have four vertex cone points");
+        for (std::size_t i = 0U; i < 4U; ++i) {
+            require(
+                cone[i] ==
+                    13 + static_cast<PetscInt>(
+                             expected_vertices[i].value()),
+                "processed GRDECL face-to-vertex cone identity");
+        }
+
+        PetscInt support_size = -1;
+        const PetscInt* support = nullptr;
+        require_petsc(
+            DMPlexGetSupportSize(
+                dm,
+                2 + static_cast<PetscInt>(face),
+                &support_size),
+            "processed GRDECL face support size");
+        require_petsc(
+            DMPlexGetSupport(
+                dm,
+                2 + static_cast<PetscInt>(face),
+                &support),
+            "processed GRDECL face support");
+        require(
+            support_size ==
+                static_cast<PetscInt>(
+                    expected_cells.size()),
+            "processed GRDECL face-to-cell support width");
+
+        std::vector<PetscInt> actual_support(
+            support,
+            support +
+                static_cast<std::ptrdiff_t>(
+                    support_size));
+        std::vector<PetscInt> expected_support;
+        for (const auto expected_cell : expected_cells) {
+            expected_support.push_back(
+                static_cast<PetscInt>(
+                    expected_cell.value()));
+        }
+        std::sort(
+            actual_support.begin(),
+            actual_support.end());
+        std::sort(
+            expected_support.begin(),
+            expected_support.end());
+        require(
+            actual_support == expected_support,
+            "processed GRDECL face-to-cell support identity");
+
+        if (support_size == 2) {
+            ++shared_face_count;
+        }
+    }
+    require(
+        shared_face_count == 1U,
+        "processed GRDECL DMPlex must preserve exactly one shared face");
+
+    require_petsc(
+        DMDestroy(&dm),
+        "DMDestroy processed GRDECL serial DMPlex");
+    require(
+        dm == nullptr,
+        "processed GRDECL DMPlex destroy must clear handle");
 }
 
 void verify_serial_dmplex_topology() {
@@ -3855,6 +4167,7 @@ void run_two_rank_test() {
             global_entity_numbering(partition));
 
     verify_serial_dmplex_topology();
+    verify_serial_dmplex_processed_grdecl();
     verify_dmplex_distribute_overlap_identity();
     verify_gmsh_import_through_dmplex_chain();
     verify_section(layout, numbering, mpi_rank);
