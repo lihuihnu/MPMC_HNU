@@ -11,6 +11,7 @@
 #include <mpmc/mesh/shared_entity_plan.hpp>
 #include <mpmc/mesh/topology.hpp>
 #include <mpmc/mesh_petsc/adapter.hpp>
+#include <mpmc/discretization/transmissibility_admissibility_3d.hpp>
 #include <mpmc/discretization_petsc/adapter.hpp>
 
 #include <petscsys.h>
@@ -32,6 +33,7 @@
 namespace {
 namespace mesh = mpmc::mesh;
 namespace mesh_petsc = mpmc::mesh_petsc;
+namespace discretization = mpmc::discretization;
 namespace discretization_petsc = mpmc::discretization_petsc;
 
 void require(bool condition, std::string_view message) {
@@ -5688,10 +5690,10 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         processed_grdecl_diagonal_permeability(
             field_reference);
     const auto strict_geometry_policy =
-        mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
+        discretization::TransmissibilityGeometryAdmissibilityPolicy3D{
             0.0};
     const auto strict_k_policy =
-        mesh::KOrthogonalityAdmissibilityPolicy3D{
+        discretization::KOrthogonalityAdmissibilityPolicy3D{
             0.0};
     const auto reference_gated_materialized =
         mesh::make_admissibility_gated_internal_face_transmissibility_snapshot_3d(
