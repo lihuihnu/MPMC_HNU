@@ -236,6 +236,14 @@ PETSc 可使用其已支持的 partitioner；核心模块不复制 ParMETIS/PT-S
 - 性能结论必须来自固定 workload 的 benchmark，不以单次 CI wall time 宣称加速；
 - 首个稳定实现建立内存/访问基线，后续无依据不得显著回退。
 
+### 7.1 固定大网格 memory/traversal baseline
+
+固定性能基线使用独立 `tests/mesh/benchmark` 可执行程序，不混入 correctness CTest，也不设置共享 runner 上的速度阈值。workload 固定为 `64×64×64` structured Cartesian hexa grid（262,144 cells），附带一个 4-component cell `DenseFieldSnapshot`。benchmark 不计 mesh construction 吞吐，只在构造完成后执行顺序读取。
+
+memory footprint 同时报告两种口径：`logical_*_bytes` 精确统计公共 contract 可见的连续 payload（entity IDs、四类 CSR relation offsets/indices、vertex/cell/face geometry、face boundary arrays、field values），不把 allocator capacity/object/string overhead 冒充精确值；官方 Ubuntu runner 另以 Linux `getrusage(RUSAGE_SELF).ru_maxrss` 记录进程 peak RSS，作为环境相关实测值。topology traversal 每次顺序读取全部 stable entity IDs 与四类 CSR arrays；field traversal 顺序读取完整 4-component field。二者先 warm-up，再固定重复次数采 5 个样本并报告 median GiB/s 和 checksum，防止 dead-code elimination。
+
+`.github/workflows/mesh_baseline_benchmark.yml` 固定使用官方 `ubuntu-24.04` + GCC Release，并记录 runner/compiler/CPU 环境。该 workflow 只负责**记录 baseline**：不根据吞吐高低判定 pass/fail、不与不同 runner 的数字直接比较，也不把单次 CI wall time 声称为优化证据。只有 benchmark 自身不能构建/运行或输出契约缺失才失败。
+
 ## 8. 本 PR 合并条件
 
 本 PR 只有在以下条件同时满足时才能从 Draft 转为可合并：
