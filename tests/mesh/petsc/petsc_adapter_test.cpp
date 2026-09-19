@@ -1309,6 +1309,918 @@ void verify_global_section_and_section_sf(
         "PetscSectionDestroy local section");
 }
 
+
+struct PlexStrata {
+    PetscInt cell_start;
+    PetscInt cell_end;
+    PetscInt face_start;
+    PetscInt face_end;
+    PetscInt vertex_start;
+    PetscInt vertex_end;
+};
+
+PlexStrata plex_strata(DM dm) {
+    PlexStrata strata{-1, -1, -1, -1, -1, -1};
+    require_petsc(
+        DMPlexGetHeightStratum(
+            dm, 0, &strata.cell_start, &strata.cell_end),
+        "DMPlex distributed cell stratum");
+    require_petsc(
+        DMPlexGetHeightStratum(
+            dm, 1, &strata.face_start, &strata.face_end),
+        "DMPlex distributed face stratum");
+    require_petsc(
+        DMPlexGetDepthStratum(
+            dm, 0, &strata.vertex_start, &strata.vertex_end),
+        "DMPlex distributed vertex stratum");
+    return strata;
+}
+
+const mesh_petsc::DMPlexPointIdentity& identity_for_point(
+    const std::vector<mesh_petsc::DMPlexPointIdentity>& identities,
+    PetscInt point) {
+    const auto found = std::find_if(
+        identities.begin(),
+        identities.end(),
+        [point](const auto& identity) {
+            return identity.point == point;
+        });
+    require(found != identities.end(),
+            "distributed DMPlex point missing stable identity");
+    return *found;
+}
+
+mesh::PartitionSnapshot partition_from_dm_point_sf(
+    DM dm,
+    const std::vector<mesh_petsc::DMPlexPointIdentity>& identities,
+    int mpi_rank,
+    int mpi_size) {
+    const auto strata = plex_strata(dm);
+
+    const auto cell_count =
+        static_cast<std::size_t>(
+            strata.cell_end - strata.cell_start);
+    const auto face_count =
+        static_cast<std::size_t>(
+            strata.face_end - strata.face_start);
+    const auto vertex_count =
+        static_cast<std::size_t>(
+            strata.vertex_end - strata.vertex_start);
+
+    mesh::Topology::EntityIds ids;
+    ids.cells.resize(
+        cell_count, mesh::GlobalEntityId{0U});
+    ids.faces.resize(
+        face_count, mesh::GlobalEntityId{0U});
+    ids.vertices.resize(
+        vertex_count, mesh::GlobalEntityId{0U});
+
+    mesh::EntityOwnerRanks owners;
+    owners.cells.assign(
+        cell_count,
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    mpi_rank)});
+    owners.faces.assign(
+        face_count,
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    mpi_rank)});
+    owners.vertices.assign(
+        vertex_count,
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    mpi_rank)});
+
+    std::vector<std::uint8_t> cell_seen(
+        cell_count, std::uint8_t{0U});
+    std::vector<std::uint8_t> face_seen(
+        face_count, std::uint8_t{0U});
+    std::vector<std::uint8_t> vertex_seen(
+        vertex_count, std::uint8_t{0U});
+
+    for (const auto& identity : identities) {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        switch (identity.kind) {
+        case mesh::EntityKind::cell:
+            require(local < ids.cells.size(),
+                    "distributed cell identity local index");
+            require(cell_seen[local] == 0U,
+                    "duplicate distributed cell identity");
+            cell_seen[local] = std::uint8_t{1U};
+            ids.cells[local] = identity.global;
+            break;
+        case mesh::EntityKind::face:
+            require(local < ids.faces.size(),
+                    "distributed face identity local index");
+            require(face_seen[local] == 0U,
+                    "duplicate distributed face identity");
+            face_seen[local] = std::uint8_t{1U};
+            ids.faces[local] = identity.global;
+            break;
+        case mesh::EntityKind::vertex:
+            require(local < ids.vertices.size(),
+                    "distributed vertex identity local index");
+            require(vertex_seen[local] == 0U,
+                    "duplicate distributed vertex identity");
+            vertex_seen[local] = std::uint8_t{1U};
+            ids.vertices[local] = identity.global;
+            break;
+        case mesh::EntityKind::edge:
+            throw std::runtime_error(
+                "distributed DMPlex unexpectedly contains core edge identity");
+        }
+    }
+
+    require(
+        std::find(
+            cell_seen.begin(), cell_seen.end(),
+            std::uint8_t{0U}) == cell_seen.end(),
+        "every distributed cell needs stable identity");
+    require(
+        std::find(
+            face_seen.begin(), face_seen.end(),
+            std::uint8_t{0U}) == face_seen.end(),
+        "every distributed face needs stable identity");
+    require(
+        std::find(
+            vertex_seen.begin(), vertex_seen.end(),
+            std::uint8_t{0U}) == vertex_seen.end(),
+        "every distributed vertex needs stable identity");
+
+    PetscSF point_sf = nullptr;
+    require_petsc(
+        DMGetPointSF(dm, &point_sf),
+        "DMGetPointSF distributed ownership");
+    require(point_sf != nullptr,
+            "distributed DMPlex must expose point SF");
+
+    PetscInt nroots = -1;
+    PetscInt nleaves = -1;
+    const PetscInt* ilocal = nullptr;
+    const PetscSFNode* remote = nullptr;
+    require_petsc(
+        PetscSFGetGraph(
+            point_sf,
+            &nroots,
+            &nleaves,
+            &ilocal,
+            &remote),
+        "PetscSFGetGraph distributed ownership");
+    require(nroots >= 0 && nleaves >= 0,
+            "distributed point SF graph must be set");
+
+    for (PetscInt leaf = 0; leaf < nleaves; ++leaf) {
+        const PetscInt point =
+            ilocal != nullptr ? ilocal[leaf] : leaf;
+        require(remote != nullptr,
+                "distributed point SF remote roots");
+
+        const auto& identity =
+            identity_for_point(identities, point);
+        require(
+            remote[leaf].rank >= 0 &&
+                remote[leaf].rank < mpi_size,
+            "distributed point SF owner rank range");
+
+        const auto owner =
+            mesh::PartitionRank{
+                static_cast<
+                    mesh::PartitionRank::value_type>(
+                        remote[leaf].rank)};
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+
+        switch (identity.kind) {
+        case mesh::EntityKind::cell:
+            owners.cells[local] = owner;
+            break;
+        case mesh::EntityKind::face:
+            owners.faces[local] = owner;
+            break;
+        case mesh::EntityKind::vertex:
+            owners.vertices[local] = owner;
+            break;
+        case mesh::EntityKind::edge:
+            throw std::runtime_error(
+                "edge identity cannot be point-SF ghost");
+        }
+    }
+
+    const mesh::Topology identity_topology{
+        std::move(ids), {}};
+    return mesh::PartitionSnapshot::create(
+        identity_topology,
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    mpi_rank)},
+        static_cast<std::uint32_t>(mpi_size),
+        std::move(owners));
+}
+
+void require_expected_identity_owner_counts(
+    const mesh::PartitionSnapshot& partition) {
+    std::array<int, 2> local_cells{0, 0};
+    std::array<int, 7> local_faces{0, 0, 0, 0, 0, 0, 0};
+    std::array<int, 6> local_vertices{0, 0, 0, 0, 0, 0};
+
+    const auto record = [&](mesh::EntityKind kind,
+                            std::uint64_t base,
+                            auto& counts) {
+        for (std::size_t local = 0U;
+             local < partition.entity_count(kind);
+             ++local) {
+            const auto index = mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        local)};
+            const auto id =
+                partition.global_id(kind, index);
+            require(id.value() >= base,
+                    "distributed stable ID lower bound");
+            const std::uint64_t ordinal =
+                id.value() - base;
+            require(
+                ordinal <
+                    static_cast<std::uint64_t>(
+                        counts.size()),
+                "distributed stable ID range");
+            if (partition.is_owned(kind, index)) {
+                ++counts[
+                    static_cast<std::size_t>(
+                        ordinal)];
+            }
+        }
+    };
+
+    record(
+        mesh::EntityKind::cell,
+        7000000000ULL,
+        local_cells);
+    record(
+        mesh::EntityKind::face,
+        6000000000ULL,
+        local_faces);
+    record(
+        mesh::EntityKind::vertex,
+        5000000000ULL,
+        local_vertices);
+
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            local_cells.data(),
+            static_cast<int>(local_cells.size()),
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce cell stable owners");
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            local_faces.data(),
+            static_cast<int>(local_faces.size()),
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce face stable owners");
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            local_vertices.data(),
+            static_cast<int>(local_vertices.size()),
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce vertex stable owners");
+
+    for (const int count : local_cells) {
+        require(count == 1,
+                "each stable cell ID must have exactly one owner");
+    }
+    for (const int count : local_faces) {
+        require(count == 1,
+                "each stable face ID must have exactly one owner");
+    }
+    for (const int count : local_vertices) {
+        require(count == 1,
+                "each stable vertex ID must have exactly one owner");
+    }
+}
+
+std::vector<mesh::SharedEntityLink>
+shared_links_from_dm_point_sf(
+    DM dm,
+    const std::vector<mesh_petsc::DMPlexPointIdentity>& identities,
+    int mpi_rank,
+    int mpi_size) {
+    const auto strata = plex_strata(dm);
+    const std::array<PetscInt, 6> local_ranges{
+        strata.cell_start,
+        strata.cell_end,
+        strata.face_start,
+        strata.face_end,
+        strata.vertex_start,
+        strata.vertex_end};
+
+    std::vector<PetscInt> all_ranges(
+        static_cast<std::size_t>(mpi_size) *
+        local_ranges.size());
+    require(
+        MPI_Allgather(
+            local_ranges.data(),
+            static_cast<int>(local_ranges.size()),
+            MPIU_INT,
+            all_ranges.data(),
+            static_cast<int>(local_ranges.size()),
+            MPIU_INT,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allgather DMPlex strata ranges");
+
+    PetscSF point_sf = nullptr;
+    require_petsc(
+        DMGetPointSF(dm, &point_sf),
+        "DMGetPointSF overlap links");
+
+    PetscInt nroots = -1;
+    PetscInt nleaves = -1;
+    const PetscInt* ilocal = nullptr;
+    const PetscSFNode* remote = nullptr;
+    require_petsc(
+        PetscSFGetGraph(
+            point_sf,
+            &nroots,
+            &nleaves,
+            &ilocal,
+            &remote),
+        "PetscSFGetGraph overlap links");
+    require(nroots >= 0 && nleaves >= 0,
+            "overlap point SF graph");
+    if (nleaves > 0) {
+        require(remote != nullptr,
+                "overlap point SF remote roots");
+    }
+
+    constexpr std::size_t words_per_link = 6U;
+    std::vector<std::uint64_t> local_words;
+    local_words.reserve(
+        static_cast<std::size_t>(nleaves) *
+        words_per_link);
+
+    for (PetscInt leaf = 0; leaf < nleaves; ++leaf) {
+        const PetscInt point =
+            ilocal != nullptr ? ilocal[leaf] : leaf;
+        const auto& identity =
+            identity_for_point(identities, point);
+        const PetscMPIInt owner_rank =
+            remote[leaf].rank;
+        require(
+            owner_rank >= 0 &&
+                owner_rank < mpi_size &&
+                owner_rank != mpi_rank,
+            "overlap leaf must reference remote owner");
+
+        const std::size_t remote_slot =
+            static_cast<std::size_t>(owner_rank) *
+            local_ranges.size();
+        PetscInt remote_start = -1;
+        PetscInt remote_end = -1;
+        switch (identity.kind) {
+        case mesh::EntityKind::cell:
+            remote_start =
+                all_ranges[remote_slot];
+            remote_end =
+                all_ranges[remote_slot + 1U];
+            break;
+        case mesh::EntityKind::face:
+            remote_start =
+                all_ranges[remote_slot + 2U];
+            remote_end =
+                all_ranges[remote_slot + 3U];
+            break;
+        case mesh::EntityKind::vertex:
+            remote_start =
+                all_ranges[remote_slot + 4U];
+            remote_end =
+                all_ranges[remote_slot + 5U];
+            break;
+        case mesh::EntityKind::edge:
+            throw std::runtime_error(
+                "overlap identity cannot be edge");
+        }
+
+        require(
+            remote[leaf].index >= remote_start &&
+                remote[leaf].index < remote_end,
+            "remote root point must lie in matching kind stratum");
+        const PetscInt owner_local =
+            remote[leaf].index - remote_start;
+        require(owner_local >= 0,
+                "remote owner local index");
+
+        local_words.push_back(
+            static_cast<std::uint64_t>(
+                identity.kind));
+        local_words.push_back(
+            identity.global.value());
+        local_words.push_back(
+            static_cast<std::uint64_t>(
+                owner_rank));
+        local_words.push_back(
+            static_cast<std::uint64_t>(
+                owner_local));
+        local_words.push_back(
+            static_cast<std::uint64_t>(
+                mpi_rank));
+        local_words.push_back(
+            static_cast<std::uint64_t>(
+                identity.local.value()));
+    }
+
+    require(
+        local_words.size() <=
+            static_cast<std::size_t>(
+                std::numeric_limits<int>::max()),
+        "local shared-link wire size");
+    const int local_word_count =
+        static_cast<int>(local_words.size());
+    std::vector<int> word_counts(
+        static_cast<std::size_t>(mpi_size), 0);
+    require(
+        MPI_Allgather(
+            &local_word_count,
+            1,
+            MPI_INT,
+            word_counts.data(),
+            1,
+            MPI_INT,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allgather shared-link word counts");
+
+    std::vector<int> displacements(
+        static_cast<std::size_t>(mpi_size), 0);
+    int total_words = 0;
+    for (int rank = 0; rank < mpi_size; ++rank) {
+        require(word_counts[
+                    static_cast<std::size_t>(rank)] >= 0,
+                "shared-link word count nonnegative");
+        displacements[
+            static_cast<std::size_t>(rank)] =
+            total_words;
+        require(
+            word_counts[
+                static_cast<std::size_t>(rank)] <=
+                std::numeric_limits<int>::max() -
+                    total_words,
+            "shared-link gathered wire size overflow");
+        total_words +=
+            word_counts[
+                static_cast<std::size_t>(rank)];
+    }
+    require(
+        total_words %
+            static_cast<int>(words_per_link) == 0,
+        "shared-link gathered wire alignment");
+
+    std::vector<std::uint64_t> all_words(
+        static_cast<std::size_t>(total_words));
+    require(
+        MPI_Allgatherv(
+            local_words.empty()
+                ? nullptr
+                : local_words.data(),
+            local_word_count,
+            MPI_UINT64_T,
+            all_words.empty()
+                ? nullptr
+                : all_words.data(),
+            word_counts.data(),
+            displacements.data(),
+            MPI_UINT64_T,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allgatherv canonical shared links");
+
+    std::vector<mesh::SharedEntityLink> links;
+    links.reserve(
+        all_words.size() / words_per_link);
+    for (std::size_t offset = 0U;
+         offset < all_words.size();
+         offset += words_per_link) {
+        const std::uint64_t raw_kind =
+            all_words[offset];
+        mesh::EntityKind kind;
+        switch (raw_kind) {
+        case static_cast<std::uint64_t>(
+                 mesh::EntityKind::cell):
+            kind = mesh::EntityKind::cell;
+            break;
+        case static_cast<std::uint64_t>(
+                 mesh::EntityKind::face):
+            kind = mesh::EntityKind::face;
+            break;
+        case static_cast<std::uint64_t>(
+                 mesh::EntityKind::vertex):
+            kind = mesh::EntityKind::vertex;
+            break;
+        default:
+            throw std::runtime_error(
+                "canonical shared-link kind");
+        }
+
+        require(
+            all_words[offset + 2U] <
+                static_cast<std::uint64_t>(
+                    mpi_size) &&
+                all_words[offset + 4U] <
+                    static_cast<std::uint64_t>(
+                        mpi_size),
+            "canonical shared-link rank range");
+        require(
+            all_words[offset + 3U] <=
+                static_cast<std::uint64_t>(
+                    std::numeric_limits<
+                        mesh::LocalIndex::value_type>::max()) &&
+                all_words[offset + 5U] <=
+                    static_cast<std::uint64_t>(
+                        std::numeric_limits<
+                            mesh::LocalIndex::value_type>::max()),
+            "canonical shared-link local index range");
+
+        links.push_back(
+            mesh::SharedEntityLink{
+                kind,
+                mesh::GlobalEntityId{
+                    all_words[offset + 1U]},
+                mesh::PartitionRank{
+                    static_cast<
+                        mesh::PartitionRank::value_type>(
+                            all_words[offset + 2U])},
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            all_words[offset + 3U])},
+                mesh::PartitionRank{
+                    static_cast<
+                        mesh::PartitionRank::value_type>(
+                            all_words[offset + 4U])},
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            all_words[offset + 5U])}});
+    }
+    return links;
+}
+
+void verify_dmplex_distribute_overlap_identity() {
+    int mpi_rank = -1;
+    int mpi_size = -1;
+    require(
+        MPI_Comm_rank(
+            PETSC_COMM_WORLD, &mpi_rank) == MPI_SUCCESS,
+        "MPI_Comm_rank DMPlex distribute");
+    require(
+        MPI_Comm_size(
+            PETSC_COMM_WORLD, &mpi_size) == MPI_SUCCESS,
+        "MPI_Comm_size DMPlex distribute");
+    require(mpi_size == 2,
+            "DMPlex distribute gate requires exactly two ranks");
+
+    const auto root_topology =
+        two_by_one_cartesian_with_stable_ids();
+
+    DM source_dm = nullptr;
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        source_identities;
+    require_petsc(
+        mesh_petsc::create_root_dmplex_topology(
+            PETSC_COMM_WORLD,
+            0,
+            mpi_rank == 0 ? &root_topology : nullptr,
+            &source_dm,
+            &source_identities),
+        "create_root_dmplex_topology");
+    require(source_dm != nullptr,
+            "rooted DMPlex source");
+
+    PetscInt source_start = -1;
+    PetscInt source_end = -1;
+    require_petsc(
+        DMPlexGetChart(
+            source_dm,
+            &source_start,
+            &source_end),
+        "rooted DMPlex source chart");
+    if (mpi_rank == 0) {
+        require(
+            source_start == 0 &&
+                source_end == 15 &&
+                source_identities.size() == 15U,
+            "rank0 must own complete serial source DAG");
+    } else {
+        require(
+            source_start == 0 &&
+                source_end == 0 &&
+                source_identities.empty(),
+            "non-root rank must start with empty source DAG");
+    }
+
+    PetscPartitioner partitioner = nullptr;
+    require_petsc(
+        DMPlexGetPartitioner(
+            source_dm, &partitioner),
+        "DMPlexGetPartitioner");
+    require_petsc(
+        PetscPartitionerSetType(
+            partitioner,
+            PETSCPARTITIONERSIMPLE),
+        "PetscPartitionerSetType simple");
+
+    PetscSF migration_sf = nullptr;
+    DM distributed_dm = nullptr;
+    require_petsc(
+        DMPlexDistribute(
+            source_dm,
+            0,
+            &migration_sf,
+            &distributed_dm),
+        "DMPlexDistribute overlap0");
+    require(
+        distributed_dm != nullptr &&
+            migration_sf != nullptr,
+        "DMPlexDistribute must produce two-rank mesh and migration SF");
+
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        distributed_identities;
+    require_petsc(
+        mesh_petsc::migrate_dmplex_identities(
+            source_dm,
+            migration_sf,
+            source_identities,
+            distributed_dm,
+            &distributed_identities),
+        "migrate DMPlex identities after distribute");
+
+    require_petsc(
+        PetscSFDestroy(&migration_sf),
+        "PetscSFDestroy distribution migration SF");
+    require_petsc(
+        DMDestroy(&source_dm),
+        "DMDestroy rooted source DM");
+
+    const auto distributed_strata =
+        plex_strata(distributed_dm);
+    require(
+        distributed_strata.cell_end -
+                distributed_strata.cell_start ==
+            1,
+        "simple partitioner must assign one cell per rank");
+
+    PetscInt distributed_overlap = -1;
+    require_petsc(
+        DMPlexGetOverlap(
+            distributed_dm,
+            &distributed_overlap),
+        "DMPlexGetOverlap distributed");
+    require(distributed_overlap == 0,
+            "first distributed mesh must have zero overlap");
+
+    const auto distributed_partition =
+        partition_from_dm_point_sf(
+            distributed_dm,
+            distributed_identities,
+            mpi_rank,
+            mpi_size);
+    require(
+        distributed_partition.owned_count(
+            mesh::EntityKind::cell) == 1U &&
+            distributed_partition.ghost_count(
+                mesh::EntityKind::cell) == 0U,
+        "overlap0 cell ownership must be unique");
+
+    const std::size_t local_shared_closure_ghosts =
+        distributed_partition.ghost_count(
+            mesh::EntityKind::face) +
+        distributed_partition.ghost_count(
+            mesh::EntityKind::vertex);
+    std::uint64_t shared_closure_ghosts =
+        static_cast<std::uint64_t>(
+            local_shared_closure_ghosts);
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            &shared_closure_ghosts,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce distributed closure ghosts");
+    require(shared_closure_ghosts > 0U,
+            "distributed mesh must expose shared face/vertex point-SF leaves");
+
+    require_expected_identity_owner_counts(
+        distributed_partition);
+
+    PetscSF distributed_point_sf = nullptr;
+    require_petsc(
+        DMGetPointSF(
+            distributed_dm,
+            &distributed_point_sf),
+        "DMGetPointSF distributed");
+    PetscInt distributed_roots = -1;
+    PetscInt distributed_leaves = -1;
+    require_petsc(
+        PetscSFGetGraph(
+            distributed_point_sf,
+            &distributed_roots,
+            &distributed_leaves,
+            nullptr,
+            nullptr),
+        "PetscSFGetGraph distributed point SF");
+    require(
+        distributed_roots ==
+            distributed_strata.vertex_end -
+                distributed_strata.cell_start,
+        "distributed point SF root space must match local chart size");
+    require(distributed_leaves >= 0,
+            "distributed point SF leaf count");
+
+    PetscSF overlap_migration_sf = nullptr;
+    DM overlap_dm = nullptr;
+    require_petsc(
+        DMPlexDistributeOverlap(
+            distributed_dm,
+            1,
+            &overlap_migration_sf,
+            &overlap_dm),
+        "DMPlexDistributeOverlap depth1");
+    require(
+        overlap_dm != nullptr &&
+            overlap_migration_sf != nullptr,
+        "DMPlexDistributeOverlap must produce overlap mesh and migration SF");
+
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        overlap_identities;
+    require_petsc(
+        mesh_petsc::migrate_dmplex_identities(
+            distributed_dm,
+            overlap_migration_sf,
+            distributed_identities,
+            overlap_dm,
+            &overlap_identities),
+        "migrate DMPlex identities into overlap");
+
+    require_petsc(
+        PetscSFDestroy(&overlap_migration_sf),
+        "PetscSFDestroy overlap migration SF");
+
+    PetscInt overlap_depth = -1;
+    require_petsc(
+        DMPlexGetOverlap(
+            overlap_dm,
+            &overlap_depth),
+        "DMPlexGetOverlap overlap mesh");
+    require(overlap_depth == 1,
+            "overlap mesh must record depth one");
+
+    const auto overlap_strata =
+        plex_strata(overlap_dm);
+    require(
+        overlap_strata.cell_end -
+                overlap_strata.cell_start ==
+            2,
+        "depth-one overlap must expose both adjacent cells on each rank");
+    require(
+        overlap_identities.size() == 15U,
+        "depth-one overlap of 2x1 mesh must expose full stable identity set");
+
+    const auto overlap_partition =
+        partition_from_dm_point_sf(
+            overlap_dm,
+            overlap_identities,
+            mpi_rank,
+            mpi_size);
+    require(
+        overlap_partition.owned_count(
+            mesh::EntityKind::cell) == 1U &&
+            overlap_partition.ghost_count(
+                mesh::EntityKind::cell) == 1U,
+        "overlap partition must contain one owned and one ghost cell");
+    require_expected_identity_owner_counts(
+        overlap_partition);
+
+    const auto all_links =
+        shared_links_from_dm_point_sf(
+            overlap_dm,
+            overlap_identities,
+            mpi_rank,
+            mpi_size);
+    const auto shared_plan =
+        mesh::SharedEntityPlan::create(
+            overlap_partition,
+            all_links);
+
+    const std::size_t expected_receive_count =
+        overlap_partition.ghost_count(
+            mesh::EntityKind::cell) +
+        overlap_partition.ghost_count(
+            mesh::EntityKind::face) +
+        overlap_partition.ghost_count(
+            mesh::EntityKind::vertex);
+    require(
+        shared_plan.receive_count() ==
+            expected_receive_count,
+        "SharedEntityPlan receives must equal DMPlex point-SF ghosts");
+    require(
+        shared_plan.neighbor_count() == 1U,
+        "two-rank overlap must have one halo neighbor");
+
+    std::array<std::uint64_t, 2> local_exchange{
+        static_cast<std::uint64_t>(
+            shared_plan.send_count()),
+        static_cast<std::uint64_t>(
+            shared_plan.receive_count())};
+    std::array<std::uint64_t, 4> all_exchange{
+        0U, 0U, 0U, 0U};
+    require(
+        MPI_Allgather(
+            local_exchange.data(),
+            2,
+            MPI_UINT64_T,
+            all_exchange.data(),
+            2,
+            MPI_UINT64_T,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allgather SharedEntityPlan send receive counts");
+    require(
+        all_exchange[0] == all_exchange[3] &&
+            all_exchange[2] == all_exchange[1],
+        "SharedEntityPlan send/receive symmetry across two ranks");
+
+    PetscSF overlap_point_sf = nullptr;
+    require_petsc(
+        DMGetPointSF(
+            overlap_dm,
+            &overlap_point_sf),
+        "DMGetPointSF overlap");
+    PetscInt overlap_roots = -1;
+    PetscInt overlap_leaves = -1;
+    const PetscInt* overlap_ilocal = nullptr;
+    const PetscSFNode* overlap_remote = nullptr;
+    require_petsc(
+        PetscSFGetGraph(
+            overlap_point_sf,
+            &overlap_roots,
+            &overlap_leaves,
+            &overlap_ilocal,
+            &overlap_remote),
+        "PetscSFGetGraph overlap point SF");
+    require(
+        overlap_leaves ==
+            static_cast<PetscInt>(
+                expected_receive_count),
+        "overlap point SF leaves must match core ghost count");
+
+    for (PetscInt leaf = 0;
+         leaf < overlap_leaves;
+         ++leaf) {
+        const PetscInt point =
+            overlap_ilocal != nullptr
+                ? overlap_ilocal[leaf]
+                : leaf;
+        const auto& identity =
+            identity_for_point(
+                overlap_identities,
+                point);
+        require(
+            overlap_partition.is_ghost(
+                identity.kind,
+                identity.local),
+            "DMPlex point-SF leaf must be core ghost");
+        require(
+            overlap_partition.owner_rank(
+                identity.kind,
+                identity.local).value() ==
+                static_cast<
+                    mesh::PartitionRank::value_type>(
+                        overlap_remote[leaf].rank),
+            "DMPlex point-SF owner rank must match PartitionSnapshot");
+    }
+
+    require_petsc(
+        DMDestroy(&overlap_dm),
+        "DMDestroy overlap DMPlex");
+    require_petsc(
+        DMDestroy(&distributed_dm),
+        "DMDestroy distributed DMPlex");
+}
+
 void run_two_rank_test() {
     int mpi_rank = -1;
     int mpi_size = -1;
@@ -1341,6 +2253,7 @@ void run_two_rank_test() {
             global_entity_numbering(partition));
 
     verify_serial_dmplex_topology();
+    verify_dmplex_distribute_overlap_identity();
     verify_section(layout, numbering, mpi_rank);
     verify_sf(partition, plan, mpi_rank);
     verify_global_section_and_section_sf(
