@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；Gmsh MSH 4.1 ASCII 已有 2D import/export round-trip，并新增最小 VTK XML UnstructuredGrid（`.vtu`）ASCII import/export round-trip。VTU baseline 支持单 Piece linear triangle/quad、XY-plane vertex coordinates、stable cell identity，以及 point/cell `DenseFieldSnapshot`；Gmsh mixed triangle/quad 仍已进入既有 `mpmc::mesh_petsc` distribute/overlap 链。core 仍不依赖 PETSc/MPI；不含 VTU binary/appended/compressed、Gmsh binary/high-order/3D、Mat、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；Gmsh MSH 4.1 ASCII 与 VTU ASCII 已有 2D import/export round-trip，并新增最小 GRDECL `SPECGRID/COORD/ZCORN/ACTNUM` parser contract。GRDECL baseline 用 `CornerPointGeometry3D` 保留所有逻辑 cell（含 inactive）的 8 个 cell-local corners 与体积，cell stable ID 按 I-fastest logical ordering 保持不变，并把 `PORO/PERMX/PERMY/PERMZ` 映射成 SI-aware cell `DenseFieldSnapshot`。当前 GRDECL slice 不推断 shared faces/NNC，也不进入流动离散。core 仍不依赖 PETSc/MPI；不含 VTU binary/appended/compressed、Gmsh binary/high-order/3D、GRDECL faults/NNC processing、Mat、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -45,6 +45,8 @@
 
 当前 2D Cartesian geometry 已实现前三项的最小基线：x/y 轴坐标必须是有限、严格递增的 SI 米值；cell area 以 m²、face length 以 m 保存。face owner 取 canonical `face->cell` relation 的首个 cell，unit normal 从 owner cell centroid 指向 face centroid，因此边界 face 为 owner 的外法向，内部 face 则从 owner 指向另一侧。builder 会逐项核对四类 Cartesian relation，而不是仅凭实体数量假定 topology 兼容。
 
+`CornerPointGeometry3D` 是当前 3D corner-point 的最小 owning snapshot：每个逻辑 cell 独占 8 个 corner vertices，顺序固定为 `{LLL,HLL,LHL,HHL,LLH,HLH,LHH,HHH}`（I 最快），坐标单位为 m，cell volume 为 m³。该类型刻意不把 faulted/split corner 强制合并为 shared vertices/faces；GRDECL parser 只物化 `cell->vertex`，以免在尚未做 fault/NNC processing 时伪造共享拓扑。volume 使用固定 5-tetra decomposition 检查 orientation：任何显著负 signed tetra 都视为 flipped/inverted 并拒绝；active cell 只要出现退化 tetra 或零总体积即拒绝，inactive cell 可保留退化 geometry 并记录 `volume=0`，但负体积翻转仍拒绝。这样 `ACTNUM=0` 不会导致 logical identity、corner coordinates 或属性被丢弃。
+
 `FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。
@@ -60,7 +62,7 @@
 1. 内建 Cartesian 生成：当前已有 2D `nx × ny` topology builder，以及由任意严格递增 x/y 轴坐标生成非均匀 Cartesian metric geometry；后续仍需 1D/3D；
 2. Gmsh MSH：当前已建立 4.1 ASCII 2D import/export 基线，覆盖 `$MeshFormat/$PhysicalNames/$Entities/$Nodes/$Elements`，支持 2-node line、3-node triangle、4-node quad。import 允许 sparse/out-of-order node/element tags，并按 stable tag 确定性压紧 local ordering；调用方显式提供 `coordinate_scale_to_m`，仅接受可映射到 `Geometry2D` 的 XY-plane mesh。vertex `GlobalEntityId` 使用 Gmsh node tag，cell 使用 2D element tag；显式 line element 对应 face 使用其 element tag，缺失的内部 cell edge 由 importer 重建并从 `max(all element tags)+1` 起确定性生成 face ID。export 以 SI metre 写出 coordinates，为每个 vertex/face/cell 构造 point/curve/surface entity，并把 face 与 cell `GlobalEntityId` 原样写回 line/2D element tag，因此 generated internal face ID 也能 round-trip 保留。boundary `PhysicalTag`、surface multi-Physical-Group membership 与 `PhysicalNames` 均写回；curve entity 仍最多允许一个 Physical Group，因为 `FaceBoundarySnapshot` 每 face 只有一个 `PhysicalTag`。parametric nodes、binary、high-order、concave quad、非 XY-plane、3D、post-processing field sections 与通用 Gmsh data export 仍显式不支持；
 3. VTK XML UnstructuredGrid：当前已建立 `.vtu` ASCII 单-Piece import/export round-trip。import 要求 `VTKFile type="UnstructuredGrid"`，`Points` 为 Float32/Float64 三分量且 z≈0，`Cells` 为标准 `connectivity + offsets + types`；connectivity/offsets 接受 Int32/Int64，types 接受 UInt8，cell type 只支持 VTK_TRIANGLE=5 与 VTK_QUAD=9。point/cell DataArray 当前只映射 Float32/Float64 为 `DenseFieldSnapshot`，component count 原样保留。稳定 cell identity 使用保留的 `CellData/DataArray Name="mpmc_global_cell_id"`（UInt64/Int64）；外部文件若缺失则按 cell 文件顺序生成确定性 `1..N`，export 总是写回 UInt64 identity array。vertex ID 当前按 point order 生成 `1..N`，faces 从 cell edges 确定性重建。字段数值走标准 PointData/CellData；为满足 core 强制的 unit/source provenance，export 额外写 `mpmc_unit/mpmc_source_kind/mpmc_source_reference/mpmc_source_revision/mpmc_source_locator` XML attributes，import 在存在时恢复，缺失时生成明确的 file-import 默认 metadata。export 使用 Float64 points/fields、Int64 connectivity/offsets 与 UInt8 types。binary、appended、compressor、多 Piece、3D/high-order、非三角/四边形以及整数型物理字段均显式不支持；
-4. reservoir corner-point：至少支持 Eclipse 风格 GRDECL 的核心 `SPECGRID/COORD/ZCORN/ACTNUM` 导入，并能读取常用 `PORO/PERMX/PERMY/PERMZ` 属性。
+4. reservoir corner-point：当前已建立最小 GRDECL parser，要求 `SPECGRID/COORD/ZCORN/ACTNUM/PORO/PERMX/PERMY/PERMZ` 各出现一次并以 `/` 终止，支持 `N*value` repeat、Fortran `D` exponent 与 `--` 行注释；未知关键词（包括 `INCLUDE`）显式拒绝。`SPECGRID` 只接受 `NUMRES=1`、Cartesian `F`；COORD 必须是 `6*(NX+1)*(NY+1)`，ZCORN 是 `8*NX*NY*NZ`，ACTNUM/属性均为 `NX*NY*NZ`，logical cell index 固定 `i + NX*(j + NY*k)`。COORD pillars 按 `(i,j)`、I-fastest 顺序解释，ZCORN 使用 `{LLL,HLL,LHL,HHL,LLH,HLH,LHH,HHH}` corner ordering。调用方必须显式提供 `coordinate_scale_to_m` 与 `permeability_scale_to_m2`；parser 不猜 FIELD/METRIC。所有 logical cells 都进入 `Topology`，cell `GlobalEntityId=logical_index+1`，每 cell 的 8 个 corner vertex IDs 也确定性保留；`ACTNUM` 仅作为 activity mask，不压缩 cell ordering。`PORO` 强制 `[0,1]`、unit=`1`，PERM 值必须非负并按显式 scale 转成 `m2`。当前不构造 shared faces、fault intersections、pinch/NNC、MAPAXES、GRIDUNIT、LGR 或 export。
 
 若某格式只实现声明的子集，必须在解析器入口与文档中显式拒绝未支持特性；不得“读取成功”后丢失高阶节点、物理组、inactive cell 或字段。
 
@@ -112,11 +114,13 @@ Gmsh importer 下游 gate 使用一个同一 surface 内相邻的 triangle+quad 
 
 VTU gate 使用同样的相邻 triangle+quad 2D 形状，`Points` 5 个点、`Cells` offsets=`{3,7}`、types=`{5,9}`，并包含一个 2-component point field 与一个 2-component cell field。cell identity 专门使用 `9223372036854775813`（超过 signed int64 上限）与 `7000000003`，验证 UInt64 不被缩窄；point field provenance 中含 XML `&amp;` 转义，验证 metadata escape/unescape。round-trip 执行 `VTU ASCII -> core -> VTU ASCII -> core`，逐项比较 vertex/face/cell IDs、四类 CSR relations、`Geometry2D`、point/cell field layout/value/metadata。invalid gate 覆盖 appended、compressor、unsupported cell type、non-planar coordinate、malformed offsets、duplicate cell IDs 与 reserved field-name collision。
 
+GRDECL gate 使用 `2×1×1` axis-aligned corner-point fixture，第二个 logical cell `ACTNUM=0`。fixture 用 `8*0 8*1` 验证 repeat expansion、`PERMZ` 用 `D` exponent 验证数值解析，并显式把 coordinate scale 设为 2、permeability scale 设为 `1e-15 m²/source-unit`；两 cells 最终 volume 均为 8 m³，inactive cell 的 stable ID=2 与 PORO/PERM 值仍完整保留。另有独立 `1×1×1` degeneracy gate：active zero-thickness cell 必须拒绝，inactive zero-thickness cell 保留 identity/corners/property 且 volume=0，inactive flipped top/bottom 仍拒绝。invalid gate 还覆盖 radial `T`、非法 ACTNUM、缺 keyword、PORO>1、negative permeability、unknown INCLUDE 与非法 unit scale。
+
 当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现通用 partition policy、超过 depth-1 的 overlap、Gmsh binary/high-order/3D、Gmsh NodeData/ElementData/ElementNodeData export、constraint DoF、真实 halo buffer abstraction、Mat integration 或残差/Jacobian；这些不得由当前 adapter/importer/exporter 冒充完成。
 
 后续适配层仍可负责：
 
-- 在已验证的 Gmsh/VTU 2D I/O 基线上建立最小 GRDECL `SPECGRID/COORD/ZCORN/ACTNUM` parser contract，先锁定 corner-point geometry、inactive-cell identity 与 PORO/PERM 属性映射，不进入流动离散；
+- 在已验证的 GRDECL raw corner-point contract 上建立最小 active-cell face processor：先只处理无 fault 的 2×1×1 / 1×1×2 fixture，把 coincident cell-local corners/faces 合并成 shared `Topology` 并保留 inactive-cell logical ID 映射；fault split/NNC 继续后置；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
