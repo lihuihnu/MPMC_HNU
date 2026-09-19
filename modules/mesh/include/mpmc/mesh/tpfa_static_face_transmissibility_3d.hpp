@@ -181,10 +181,10 @@ combine_internal_face_tpfa_half_transmissibilities_3d(
     if (!std::isfinite(
             face_transmissibility_m3) ||
         face_transmissibility_m3 <= 0.0 ||
-        face_transmissibility_m3 >=
+        face_transmissibility_m3 >
             smaller_m3) {
         throw std::invalid_argument(
-            "mpmc::mesh::combine_internal_face_tpfa_half_transmissibilities_3d: positive harmonic combination must be finite, positive, and smaller than each half");
+            "mpmc::mesh::combine_internal_face_tpfa_half_transmissibilities_3d: positive harmonic combination must be finite, positive, and no larger than either half");
     }
 
     return TpfaStaticFaceTransmissibility3D{
