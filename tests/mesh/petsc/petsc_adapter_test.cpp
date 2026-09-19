@@ -4423,6 +4423,11 @@ void verify_target_local_gated_tpfa_view_stage(
 }
 
 
+mesh::GlobalEntityId
+processed_grdecl_face_owner_global_id(
+    const mesh::ActiveCornerPointGrid& reference,
+    mesh::LocalIndex face);
+
 void verify_assembly_ready_internal_connection_table_stage(
     const mesh_petsc::AssemblyReadyInternalConnectionTable3D& table,
     const mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D& view,
