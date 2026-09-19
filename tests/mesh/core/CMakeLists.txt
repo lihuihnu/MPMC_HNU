@@ -26,6 +26,7 @@ add_executable(mpmc_mesh_core_tests
     face_boundary_header_self_contained.cpp
     face_geometry_3d_header_self_contained.cpp
     cell_face_geometric_operator_3d_header_self_contained.cpp
+    cartesian_symmetric_tensor_3d_header_self_contained.cpp
     permeability_tensor_3d_header_self_contained.cpp
     conductivity_field_header_self_contained.cpp
     dense_field_header_self_contained.cpp

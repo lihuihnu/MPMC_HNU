@@ -1,6 +1,7 @@
 #ifndef MPMC_MESH_PERMEABILITY_TENSOR_3D_HPP
 #define MPMC_MESH_PERMEABILITY_TENSOR_3D_HPP
 
+#include <mpmc/mesh/cartesian_symmetric_tensor_3d.hpp>
 #include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dense_field_registry.hpp>
 #include <mpmc/mesh/topology.hpp>
@@ -16,11 +17,6 @@
 #include <vector>
 
 namespace mpmc::mesh {
-
-/// Explicit basis for material tensors represented by this mesh contract.
-enum class CartesianTensorBasis3D : std::uint8_t {
-    mesh_world_xyz = 0,
-};
 
 /// Cell permeability tensor for the existing diagonal baseline.
 ///
@@ -132,59 +128,31 @@ inline void require_symmetric_permeability_field(
 
 inline void require_positive_semidefinite(
     const CartesianSymmetricPermeabilityTensor3D& tensor) {
-    const double scale = std::max(
-        {std::abs(tensor.kxx_m2),
-         std::abs(tensor.kyy_m2),
-         std::abs(tensor.kzz_m2),
-         std::abs(tensor.kxy_m2),
-         std::abs(tensor.kxz_m2),
-         std::abs(tensor.kyz_m2)});
+    const auto status =
+        classify_positive_semidefinite(
+            CartesianSymmetricTensorComponents3D{
+                tensor.kxx_m2,
+                tensor.kyy_m2,
+                tensor.kzz_m2,
+                tensor.kxy_m2,
+                tensor.kxz_m2,
+                tensor.kyz_m2});
 
-    if (!std::isfinite(scale)) {
+    switch (status) {
+    case PositiveSemidefiniteStatus3D::valid:
+        return;
+    case PositiveSemidefiniteStatus3D::non_finite:
         throw std::invalid_argument(
             "mpmc::mesh::CellCartesianSymmetricPermeability3D: tensor components must be finite");
-    }
-    if (tensor.kxx_m2 < 0.0 ||
-        tensor.kyy_m2 < 0.0 ||
-        tensor.kzz_m2 < 0.0) {
+    case PositiveSemidefiniteStatus3D::negative_diagonal:
         throw std::invalid_argument(
             "mpmc::mesh::CellCartesianSymmetricPermeability3D: diagonal permeability components must be non-negative");
-    }
-    if (scale == 0.0) {
-        return;
-    }
-
-    const double a = tensor.kxx_m2 / scale;
-    const double b = tensor.kyy_m2 / scale;
-    const double c = tensor.kzz_m2 / scale;
-    const double d = tensor.kxy_m2 / scale;
-    const double e = tensor.kxz_m2 / scale;
-    const double f = tensor.kyz_m2 / scale;
-
-    const double minor_xy = a * b - d * d;
-    const double minor_xz = a * c - e * e;
-    const double minor_yz = b * c - f * f;
-    const double determinant =
-        a * b * c +
-        2.0 * d * e * f -
-        a * f * f -
-        b * e * e -
-        c * d * d;
-
-    constexpr double tolerance =
-        4096.0 *
-        std::numeric_limits<double>::epsilon();
-    if (!std::isfinite(minor_xy) ||
-        !std::isfinite(minor_xz) ||
-        !std::isfinite(minor_yz) ||
-        !std::isfinite(determinant) ||
-        minor_xy < -tolerance ||
-        minor_xz < -tolerance ||
-        minor_yz < -tolerance ||
-        determinant < -tolerance) {
+    case PositiveSemidefiniteStatus3D::indefinite:
         throw std::invalid_argument(
             "mpmc::mesh::CellCartesianSymmetricPermeability3D: permeability tensor must be positive semidefinite");
     }
+    throw std::logic_error(
+        "mpmc::mesh::CellCartesianSymmetricPermeability3D: invalid PSD classifier status");
 }
 
 } // namespace permeability_tensor_3d_detail

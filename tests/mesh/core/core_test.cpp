@@ -4227,11 +4227,43 @@ void conductivity_field_contract() {
             synthetic_field_metadata(
                 "edge.electrical_conductivity",
                 "S/m"));
+    const auto thermal_tensor =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            6U,
+            {
+                4.0, 3.0, 2.0,
+                -1.0, 0.5, -0.25,
+            },
+            synthetic_field_metadata(
+                "rock.thermal_conductivity.full",
+                "W/(m*K)"));
+    const auto electrical_tensor =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::edge,
+            6U,
+            {
+                2.0, 2.0, 2.0,
+                0.0, 0.0, 0.0,
+
+                1.0, 1.0, 0.0,
+                -1.0, 0.0, 0.0,
+
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0,
+            },
+            synthetic_field_metadata(
+                "edge.electrical_conductivity.full",
+                "S/m"));
     const auto registry =
         mesh::DenseFieldRegistry::create(
             topology,
             {thermal_cell,
-             electrical_edge});
+             electrical_edge,
+             thermal_tensor,
+             electrical_tensor});
 
     const auto thermal =
         mesh::require_scalar_conductivity_field(
@@ -4264,6 +4296,80 @@ void conductivity_field_contract() {
         30.0,
         0.0,
         "electrical conductivity edge value");
+
+    const auto typed_thermal =
+        mesh::make_cartesian_symmetric_conductivity_field_3d(
+            topology,
+            registry,
+            mesh::SymmetricConductivityFieldContract3D{
+                mesh::EntityKind::cell,
+                "rock.thermal_conductivity.full",
+                "W/(m*K)"});
+    require(
+        typed_thermal.location() ==
+                mesh::EntityKind::cell &&
+            typed_thermal.entity_count() == 1U &&
+            typed_thermal.unit() ==
+                "W/(m*K)" &&
+            typed_thermal.basis() ==
+                mesh::CartesianTensorBasis3D::
+                    mesh_world_xyz,
+        "typed thermal conductivity contract");
+    const auto thermal_full =
+        typed_thermal.tensor(
+            mesh::LocalIndex{0U});
+    require_close(
+        thermal_full.xx,
+        4.0,
+        0.0,
+        "thermal tensor xx");
+    require_close(
+        thermal_full.xy,
+        -1.0,
+        0.0,
+        "thermal tensor negative off-diagonal");
+    require_close(
+        thermal_full.yz,
+        -0.25,
+        0.0,
+        "thermal tensor yz");
+
+    const auto typed_electrical =
+        mesh::make_cartesian_symmetric_conductivity_field_3d(
+            topology,
+            registry,
+            mesh::SymmetricConductivityFieldContract3D{
+                mesh::EntityKind::edge,
+                "edge.electrical_conductivity.full",
+                "S/m"});
+    require(
+        typed_electrical.location() ==
+                mesh::EntityKind::edge &&
+            typed_electrical.entity_count() == 3U &&
+            typed_electrical.unit() == "S/m",
+        "typed electrical conductivity contract");
+    const auto semidefinite =
+        typed_electrical.tensor(
+            mesh::LocalIndex{1U});
+    require_close(
+        semidefinite.xy,
+        -1.0,
+        0.0,
+        "semidefinite conductivity off-diagonal");
+    require_close(
+        semidefinite.zz,
+        0.0,
+        0.0,
+        "semidefinite conductivity zero direction");
+    const auto zero =
+        typed_electrical.tensor(
+            mesh::LocalIndex{2U});
+    require_close(
+        zero.xx + zero.yy + zero.zz +
+            zero.xy + zero.xz + zero.yz,
+        0.0,
+        0.0,
+        "zero conductivity tensor is valid");
 }
 
 void conductivity_field_contract_invalid() {
@@ -4288,11 +4394,60 @@ void conductivity_field_contract_invalid() {
             synthetic_field_metadata(
                 "vector.conductivity",
                 "W/(m*K)"));
+    const auto good_tensor =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            6U,
+            {
+                1.0, 2.0, 3.0,
+                0.0, 0.0, 0.0,
+            },
+            synthetic_field_metadata(
+                "good.tensor.conductivity",
+                "W/(m*K)"));
+    const auto non_psd_tensor =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            6U,
+            {
+                1.0, 1.0, 1.0,
+                2.0, 0.0, 0.0,
+            },
+            synthetic_field_metadata(
+                "non_psd.conductivity",
+                "W/(m*K)"));
+    const auto negative_diagonal_tensor =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            6U,
+            {
+                -1.0, 1.0, 1.0,
+                0.0, 0.0, 0.0,
+            },
+            synthetic_field_metadata(
+                "negative_diagonal.conductivity",
+                "W/(m*K)"));
+    const auto wrong_width_tensor =
+        mesh::DenseFieldSnapshot::create(
+            topology,
+            mesh::EntityKind::cell,
+            3U,
+            {1.0, 1.0, 1.0},
+            synthetic_field_metadata(
+                "wrong_width.conductivity",
+                "W/(m*K)"));
     const auto registry =
         mesh::DenseFieldRegistry::create(
             topology,
             {negative,
-             vector_field});
+             vector_field,
+             good_tensor,
+             non_psd_tensor,
+             negative_diagonal_tensor,
+             wrong_width_tensor});
 
     expect_throw<std::invalid_argument>(
         [&] {
@@ -4344,6 +4499,78 @@ void conductivity_field_contract_invalid() {
                     mesh::EntityKind::cell,
                     " ",
                     "W/(m*K)"});
+        });
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cartesian_symmetric_conductivity_field_3d(
+                topology,
+                registry,
+                mesh::SymmetricConductivityFieldContract3D{
+                    mesh::EntityKind::cell,
+                    "non_psd.conductivity",
+                    "W/(m*K)"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cartesian_symmetric_conductivity_field_3d(
+                topology,
+                registry,
+                mesh::SymmetricConductivityFieldContract3D{
+                    mesh::EntityKind::cell,
+                    "negative_diagonal.conductivity",
+                    "W/(m*K)"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cartesian_symmetric_conductivity_field_3d(
+                topology,
+                registry,
+                mesh::SymmetricConductivityFieldContract3D{
+                    mesh::EntityKind::cell,
+                    "wrong_width.conductivity",
+                    "W/(m*K)"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cartesian_symmetric_conductivity_field_3d(
+                topology,
+                registry,
+                mesh::SymmetricConductivityFieldContract3D{
+                    mesh::EntityKind::cell,
+                    "good.tensor.conductivity",
+                    "S/m"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cartesian_symmetric_conductivity_field_3d(
+                topology,
+                registry,
+                mesh::SymmetricConductivityFieldContract3D{
+                    static_cast<
+                        mesh::EntityKind>(255U),
+                    "good.tensor.conductivity",
+                    "W/(m*K)"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cartesian_symmetric_conductivity_field_3d(
+                topology,
+                registry,
+                mesh::SymmetricConductivityFieldContract3D{
+                    mesh::EntityKind::cell,
+                    " ",
+                    "W/(m*K)"});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::make_cartesian_symmetric_conductivity_field_3d(
+                topology,
+                registry,
+                mesh::SymmetricConductivityFieldContract3D{
+                    mesh::EntityKind::cell,
+                    "good.tensor.conductivity",
+                    " "});
         });
 }
 
