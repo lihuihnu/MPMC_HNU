@@ -2514,6 +2514,18 @@ void verify_dmplex_distribute_overlap_identity() {
     const auto reference_geometry =
         two_by_one_reference_geometry(
             root_topology);
+    const auto reference_boundary =
+        two_by_one_reference_boundary(
+            root_topology);
+    const auto reference_cell_field =
+        reference_cell_scalar_field(
+            root_topology);
+    const auto reference_face_field =
+        reference_face_vector_field(
+            root_topology);
+    const auto reference_vertex_field =
+        reference_vertex_vector_field(
+            root_topology);
 
     DM source_dm = nullptr;
     std::vector<mesh_petsc::DMPlexPointIdentity>
@@ -2604,6 +2616,79 @@ void verify_dmplex_distribute_overlap_identity() {
         distributed_dm,
         distributed_identities,
         reference_geometry);
+
+    std::optional<mesh::FaceBoundarySnapshot>
+        distributed_boundary;
+    std::optional<mesh::DenseFieldSnapshot>
+        distributed_cell_field;
+    std::optional<mesh::DenseFieldSnapshot>
+        distributed_face_field;
+    std::optional<mesh::DenseFieldSnapshot>
+        distributed_vertex_field;
+
+    require_petsc(
+        mesh_petsc::migrate_face_boundary_snapshot(
+            source_dm,
+            migration_sf,
+            reference_boundary,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_boundary),
+        "migrate face boundary after distribute");
+    require_petsc(
+        mesh_petsc::migrate_dense_field_snapshot(
+            source_dm,
+            migration_sf,
+            reference_cell_field,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_cell_field),
+        "migrate cell field after distribute");
+    require_petsc(
+        mesh_petsc::migrate_dense_field_snapshot(
+            source_dm,
+            migration_sf,
+            reference_face_field,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_face_field),
+        "migrate face field after distribute");
+    require_petsc(
+        mesh_petsc::migrate_dense_field_snapshot(
+            source_dm,
+            migration_sf,
+            reference_vertex_field,
+            source_identities,
+            distributed_dm,
+            distributed_identities,
+            &distributed_vertex_field),
+        "migrate vertex field after distribute");
+
+    require(
+        distributed_boundary.has_value() &&
+            distributed_cell_field.has_value() &&
+            distributed_face_field.has_value() &&
+            distributed_vertex_field.has_value(),
+        "distributed boundary and field snapshots must be reconstructed");
+    verify_migrated_boundary(
+        *distributed_boundary,
+        reference_boundary,
+        distributed_identities);
+    verify_migrated_dense_field(
+        *distributed_cell_field,
+        reference_cell_field,
+        distributed_identities);
+    verify_migrated_dense_field(
+        *distributed_face_field,
+        reference_face_field,
+        distributed_identities);
+    verify_migrated_dense_field(
+        *distributed_vertex_field,
+        reference_vertex_field,
+        distributed_identities);
 
     require_petsc(
         PetscSFDestroy(&migration_sf),
@@ -2748,6 +2833,79 @@ void verify_dmplex_distribute_overlap_identity() {
         overlap_dm,
         overlap_identities,
         reference_geometry);
+
+    std::optional<mesh::FaceBoundarySnapshot>
+        overlap_boundary;
+    std::optional<mesh::DenseFieldSnapshot>
+        overlap_cell_field;
+    std::optional<mesh::DenseFieldSnapshot>
+        overlap_face_field;
+    std::optional<mesh::DenseFieldSnapshot>
+        overlap_vertex_field;
+
+    require_petsc(
+        mesh_petsc::migrate_face_boundary_snapshot(
+            distributed_dm,
+            overlap_migration_sf,
+            *distributed_boundary,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_boundary),
+        "migrate face boundary into overlap");
+    require_petsc(
+        mesh_petsc::migrate_dense_field_snapshot(
+            distributed_dm,
+            overlap_migration_sf,
+            *distributed_cell_field,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_cell_field),
+        "migrate cell field into overlap");
+    require_petsc(
+        mesh_petsc::migrate_dense_field_snapshot(
+            distributed_dm,
+            overlap_migration_sf,
+            *distributed_face_field,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_face_field),
+        "migrate face field into overlap");
+    require_petsc(
+        mesh_petsc::migrate_dense_field_snapshot(
+            distributed_dm,
+            overlap_migration_sf,
+            *distributed_vertex_field,
+            distributed_identities,
+            overlap_dm,
+            overlap_identities,
+            &overlap_vertex_field),
+        "migrate vertex field into overlap");
+
+    require(
+        overlap_boundary.has_value() &&
+            overlap_cell_field.has_value() &&
+            overlap_face_field.has_value() &&
+            overlap_vertex_field.has_value(),
+        "overlap boundary and field snapshots must be reconstructed");
+    verify_migrated_boundary(
+        *overlap_boundary,
+        reference_boundary,
+        overlap_identities);
+    verify_migrated_dense_field(
+        *overlap_cell_field,
+        reference_cell_field,
+        overlap_identities);
+    verify_migrated_dense_field(
+        *overlap_face_field,
+        reference_face_field,
+        overlap_identities);
+    verify_migrated_dense_field(
+        *overlap_vertex_field,
+        reference_vertex_field,
+        overlap_identities);
 
     require_petsc(
         PetscSFDestroy(&overlap_migration_sf),
