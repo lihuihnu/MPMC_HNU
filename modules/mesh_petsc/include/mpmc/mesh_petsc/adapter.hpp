@@ -657,25 +657,31 @@ inline PetscErrorCode create_serial_dmplex_topology(
         mpmc::mesh::EntityKind::face,
         mpmc::mesh::EntityKind::cell);
 
-    std::size_t face_vertex_degree = 0U;
+    bool has_2d_face = false;
+    bool has_3d_face = false;
     for (std::size_t face = 0U; face < face_count; ++face) {
         const auto local = mpmc::mesh::LocalIndex{
             static_cast<mpmc::mesh::LocalIndex::value_type>(face)};
         const auto vertices = face_vertices.adjacent(local);
         const auto cells = face_cells.adjacent(local);
-        if ((vertices.size() != 2U && vertices.size() != 4U) ||
-            (cells.size() != 1U && cells.size() != 2U)) {
+        if (cells.size() != 1U && cells.size() != 2U) {
             return PETSC_ERR_SUP;
         }
-        if (face_vertex_degree == 0U) {
-            face_vertex_degree = vertices.size();
-        } else if (vertices.size() != face_vertex_degree) {
+        if (vertices.size() == 2U) {
+            has_2d_face = true;
+        } else if (vertices.size() == 3U ||
+                   vertices.size() == 4U) {
+            has_3d_face = true;
+        } else {
+            return PETSC_ERR_SUP;
+        }
+        if (has_2d_face && has_3d_face) {
             return PETSC_ERR_SUP;
         }
     }
 
     const PetscInt dm_dimension =
-        face_vertex_degree == 2U ? PetscInt{2} : PetscInt{3};
+        has_2d_face ? PetscInt{2} : PetscInt{3};
     for (std::size_t cell = 0U; cell < cell_count; ++cell) {
         const auto local = mpmc::mesh::LocalIndex{
             static_cast<mpmc::mesh::LocalIndex::value_type>(cell)};
@@ -688,8 +694,14 @@ inline PetscErrorCode create_serial_dmplex_topology(
                 vertex_degree != face_degree) {
                 return PETSC_ERR_SUP;
             }
-        } else if (face_degree != 6U || vertex_degree != 8U) {
-            return PETSC_ERR_SUP;
+        } else {
+            const bool tetrahedron =
+                face_degree == 4U && vertex_degree == 4U;
+            const bool hexahedron =
+                face_degree == 6U && vertex_degree == 8U;
+            if (!tetrahedron && !hexahedron) {
+                return PETSC_ERR_SUP;
+            }
         }
     }
 
