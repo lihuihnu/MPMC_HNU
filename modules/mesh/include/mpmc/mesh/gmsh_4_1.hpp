@@ -363,9 +363,9 @@ inline void parse_physical_names(
             throw std::invalid_argument(
                 "mpmc::mesh::import_gmsh_4_1_ascii: invalid quoted physical-group name");
         }
-        if (dimension < 0 || dimension > 2) {
+        if (dimension < 0 || dimension > 3) {
             throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: only 0D/1D/2D physical names are supported");
+                "mpmc::mesh::import_gmsh_4_1_ascii: only 0D/1D/2D/3D physical names are supported");
         }
         const std::uint32_t tag = checked_physical_tag(
             raw_tag,
@@ -436,12 +436,7 @@ inline void parse_entities(
             input, count,
             "mpmc::mesh::import_gmsh_4_1_ascii: invalid $Entities header");
     }
-    if (raw_counts[3] != 0U) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_gmsh_4_1_ascii: volume entities are unsupported in the 2D baseline");
-    }
-
-    for (int dimension = 0; dimension <= 2; ++dimension) {
+    for (int dimension = 0; dimension <= 3; ++dimension) {
         const std::size_t count = checked_size(
             raw_counts[static_cast<std::size_t>(dimension)],
             "mpmc::mesh::import_gmsh_4_1_ascii: entity count overflow");
@@ -556,9 +551,9 @@ inline void parse_nodes(
         read_value(input, raw_block_nodes,
                    "mpmc::mesh::import_gmsh_4_1_ascii: invalid node-block size");
         if (entity_dimension < 0 ||
-            entity_dimension > 2) {
+            entity_dimension > 3) {
             throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: node blocks above dimension 2 are unsupported");
+                "mpmc::mesh::import_gmsh_4_1_ascii: node block dimension must lie in [0,3]");
         }
         require_positive_tag(
             entity_tag,
@@ -633,8 +628,10 @@ inline void parse_nodes(
     if (dimension == 1 && element_type == 1) return 2U;
     if (dimension == 2 && element_type == 2) return 3U;
     if (dimension == 2 && element_type == 3) return 4U;
+    if (dimension == 3 && element_type == 4) return 4U;
+    if (dimension == 3 && element_type == 5) return 8U;
     throw std::invalid_argument(
-        "mpmc::mesh::import_gmsh_4_1_ascii: unsupported element type; baseline accepts point, 2-node line, 3-node triangle and 4-node quad only");
+        "mpmc::mesh::import_gmsh_4_1_ascii: unsupported element type; baseline accepts point, 2-node line, 3-node triangle, 4-node quad, 4-node tetrahedron and 8-node hexahedron only");
 }
 
 inline void parse_elements(
@@ -678,9 +675,9 @@ inline void parse_elements(
         read_value(input, raw_block_elements,
                    "mpmc::mesh::import_gmsh_4_1_ascii: invalid element-block size");
         if (entity_dimension < 0 ||
-            entity_dimension > 2) {
+            entity_dimension > 3) {
             throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: element blocks above dimension 2 are unsupported");
+                "mpmc::mesh::import_gmsh_4_1_ascii: element block dimension must lie in [0,3]");
         }
         require_positive_tag(
             entity_tag,
@@ -929,6 +926,7 @@ entity_physical_tags(
 
     std::vector<CellRecord> cell_records;
     std::vector<LineRecord> line_records;
+    bool volume_element_seen = false;
     std::uint64_t maximum_element_tag = 0U;
     for (const auto& element : elements) {
         maximum_element_tag =
@@ -957,7 +955,13 @@ entity_physical_tags(
                     element.tag,
                     element.entity_tag,
                     element.node_tags});
+        } else if (element.dimension == 3) {
+            volume_element_seen = true;
         }
+    }
+    if (volume_element_seen) {
+        throw std::invalid_argument(
+            "mpmc::mesh::import_gmsh_4_1_ascii: 3D volume elements require import_gmsh_4_1_ascii_3d");
     }
     if (cell_records.empty()) {
         throw std::invalid_argument(
