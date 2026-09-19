@@ -2432,6 +2432,70 @@ PERMZ
 )grdecl";
 }
 
+const mesh::DenseFieldSnapshot&
+active_corner_point_field(
+    const mesh::ActiveCornerPointGrid& processed,
+    std::string_view id) {
+    const auto found =
+        std::find_if(
+            processed.cell_fields.begin(),
+            processed.cell_fields.end(),
+            [id](const auto& field) {
+                return field.metadata().id == id;
+            });
+    require(
+        found != processed.cell_fields.end(),
+        "processed active field ID missing");
+    return *found;
+}
+
+void require_metadata_equal(
+    const mesh::DenseFieldMetadata& actual,
+    const mesh::DenseFieldMetadata& expected,
+    std::string_view message) {
+    require(
+        actual.id == expected.id &&
+        actual.unit == expected.unit &&
+        actual.source.kind ==
+            expected.source.kind &&
+        actual.source.reference ==
+            expected.source.reference &&
+        actual.source.revision ==
+            expected.source.revision &&
+        actual.source.locator ==
+            expected.source.locator,
+        std::string{message});
+}
+
+mesh::Coordinate3D processed_cell_vertex_mean(
+    const mesh::ActiveCornerPointGrid& processed,
+    mesh::LocalIndex cell) {
+    const auto& cell_vertices =
+        processed.topology.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::vertex);
+    const auto vertices =
+        cell_vertices.adjacent(cell);
+    require(
+        vertices.size() == 8U,
+        "processed cell mean requires eight vertices");
+
+    mesh::Coordinate3D mean{0.0, 0.0, 0.0};
+    for (const auto vertex : vertices) {
+        const auto& coordinate =
+            processed.vertex_coordinates_m[
+                static_cast<std::size_t>(
+                    vertex.value())];
+        mean.x_m += coordinate.x_m;
+        mean.y_m += coordinate.y_m;
+        mean.z_m += coordinate.z_m;
+    }
+    mean.x_m /= 8.0;
+    mean.y_m /= 8.0;
+    mean.z_m /= 8.0;
+    return mean;
+}
+
 std::size_t shared_face_count(
     const mesh::Topology& topology) {
     const auto& face_cells =
@@ -2489,6 +2553,22 @@ void require_active_processor_shape(
             mesh::LocalIndex{1U}).value() == 2U,
         "active corner-point processed cell identities");
 
+    require(
+        processed.face_geometry.cell_count() == 2U &&
+        processed.face_geometry.face_count() == 11U,
+        "active corner-point face metric counts");
+    require(
+        processed.cell_fields.size() == 4U,
+        "active corner-point projected field count");
+    for (const auto& field :
+         processed.cell_fields) {
+        require(
+            field.location() ==
+                mesh::EntityKind::cell &&
+            field.entity_count() == 2U,
+            "active corner-point projected field alignment");
+    }
+
     const auto& cell_vertices =
         topology.relation(
             mesh::EntityKind::cell,
@@ -2537,6 +2617,47 @@ void require_active_processor_shape(
         require(
             support == 1U || support == 2U,
             "processed face support cardinality");
+
+        require_close(
+            processed.face_geometry.face_area_m2(local),
+            1.0,
+            1.0e-14,
+            "processed unit-cube face area");
+
+        const auto owner =
+            processed.face_geometry.face_owner(local);
+        require(
+            face_cells.adjacent(local).front() == owner,
+            "face metric owner follows canonical face support owner");
+        const auto centroid =
+            processed.face_geometry.face_centroid_m(local);
+        const auto owner_centroid =
+            processed_cell_vertex_mean(
+                processed, owner);
+        const auto normal =
+            processed.face_geometry.face_owner_unit_normal(
+                local);
+        const double outward =
+            normal.x *
+                (centroid.x_m -
+                 owner_centroid.x_m) +
+            normal.y *
+                (centroid.y_m -
+                 owner_centroid.y_m) +
+            normal.z *
+                (centroid.z_m -
+                 owner_centroid.z_m);
+        require(
+            outward > 0.0,
+            "processed face normal points away from owner cell");
+        require_close(
+            std::sqrt(
+                normal.x * normal.x +
+                normal.y * normal.y +
+                normal.z * normal.z),
+            1.0,
+            1.0e-14,
+            "processed face normal magnitude");
     }
 }
 
@@ -2584,6 +2705,38 @@ void active_corner_point_i_neighbor() {
             continue;
         }
         found_interface = true;
+        const auto centroid =
+            processed.face_geometry.face_centroid_m(local);
+        const auto normal =
+            processed.face_geometry.face_owner_unit_normal(
+                local);
+        require_close(
+            centroid.x_m, 1.0, 0.0,
+            "processed I-interface centroid x");
+        require_close(
+            centroid.y_m, 0.5, 1.0e-14,
+            "processed I-interface centroid y");
+        require_close(
+            centroid.z_m, 0.5, 1.0e-14,
+            "processed I-interface centroid z");
+        require_close(
+            processed.face_geometry.face_area_m2(local),
+            1.0,
+            1.0e-14,
+            "processed I-interface area");
+        require(
+            processed.face_geometry.face_owner(local) ==
+                mesh::LocalIndex{0U},
+            "processed I-interface owner");
+        require_close(
+            normal.x, 1.0, 1.0e-14,
+            "processed I-interface normal x");
+        require_close(
+            normal.y, 0.0, 1.0e-14,
+            "processed I-interface normal y");
+        require_close(
+            normal.z, 0.0, 1.0e-14,
+            "processed I-interface normal z");
         for (const auto vertex :
              face_vertices.adjacent(local)) {
             require_close(
@@ -2599,6 +2752,45 @@ void active_corner_point_i_neighbor() {
     require(
         found_interface,
         "processed I-interface face exists");
+
+    const auto& poro =
+        active_corner_point_field(
+            processed, "PORO");
+    const auto& permx =
+        active_corner_point_field(
+            processed, "PERMX");
+    require_close(
+        poro.value(
+            mesh::LocalIndex{0U}, 0U),
+        0.20,
+        0.0,
+        "processed first PORO");
+    require_close(
+        poro.value(
+            mesh::LocalIndex{1U}, 0U),
+        0.35,
+        0.0,
+        "processed second PORO");
+    require_close(
+        permx.value(
+            mesh::LocalIndex{0U}, 0U),
+        100.0e-15,
+        1.0e-28,
+        "processed first PERMX");
+    require_close(
+        permx.value(
+            mesh::LocalIndex{1U}, 0U),
+        200.0e-15,
+        1.0e-28,
+        "processed second PERMX");
+    require_metadata_equal(
+        poro.metadata(),
+        grdecl_field(raw, "PORO").metadata(),
+        "processed PORO metadata preserved");
+    require_metadata_equal(
+        permx.metadata(),
+        grdecl_field(raw, "PERMX").metadata(),
+        "processed PERMX metadata preserved");
 
     const auto repeated =
         mesh::process_active_corner_point_grid(
@@ -2659,6 +2851,38 @@ void active_corner_point_k_neighbor() {
             continue;
         }
         found_interface = true;
+        const auto centroid =
+            processed.face_geometry.face_centroid_m(local);
+        const auto normal =
+            processed.face_geometry.face_owner_unit_normal(
+                local);
+        require_close(
+            centroid.x_m, 0.5, 1.0e-14,
+            "processed K-interface centroid x");
+        require_close(
+            centroid.y_m, 0.5, 1.0e-14,
+            "processed K-interface centroid y");
+        require_close(
+            centroid.z_m, 1.0, 0.0,
+            "processed K-interface centroid z");
+        require_close(
+            processed.face_geometry.face_area_m2(local),
+            1.0,
+            1.0e-14,
+            "processed K-interface area");
+        require(
+            processed.face_geometry.face_owner(local) ==
+                mesh::LocalIndex{0U},
+            "processed K-interface owner");
+        require_close(
+            normal.x, 0.0, 1.0e-14,
+            "processed K-interface normal x");
+        require_close(
+            normal.y, 0.0, 1.0e-14,
+            "processed K-interface normal y");
+        require_close(
+            normal.z, 1.0, 1.0e-14,
+            "processed K-interface normal z");
         for (const auto vertex :
              face_vertices.adjacent(local)) {
             require_close(
@@ -2702,6 +2926,44 @@ void active_corner_point_activity_mapping() {
             mesh::EntityKind::cell,
             mesh::LocalIndex{0U}).value() == 2U,
         "processed local cell maps to original logical GlobalEntityId");
+
+    require(
+        processed.face_geometry.cell_count() == 1U &&
+        processed.face_geometry.face_count() == 6U &&
+        processed.cell_fields.size() == 4U,
+        "filtered active geometry/field counts");
+    require_close(
+        active_corner_point_field(
+            processed, "PORO")
+            .value(
+                mesh::LocalIndex{0U}, 0U),
+        0.35,
+        0.0,
+        "filtered logical cell 2 PORO");
+    require_close(
+        active_corner_point_field(
+            processed, "PERMX")
+            .value(
+                mesh::LocalIndex{0U}, 0U),
+        200.0e-15,
+        1.0e-28,
+        "filtered logical cell 2 PERMX");
+    require_close(
+        active_corner_point_field(
+            processed, "PERMY")
+            .value(
+                mesh::LocalIndex{0U}, 0U),
+        75.0e-15,
+        1.0e-28,
+        "filtered logical cell 2 PERMY");
+    require_close(
+        active_corner_point_field(
+            processed, "PERMZ")
+            .value(
+                mesh::LocalIndex{0U}, 0U),
+        20.0e-15,
+        1.0e-28,
+        "filtered logical cell 2 PERMZ");
 
     const auto& face_cells =
         processed.topology.relation(
