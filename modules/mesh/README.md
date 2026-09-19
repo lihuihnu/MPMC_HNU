@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已能创建 local/global `PetscSection`、PETSc-width local-to-global scalar map、entity/point/section SF、真实 global/local Vec，并新增最小 serial DMPlex topology adapter。该 adapter 在 `PETSC_COMM_SELF` 上把 2D quad core DAG 直接映射为 `[cells][faces][vertices]` DMPlex point space，并单独保存 PETSc point 到 core `(EntityKind, LocalIndex, GlobalEntityId)` 的 64-bit stable identity map。core 仍不依赖 PETSc/MPI；不含 DMPlex distribute、Mat、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已覆盖 local/global `PetscSection`、entity/point/section SF、global/local Vec、serial DMPlex topology，并新增最小 2-rank `DMPlexDistribute + DMPlexDistributeOverlap` identity gate。rank 0 以完整 `2×1` quad DMPlex 为源、rank 1 以空 source 参与 collective，stable `(EntityKind, GlobalEntityId)` 经 PETSc migration SF 以 64-bit 数据真实迁移；分发后 point-SF ownership 可重建为 core `PartitionSnapshot`，depth-1 overlap 的 owner/ghost 图可重建为 `SharedEntityPlan`。core 仍不依赖 PETSc/MPI；不含 Mat、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -94,13 +94,17 @@
 
 新增 `create_serial_dmplex_topology()` 作为 topology-only DMPlex 基线。它不让 PETSc 从 cell list 自动插值并重新生成 face，而是直接用 core `cell->face` 作为 cell cone、`face->vertex` 作为 face cone，再调用 `DMPlexSymmetrize()` 生成 support、`DMPlexStratify()` 建立 strata、`DMPlexComputeCellTypes()` 推导 quad/segment/point 类型。当前 point numbering 明确固定为 `[cells][faces][vertices]`，并返回独立 `DMPlexPointIdentity[]`：stable `GlobalEntityId` 保留为 core 的 64-bit 类型，不压入 `DMLabel/PetscInt`。构建前会拒绝 edge entity、缺失四类必要 relation、非 4-face/4-vertex cell、非 2-vertex face，以及 `cell->face` / `face->cell` 或 cell vertex closure 不一致。
 
-synthetic serial 回归使用现有 `2×1` Cartesian quad connectivity，但把 vertex/face/cell stable IDs 分别提升到 5/6/7×10^9 量级，严格核对 DMPlex chart/height/depth strata、quadrilateral/segment/point cell type、cell cone、face cone、face support、vertex support，以及每个 PETSc point 的 64-bit core identity。测试虽运行在现有 2-rank executable 中，但每个 rank 都在自己的 `PETSC_COMM_SELF` 上独立构造 serial DMPlex；没有执行 distribute，也没有给 topology 注入伪造坐标或 metric geometry。
+synthetic serial 回归使用现有 `2×1` Cartesian quad connectivity，但把 vertex/face/cell stable IDs 分别提升到 5/6/7×10^9 量级，严格核对 DMPlex chart/height/depth strata、quadrilateral/segment/point cell type、cell cone、face cone、face support、vertex support，以及每个 PETSc point 的 64-bit core identity。该 serial builder 本身仍只在 `PETSC_COMM_SELF` 上工作，不注入伪造坐标或 metric geometry。
 
-当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现 DMPlex distribute/overlap、DMPlex geometry/coordinates、constraint DoF、真实 halo buffer abstraction、Mat integration、残差/Jacobian 或 PETSc partitioner；这些不得由当前 adapter 冒充完成。
+其上新增 rooted distribution gate。`create_root_dmplex_topology()` 在 rank 0 复用已验证的 serial adapter，再把同一 DAG 放到 `PETSC_COMM_WORLD`；其他 rank 初始 chart 为空。测试把 partitioner 固定为 `PETSCPARTITIONERSIMPLE`，调用 `DMPlexDistribute(..., overlap=0)` 后要求两个 rank 各拥有一个 cell，并从 distributed DM 的 point SF 重建每个 local cell/face/vertex 的 owner rank。stable identity 不存入 `DMLabel/PetscInt`，而由 `migrate_dmplex_identities()` 给 source points 建立每点两列 `uint64` 数据（kind + GlobalEntityId），通过 `DMPlexDistributeData()` 沿 migration SF 迁移到目标 DM，再按目标 cell/face/vertex strata 重新生成 kind-local `LocalIndex`。
+
+对 overlap=0，回归对 2 个 cell、7 个 face、6 个 vertex 的每一个 stable ID 跨 rank 统计 owner 数，要求严格为 1；共享 closure points 的 point-SF leaves 必须能逐项解释为 `PartitionSnapshot` ghost。随后调用 `DMPlexDistributeOverlap(..., 1)`，再次沿 overlap migration SF 迁移 stable identity。对本 2×1 fixture，每个 rank 必须看见两个 cell，其中一个 owned、一个 ghost。测试从 overlap DM point SF 的 remote `(rank, point)`、各 rank strata ranges 与迁移后的 GlobalEntityId 构造 canonical `SharedEntityLink`，经 collective 汇总后交给现有 `SharedEntityPlan::create()`；最终要求 plan 的 receive 数等于 core ghost 数、两 rank send/receive 对称，且每个 point-SF leaf 的 owner rank 与 `PartitionSnapshot` 完全一致。PETSc point SF 的 `nroots` 按 DMPlex point-index space 的上界解释，而不是简单 chart size，这一差异已由真实 3.19.6 runner 定点修正。
+
+当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现通用 partition policy、超过 depth-1 的 overlap、distributed DMPlex geometry/coordinates、constraint DoF、真实 halo buffer abstraction、Mat integration 或残差/Jacobian；这些不得由当前 adapter 冒充完成。
 
 后续适配层仍可负责：
 
-- 在已有 serial DMPlex 基线上加入 DMPlex distribute/overlap，并核对 distributed stable identity 与 core partition/halo contract；
+- 在已经验证的 2-rank distribute/overlap identity gate 上加入 distributed DMPlex geometry/coordinates 与边界/字段迁移；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
