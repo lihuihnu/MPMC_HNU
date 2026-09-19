@@ -11,6 +11,7 @@
 #include <mpmc/mesh/shared_entity_plan.hpp>
 #include <mpmc/mesh/topology.hpp>
 #include <mpmc/mesh_petsc/adapter.hpp>
+#include <mpmc/discretization_petsc/adapter.hpp>
 
 #include <petscsys.h>
 
@@ -31,6 +32,7 @@
 namespace {
 namespace mesh = mpmc::mesh;
 namespace mesh_petsc = mpmc::mesh_petsc;
+namespace discretization_petsc = mpmc::discretization_petsc;
 
 void require(bool condition, std::string_view message) {
     if (!condition) {
@@ -4115,7 +4117,7 @@ processed_grdecl_diagonal_permeability(
 }
 
 void verify_stable_gated_tpfa_transport_stage(
-    const mesh_petsc::StableFaceGatedTpfaSnapshot3D& actual,
+    const discretization_petsc::StableFaceGatedTpfaSnapshot3D& actual,
     const mesh::TpfaInternalFaceTransmissibilitySnapshot3D& reference,
     const mesh::Topology& reference_topology,
     const std::vector<
@@ -4258,8 +4260,8 @@ void verify_stable_gated_tpfa_transport_stage(
 
 
 void verify_target_local_gated_tpfa_view_stage(
-    const mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D& view,
-    const mesh_petsc::StableFaceGatedTpfaSnapshot3D& transport,
+    const discretization_petsc::TargetLocalGatedTpfaTransmissibilityView3D& view,
+    const discretization_petsc::StableFaceGatedTpfaSnapshot3D& transport,
     const mesh::TpfaInternalFaceTransmissibilitySnapshot3D& reference,
     const mesh::Topology& reference_topology,
     const std::vector<
@@ -4429,8 +4431,8 @@ processed_grdecl_face_owner_global_id(
     mesh::LocalIndex face);
 
 void verify_assembly_ready_internal_connection_table_stage(
-    const mesh_petsc::AssemblyReadyInternalConnectionTable3D& table,
-    const mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D& view,
+    const discretization_petsc::AssemblyReadyInternalConnectionTable3D& table,
+    const discretization_petsc::TargetLocalGatedTpfaTransmissibilityView3D& view,
     const mesh::ActiveCornerPointGrid& reference,
     const std::vector<
         mesh_petsc::DMPlexPointIdentity>& identities) {
@@ -4588,8 +4590,8 @@ void verify_assembly_ready_internal_connection_table_stage(
 
 
 void verify_parallel_owned_connection_schedule_stage(
-    const mesh_petsc::ParallelOwnedConnectionSchedule3D& schedule,
-    const mesh_petsc::AssemblyReadyInternalConnectionTable3D& table,
+    const discretization_petsc::ParallelOwnedConnectionSchedule3D& schedule,
+    const discretization_petsc::AssemblyReadyInternalConnectionTable3D& table,
     const mesh::PartitionSnapshot& partition,
     bool expect_one_global_materialized_connection) {
     require(
@@ -4736,7 +4738,7 @@ void verify_parallel_owned_connection_schedule_stage(
 
 
 void verify_cell_pair_sparsity_stencil_stage(
-    const mesh_petsc::CellPairSparsityStencilSnapshot3D& snapshot,
+    const discretization_petsc::CellPairSparsityStencilSnapshot3D& snapshot,
     const mesh::PartitionSnapshot& partition,
     bool expect_materialized_pair) {
     require(
@@ -4885,8 +4887,8 @@ void verify_cell_pair_sparsity_stencil_stage(
 
 
 void verify_petsc_mpiaij_symbolic_preallocation_stage(
-    const mesh_petsc::PetscMpiAijSymbolicPreallocation3D& bridge,
-    const mesh_petsc::CellPairSparsityStencilSnapshot3D& sparsity,
+    const discretization_petsc::PetscMpiAijSymbolicPreallocation3D& bridge,
+    const discretization_petsc::CellPairSparsityStencilSnapshot3D& sparsity,
     const mesh::PartitionSnapshot& partition,
     bool expect_remote_coupling) {
     require(
@@ -5054,8 +5056,8 @@ void verify_petsc_mpiaij_symbolic_preallocation_stage(
 void verify_owned_cell_structural_column_pattern_stage(
     const mesh_petsc::
         OwnedCellStructuralColumnPatternSnapshot3D& snapshot,
-    const mesh_petsc::PetscMpiAijSymbolicPreallocation3D& bridge,
-    const mesh_petsc::CellPairSparsityStencilSnapshot3D& sparsity,
+    const discretization_petsc::PetscMpiAijSymbolicPreallocation3D& bridge,
+    const discretization_petsc::CellPairSparsityStencilSnapshot3D& sparsity,
     const mesh::PartitionSnapshot& partition,
     bool expect_remote_coupling) {
     require(
@@ -5259,7 +5261,7 @@ void verify_owned_cell_structural_column_pattern_stage(
 
 void verify_empty_petsc_mpiaij_symbolic_matrix_stage(
     Mat matrix,
-    const mesh_petsc::PetscMpiAijSymbolicPreallocation3D& bridge) {
+    const discretization_petsc::PetscMpiAijSymbolicPreallocation3D& bridge) {
     require(
         matrix != nullptr,
         "empty symbolic MPIAIJ matrix exists");
@@ -5844,12 +5846,12 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             source_identities);
     }
 
-    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+    discretization_petsc::StableFaceGatedTpfaSnapshot3D
         source_gated_materialized;
-    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+    discretization_petsc::StableFaceGatedTpfaSnapshot3D
         source_gated_blocked;
     require_petsc(
-        mesh_petsc::make_root_stable_face_gated_tpfa_snapshot_3d(
+        discretization_petsc::make_root_stable_face_gated_tpfa_snapshot_3d(
             PETSC_COMM_WORLD,
             0,
             mpi_rank == 0
@@ -5859,7 +5861,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             &source_gated_materialized),
         "freeze materialized gated TPFA snapshot by stable face ID");
     require_petsc(
-        mesh_petsc::make_root_stable_face_gated_tpfa_snapshot_3d(
+        discretization_petsc::make_root_stable_face_gated_tpfa_snapshot_3d(
             PETSC_COMM_WORLD,
             0,
             mpi_rank == 0
@@ -5963,12 +5965,12 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
     require_processed_grdecl_identity_owner_counts(
         distributed_partition);
 
-    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+    discretization_petsc::StableFaceGatedTpfaSnapshot3D
         distributed_gated_materialized;
-    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+    discretization_petsc::StableFaceGatedTpfaSnapshot3D
         distributed_gated_blocked;
     require_petsc(
-        mesh_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
+        discretization_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
             source_dm,
             migration_sf,
             source_gated_materialized,
@@ -5978,7 +5980,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             &distributed_gated_materialized),
         "migrate materialized gated TPFA snapshot after distribute");
     require_petsc(
-        mesh_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
+        discretization_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
             source_dm,
             migration_sf,
             source_gated_blocked,
@@ -6001,20 +6003,20 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         distributed_partition);
 
     std::optional<
-        mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
+        discretization_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
         distributed_materialized_view;
     std::optional<
-        mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
+        discretization_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
         distributed_blocked_view;
     require_petsc(
-        mesh_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
+        discretization_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
             distributed_dm,
             distributed_gated_materialized,
             distributed_identities,
             &distributed_materialized_view),
         "build distributed target-local materialized TPFA view");
     require_petsc(
-        mesh_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
+        discretization_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
             distributed_dm,
             distributed_gated_blocked,
             distributed_identities,
@@ -6091,11 +6093,11 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         distributed_identities);
 
     std::optional<
-        mesh_petsc::AssemblyReadyInternalConnectionTable3D>
+        discretization_petsc::AssemblyReadyInternalConnectionTable3D>
         distributed_materialized_table;
     const PetscErrorCode
         distributed_materialized_table_error =
-            mesh_petsc::make_assembly_ready_internal_connection_table_3d(
+            discretization_petsc::make_assembly_ready_internal_connection_table_3d(
                 distributed_dm,
                 *distributed_materialized_view,
                 distributed_face_geometry,
@@ -6127,10 +6129,10 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         "both overlap0 ranks must refuse a cross-rank materialized connection without both local cells");
 
     std::optional<
-        mesh_petsc::AssemblyReadyInternalConnectionTable3D>
+        discretization_petsc::AssemblyReadyInternalConnectionTable3D>
         distributed_blocked_table;
     require_petsc(
-        mesh_petsc::make_assembly_ready_internal_connection_table_3d(
+        discretization_petsc::make_assembly_ready_internal_connection_table_3d(
             distributed_dm,
             *distributed_blocked_view,
             distributed_face_geometry,
@@ -6270,12 +6272,12 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
     require_processed_grdecl_identity_owner_counts(
         overlap_partition);
 
-    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+    discretization_petsc::StableFaceGatedTpfaSnapshot3D
         overlap_gated_materialized;
-    mesh_petsc::StableFaceGatedTpfaSnapshot3D
+    discretization_petsc::StableFaceGatedTpfaSnapshot3D
         overlap_gated_blocked;
     require_petsc(
-        mesh_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
+        discretization_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
             distributed_dm,
             overlap_migration_sf,
             distributed_gated_materialized,
@@ -6285,7 +6287,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             &overlap_gated_materialized),
         "migrate materialized gated TPFA snapshot into overlap");
     require_petsc(
-        mesh_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
+        discretization_petsc::migrate_stable_face_gated_tpfa_snapshot_3d(
             distributed_dm,
             overlap_migration_sf,
             distributed_gated_blocked,
@@ -6308,20 +6310,20 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         overlap_partition);
 
     std::optional<
-        mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
+        discretization_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
         overlap_materialized_view;
     std::optional<
-        mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
+        discretization_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
         overlap_blocked_view;
     require_petsc(
-        mesh_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
+        discretization_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
             overlap_dm,
             overlap_gated_materialized,
             overlap_identities,
             &overlap_materialized_view),
         "build overlap target-local materialized TPFA view");
     require_petsc(
-        mesh_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
+        discretization_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
             overlap_dm,
             overlap_gated_blocked,
             overlap_identities,
@@ -6401,13 +6403,13 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         overlap_identities);
 
     std::optional<
-        mesh_petsc::AssemblyReadyInternalConnectionTable3D>
+        discretization_petsc::AssemblyReadyInternalConnectionTable3D>
         overlap_materialized_table;
     std::optional<
-        mesh_petsc::AssemblyReadyInternalConnectionTable3D>
+        discretization_petsc::AssemblyReadyInternalConnectionTable3D>
         overlap_blocked_table;
     require_petsc(
-        mesh_petsc::make_assembly_ready_internal_connection_table_3d(
+        discretization_petsc::make_assembly_ready_internal_connection_table_3d(
             overlap_dm,
             *overlap_materialized_view,
             overlap_face_geometry,
@@ -6415,7 +6417,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             &overlap_materialized_table),
         "build depth-one assembly-ready materialized connection table");
     require_petsc(
-        mesh_petsc::make_assembly_ready_internal_connection_table_3d(
+        discretization_petsc::make_assembly_ready_internal_connection_table_3d(
             overlap_dm,
             *overlap_blocked_view,
             overlap_face_geometry,
@@ -6444,19 +6446,19 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         overlap_identities);
 
     std::optional<
-        mesh_petsc::ParallelOwnedConnectionSchedule3D>
+        discretization_petsc::ParallelOwnedConnectionSchedule3D>
         overlap_materialized_schedule;
     std::optional<
-        mesh_petsc::ParallelOwnedConnectionSchedule3D>
+        discretization_petsc::ParallelOwnedConnectionSchedule3D>
         overlap_blocked_schedule;
     require_petsc(
-        mesh_petsc::make_parallel_owned_connection_schedule_3d(
+        discretization_petsc::make_parallel_owned_connection_schedule_3d(
             *overlap_materialized_table,
             overlap_partition,
             &overlap_materialized_schedule),
         "build parallel owned materialized connection schedule");
     require_petsc(
-        mesh_petsc::make_parallel_owned_connection_schedule_3d(
+        discretization_petsc::make_parallel_owned_connection_schedule_3d(
             *overlap_blocked_table,
             overlap_partition,
             &overlap_blocked_schedule),
@@ -6477,20 +6479,20 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         false);
 
     std::optional<
-        mesh_petsc::CellPairSparsityStencilSnapshot3D>
+        discretization_petsc::CellPairSparsityStencilSnapshot3D>
         materialized_sparsity;
     std::optional<
-        mesh_petsc::CellPairSparsityStencilSnapshot3D>
+        discretization_petsc::CellPairSparsityStencilSnapshot3D>
         blocked_sparsity;
     require_petsc(
-        mesh_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
+        discretization_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
             PETSC_COMM_WORLD,
             *overlap_materialized_schedule,
             overlap_partition,
             &materialized_sparsity),
         "build materialized cell-pair sparsity/stencil snapshot");
     require_petsc(
-        mesh_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
+        discretization_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
             PETSC_COMM_WORLD,
             *overlap_blocked_schedule,
             overlap_partition,
@@ -6510,13 +6512,13 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         false);
 
     std::optional<
-        mesh_petsc::PetscMpiAijSymbolicPreallocation3D>
+        discretization_petsc::PetscMpiAijSymbolicPreallocation3D>
         materialized_preallocation;
     std::optional<
-        mesh_petsc::PetscMpiAijSymbolicPreallocation3D>
+        discretization_petsc::PetscMpiAijSymbolicPreallocation3D>
         blocked_preallocation;
     require_petsc(
-        mesh_petsc::make_petsc_mpiaij_symbolic_preallocation_3d(
+        discretization_petsc::make_petsc_mpiaij_symbolic_preallocation_3d(
             overlap_dm,
             *materialized_sparsity,
             overlap_partition,
@@ -6524,7 +6526,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             &materialized_preallocation),
         "build materialized symbolic MPIAIJ preallocation bridge");
     require_petsc(
-        mesh_petsc::make_petsc_mpiaij_symbolic_preallocation_3d(
+        discretization_petsc::make_petsc_mpiaij_symbolic_preallocation_3d(
             overlap_dm,
             *blocked_sparsity,
             overlap_partition,
@@ -6622,7 +6624,7 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         "destroy blocked-only empty symbolic MPIAIJ matrix");
 
     std::vector<
-        mesh_petsc::AssemblyReadyInternalConnectionRow3D>
+        discretization_petsc::AssemblyReadyInternalConnectionRow3D>
         duplicate_pair_authoritative_rows;
     if (!overlap_materialized_schedule
              ->assembly_rows()
@@ -6643,17 +6645,17 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
             duplicate_row);
     }
     const auto duplicate_pair_schedule =
-        mesh_petsc::ParallelOwnedConnectionSchedule3D{
+        discretization_petsc::ParallelOwnedConnectionSchedule3D{
             overlap_partition.local_rank(),
             overlap_partition.rank_count(),
             std::move(
                 duplicate_pair_authoritative_rows),
             {}};
     std::optional<
-        mesh_petsc::CellPairSparsityStencilSnapshot3D>
+        discretization_petsc::CellPairSparsityStencilSnapshot3D>
         deduplicated_sparsity;
     require_petsc(
-        mesh_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
+        discretization_petsc::make_cell_pair_sparsity_stencil_snapshot_3d(
             PETSC_COMM_WORLD,
             duplicate_pair_schedule,
             overlap_partition,
@@ -7526,10 +7528,10 @@ void run_three_rank_sparsity_test() {
         };
 
     std::vector<
-        mesh_petsc::AssemblyReadyInternalConnectionRow3D>
+        discretization_petsc::AssemblyReadyInternalConnectionRow3D>
         authoritative_rows;
     std::vector<
-        mesh_petsc::AssemblyReadyInternalConnectionRow3D>
+        discretization_petsc::AssemblyReadyInternalConnectionRow3D>
         ghost_rows;
 
     if (rank == 1U) {
@@ -7556,7 +7558,7 @@ void run_three_rank_sparsity_test() {
                 22.0));
     }
 
-    const mesh_petsc::ParallelOwnedConnectionSchedule3D
+    const discretization_petsc::ParallelOwnedConnectionSchedule3D
         schedule{
             mesh::PartitionRank{rank},
             3U,
@@ -7564,7 +7566,7 @@ void run_three_rank_sparsity_test() {
             std::move(ghost_rows)};
 
     std::optional<
-        mesh_petsc::CellPairSparsityStencilSnapshot3D>
+        discretization_petsc::CellPairSparsityStencilSnapshot3D>
         snapshot;
     require_petsc(
         mesh_petsc::
@@ -7719,10 +7721,10 @@ void verify_structural_column_pattern_sorting_fixture(
         };
 
     std::vector<
-        mesh_petsc::CellPairCoupling3D>
+        discretization_petsc::CellPairCoupling3D>
         couplings;
     std::vector<
-        mesh_petsc::OwnedCellStructuralCounts3D>
+        discretization_petsc::OwnedCellStructuralCounts3D>
         counts;
     std::vector<mesh::LocalIndex>
         owned_cells;
