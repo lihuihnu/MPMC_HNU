@@ -224,18 +224,28 @@ struct FaceBuild {
          ++i) {
         key.vertices[i] = vertices[i].value();
     }
-    std::sort(
-        key.vertices.begin(),
-        key.vertices.begin() +
-            static_cast<std::ptrdiff_t>(vertices.size()));
-    if (std::adjacent_find(
-            key.vertices.begin(),
-            key.vertices.begin() +
-                static_cast<std::ptrdiff_t>(vertices.size())) !=
-        key.vertices.begin() +
-            static_cast<std::ptrdiff_t>(vertices.size())) {
-        throw std::invalid_argument(
-            "mpmc::mesh::make_linear_mesh_3d: face contains repeated vertices");
+    // The face width is only three or four. Keep the ordering logic
+    // explicitly bounded instead of invoking a general introsort over a
+    // runtime-sized prefix of the fixed array; GCC 13 otherwise emits a
+    // false-positive -Warray-bounds under Release inlining.
+    const std::size_t count = vertices.size();
+    for (std::size_t i = 1U; i < count; ++i) {
+        const auto value = key.vertices[i];
+        std::size_t j = i;
+        while (j > 0U &&
+               value < key.vertices[j - 1U]) {
+            key.vertices[j] =
+                key.vertices[j - 1U];
+            --j;
+        }
+        key.vertices[j] = value;
+    }
+    for (std::size_t i = 1U; i < count; ++i) {
+        if (key.vertices[i - 1U] ==
+            key.vertices[i]) {
+            throw std::invalid_argument(
+                "mpmc::mesh::make_linear_mesh_3d: face contains repeated vertices");
+        }
     }
     return key;
 }
