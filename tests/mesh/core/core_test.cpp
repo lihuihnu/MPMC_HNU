@@ -6,6 +6,7 @@
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
+#include <mpmc/mesh/gmsh_4_1.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
 #include <mpmc/mesh/topology.hpp>
@@ -735,6 +736,377 @@ void dense_field_invalid() {
     });
 }
 
+
+std::string gmsh_mixed_triangle_quad_fixture() {
+    return R"msh($MeshFormat
+4.1 0 8
+$EndMeshFormat
+$PhysicalNames
+5
+1 11 "left"
+1 12 "bottom"
+1 13 "right"
+1 14 "top"
+2 21 "domain"
+$EndPhysicalNames
+$Entities
+0 5 1 0
+1 0 0 0 1 0 0 1 12 0
+2 0 0 0 1 1 0 1 11 0
+3 1 0 0 3 0 0 1 12 0
+4 3 0 0 3 1 0 1 13 0
+5 1 1 0 3 1 0 1 14 0
+100 0 0 0 3 1 0 1 21 5 1 2 3 4 5
+$EndEntities
+$Nodes
+1 5 10 50
+2 100 0 5
+50
+10
+40
+20
+30
+3 1 0
+0 0 0
+3 0 0
+1 0 0
+1 1 0
+$EndNodes
+$Elements
+7 7 101 202
+1 1 1 1
+101 10 20
+1 2 1 1
+103 30 10
+1 3 1 1
+104 20 40
+1 4 1 1
+105 40 50
+1 5 1 1
+106 50 30
+2 100 2 1
+201 10 20 30
+2 100 3 1
+202 20 40 50 30
+$EndElements
+)msh";
+}
+
+void gmsh_4_1_import() {
+    const auto imported =
+        mesh::import_gmsh_4_1_ascii(
+            gmsh_mixed_triangle_quad_fixture(),
+            2.0);
+
+    const auto& topology = imported.topology;
+    require(
+        topology.entity_count(mesh::EntityKind::vertex) == 5U,
+        "Gmsh vertex count");
+    require(
+        topology.entity_count(mesh::EntityKind::edge) == 0U,
+        "Gmsh edge kind must remain empty in 2D");
+    require(
+        topology.entity_count(mesh::EntityKind::face) == 6U,
+        "Gmsh face count");
+    require(
+        topology.entity_count(mesh::EntityKind::cell) == 2U,
+        "Gmsh cell count");
+
+    const std::array<std::uint64_t, 5> expected_vertices{
+        10U, 20U, 30U, 40U, 50U};
+    const auto vertex_ids =
+        topology.global_ids(mesh::EntityKind::vertex);
+    for (std::size_t i = 0U;
+         i < expected_vertices.size();
+         ++i) {
+        require(
+            vertex_ids[i].value() ==
+                expected_vertices[i],
+            "Gmsh sparse node tags must become sorted stable vertex IDs");
+    }
+
+    const std::array<std::uint64_t, 6> expected_faces{
+        101U, 103U, 104U, 105U, 106U, 203U};
+    const auto face_ids =
+        topology.global_ids(mesh::EntityKind::face);
+    for (std::size_t i = 0U;
+         i < expected_faces.size();
+         ++i) {
+        require(
+            face_ids[i].value() ==
+                expected_faces[i],
+            "Gmsh boundary/generated face stable IDs");
+    }
+    require(
+        topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{0U}).value() == 201U &&
+        topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{1U}).value() == 202U,
+        "Gmsh cell element tags must be stable cell IDs");
+
+    const auto& cell_vertices =
+        topology.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::vertex);
+    require(
+        cell_vertices.adjacent(
+            mesh::LocalIndex{0U}).size() == 3U,
+        "Gmsh triangle connectivity width");
+    require(
+        cell_vertices.adjacent(
+            mesh::LocalIndex{1U}).size() == 4U,
+        "Gmsh quad connectivity width");
+
+    const auto& cell_faces =
+        topology.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::face);
+    require(
+        cell_faces.adjacent(
+            mesh::LocalIndex{0U}).size() == 3U &&
+        cell_faces.adjacent(
+            mesh::LocalIndex{1U}).size() == 4U,
+        "Gmsh triangle/quad cell-to-face widths");
+
+    const auto& face_cells =
+        topology.relation(
+            mesh::EntityKind::face,
+            mesh::EntityKind::cell);
+    require(
+        face_cells.adjacent(
+            mesh::LocalIndex{5U}).size() == 2U,
+        "generated internal face must connect both cells");
+
+    const auto& boundary =
+        imported.face_boundary;
+    require(
+        boundary.face_count() == 6U &&
+        boundary.boundary_face_count() == 5U &&
+        boundary.interior_face_count() == 1U,
+        "Gmsh boundary classification counts");
+    const std::array<std::uint32_t, 6> expected_tags{
+        12U, 11U, 12U, 13U, 14U, 0U};
+    for (std::size_t face = 0U;
+         face < expected_tags.size();
+         ++face) {
+        const auto local =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        face)};
+        require(
+            boundary.physical_tag(local).value() ==
+                expected_tags[face],
+            "Gmsh curve Physical Group to PhysicalTag mapping");
+    }
+    require(
+        boundary.classification(
+            mesh::LocalIndex{5U}) ==
+            mesh::FaceClassification::interior &&
+        !boundary.has_physical_tag(
+            mesh::LocalIndex{5U}),
+        "generated internal face must remain untagged interior");
+
+    const auto& geometry = imported.geometry;
+    const auto v0 =
+        geometry.vertex_coordinate_m(
+            mesh::LocalIndex{0U});
+    const auto v4 =
+        geometry.vertex_coordinate_m(
+            mesh::LocalIndex{4U});
+    require_close(v0.x_m, 0.0, 0.0,
+                  "scaled Gmsh vertex x0");
+    require_close(v0.y_m, 0.0, 0.0,
+                  "scaled Gmsh vertex y0");
+    require_close(v4.x_m, 6.0, 0.0,
+                  "scaled Gmsh vertex x4");
+    require_close(v4.y_m, 2.0, 0.0,
+                  "scaled Gmsh vertex y4");
+
+    const auto triangle_centroid =
+        geometry.cell_centroid_m(
+            mesh::LocalIndex{0U});
+    require_close(
+        triangle_centroid.x_m,
+        4.0 / 3.0,
+        1.0e-14,
+        "Gmsh triangle centroid x");
+    require_close(
+        triangle_centroid.y_m,
+        2.0 / 3.0,
+        1.0e-14,
+        "Gmsh triangle centroid y");
+    require_close(
+        geometry.cell_area_m2(
+            mesh::LocalIndex{0U}),
+        2.0,
+        1.0e-14,
+        "Gmsh triangle area");
+
+    const auto quad_centroid =
+        geometry.cell_centroid_m(
+            mesh::LocalIndex{1U});
+    require_close(
+        quad_centroid.x_m,
+        4.0,
+        1.0e-14,
+        "Gmsh quad centroid x");
+    require_close(
+        quad_centroid.y_m,
+        1.0,
+        1.0e-14,
+        "Gmsh quad centroid y");
+    require_close(
+        geometry.cell_area_m2(
+            mesh::LocalIndex{1U}),
+        8.0,
+        1.0e-14,
+        "Gmsh quad area");
+
+    const std::array<double, 6> expected_lengths{
+        2.0,
+        std::sqrt(8.0),
+        4.0,
+        2.0,
+        4.0,
+        2.0};
+    for (std::size_t face = 0U;
+         face < expected_lengths.size();
+         ++face) {
+        require_close(
+            geometry.face_length_m(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            face)}),
+            expected_lengths[face],
+            1.0e-14,
+            "Gmsh face length");
+    }
+
+    require(
+        imported.physical_names.size() == 5U,
+        "Gmsh PhysicalNames retention");
+    require(
+        imported.physical_names.front().dimension == 1 &&
+        imported.physical_names.front().tag == 11U &&
+        imported.physical_names.front().name == "left",
+        "Gmsh first PhysicalName");
+    require(
+        imported.physical_names.back().dimension == 2 &&
+        imported.physical_names.back().tag == 21U &&
+        imported.physical_names.back().name == "domain",
+        "Gmsh surface PhysicalName retention");
+
+    require(
+        imported.cell_physical_groups.size() == 2U,
+        "Gmsh cell Physical Group count");
+    for (std::size_t cell = 0U;
+         cell < imported.cell_physical_groups.size();
+         ++cell) {
+        const auto& groups =
+            imported.cell_physical_groups[cell];
+        require(
+            groups.cell_global_id.value() ==
+                201U + cell &&
+            groups.physical_tags.size() == 1U &&
+            groups.physical_tags.front() == 21U,
+            "Gmsh surface Physical Group retention per cell");
+    }
+}
+
+void gmsh_4_1_invalid() {
+    const auto valid =
+        gmsh_mixed_triangle_quad_fixture();
+
+    expect_throw<std::invalid_argument>([&] {
+        (void)mesh::import_gmsh_4_1_ascii(
+            valid, 0.0);
+    });
+
+    {
+        auto binary = valid;
+        const auto where =
+            binary.find("4.1 0 8");
+        require(where != std::string::npos,
+                "binary fixture marker");
+        binary.replace(
+            where, std::string{"4.1 0 8"}.size(),
+            "4.1 1 8");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_gmsh_4_1_ascii(
+                binary, 1.0);
+        });
+    }
+
+    {
+        auto high_order = valid;
+        const auto where =
+            high_order.find("2 100 2 1\n201");
+        require(where != std::string::npos,
+                "high-order fixture marker");
+        high_order.replace(
+            where,
+            std::string{"2 100 2 1"}.size(),
+            "2 100 9 1");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_gmsh_4_1_ascii(
+                high_order, 1.0);
+        });
+    }
+
+    {
+        auto missing_node = valid;
+        const auto where =
+            missing_node.find("201 10 20 30");
+        require(where != std::string::npos,
+                "missing-node fixture marker");
+        missing_node.replace(
+            where,
+            std::string{"201 10 20 30"}.size(),
+            "201 10 20 999");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_gmsh_4_1_ascii(
+                missing_node, 1.0);
+        });
+    }
+
+    {
+        auto multi_group = valid;
+        const auto where =
+            multi_group.find(
+                "1 0 0 0 1 0 0 1 12 0");
+        require(where != std::string::npos,
+                "multi-group fixture marker");
+        multi_group.replace(
+            where,
+            std::string{
+                "1 0 0 0 1 0 0 1 12 0"}.size(),
+            "1 0 0 0 1 0 0 2 12 99 0");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_gmsh_4_1_ascii(
+                multi_group, 1.0);
+        });
+    }
+
+    {
+        auto nonplanar = valid;
+        const auto where =
+            nonplanar.find("3 1 0\n0 0 0");
+        require(where != std::string::npos,
+                "nonplanar fixture marker");
+        nonplanar.replace(
+            where,
+            std::string{"3 1 0"}.size(),
+            "3 1 0.25");
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_gmsh_4_1_ascii(
+                nonplanar, 1.0);
+        });
+    }
+}
 
 void dof_layout_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
@@ -1657,6 +2029,8 @@ int main(int argc, char** argv) {
         else if (name == "face_boundary_invalid") { face_boundary_invalid(); }
         else if (name == "dense_field_snapshot") { dense_field_snapshot(); }
         else if (name == "dense_field_invalid") { dense_field_invalid(); }
+        else if (name == "gmsh_4_1_import") { gmsh_4_1_import(); }
+        else if (name == "gmsh_4_1_invalid") { gmsh_4_1_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
