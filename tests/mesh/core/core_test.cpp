@@ -2697,16 +2697,8 @@ void active_corner_point_i_neighbor() {
     const auto processed =
         mesh::process_active_corner_point_grid(
             raw);
-    require(
-        processed.topology.entity_count(
-            mesh::EntityKind::cell) == 2U &&
-            processed.topology.entity_count(
-                mesh::EntityKind::face) == 11U &&
-            processed.topology.entity_count(
-                mesh::EntityKind::vertex) == 12U &&
-            shared_face_count(
-                processed.topology) == 1U,
-        "skewed processed topology counts");
+    require_active_processor_shape(
+        processed);
     require_close(
         processed.cell_volumes_m3[0],
         1.0,
@@ -3301,8 +3293,18 @@ void cell_face_geometric_operator_3d_skewed() {
                 mesh::GrdeclImportOptions{
                     1.0, 1.0e-15}));
 
-    require_active_processor_shape(
-        processed);
+    require(
+        processed.topology.entity_count(
+            mesh::EntityKind::cell) == 2U &&
+            processed.topology.entity_count(
+                mesh::EntityKind::face) == 11U &&
+            processed.topology.entity_count(
+                mesh::EntityKind::vertex) == 12U &&
+            processed.topology.entity_count(
+                mesh::EntityKind::edge) == 0U &&
+            shared_face_count(
+                processed.topology) == 1U,
+        "skewed processed topology counts");
     require_close(
         processed.cell_volumes_m3[0],
         1.0,
