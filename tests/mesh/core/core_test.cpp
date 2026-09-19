@@ -1860,11 +1860,18 @@ void vtu_ascii_invalid() {
 
     {
         auto bad_offsets = valid;
+        const auto offsets_name =
+            bad_offsets.find(
+                "Name=\"offsets\"");
+        require(
+            offsets_name != std::string::npos,
+            "VTU offsets array marker");
         const auto where =
-            bad_offsets.find("3 7");
+            bad_offsets.find(
+                "3 7", offsets_name);
         require(
             where != std::string::npos,
-            "VTU offsets marker");
+            "VTU offsets values marker");
         bad_offsets.replace(
             where,
             std::string{"3 7"}.size(),
