@@ -4641,6 +4641,250 @@ make_assembly_ready_internal_connection_table_3d(
     return PETSC_SUCCESS;
 }
 
+
+class ParallelOwnedConnectionSchedule3D {
+public:
+    ParallelOwnedConnectionSchedule3D(
+        mpmc::mesh::PartitionRank local_rank,
+        std::uint32_t rank_count,
+        std::vector<AssemblyReadyInternalConnectionRow3D>
+            authoritative_rows,
+        std::vector<AssemblyReadyInternalConnectionRow3D>
+            ghost_rows)
+        : local_rank_(local_rank),
+          rank_count_(rank_count),
+          authoritative_rows_(
+              std::move(authoritative_rows)),
+          ghost_rows_(
+              std::move(ghost_rows)) {
+        validate();
+    }
+
+    ParallelOwnedConnectionSchedule3D(
+        const ParallelOwnedConnectionSchedule3D&) =
+        default;
+    ParallelOwnedConnectionSchedule3D(
+        ParallelOwnedConnectionSchedule3D&&) noexcept =
+        default;
+    ParallelOwnedConnectionSchedule3D& operator=(
+        const ParallelOwnedConnectionSchedule3D&) =
+        delete;
+    ParallelOwnedConnectionSchedule3D& operator=(
+        ParallelOwnedConnectionSchedule3D&&) =
+        delete;
+    ~ParallelOwnedConnectionSchedule3D() = default;
+
+    [[nodiscard]] mpmc::mesh::PartitionRank
+    local_rank() const noexcept {
+        return local_rank_;
+    }
+
+    [[nodiscard]] std::uint32_t
+    rank_count() const noexcept {
+        return rank_count_;
+    }
+
+    /// The only rows permitted to participate in a future assembly loop.
+    [[nodiscard]] std::span<
+        const AssemblyReadyInternalConnectionRow3D>
+    assembly_rows() const noexcept {
+        return authoritative_rows_;
+    }
+
+    /// Duplicate non-owned rows retained only for stable-ID/value consistency
+    /// diagnostics. They are intentionally excluded from assembly_rows().
+    [[nodiscard]] std::span<
+        const AssemblyReadyInternalConnectionRow3D>
+    ghost_rows() const noexcept {
+        return ghost_rows_;
+    }
+
+    [[nodiscard]] std::size_t
+    authoritative_row_count() const noexcept {
+        return authoritative_rows_.size();
+    }
+
+    [[nodiscard]] std::size_t
+    ghost_row_count() const noexcept {
+        return ghost_rows_.size();
+    }
+
+    [[nodiscard]] std::size_t
+    local_copy_count() const noexcept {
+        return authoritative_rows_.size() +
+               ghost_rows_.size();
+    }
+
+private:
+    static void validate_row(
+        const AssemblyReadyInternalConnectionRow3D&
+            row) {
+        if (row.owner_cell ==
+                row.neighbour_cell ||
+            row.owner_cell_global ==
+                row.neighbour_cell_global ||
+            !std::isfinite(
+                row.transmissibility_m3) ||
+            row.transmissibility_m3 <= 0.0) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::ParallelOwnedConnectionSchedule3D: invalid connection row");
+        }
+    }
+
+    void validate() {
+        if (rank_count_ == 0U ||
+            local_rank_.value() >= rank_count_) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::ParallelOwnedConnectionSchedule3D: invalid rank metadata");
+        }
+
+        for (const auto& row :
+             authoritative_rows_) {
+            validate_row(row);
+        }
+        for (const auto& row :
+             ghost_rows_) {
+            validate_row(row);
+        }
+
+        for (std::size_t i = 0U;
+             i < authoritative_rows_.size();
+             ++i) {
+            for (std::size_t j = 0U;
+                 j < i;
+                 ++j) {
+                if (authoritative_rows_[i].face_global ==
+                    authoritative_rows_[j].face_global) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh_petsc::ParallelOwnedConnectionSchedule3D: duplicate authoritative stable face ID");
+                }
+            }
+            for (const auto& ghost :
+                 ghost_rows_) {
+                if (authoritative_rows_[i].face_global ==
+                    ghost.face_global) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh_petsc::ParallelOwnedConnectionSchedule3D: one local stable face copy cannot be both authoritative and ghost");
+                }
+            }
+        }
+        for (std::size_t i = 0U;
+             i < ghost_rows_.size();
+             ++i) {
+            for (std::size_t j = 0U;
+                 j < i;
+                 ++j) {
+                if (ghost_rows_[i].face_global ==
+                    ghost_rows_[j].face_global) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh_petsc::ParallelOwnedConnectionSchedule3D: duplicate ghost stable face ID");
+                }
+            }
+        }
+    }
+
+    mpmc::mesh::PartitionRank local_rank_;
+    std::uint32_t rank_count_;
+    std::vector<AssemblyReadyInternalConnectionRow3D>
+        authoritative_rows_;
+    std::vector<AssemblyReadyInternalConnectionRow3D>
+        ghost_rows_;
+};
+
+/// Split a target-local active connection table by PETSc/core face ownership.
+///
+/// The authoritative criterion is exclusively PartitionSnapshot ownership of
+/// the FACE represented by the row. Canonical geometric owner_cell is not used
+/// to choose the MPI assembly rank.
+///
+/// Future assembly code must iterate schedule.assembly_rows(); ghost_rows()
+/// exist only to validate duplicate copies after overlap construction.
+inline PetscErrorCode
+make_parallel_owned_connection_schedule_3d(
+    const AssemblyReadyInternalConnectionTable3D& table,
+    const mpmc::mesh::PartitionSnapshot& partition,
+    std::optional<ParallelOwnedConnectionSchedule3D>*
+        output) {
+    if (output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+
+    if (partition.entity_count(
+            mpmc::mesh::EntityKind::face) !=
+            table.target_face_count() ||
+        partition.entity_count(
+            mpmc::mesh::EntityKind::cell) !=
+            table.target_cell_count()) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    std::vector<AssemblyReadyInternalConnectionRow3D>
+        authoritative_rows;
+    std::vector<AssemblyReadyInternalConnectionRow3D>
+        ghost_rows;
+    authoritative_rows.reserve(
+        table.row_count());
+    ghost_rows.reserve(
+        table.row_count());
+
+    for (const auto& row :
+         table.rows()) {
+        try {
+            if (partition.global_id(
+                    mpmc::mesh::EntityKind::face,
+                    row.face) !=
+                    row.face_global ||
+                partition.global_id(
+                    mpmc::mesh::EntityKind::cell,
+                    row.owner_cell) !=
+                    row.owner_cell_global ||
+                partition.global_id(
+                    mpmc::mesh::EntityKind::cell,
+                    row.neighbour_cell) !=
+                    row.neighbour_cell_global) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+
+            if (partition.is_owned(
+                    mpmc::mesh::EntityKind::face,
+                    row.face)) {
+                authoritative_rows.push_back(
+                    row);
+            } else if (
+                partition.is_ghost(
+                    mpmc::mesh::EntityKind::face,
+                    row.face)) {
+                ghost_rows.push_back(
+                    row);
+            } else {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+    }
+
+    if (authoritative_rows.size() +
+            ghost_rows.size() !=
+        table.row_count()) {
+        return PETSC_ERR_PLIB;
+    }
+
+    try {
+        output->emplace(
+            partition.local_rank(),
+            partition.rank_count(),
+            std::move(authoritative_rows),
+            std::move(ghost_rows));
+    } catch (...) {
+        output->reset();
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    return PETSC_SUCCESS;
+}
+
 inline PetscErrorCode migrate_dense_field_snapshot(
     DM source_dm,
     PetscSF migration_sf,
