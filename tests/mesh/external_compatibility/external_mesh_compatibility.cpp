@@ -60,16 +60,6 @@ void require_close(
     }
 }
 
-[[nodiscard]] bool same_ids(
-    std::span<const mesh::GlobalEntityId> left,
-    std::span<const mesh::GlobalEntityId> right) {
-    return left.size() == right.size() &&
-           std::equal(
-               left.begin(),
-               left.end(),
-               right.begin());
-}
-
 [[nodiscard]] std::vector<std::string>
 split_vtu_documents(
     std::string_view bundle) {
