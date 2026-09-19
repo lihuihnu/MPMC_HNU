@@ -19,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <limits>
 #include <optional>
 #include <span>
@@ -960,6 +961,258 @@ inline PetscErrorCode create_serial_dmplex_topology(
 
     *dm = plex;
     return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode attach_serial_vertex_coordinates_3d(
+    DM dm,
+    std::span<const mpmc::mesh::Coordinate3D> vertex_coordinates_m,
+    std::span<const DMPlexPointIdentity> identities) {
+    if (dm == nullptr) return PETSC_ERR_ARG_NULL;
+
+    MPI_Comm comm =
+        PetscObjectComm(reinterpret_cast<PetscObject>(dm));
+    int mpi_size = -1;
+    if (MPI_Comm_size(comm, &mpi_size) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (mpi_size != 1) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    PetscInt dimension = -1;
+    PetscErrorCode error =
+        DMGetDimension(dm, &dimension);
+    if (error != PETSC_SUCCESS) return error;
+    if (dimension != PetscInt{3}) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    PetscInt chart_start = 0;
+    PetscInt chart_end = 0;
+    error = DMPlexGetChart(
+        dm, &chart_start, &chart_end);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscInt vertex_start = 0;
+    PetscInt vertex_end = 0;
+    error = DMPlexGetDepthStratum(
+        dm, 0, &vertex_start, &vertex_end);
+    if (error != PETSC_SUCCESS) return error;
+    if (vertex_start < chart_start ||
+        vertex_end < vertex_start ||
+        vertex_end > chart_end) {
+        return PETSC_ERR_PLIB;
+    }
+
+    const auto vertex_count =
+        static_cast<std::size_t>(
+            vertex_end - vertex_start);
+    if (vertex_coordinates_m.size() !=
+        vertex_count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    std::vector<std::uint8_t>
+        seen_local(vertex_count, std::uint8_t{0U});
+    std::vector<std::uint8_t>
+        seen_point(vertex_count, std::uint8_t{0U});
+    std::size_t vertex_identity_count = 0U;
+    for (const auto& identity : identities) {
+        if (identity.point < chart_start ||
+            identity.point >= chart_end) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        const bool point_is_vertex =
+            identity.point >= vertex_start &&
+            identity.point < vertex_end;
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::vertex) {
+            if (point_is_vertex) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+            continue;
+        }
+        if (!point_is_vertex) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        const std::size_t local =
+            static_cast<std::size_t>(
+                identity.local.value());
+        if (local >= vertex_count) {
+            return PETSC_ERR_ARG_SIZ;
+        }
+        const std::size_t point_slot =
+            static_cast<std::size_t>(
+                identity.point - vertex_start);
+        if (seen_local[local] != std::uint8_t{0U} ||
+            seen_point[point_slot] != std::uint8_t{0U}) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        seen_local[local] = std::uint8_t{1U};
+        seen_point[point_slot] = std::uint8_t{1U};
+        ++vertex_identity_count;
+
+        const auto coordinate =
+            vertex_coordinates_m[local];
+        if (!std::isfinite(coordinate.x_m) ||
+            !std::isfinite(coordinate.y_m) ||
+            !std::isfinite(coordinate.z_m)) {
+            return PETSC_ERR_FP;
+        }
+    }
+    if (vertex_identity_count != vertex_count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    error = DMSetCoordinateDim(dm, 3);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscSection coordinate_section = nullptr;
+    error = PetscSectionCreate(
+        comm, &coordinate_section);
+    if (error != PETSC_SUCCESS) return error;
+
+    error = PetscSectionSetChart(
+        coordinate_section,
+        chart_start,
+        chart_end);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::vertex) {
+            continue;
+        }
+        error = PetscSectionSetDof(
+            coordinate_section,
+            identity.point,
+            3);
+        if (error != PETSC_SUCCESS) {
+            PetscSectionDestroy(&coordinate_section);
+            return error;
+        }
+    }
+    error = PetscSectionSetUp(coordinate_section);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    PetscInt coordinate_storage = 0;
+    error = PetscSectionGetStorageSize(
+        coordinate_section,
+        &coordinate_storage);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+    if (vertex_count >
+        static_cast<std::size_t>(
+            std::numeric_limits<PetscInt>::max()) /
+            std::size_t{3U}) {
+        PetscSectionDestroy(&coordinate_section);
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    const PetscInt expected_storage =
+        static_cast<PetscInt>(
+            vertex_count * std::size_t{3U});
+    if (coordinate_storage != expected_storage) {
+        PetscSectionDestroy(&coordinate_section);
+        return PETSC_ERR_PLIB;
+    }
+
+    Vec coordinates = nullptr;
+    error = VecCreateSeq(
+        comm,
+        coordinate_storage,
+        &coordinates);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+    error = VecSetBlockSize(coordinates, 3);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&coordinates);
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    PetscScalar* values = nullptr;
+    error = VecGetArray(coordinates, &values);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&coordinates);
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::vertex) {
+            continue;
+        }
+        PetscInt offset = -1;
+        error = PetscSectionGetOffset(
+            coordinate_section,
+            identity.point,
+            &offset);
+        if (error != PETSC_SUCCESS ||
+            offset < 0 ||
+            offset + 2 >= coordinate_storage) {
+            VecRestoreArray(coordinates, &values);
+            VecDestroy(&coordinates);
+            PetscSectionDestroy(&coordinate_section);
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_PLIB;
+        }
+
+        const auto coordinate =
+            vertex_coordinates_m[
+                static_cast<std::size_t>(
+                    identity.local.value())];
+        values[static_cast<std::size_t>(offset)] =
+            static_cast<PetscScalar>(
+                coordinate.x_m);
+        values[static_cast<std::size_t>(offset + 1)] =
+            static_cast<PetscScalar>(
+                coordinate.y_m);
+        values[static_cast<std::size_t>(offset + 2)] =
+            static_cast<PetscScalar>(
+                coordinate.z_m);
+    }
+    error = VecRestoreArray(coordinates, &values);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&coordinates);
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    error = DMSetCoordinateSection(
+        dm, 3, coordinate_section);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&coordinates);
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+    error = DMSetCoordinatesLocal(
+        dm, coordinates);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&coordinates);
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    const PetscErrorCode vector_destroy_error =
+        VecDestroy(&coordinates);
+    const PetscErrorCode section_destroy_error =
+        PetscSectionDestroy(&coordinate_section);
+    if (vector_destroy_error != PETSC_SUCCESS) {
+        return vector_destroy_error;
+    }
+    return section_destroy_error;
 }
 
 inline PetscErrorCode attach_root_geometry2d_coordinates(
