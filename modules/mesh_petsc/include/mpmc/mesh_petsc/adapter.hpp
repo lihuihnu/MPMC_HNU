@@ -2193,18 +2193,21 @@ inline PetscErrorCode migrate_dense_field_snapshot(
     }
 
     mpmc::mesh::Topology::EntityIds ids;
-    ids.cells.resize(
+    ids.cells.assign(
         location == mpmc::mesh::EntityKind::cell
             ? entity_count
-            : 0U);
-    ids.faces.resize(
+            : 0U,
+        mpmc::mesh::GlobalEntityId{0U});
+    ids.faces.assign(
         location == mpmc::mesh::EntityKind::face
             ? entity_count
-            : 0U);
-    ids.vertices.resize(
+            : 0U,
+        mpmc::mesh::GlobalEntityId{0U});
+    ids.vertices.assign(
         location == mpmc::mesh::EntityKind::vertex
             ? entity_count
-            : 0U);
+            : 0U,
+        mpmc::mesh::GlobalEntityId{0U});
 
     auto assign_id =
         [&](const DMPlexPointIdentity& identity) {
