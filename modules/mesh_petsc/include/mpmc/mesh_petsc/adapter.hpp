@@ -4268,6 +4268,379 @@ make_target_local_gated_tpfa_transmissibility_view_3d(
     return PETSC_SUCCESS;
 }
 
+
+struct AssemblyReadyInternalConnectionRow3D {
+    mpmc::mesh::LocalIndex face;
+    mpmc::mesh::GlobalEntityId face_global;
+    mpmc::mesh::LocalIndex owner_cell;
+    mpmc::mesh::GlobalEntityId owner_cell_global;
+    mpmc::mesh::LocalIndex neighbour_cell;
+    mpmc::mesh::GlobalEntityId neighbour_cell_global;
+    double transmissibility_m3;
+};
+
+/// Immutable target-local active internal-connection table.
+///
+/// Rows contain only materialized gated TPFA faces. Blocked faces remain
+/// available exclusively through TargetLocalGatedTpfaTransmissibilityView3D
+/// and never receive an active connection row.
+///
+/// "owner" is the canonical geometric owner cell carried by
+/// StableOwnerFaceGeometry3D; it is unrelated to MPI point ownership.
+class AssemblyReadyInternalConnectionTable3D {
+public:
+    AssemblyReadyInternalConnectionTable3D(
+        std::size_t target_face_count,
+        std::size_t target_cell_count,
+        std::vector<AssemblyReadyInternalConnectionRow3D>
+            rows)
+        : target_face_count_(target_face_count),
+          target_cell_count_(target_cell_count),
+          rows_(std::move(rows)),
+          face_to_row_(target_face_count) {
+        validate_and_index();
+    }
+
+    AssemblyReadyInternalConnectionTable3D(
+        const AssemblyReadyInternalConnectionTable3D&) =
+        default;
+    AssemblyReadyInternalConnectionTable3D(
+        AssemblyReadyInternalConnectionTable3D&&) noexcept =
+        default;
+    AssemblyReadyInternalConnectionTable3D& operator=(
+        const AssemblyReadyInternalConnectionTable3D&) =
+        delete;
+    AssemblyReadyInternalConnectionTable3D& operator=(
+        AssemblyReadyInternalConnectionTable3D&&) =
+        delete;
+    ~AssemblyReadyInternalConnectionTable3D() = default;
+
+    [[nodiscard]] std::size_t
+    target_face_count() const noexcept {
+        return target_face_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    target_cell_count() const noexcept {
+        return target_cell_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    row_count() const noexcept {
+        return rows_.size();
+    }
+
+    [[nodiscard]] std::span<
+        const AssemblyReadyInternalConnectionRow3D>
+    rows() const noexcept {
+        return rows_;
+    }
+
+    [[nodiscard]] bool contains_face(
+        mpmc::mesh::LocalIndex face) const {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                face.value());
+        if (local >= target_face_count_) {
+            throw std::out_of_range(
+                "mpmc::mesh_petsc::AssemblyReadyInternalConnectionTable3D: face index out of range");
+        }
+        return face_to_row_[local].has_value();
+    }
+
+    [[nodiscard]]
+    const AssemblyReadyInternalConnectionRow3D&
+    row(mpmc::mesh::LocalIndex face) const {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                face.value());
+        if (local >= target_face_count_) {
+            throw std::out_of_range(
+                "mpmc::mesh_petsc::AssemblyReadyInternalConnectionTable3D: face index out of range");
+        }
+        const auto mapped =
+            face_to_row_[local];
+        if (!mapped.has_value()) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::AssemblyReadyInternalConnectionTable3D: face has no active materialized connection row");
+        }
+        return rows_.at(*mapped);
+    }
+
+    [[nodiscard]] double transmissibility_m3(
+        mpmc::mesh::LocalIndex face) const {
+        return row(face).transmissibility_m3;
+    }
+
+private:
+    void validate_and_index() {
+        for (std::size_t index = 0U;
+             index < rows_.size();
+             ++index) {
+            const auto& connection =
+                rows_[index];
+            const std::size_t face =
+                static_cast<std::size_t>(
+                    connection.face.value());
+            const std::size_t owner =
+                static_cast<std::size_t>(
+                    connection.owner_cell.value());
+            const std::size_t neighbour =
+                static_cast<std::size_t>(
+                    connection.neighbour_cell.value());
+
+            if (face >= target_face_count_) {
+                throw std::out_of_range(
+                    "mpmc::mesh_petsc::AssemblyReadyInternalConnectionTable3D: row face index out of range");
+            }
+            if (owner >= target_cell_count_ ||
+                neighbour >= target_cell_count_ ||
+                owner == neighbour) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::AssemblyReadyInternalConnectionTable3D: row must reference two distinct target-local cells");
+            }
+            if (!std::isfinite(
+                    connection.transmissibility_m3) ||
+                connection.transmissibility_m3 <=
+                    0.0) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::AssemblyReadyInternalConnectionTable3D: row transmissibility must be finite and positive");
+            }
+            if (face_to_row_[face].has_value()) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::AssemblyReadyInternalConnectionTable3D: duplicate target-local face row");
+            }
+            for (std::size_t prior = 0U;
+                 prior < index;
+                 ++prior) {
+                if (rows_[prior].face_global ==
+                    connection.face_global) {
+                    throw std::invalid_argument(
+                        "mpmc::mesh_petsc::AssemblyReadyInternalConnectionTable3D: duplicate stable face GlobalEntityId");
+                }
+            }
+
+            face_to_row_[face] = index;
+        }
+    }
+
+    std::size_t target_face_count_;
+    std::size_t target_cell_count_;
+    std::vector<AssemblyReadyInternalConnectionRow3D>
+        rows_;
+    std::vector<std::optional<std::size_t>>
+        face_to_row_;
+};
+
+/// Project materialized target-local gated faces into active connection rows.
+///
+/// Every materialized face must have both adjacent cells present in target_dm.
+/// At overlap=0 a cross-rank internal face normally has only one local support,
+/// so this routine returns PETSC_ERR_ARG_WRONGSTATE rather than fabricating a
+/// remote neighbour LocalIndex or silently omitting the connection.
+///
+/// Blocked faces are skipped unconditionally and therefore never enter the
+/// active table.
+inline PetscErrorCode
+make_assembly_ready_internal_connection_table_3d(
+    DM target_dm,
+    const TargetLocalGatedTpfaTransmissibilityView3D& view,
+    const StableOwnerFaceGeometry3D& stable_face_geometry,
+    std::span<const DMPlexPointIdentity> target_identities,
+    std::optional<AssemblyReadyInternalConnectionTable3D>*
+        output) {
+    if (target_dm == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+
+    const std::size_t face_count =
+        view.target_face_count();
+    if (stable_face_geometry.face_count() !=
+            face_count ||
+        stable_face_geometry.face_areas_m2.size() !=
+            face_count ||
+        stable_face_geometry.face_owner_global_ids.size() !=
+            face_count ||
+        stable_face_geometry.face_owner_unit_normals.size() !=
+            face_count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    PetscInt cell_start = -1;
+    PetscInt cell_end = -1;
+    PetscInt face_start = -1;
+    PetscInt face_end = -1;
+    PetscErrorCode error =
+        DMPlexGetHeightStratum(
+            target_dm,
+            0,
+            &cell_start,
+            &cell_end);
+    if (error == PETSC_SUCCESS) {
+        error = DMPlexGetHeightStratum(
+            target_dm,
+            1,
+            &face_start,
+            &face_end);
+    }
+    if (error != PETSC_SUCCESS ||
+        cell_start < 0 ||
+        cell_end < cell_start ||
+        face_start < 0 ||
+        face_end < face_start) {
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+
+    const std::size_t cell_count =
+        static_cast<std::size_t>(
+            cell_end - cell_start);
+    if (static_cast<std::size_t>(
+            face_end - face_start) !=
+        face_count) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    auto identity_for_point =
+        [&](PetscInt point)
+            -> const DMPlexPointIdentity* {
+        const auto found =
+            std::find_if(
+                target_identities.begin(),
+                target_identities.end(),
+                [point](
+                    const DMPlexPointIdentity& identity) {
+                    return identity.point ==
+                           point;
+                });
+        return found == target_identities.end()
+                   ? nullptr
+                   : &*found;
+    };
+
+    std::vector<AssemblyReadyInternalConnectionRow3D>
+        rows;
+    rows.reserve(
+        view.materialized_face_count());
+
+    for (const auto& gated :
+         view.entries()) {
+        if (gated.disposition !=
+            mpmc::mesh::
+                TpfaInternalFaceTransmissibilityDisposition3D::
+                    materialized) {
+            continue;
+        }
+        if (!gated.transmissibility_m3.has_value() ||
+            !std::isfinite(
+                *gated.transmissibility_m3) ||
+            *gated.transmissibility_m3 <= 0.0) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        const std::size_t face_local =
+            static_cast<std::size_t>(
+                gated.face.value());
+        if (face_local >= face_count) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        const PetscInt face_point =
+            face_start +
+            static_cast<PetscInt>(
+                face_local);
+
+        PetscInt support_size = 0;
+        const PetscInt* support = nullptr;
+        error = DMPlexGetSupportSize(
+            target_dm,
+            face_point,
+            &support_size);
+        if (error == PETSC_SUCCESS) {
+            error = DMPlexGetSupport(
+                target_dm,
+                face_point,
+                &support);
+        }
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+        if (support_size != 2 ||
+            support == nullptr) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+
+        const auto* first_identity =
+            identity_for_point(
+                support[0]);
+        const auto* second_identity =
+            identity_for_point(
+                support[1]);
+        if (first_identity == nullptr ||
+            second_identity == nullptr ||
+            first_identity->kind !=
+                mpmc::mesh::EntityKind::cell ||
+            second_identity->kind !=
+                mpmc::mesh::EntityKind::cell ||
+            first_identity->point < cell_start ||
+            first_identity->point >= cell_end ||
+            second_identity->point < cell_start ||
+            second_identity->point >= cell_end ||
+            first_identity->local ==
+                second_identity->local) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        const auto canonical_owner_global =
+            stable_face_geometry
+                .face_owner_global_ids[
+                    face_local];
+
+        const DMPlexPointIdentity* owner = nullptr;
+        const DMPlexPointIdentity* neighbour = nullptr;
+        if (first_identity->global ==
+            canonical_owner_global) {
+            owner = first_identity;
+            neighbour = second_identity;
+        } else if (
+            second_identity->global ==
+            canonical_owner_global) {
+            owner = second_identity;
+            neighbour = first_identity;
+        } else {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        rows.push_back(
+            AssemblyReadyInternalConnectionRow3D{
+                gated.face,
+                gated.global,
+                owner->local,
+                owner->global,
+                neighbour->local,
+                neighbour->global,
+                *gated.transmissibility_m3});
+    }
+
+    if (rows.size() !=
+        view.materialized_face_count()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    try {
+        output->emplace(
+            face_count,
+            cell_count,
+            std::move(rows));
+    } catch (...) {
+        output->reset();
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    return PETSC_SUCCESS;
+}
+
 inline PetscErrorCode migrate_dense_field_snapshot(
     DM source_dm,
     PetscSF migration_sf,
