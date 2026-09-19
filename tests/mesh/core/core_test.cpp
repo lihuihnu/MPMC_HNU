@@ -1084,7 +1084,7 @@ void require_topology_equal(
         }
     }
 
-    for (const auto relation :
+    for (const auto& relation :
          {std::pair{
               mesh::EntityKind::cell,
               mesh::EntityKind::vertex},
