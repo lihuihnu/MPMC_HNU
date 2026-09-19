@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；Gmsh MSH 4.1 ASCII 与 VTU ASCII 已有 2D import/export round-trip，GRDECL 已有 raw corner-point parser 与无-fault active-cell shared-face processor。processor 现在进一步按 `source_logical_cell_ids` 投影 `PORO/PERMX/PERMY/PERMZ` 为 processed-topology `DenseFieldSnapshot`，并为每张 quad face 计算 centroid、area、owner 与 owner-relative unit normal。processed cell `GlobalEntityId` 和 source mapping 仍保留原 logical cell ID。当前只验证无 fault 的 `2×1×1` 与 `1×1×2`，fault split/pinch/NNC 继续显式拒绝或后置。core 仍不依赖 PETSc/MPI；不含 VTU binary/appended/compressed、Gmsh binary/high-order/3D、GRDECL fault/NNC processing、Mat、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；Gmsh MSH 4.1 ASCII 与 VTU ASCII 已有 2D import/export round-trip，GRDECL 已有 raw corner-point parser 与无-fault active-cell shared-face processor。processor 现在进一步按 `source_logical_cell_ids` 投影 `PORO/PERMX/PERMY/PERMZ` 为 processed-topology `DenseFieldSnapshot`，并为每张 quad face 计算 centroid、area、owner 与 owner-relative unit normal。processed cell `GlobalEntityId` 和 source mapping 仍保留原 logical cell ID。`2×1×1` processed GRDECL shared topology 已实际送入 serial DMPlex：现有 topology adapter 现在严格接受 2D triangle/quad 或 3D hexa/quad 两类输入，3D 路径保持 `cell->face->vertex` 的部分插值表示并验证 hexa/quad/point strata、cone/support 与 stable cell/face/vertex identity；尚未宣称 3D distribute/overlap。当前 GRDECL processing 仍只验证无 fault 的 `2×1×1` 与 `1×1×2`，fault split/pinch/NNC 继续显式拒绝或后置。core 仍不依赖 PETSc/MPI；不含 VTU binary/appended/compressed、Gmsh binary/high-order/3D、GRDECL fault/NNC processing、Mat、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -128,7 +128,7 @@ active face processor gate 使用两种正交共享方向：`2×1×1` 两 active
 
 后续适配层仍可负责：
 
-- 在已验证的 processed GRDECL shared topology + properties + face metrics 上建立最小 3D hexa DMPlex adapter gate：让现有 topology-only adapter 接受 6-face hexa/4-vertex quad faces，把 `2×1×1` processed grid 送入 serial DMPlex，再验证 hexa/quad/point strata 与 stable cell/face/vertex identity；先不做 3D distribute/overlap；
+- 在已通过的 processed GRDECL 3D serial DMPlex topology gate 上，后续可单独把 `vertex_coordinates_m` 接入 3D DMPlex coordinate section，并用现有 `FaceGeometry3D`/cell volume 作为独立 reference 验证 PETSc 侧几何；完成 serial geometry 前仍不扩大到 3D distribute/overlap；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
