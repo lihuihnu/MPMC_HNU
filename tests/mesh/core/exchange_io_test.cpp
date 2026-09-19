@@ -1,6 +1,7 @@
 #include <mpmc/mesh/mesh_exchange_io.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
@@ -292,6 +293,151 @@ void verify_gmsh_group_bridge() {
         "Gmsh boundary tags bridge");
 }
 
+void verify_rectilinear_grdecl_reconstruction() {
+    const auto source =
+        mesh::import_vtu_ascii_3d(
+            R"VTU(<?xml version="1.0"?>
+<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian">
+  <UnstructuredGrid>
+    <Piece NumberOfPoints="12" NumberOfCells="2">
+      <PointData/>
+      <CellData>
+        <DataArray type="Float64" Name="PORO" mpmc_unit="1" format="ascii">0.2 0.1</DataArray>
+      </CellData>
+      <Points>
+        <DataArray type="Float64" NumberOfComponents="3" format="ascii">
+          0 0 0  1 0 0  3 0 0
+          0 2 0  1 2 0  3 2 0
+          0 0 1  1 0 1  3 0 1
+          0 2 1  1 2 1  3 2 1
+        </DataArray>
+      </Points>
+      <Cells>
+        <DataArray type="Int64" Name="connectivity" format="ascii">
+          1 2 5 4 7 8 11 10
+          0 1 4 3 6 7 10 9
+        </DataArray>
+        <DataArray type="Int64" Name="offsets" format="ascii">8 16</DataArray>
+        <DataArray type="UInt8" Name="types" format="ascii">12 12</DataArray>
+      </Cells>
+    </Piece>
+  </UnstructuredGrid>
+</VTKFile>)VTU");
+    const auto document =
+        mesh::make_mesh_exchange_document(
+            source);
+
+    const auto reconstruction =
+        mesh::reconstruct_structured_logical_grid_3d(
+            document);
+    require(
+        reconstruction.report.representable() &&
+            reconstruction.report.dimensions()
+                .has_value() &&
+            *reconstruction.report.dimensions() ==
+                std::array<std::size_t, 3>{
+                    2U, 1U, 1U} &&
+            reconstruction.logical_grid
+                .has_value() &&
+            reconstruction.source_cell_by_logical
+                .size() == 2U &&
+            reconstruction.source_cell_by_logical[0]
+                    .value() == 1U &&
+            reconstruction.source_cell_by_logical[1]
+                    .value() == 0U,
+        "reversed source cells must reconstruct as I-fastest 2x1x1 GRDECL");
+    require(
+        reconstruction.logical_grid->
+                porosity.size() == 2U &&
+            reconstruction.logical_grid->
+                porosity[0] == 0.1 &&
+            reconstruction.logical_grid->
+                porosity[1] == 0.2,
+        "reconstructed PORO must follow logical cell ordering");
+
+    const auto exported =
+        mesh::export_grdecl_ascii(
+            document);
+    require(
+        exported.exported() &&
+            exported.report.lossless(),
+        "rectilinear canonical mesh must export exact reconstructed GRDECL");
+
+    const auto imported =
+        mesh::import_grdecl(
+            *exported.content,
+            mesh::GrdeclImportOptions{
+                1.0,
+                1.0});
+    require(
+        imported.dimensions ==
+                std::array<std::size_t, 3>{
+                    2U, 1U, 1U} &&
+            imported.cell_fields.size() == 1U &&
+            imported.active_cell_count() == 2U,
+        "reconstructed GRDECL import");
+    require(
+        field(imported, "PORO")
+                .value(mesh::LocalIndex{0U}, 0U) ==
+                0.1 &&
+            field(imported, "PORO")
+                .value(mesh::LocalIndex{1U}, 0U) ==
+                0.2,
+        "re-imported PORO logical ordering");
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            imported);
+    require(
+        processed.cell_count() == 2U &&
+            processed.cell_fields.size() == 1U,
+        "reconstructed GRDECL active processing");
+}
+
+void verify_slanted_hexa_reconstruction_rejection() {
+    const auto source =
+        mesh::import_vtu_ascii_3d(
+            R"VTU(<?xml version="1.0"?>
+<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian">
+  <UnstructuredGrid>
+    <Piece NumberOfPoints="8" NumberOfCells="1">
+      <PointData/>
+      <CellData/>
+      <Points>
+        <DataArray type="Float64" NumberOfComponents="3" format="ascii">
+          0 0 0 1 0 0 1 1 0 0 1 0
+          0.1 0 1 1.1 0 1 1.1 1 1 0.1 1 1
+        </DataArray>
+      </Points>
+      <Cells>
+        <DataArray type="Int64" Name="connectivity" format="ascii">0 1 2 3 4 5 6 7</DataArray>
+        <DataArray type="Int64" Name="offsets" format="ascii">8</DataArray>
+        <DataArray type="UInt8" Name="types" format="ascii">12</DataArray>
+      </Cells>
+    </Piece>
+  </UnstructuredGrid>
+</VTKFile>)VTU");
+    const auto document =
+        mesh::make_mesh_exchange_document(
+            source);
+    const auto reconstruction =
+        mesh::reconstruct_structured_logical_grid_3d(
+            document);
+    require(
+        !reconstruction.report.representable() &&
+            !reconstruction.report.issues().empty(),
+        "slanted hexa is outside rectilinear GRDECL reconstruction baseline");
+
+    const auto exported =
+        mesh::export_grdecl_ascii(
+            document);
+    require(
+        !exported.exported() &&
+            exported.report.disposition() ==
+                mesh::ConversionDisposition::
+                    unsupported,
+        "slanted hexa GRDECL export must remain unsupported");
+}
+
 void verify_non_corner_point_report() {
     const auto source =
         mesh::import_vtu_ascii_3d(
@@ -381,6 +527,8 @@ int main() {
     try {
         verify_grdecl_canonical_roundtrip();
         verify_gmsh_group_bridge();
+        verify_rectilinear_grdecl_reconstruction();
+        verify_slanted_hexa_reconstruction_rejection();
         verify_non_corner_point_report();
         std::cout
             << "[PASS] mesh.core.exchange_io\n";

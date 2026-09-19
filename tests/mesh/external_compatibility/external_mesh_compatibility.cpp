@@ -7,6 +7,7 @@
 #include <mpmc/mesh/vtu_3d.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <fstream>
@@ -222,21 +223,43 @@ void verify_gmsh_3d(
         1.0e-14,
         "Gmsh 3D canonical VTU volume");
 
+    const auto representability =
+        mesh::detect_grdecl_representability(
+            canonical);
+    require(
+        representability.representable() &&
+            representability.dimensions()
+                .has_value() &&
+            *representability.dimensions() ==
+                std::array<std::size_t, 3>{
+                    1U, 1U, 1U},
+        "deal.II Gmsh 3D GRDECL representability");
     const auto as_grdecl =
         mesh::export_grdecl_ascii(
             canonical);
     require(
-        !as_grdecl.exported() &&
+        as_grdecl.exported() &&
             as_grdecl.report.disposition() ==
-                mesh::ConversionDisposition::
-                    unsupported,
-        "Gmsh 3D canonical->GRDECL unsupported");
+                mesh::ConversionDisposition::lossy,
+        "Gmsh 3D canonical->GRDECL reconstructed with metadata loss");
+    const auto grdecl_second =
+        mesh::import_grdecl(
+            *as_grdecl.content,
+            mesh::GrdeclImportOptions{
+                1.0,
+                1.0});
+    require(
+        grdecl_second.dimensions ==
+                std::array<std::size_t, 3>{
+                    1U, 1U, 1U} &&
+            grdecl_second.cell_fields.empty(),
+        "Gmsh 3D reconstructed GRDECL re-import");
 
     std::cout
         << "[PASS] external.gmsh.3d.dealii\n"
         << "matrix.gmsh3d.gmsh=lossless\n"
         << "matrix.gmsh3d.vtu=lossy\n"
-        << "matrix.gmsh3d.grdecl=unsupported\n";
+        << "matrix.gmsh3d.grdecl=lossy\n";
 }
 
 void verify_vtu_bundle(
@@ -336,15 +359,37 @@ void verify_vtu_bundle(
         1.0e-14,
         "VTU 3D canonical Gmsh volume");
 
+    const auto representability_3d =
+        mesh::detect_grdecl_representability(
+            canonical_3d);
+    require(
+        representability_3d.representable() &&
+            representability_3d.dimensions()
+                .has_value() &&
+            *representability_3d.dimensions() ==
+                std::array<std::size_t, 3>{
+                    1U, 1U, 1U},
+        "deal.II VTU 3D GRDECL representability");
     const auto grdecl_3d =
         mesh::export_grdecl_ascii(
             canonical_3d);
     require(
-        !grdecl_3d.exported() &&
+        grdecl_3d.exported() &&
             grdecl_3d.report.disposition() ==
-                mesh::ConversionDisposition::
-                    unsupported,
-        "VTU 3D canonical->GRDECL unsupported");
+                mesh::ConversionDisposition::lossy,
+        "VTU 3D canonical->GRDECL reconstructed with field loss");
+    const auto grdecl_3d_second =
+        mesh::import_grdecl(
+            *grdecl_3d.content,
+            mesh::GrdeclImportOptions{
+                1.0,
+                1.0});
+    require(
+        grdecl_3d_second.dimensions ==
+                std::array<std::size_t, 3>{
+                    1U, 1U, 1U} &&
+            grdecl_3d_second.cell_fields.empty(),
+        "VTU 3D reconstructed GRDECL re-import");
 
     std::cout
         << "[PASS] external.vtu.2d3d.dealii\n"
@@ -353,7 +398,7 @@ void verify_vtu_bundle(
         << "matrix.vtu2d.grdecl=unsupported\n"
         << "matrix.vtu3d.gmsh=lossy\n"
         << "matrix.vtu3d.vtu=lossless\n"
-        << "matrix.vtu3d.grdecl=unsupported\n";
+        << "matrix.vtu3d.grdecl=lossy\n";
 }
 
 void verify_grdecl_tube(

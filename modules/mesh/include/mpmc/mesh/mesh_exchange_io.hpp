@@ -5,6 +5,7 @@
 #include <mpmc/mesh/gmsh_4_1.hpp>
 #include <mpmc/mesh/gmsh_4_1_3d.hpp>
 #include <mpmc/mesh/grdecl.hpp>
+#include <mpmc/mesh/grdecl_reconstruction.hpp>
 #include <mpmc/mesh/mesh_exchange.hpp>
 #include <mpmc/mesh/vtu.hpp>
 #include <mpmc/mesh/vtu_3d.hpp>
@@ -214,8 +215,8 @@ combine_fields(
     return result;
 }
 
-[[nodiscard]] inline const DenseFieldSnapshot&
-required_grdecl_field(
+[[nodiscard]] inline const DenseFieldSnapshot*
+optional_grdecl_field(
     const GrdeclImportResult& raw,
     std::string_view id,
     std::string_view unit) {
@@ -227,25 +228,68 @@ required_grdecl_field(
                 return field.metadata().id ==
                     id;
             });
-    if (found == raw.cell_fields.end() ||
-        found->location() !=
+    if (found == raw.cell_fields.end()) {
+        return nullptr;
+    }
+    if (found->location() !=
             EntityKind::cell ||
         found->component_count() != 1U ||
         found->entity_count() !=
             raw.cell_count() ||
         found->metadata().unit != unit) {
         throw std::invalid_argument(
-            "mpmc::mesh::make_mesh_exchange_document: required GRDECL field contract is absent");
+            "mpmc::mesh::make_mesh_exchange_document: GRDECL field is present but violates its scalar cell/unit contract");
     }
-    return *found;
+    return &*found;
 }
 
 [[nodiscard]] inline std::vector<double>
 scalar_values(
-    const DenseFieldSnapshot& field) {
+    const DenseFieldSnapshot* field) {
+    if (field == nullptr) {
+        return {};
+    }
     return std::vector<double>{
-        field.values().begin(),
-        field.values().end()};
+        field->values().begin(),
+        field->values().end()};
+}
+
+[[nodiscard]] inline std::vector<DenseFieldSnapshot>
+copy_fields(
+    const MeshExchangeDocument& document) {
+    std::vector<DenseFieldSnapshot> fields;
+    fields.reserve(
+        document.fields().size());
+    for (const auto& field :
+         document.fields().fields()) {
+        fields.push_back(field);
+    }
+    return fields;
+}
+
+[[nodiscard]] inline std::vector<MeshExchangeGroup>
+copy_groups(
+    const MeshExchangeDocument& document) {
+    return std::vector<MeshExchangeGroup>{
+        document.groups().begin(),
+        document.groups().end()};
+}
+
+[[nodiscard]] inline MeshExchangeDocument
+with_logical_corner_point(
+    const MeshExchangeDocument& document,
+    LogicalCornerPointGrid3D logical) {
+    return MeshExchangeDocument::create(
+        document.source_format(),
+        document.dimension(),
+        document.topology(),
+        std::vector<Coordinate3D>{
+            document.vertex_coordinates_m().begin(),
+            document.vertex_coordinates_m().end()},
+        document.face_boundary(),
+        copy_fields(document),
+        copy_groups(document),
+        std::move(logical));
 }
 
 struct GmshTargetIds {
@@ -1040,27 +1084,27 @@ make_mesh_exchange_document(
 [[nodiscard]] inline MeshExchangeDocument
 make_mesh_exchange_document(
     const GrdeclImportResult& source) {
-    const auto& poro =
+    const auto* poro =
         mesh_exchange_io_detail::
-            required_grdecl_field(
+            optional_grdecl_field(
                 source,
                 "PORO",
                 "1");
-    const auto& permx =
+    const auto* permx =
         mesh_exchange_io_detail::
-            required_grdecl_field(
+            optional_grdecl_field(
                 source,
                 "PERMX",
                 "m2");
-    const auto& permy =
+    const auto* permy =
         mesh_exchange_io_detail::
-            required_grdecl_field(
+            optional_grdecl_field(
                 source,
                 "PERMY",
                 "m2");
-    const auto& permz =
+    const auto* permz =
         mesh_exchange_io_detail::
-            required_grdecl_field(
+            optional_grdecl_field(
                 source,
                 "PERMZ",
                 "m2");
@@ -1301,18 +1345,67 @@ export_grdecl_ascii(
         options.permeability_scale_to_m2,
         "mpmc::mesh::export_grdecl_ascii: permeability_scale_to_m2 must be finite and positive");
 
+    std::optional<MeshExchangeDocument>
+        reconstructed;
+    const MeshExchangeDocument* source =
+        &document;
+    GrdeclRepresentabilityReport
+        reconstruction_report;
+
+    if (!document.logical_corner_point()
+             .has_value()) {
+        auto result =
+            reconstruct_structured_logical_grid_3d(
+                document);
+        reconstruction_report =
+            result.report;
+        if (!result.report.representable() ||
+            !result.logical_grid.has_value()) {
+            ConversionReport report{
+                MeshExchangeFormat::grdecl};
+            if (result.report.issues().empty()) {
+                report.note_unsupported(
+                    "grdecl_reconstruction.unsupported",
+                    "generic canonical mesh is not representable by the current structured GRDECL reconstruction baseline");
+            } else {
+                for (const auto& issue :
+                     result.report.issues()) {
+                    report.note_unsupported(
+                        issue.code,
+                        issue.message);
+                }
+            }
+            return MeshTextExportResult{
+                std::nullopt,
+                std::move(report)};
+        }
+        reconstructed.emplace(
+            with_logical_corner_point(
+                document,
+                std::move(
+                    *result.logical_grid)));
+        source = &*reconstructed;
+    }
+
     auto report =
         analyze_conversion(
-            document,
+            *source,
             MeshExchangeFormat::grdecl);
-    if (!report.lossless()) {
+    if (report.disposition() ==
+        ConversionDisposition::unsupported) {
         return MeshTextExportResult{
             std::nullopt,
             std::move(report)};
     }
+    for (const auto& issue :
+         reconstruction_report.issues()) {
+        report.note_lossy(
+            issue.code,
+            issue.message);
+    }
 
     const auto& data =
-        *document.logical_corner_point();
+        *source->logical_corner_point();
 
     std::ostringstream output;
     output <<
@@ -1348,30 +1441,38 @@ export_grdecl_ascii(
     write_actnum(
         output,
         data.active);
-    write_double_record(
-        output,
-        "PORO",
-        data.porosity,
-        1.0,
-        8U);
-    write_double_record(
-        output,
-        "PERMX",
-        data.permx_m2,
-        options.permeability_scale_to_m2,
-        8U);
-    write_double_record(
-        output,
-        "PERMY",
-        data.permy_m2,
-        options.permeability_scale_to_m2,
-        8U);
-    write_double_record(
-        output,
-        "PERMZ",
-        data.permz_m2,
-        options.permeability_scale_to_m2,
-        8U);
+    if (!data.porosity.empty()) {
+        write_double_record(
+            output,
+            "PORO",
+            data.porosity,
+            1.0,
+            8U);
+    }
+    if (!data.permx_m2.empty()) {
+        write_double_record(
+            output,
+            "PERMX",
+            data.permx_m2,
+            options.permeability_scale_to_m2,
+            8U);
+    }
+    if (!data.permy_m2.empty()) {
+        write_double_record(
+            output,
+            "PERMY",
+            data.permy_m2,
+            options.permeability_scale_to_m2,
+            8U);
+    }
+    if (!data.permz_m2.empty()) {
+        write_double_record(
+            output,
+            "PERMZ",
+            data.permz_m2,
+            options.permeability_scale_to_m2,
+            8U);
+    }
 
     return MeshTextExportResult{
         output.str(),
@@ -1381,22 +1482,22 @@ export_grdecl_ascii(
 [[nodiscard]] inline MeshTextExportResult
 export_grdecl_ascii(
     const MeshExchangeDocument& document) {
-    const auto report =
-        analyze_conversion(
+    if (document.logical_corner_point()
+            .has_value()) {
+        const auto& data =
+            *document.logical_corner_point();
+        return export_grdecl_ascii(
             document,
-            MeshExchangeFormat::grdecl);
-    if (!report.lossless()) {
-        return MeshTextExportResult{
-            std::nullopt,
-            report};
+            GrdeclExportOptions{
+                data.source_coordinate_scale_to_m,
+                data.source_permeability_scale_to_m2});
     }
-    const auto& data =
-        *document.logical_corner_point();
+    // Generic canonical coordinates and material fields are already SI.
     return export_grdecl_ascii(
         document,
         GrdeclExportOptions{
-            data.source_coordinate_scale_to_m,
-            data.source_permeability_scale_to_m2});
+            1.0,
+            1.0});
 }
 
 } // namespace mpmc::mesh

@@ -2414,6 +2414,31 @@ void grdecl_import() {
         20.0 * permeability_scale,
         1.0e-28,
         "GRDECL Fortran-D exponent parsing");
+
+    auto geometry_only_text =
+        grdecl_two_cell_fixture();
+    const auto properties =
+        geometry_only_text.find("PORO");
+    require(
+        properties != std::string::npos,
+        "GRDECL geometry-only property marker");
+    geometry_only_text.erase(properties);
+    const auto geometry_only =
+        mesh::import_grdecl(
+            geometry_only_text,
+            mesh::GrdeclImportOptions{
+                coordinate_scale,
+                permeability_scale});
+    require(
+        geometry_only.cell_fields.empty(),
+        "GRDECL geometry-only import must not fabricate material fields");
+    const auto processed_geometry_only =
+        mesh::process_active_corner_point_grid(
+            geometry_only);
+    require(
+        processed_geometry_only.cell_count() == 1U &&
+            processed_geometry_only.cell_fields.empty(),
+        "GRDECL geometry-only active processing");
 }
 
 void grdecl_inactive_degenerate() {
@@ -2498,11 +2523,16 @@ void grdecl_invalid() {
         auto missing =
             grdecl_two_cell_fixture();
         const auto begin =
-            missing.find("PERMZ");
+            missing.find("ACTNUM");
+        const auto end =
+            missing.find("PORO", begin);
         require(
-            begin != std::string::npos,
-            "GRDECL missing-keyword marker");
-        missing.erase(begin);
+            begin != std::string::npos &&
+                end != std::string::npos,
+            "GRDECL missing-required-keyword marker");
+        missing.erase(
+            begin,
+            end - begin);
         expect_throw<std::invalid_argument>(
             [&] {
                 (void)mesh::import_grdecl(

@@ -19,6 +19,7 @@ add_executable(mpmc_mesh_core_tests
     gmsh_4_1_header_self_contained.cpp
     gmsh_4_1_3d_header_self_contained.cpp
     grdecl_header_self_contained.cpp
+    grdecl_reconstruction_header_self_contained.cpp
     vtu_header_self_contained.cpp
     vtu_3d_header_self_contained.cpp
     linear_cell_mesh_3d_header_self_contained.cpp

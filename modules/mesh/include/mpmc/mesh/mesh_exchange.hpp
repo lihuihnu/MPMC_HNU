@@ -107,9 +107,11 @@ struct MeshExchangeGroup {
 /// Source-preserving logical corner-point semantics.
 ///
 /// COORD and ZCORN are stored in canonical SI metres while permeability is
-/// stored in square metres. source_*_scale_to_si retains the explicit import
-/// scale so a GRDECL writer can reproduce the source numeric unit convention
-/// without guessing FIELD/METRIC semantics.
+/// stored in square metres. PORO/PERM arrays are optional: geometry-only GRDECL
+/// documents keep them empty instead of inventing material properties.
+/// source_*_scale_to_si retains the explicit import scale so a GRDECL writer
+/// can reproduce the source numeric unit convention without guessing
+/// FIELD/METRIC semantics.
 struct LogicalCornerPointGrid3D {
     std::array<std::size_t, 3> dimensions;
     std::vector<double> coord_m;
@@ -394,22 +396,27 @@ private:
                 8U,
                 "mpmc::mesh::MeshExchangeDocument: corner-point ZCORN size overflow");
 
+        const auto optional_cell_array =
+            [cell_count](std::size_t size) {
+                return size == 0U ||
+                       size == cell_count;
+            };
         if (data.coord_m.size() !=
                 expected_coord ||
             data.zcorn_m.size() !=
                 expected_zcorn ||
             data.active.size() !=
                 cell_count ||
-            data.porosity.size() !=
-                cell_count ||
-            data.permx_m2.size() !=
-                cell_count ||
-            data.permy_m2.size() !=
-                cell_count ||
-            data.permz_m2.size() !=
-                cell_count) {
+            !optional_cell_array(
+                data.porosity.size()) ||
+            !optional_cell_array(
+                data.permx_m2.size()) ||
+            !optional_cell_array(
+                data.permy_m2.size()) ||
+            !optional_cell_array(
+                data.permz_m2.size())) {
             throw std::invalid_argument(
-                "mpmc::mesh::MeshExchangeDocument: corner-point array sizes do not match dimensions");
+                "mpmc::mesh::MeshExchangeDocument: corner-point geometry arrays must match dimensions and optional property arrays must be empty or cell-aligned");
         }
 
         const auto finite =

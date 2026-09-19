@@ -9,6 +9,7 @@ on:
       - 'modules/mesh/include/mpmc/mesh/vtu.hpp'
       - 'modules/mesh/include/mpmc/mesh/vtu_3d.hpp'
       - 'modules/mesh/include/mpmc/mesh/grdecl.hpp'
+      - 'modules/mesh/include/mpmc/mesh/grdecl_reconstruction.hpp'
       - 'modules/mesh/include/mpmc/mesh/mesh_exchange.hpp'
       - 'modules/mesh/include/mpmc/mesh/mesh_exchange_io.hpp'
       - 'modules/mesh/include/mpmc/mesh/active_corner_point.hpp'
@@ -71,7 +72,9 @@ jobs:
           grep -Fqx '[PASS] external.grdecl.opm_tube_native_roundtrip' build/external-compatibility.txt
           grep -Fqx '[PASS] external.grdecl.opm_tube_to_gmsh' build/external-compatibility.txt
           grep -Fqx 'matrix.gmsh3d.vtu=lossy' build/external-compatibility.txt
+          grep -Fqx 'matrix.gmsh3d.grdecl=lossy' build/external-compatibility.txt
           grep -Fqx 'matrix.vtu3d.gmsh=lossy' build/external-compatibility.txt
+          grep -Fqx 'matrix.vtu3d.grdecl=lossy' build/external-compatibility.txt
           grep -Fqx 'matrix.grdecl.grdecl=lossless' build/external-compatibility.txt
           grep -Fqx 'grdecl_native_export=implemented_minimal_baseline' build/external-compatibility.txt
 

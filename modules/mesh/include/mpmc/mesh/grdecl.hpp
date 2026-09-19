@@ -683,41 +683,40 @@ import_grdecl(
                     token, message);
             },
             "mpmc::mesh::import_grdecl: invalid ACTNUM value");
+    const auto optional_double_record =
+        [&](std::string_view keyword,
+            const char* message) {
+            const auto found =
+                records.find(
+                    std::string{keyword});
+            if (found == records.end()) {
+                return std::vector<double>{};
+            }
+            return expand_numeric_record(
+                found->second,
+                [](std::string_view token,
+                   const char* parse_message) {
+                    return parse_double(
+                        token,
+                        parse_message);
+                },
+                message);
+        };
     const auto poro =
-        expand_numeric_record(
-            require_record(records, "PORO"),
-            [](std::string_view token,
-               const char* message) {
-                return parse_double(
-                    token, message);
-            },
+        optional_double_record(
+            "PORO",
             "mpmc::mesh::import_grdecl: invalid PORO value");
     const auto permx =
-        expand_numeric_record(
-            require_record(records, "PERMX"),
-            [](std::string_view token,
-               const char* message) {
-                return parse_double(
-                    token, message);
-            },
+        optional_double_record(
+            "PERMX",
             "mpmc::mesh::import_grdecl: invalid PERMX value");
     const auto permy =
-        expand_numeric_record(
-            require_record(records, "PERMY"),
-            [](std::string_view token,
-               const char* message) {
-                return parse_double(
-                    token, message);
-            },
+        optional_double_record(
+            "PERMY",
             "mpmc::mesh::import_grdecl: invalid PERMY value");
     const auto permz =
-        expand_numeric_record(
-            require_record(records, "PERMZ"),
-            [](std::string_view token,
-               const char* message) {
-                return parse_double(
-                    token, message);
-            },
+        optional_double_record(
+            "PERMZ",
             "mpmc::mesh::import_grdecl: invalid PERMZ value");
 
     const std::size_t expected_coord =
@@ -736,15 +735,20 @@ import_grdecl(
         throw std::invalid_argument(
             "mpmc::mesh::import_grdecl: ZCORN must contain 8*NX*NY*NZ values");
     }
+    if (actnum.size() !=
+        cell_count) {
+        throw std::invalid_argument(
+            "mpmc::mesh::import_grdecl: ACTNUM must contain NX*NY*NZ values");
+    }
     for (const auto size :
-         {actnum.size(),
-          poro.size(),
+         {poro.size(),
           permx.size(),
           permy.size(),
           permz.size()}) {
-        if (size != cell_count) {
+        if (size != 0U &&
+            size != cell_count) {
             throw std::invalid_argument(
-                "mpmc::mesh::import_grdecl: ACTNUM/PORO/PERM arrays must contain NX*NY*NZ values");
+                "mpmc::mesh::import_grdecl: optional PORO/PERM arrays must contain NX*NY*NZ values when present");
         }
     }
 
@@ -1010,21 +1014,29 @@ import_grdecl(
     std::vector<DenseFieldSnapshot>
         fields;
     fields.reserve(4U);
-    fields.push_back(
-        make_field(
-            "PORO", "1", poro, 1.0));
-    fields.push_back(
-        make_field(
-            "PERMX", "m2", permx,
-            options.permeability_scale_to_m2));
-    fields.push_back(
-        make_field(
-            "PERMY", "m2", permy,
-            options.permeability_scale_to_m2));
-    fields.push_back(
-        make_field(
-            "PERMZ", "m2", permz,
-            options.permeability_scale_to_m2));
+    if (!poro.empty()) {
+        fields.push_back(
+            make_field(
+                "PORO", "1", poro, 1.0));
+    }
+    if (!permx.empty()) {
+        fields.push_back(
+            make_field(
+                "PERMX", "m2", permx,
+                options.permeability_scale_to_m2));
+    }
+    if (!permy.empty()) {
+        fields.push_back(
+            make_field(
+                "PERMY", "m2", permy,
+                options.permeability_scale_to_m2));
+    }
+    if (!permz.empty()) {
+        fields.push_back(
+            make_field(
+                "PERMZ", "m2", permz,
+                options.permeability_scale_to_m2));
+    }
 
     return GrdeclImportResult{
         {spec.nx, spec.ny, spec.nz},

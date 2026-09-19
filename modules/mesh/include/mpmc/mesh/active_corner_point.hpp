@@ -14,6 +14,7 @@
 #include <set>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -1032,50 +1033,30 @@ process_active_corner_point_grid(
                 "mpmc::mesh::process_active_corner_point_grid: duplicate raw cell GlobalEntityId");
         }
     }
-
     std::vector<DenseFieldSnapshot>
         projected_fields;
-    projected_fields.reserve(4U);
-    constexpr std::array<std::string_view, 4>
-        required_fields{
-            "PORO", "PERMX", "PERMY", "PERMZ"};
-    for (const auto field_id :
-         required_fields) {
-        const auto found =
-            std::find_if(
-                raw.cell_fields.begin(),
-                raw.cell_fields.end(),
-                [field_id](
-                    const DenseFieldSnapshot& field) {
-                    return field.metadata().id ==
-                           field_id;
-                });
-        if (found == raw.cell_fields.end()) {
-            throw std::invalid_argument(
-                "mpmc::mesh::process_active_corner_point_grid: required raw GRDECL cell field is missing");
-        }
-        if (std::find_if(
-                std::next(found),
-                raw.cell_fields.end(),
-                [field_id](
-                    const DenseFieldSnapshot& field) {
-                    return field.metadata().id ==
-                           field_id;
-                }) !=
-            raw.cell_fields.end()) {
-            throw std::invalid_argument(
-                "mpmc::mesh::process_active_corner_point_grid: duplicate raw GRDECL cell field ID");
-        }
-        if (found->location() !=
+    projected_fields.reserve(
+        raw.cell_fields.size());
+    std::set<std::string>
+        projected_field_ids;
+    for (const auto& field :
+         raw.cell_fields) {
+        if (field.location() !=
                 EntityKind::cell ||
-            found->entity_count() !=
+            field.entity_count() !=
                 raw.cell_count()) {
             throw std::invalid_argument(
                 "mpmc::mesh::process_active_corner_point_grid: raw GRDECL field is not aligned to logical cells");
         }
+        if (!projected_field_ids.insert(
+                field.metadata().id)
+                 .second) {
+            throw std::invalid_argument(
+                "mpmc::mesh::process_active_corner_point_grid: duplicate raw GRDECL cell field ID");
+        }
 
         const std::size_t components =
-            found->component_count();
+            field.component_count();
         std::vector<double> values;
         values.reserve(
             checked_multiply(
@@ -1094,7 +1075,7 @@ process_active_corner_point_grid(
                     "mpmc::mesh::process_active_corner_point_grid: source logical cell ID is absent from raw topology");
             }
             const auto raw_values =
-                found->entity_values(
+                field.entity_values(
                     checked_local(
                         local_found->second,
                         "mpmc::mesh::process_active_corner_point_grid: raw field cell local index overflow"));
@@ -1110,14 +1091,10 @@ process_active_corner_point_grid(
                 EntityKind::cell,
                 components,
                 std::move(values),
-                found->metadata()));
+                field.metadata()));
     }
 
-    for (std::size_t cell = 0U;
-         cell < processed_cell_count;
-         ++cell) {
-        const auto local =
-            checked_local(
+
                 cell,
                 "mpmc::mesh::process_active_corner_point_grid: processed cell local index overflow");
         if (topology.global_id(
