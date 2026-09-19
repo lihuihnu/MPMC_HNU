@@ -6,6 +6,7 @@
 #include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/gmsh_4_1.hpp>
 #include <mpmc/mesh/grdecl.hpp>
+#include <mpmc/mesh/linear_cell_mesh_3d.hpp>
 #include <mpmc/mesh/dof_numbering.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
@@ -7911,6 +7912,184 @@ void verify_structural_column_pattern_sorting_fixture(
         "multi-neighbour finalized column storage is compact across rows");
 }
 
+void verify_linear_3d_tetra_hexa_dmplex(
+    int mpi_rank,
+    int mpi_size) {
+    require(
+        mpi_size == 2 &&
+            (mpi_rank == 0 || mpi_rank == 1),
+        "linear 3D PETSc fixture requires two MPI ranks");
+
+    const std::vector<mesh::GlobalEntityId>
+        vertex_ids{
+            mesh::GlobalEntityId{1U},
+            mesh::GlobalEntityId{2U},
+            mesh::GlobalEntityId{3U},
+            mesh::GlobalEntityId{4U},
+            mesh::GlobalEntityId{5U},
+            mesh::GlobalEntityId{6U},
+            mesh::GlobalEntityId{7U},
+            mesh::GlobalEntityId{8U},
+            mesh::GlobalEntityId{9U},
+            mesh::GlobalEntityId{10U},
+            mesh::GlobalEntityId{11U},
+            mesh::GlobalEntityId{12U}};
+    const std::vector<mesh::Coordinate3D>
+        coordinates{
+            {0.0, 0.0, 0.0},
+            {1.0, 0.0, 0.0},
+            {0.0, 1.0, 0.0},
+            {0.0, 0.0, 1.0},
+            {2.0, 0.0, 0.0},
+            {3.0, 0.0, 0.0},
+            {3.0, 1.0, 0.0},
+            {2.0, 1.0, 0.0},
+            {2.0, 0.0, 1.0},
+            {3.0, 0.0, 1.0},
+            {3.0, 1.0, 1.0},
+            {2.0, 1.0, 1.0}};
+    const std::vector<mesh::LinearCell3D>
+        cells{
+            {mesh::GlobalEntityId{101U},
+             mesh::LinearCellType3D::tetrahedron,
+             {mesh::LocalIndex{0U},
+              mesh::LocalIndex{1U},
+              mesh::LocalIndex{2U},
+              mesh::LocalIndex{3U}}},
+            {mesh::GlobalEntityId{102U},
+             mesh::LinearCellType3D::hexahedron,
+             {mesh::LocalIndex{4U},
+              mesh::LocalIndex{5U},
+              mesh::LocalIndex{6U},
+              mesh::LocalIndex{7U},
+              mesh::LocalIndex{8U},
+              mesh::LocalIndex{9U},
+              mesh::LocalIndex{10U},
+              mesh::LocalIndex{11U}}}};
+    const auto fixture =
+        mesh::make_linear_mesh_3d(
+            vertex_ids,
+            coordinates,
+            cells);
+
+    DM source_dm = nullptr;
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        source_identities;
+    require_petsc(
+        mesh_petsc::create_root_dmplex_topology(
+            PETSC_COMM_WORLD,
+            0,
+            mpi_rank == 0
+                ? &fixture.topology
+                : nullptr,
+            &source_dm,
+            &source_identities),
+        "create rooted mixed tetra/hexa DMPlex");
+
+    PetscInt source_dimension = -1;
+    require_petsc(
+        DMGetDimension(
+            source_dm,
+            &source_dimension),
+        "mixed tetra/hexa source dimension");
+    require(
+        source_dimension == 3,
+        "mixed tetra/hexa source DMPlex is 3D");
+
+    PetscPartitioner partitioner = nullptr;
+    require_petsc(
+        DMPlexGetPartitioner(
+            source_dm,
+            &partitioner),
+        "mixed tetra/hexa DMPlexGetPartitioner");
+    require_petsc(
+        PetscPartitionerSetType(
+            partitioner,
+            PETSCPARTITIONERSIMPLE),
+        "mixed tetra/hexa simple partitioner");
+
+    PetscSF migration_sf = nullptr;
+    DM distributed_dm = nullptr;
+    require_petsc(
+        DMPlexDistribute(
+            source_dm,
+            0,
+            &migration_sf,
+            &distributed_dm),
+        "distribute mixed tetra/hexa DMPlex");
+    require(
+        migration_sf != nullptr &&
+            distributed_dm != nullptr,
+        "mixed tetra/hexa distribution outputs");
+
+    PetscInt distributed_dimension = -1;
+    require_petsc(
+        DMGetDimension(
+            distributed_dm,
+            &distributed_dimension),
+        "mixed tetra/hexa distributed dimension");
+    require(
+        distributed_dimension == 3,
+        "distributed mixed tetra/hexa DMPlex is 3D");
+
+    PetscInt cell_start = 0;
+    PetscInt cell_end = 0;
+    require_petsc(
+        DMPlexGetHeightStratum(
+            distributed_dm,
+            0,
+            &cell_start,
+            &cell_end),
+        "mixed tetra/hexa distributed cell stratum");
+    const int local_cells =
+        static_cast<int>(
+            cell_end - cell_start);
+    int global_cells = 0;
+    require(
+        MPI_Allreduce(
+            &local_cells,
+            &global_cells,
+            1,
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "mixed tetra/hexa global cell count");
+    require(
+        global_cells == 2,
+        "mixed tetra/hexa distribution preserves both cells");
+
+    PetscSF overlap_sf = nullptr;
+    DM overlap_dm = nullptr;
+    require_petsc(
+        DMPlexDistributeOverlap(
+            distributed_dm,
+            1,
+            &overlap_sf,
+            &overlap_dm),
+        "mixed tetra/hexa depth-1 overlap");
+    require(
+        overlap_sf != nullptr &&
+            overlap_dm != nullptr,
+        "mixed tetra/hexa overlap outputs");
+
+    require_petsc(
+        PetscSFDestroy(&overlap_sf),
+        "destroy mixed tetra/hexa overlap SF");
+    require_petsc(
+        DMDestroy(&overlap_dm),
+        "destroy mixed tetra/hexa overlap DM");
+    require_petsc(
+        PetscSFDestroy(&migration_sf),
+        "destroy mixed tetra/hexa migration SF");
+    require_petsc(
+        DMDestroy(&distributed_dm),
+        "destroy mixed tetra/hexa distributed DM");
+    require_petsc(
+        DMDestroy(&source_dm),
+        "destroy mixed tetra/hexa source DM");
+}
+
 void run_two_rank_test() {
     int mpi_rank = -1;
     int mpi_size = -1;
@@ -7924,6 +8103,9 @@ void run_two_rank_test() {
     require(mpi_rank == 0 || mpi_rank == 1, "unexpected MPI rank");
 
     const auto rank = static_cast<std::uint32_t>(mpi_rank);
+    verify_linear_3d_tetra_hexa_dmplex(
+        mpi_rank,
+        mpi_size);
     const auto topology = two_rank_topology(rank);
     const auto partition = two_rank_partition(topology, rank);
     const auto plan = mesh::SharedEntityPlan::create(
