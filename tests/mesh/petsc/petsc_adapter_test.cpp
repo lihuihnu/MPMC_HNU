@@ -5051,6 +5051,126 @@ void verify_petsc_mpiaij_symbolic_preallocation_stage(
         "point-SF ghost row resolves to the remote owner's stable-cell PETSc row");
 }
 
+void verify_empty_petsc_mpiaij_symbolic_matrix_stage(
+    Mat matrix,
+    const mesh_petsc::PetscMpiAijSymbolicPreallocation3D& bridge) {
+    require(
+        matrix != nullptr,
+        "empty symbolic MPIAIJ matrix exists");
+
+    PetscBool is_mpiaij = PETSC_FALSE;
+    require_petsc(
+        PetscObjectTypeCompare(
+            reinterpret_cast<PetscObject>(
+                matrix),
+            MATMPIAIJ,
+            &is_mpiaij),
+        "empty symbolic matrix type");
+    require(
+        is_mpiaij == PETSC_TRUE,
+        "symbolic matrix must be MATMPIAIJ");
+
+    PetscInt local_rows = -1;
+    PetscInt local_columns = -1;
+    PetscInt global_rows = -1;
+    PetscInt global_columns = -1;
+    PetscInt row_start = -1;
+    PetscInt row_end = -1;
+    PetscInt column_start = -1;
+    PetscInt column_end = -1;
+
+    require_petsc(
+        MatGetLocalSize(
+            matrix,
+            &local_rows,
+            &local_columns),
+        "empty symbolic MatGetLocalSize");
+    require_petsc(
+        MatGetSize(
+            matrix,
+            &global_rows,
+            &global_columns),
+        "empty symbolic MatGetSize");
+    require_petsc(
+        MatGetOwnershipRange(
+            matrix,
+            &row_start,
+            &row_end),
+        "empty symbolic MatGetOwnershipRange");
+    require_petsc(
+        MatGetOwnershipRangeColumn(
+            matrix,
+            &column_start,
+            &column_end),
+        "empty symbolic MatGetOwnershipRangeColumn");
+
+    require(
+        local_rows ==
+                bridge.local_owned_row_count() &&
+            local_columns ==
+                bridge.local_owned_row_count() &&
+            global_rows ==
+                bridge.global_row_count() &&
+            global_columns ==
+                bridge.global_row_count() &&
+            row_start ==
+                bridge.global_row_start() &&
+            row_end ==
+                bridge.global_row_end() &&
+            column_start ==
+                row_start &&
+            column_end ==
+                row_end,
+        "empty MPIAIJ matrix sizes and ownership exactly match symbolic bridge");
+
+    const auto owned_cells =
+        bridge.owned_cells_in_petsc_row_order();
+    const auto owned_ids =
+        bridge.owned_cell_global_ids();
+    const auto owned_rows =
+        bridge.owned_global_rows();
+    require(
+        owned_cells.size() ==
+                owned_rows.size() &&
+            owned_cells.size() ==
+                owned_ids.size() &&
+            owned_cells.size() ==
+                static_cast<std::size_t>(
+                    local_rows),
+        "empty symbolic matrix stable-cell row map sizes");
+
+    for (std::size_t index = 0U;
+         index < owned_cells.size();
+         ++index) {
+        const PetscInt expected_row =
+            row_start +
+            static_cast<PetscInt>(
+                index);
+        require(
+            owned_rows[index] ==
+                    expected_row &&
+                bridge.global_row(
+                    owned_cells[index]) ==
+                    expected_row &&
+                (index == 0U ||
+                 owned_ids[index - 1U] <
+                     owned_ids[index]),
+            "empty symbolic matrix ownership range matches stable-cell row map");
+    }
+
+    MatInfo info{};
+    require_petsc(
+        MatGetInfo(
+            matrix,
+            MAT_LOCAL,
+            &info),
+        "empty symbolic MatGetInfo");
+    require(
+        info.nz_used == 0.0,
+        "empty symbolic MPIAIJ matrix must remain value-free");
+}
+
+
 void verify_processed_grdecl_cell_field_stage(
     const mesh::DenseFieldSnapshot& actual,
     const mesh::DenseFieldSnapshot& reference,
@@ -6219,6 +6339,38 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         *blocked_sparsity,
         overlap_partition,
         false);
+
+    Mat materialized_symbolic_matrix = nullptr;
+    require_petsc(
+        mesh_petsc::
+            create_empty_petsc_mpiaij_symbolic_matrix_3d(
+                PETSC_COMM_WORLD,
+                *materialized_preallocation,
+                &materialized_symbolic_matrix),
+        "create materialized empty symbolic MPIAIJ matrix");
+    verify_empty_petsc_mpiaij_symbolic_matrix_stage(
+        materialized_symbolic_matrix,
+        *materialized_preallocation);
+    require_petsc(
+        MatDestroy(
+            &materialized_symbolic_matrix),
+        "destroy materialized empty symbolic MPIAIJ matrix");
+
+    Mat blocked_symbolic_matrix = nullptr;
+    require_petsc(
+        mesh_petsc::
+            create_empty_petsc_mpiaij_symbolic_matrix_3d(
+                PETSC_COMM_WORLD,
+                *blocked_preallocation,
+                &blocked_symbolic_matrix),
+        "create blocked-only empty symbolic MPIAIJ matrix");
+    verify_empty_petsc_mpiaij_symbolic_matrix_stage(
+        blocked_symbolic_matrix,
+        *blocked_preallocation);
+    require_petsc(
+        MatDestroy(
+            &blocked_symbolic_matrix),
+        "destroy blocked-only empty symbolic MPIAIJ matrix");
 
     std::vector<
         mesh_petsc::AssemblyReadyInternalConnectionRow3D>
