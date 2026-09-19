@@ -937,6 +937,167 @@ process_active_corner_point_grid(
         std::move(ids),
         std::move(relations)};
 
+    std::vector<Coordinate3D>
+        processed_cell_centroids;
+    processed_cell_centroids.reserve(
+        processed_cell_count);
+    for (const auto& vertices :
+         processed_cell_vertices) {
+        processed_cell_centroids.push_back(
+            cell_vertex_mean(
+                vertices,
+                processed_coordinates));
+    }
+
+    std::vector<Coordinate3D>
+        face_centroids;
+    std::vector<double>
+        face_areas;
+    std::vector<LocalIndex>
+        face_owners;
+    std::vector<UnitVector3D>
+        face_owner_normals;
+    face_centroids.reserve(faces.size());
+    face_areas.reserve(faces.size());
+    face_owners.reserve(faces.size());
+    face_owner_normals.reserve(
+        faces.size());
+
+    for (const auto& face : faces) {
+        if (face.processed_cells.empty()) {
+            throw std::logic_error(
+                "mpmc::mesh::process_active_corner_point_grid: merged face has no owner cell");
+        }
+        const std::size_t owner =
+            face.processed_cells.front();
+        if (owner >=
+            processed_cell_centroids.size()) {
+            throw std::logic_error(
+                "mpmc::mesh::process_active_corner_point_grid: merged face owner index is invalid");
+        }
+        const auto metric =
+            quad_metric(
+                face.ordered_vertices,
+                processed_coordinates,
+                processed_cell_centroids[
+                    owner]);
+        face_centroids.push_back(
+            metric.centroid);
+        face_areas.push_back(
+            metric.area_m2);
+        face_owners.push_back(
+            checked_local(
+                owner,
+                "mpmc::mesh::process_active_corner_point_grid: face owner local index overflow"));
+        face_owner_normals.push_back(
+            metric.unit_normal);
+    }
+
+    FaceGeometry3D face_geometry{
+        processed_cell_count,
+        std::move(face_centroids),
+        std::move(face_areas),
+        std::move(face_owners),
+        std::move(face_owner_normals)};
+
+    std::map<std::uint64_t, std::size_t>
+        raw_cell_local_by_id;
+    const auto raw_cell_ids =
+        raw.topology.global_ids(
+            EntityKind::cell);
+    for (std::size_t local = 0U;
+         local < raw_cell_ids.size();
+         ++local) {
+        if (!raw_cell_local_by_id
+                 .emplace(
+                     raw_cell_ids[local].value(),
+                     local)
+                 .second) {
+            throw std::logic_error(
+                "mpmc::mesh::process_active_corner_point_grid: duplicate raw cell GlobalEntityId");
+        }
+    }
+
+    std::vector<DenseFieldSnapshot>
+        projected_fields;
+    projected_fields.reserve(4U);
+    constexpr std::array<std::string_view, 4>
+        required_fields{
+            "PORO", "PERMX", "PERMY", "PERMZ"};
+    for (const auto field_id :
+         required_fields) {
+        const auto found =
+            std::find_if(
+                raw.cell_fields.begin(),
+                raw.cell_fields.end(),
+                [field_id](
+                    const DenseFieldSnapshot& field) {
+                    return field.metadata().id ==
+                           field_id;
+                });
+        if (found == raw.cell_fields.end()) {
+            throw std::invalid_argument(
+                "mpmc::mesh::process_active_corner_point_grid: required raw GRDECL cell field is missing");
+        }
+        if (std::find_if(
+                std::next(found),
+                raw.cell_fields.end(),
+                [field_id](
+                    const DenseFieldSnapshot& field) {
+                    return field.metadata().id ==
+                           field_id;
+                }) !=
+            raw.cell_fields.end()) {
+            throw std::invalid_argument(
+                "mpmc::mesh::process_active_corner_point_grid: duplicate raw GRDECL cell field ID");
+        }
+        if (found->location() !=
+                EntityKind::cell ||
+            found->entity_count() !=
+                raw.cell_count()) {
+            throw std::invalid_argument(
+                "mpmc::mesh::process_active_corner_point_grid: raw GRDECL field is not aligned to logical cells");
+        }
+
+        const std::size_t components =
+            found->component_count();
+        std::vector<double> values;
+        values.reserve(
+            checked_multiply(
+                processed_cell_count,
+                components,
+                "mpmc::mesh::process_active_corner_point_grid: projected field storage overflow"));
+
+        for (const auto logical_id :
+             source_logical_ids) {
+            const auto local_found =
+                raw_cell_local_by_id.find(
+                    logical_id.value());
+            if (local_found ==
+                raw_cell_local_by_id.end()) {
+                throw std::logic_error(
+                    "mpmc::mesh::process_active_corner_point_grid: source logical cell ID is absent from raw topology");
+            }
+            const auto raw_values =
+                found->entity_values(
+                    checked_local(
+                        local_found->second,
+                        "mpmc::mesh::process_active_corner_point_grid: raw field cell local index overflow"));
+            values.insert(
+                values.end(),
+                raw_values.begin(),
+                raw_values.end());
+        }
+
+        projected_fields.push_back(
+            DenseFieldSnapshot::create(
+                topology,
+                EntityKind::cell,
+                components,
+                std::move(values),
+                found->metadata()));
+    }
+
     for (std::size_t cell = 0U;
          cell < processed_cell_count;
          ++cell) {
@@ -957,6 +1118,8 @@ process_active_corner_point_grid(
         std::move(topology),
         std::move(processed_coordinates),
         std::move(processed_volumes),
+        std::move(face_geometry),
+        std::move(projected_fields),
         std::move(source_logical_ids)};
 }
 
