@@ -116,9 +116,8 @@ inline void validate_area_scaled_half(
         throw std::invalid_argument(
             "mpmc::mesh::combine_internal_face_tpfa_half_transmissibilities_3d: owner/neighbour halves must use the same physical face area");
     }
-    return 0.5 *
-           (owner.face_area_m2 +
-            neighbour.face_area_m2);
+    return 0.5 * owner.face_area_m2 +
+           0.5 * neighbour.face_area_m2;
 }
 
 } // namespace tpfa_static_face_transmissibility_3d_detail
