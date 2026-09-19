@@ -1423,6 +1423,294 @@ inline PetscErrorCode attach_root_geometry2d_coordinates(
     return section_destroy_error;
 }
 
+inline PetscErrorCode attach_root_vertex_coordinates_3d(
+    DM dm,
+    PetscMPIInt root_rank,
+    std::span<const mpmc::mesh::Coordinate3D> root_vertex_coordinates_m,
+    std::span<const DMPlexPointIdentity> identities) {
+    if (dm == nullptr) return PETSC_ERR_ARG_NULL;
+
+    MPI_Comm comm =
+        PetscObjectComm(reinterpret_cast<PetscObject>(dm));
+    int mpi_rank = -1;
+    int mpi_size = -1;
+    if (MPI_Comm_rank(comm, &mpi_rank) != MPI_SUCCESS ||
+        MPI_Comm_size(comm, &mpi_size) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (root_rank < 0 || root_rank >= mpi_size) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    PetscInt dimension = -1;
+    PetscErrorCode error =
+        DMGetDimension(dm, &dimension);
+    if (error != PETSC_SUCCESS) return error;
+    if (dimension != PetscInt{3}) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    PetscInt chart_start = 0;
+    PetscInt chart_end = 0;
+    error = DMPlexGetChart(
+        dm, &chart_start, &chart_end);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscErrorCode local_validation = PETSC_SUCCESS;
+    if (mpi_rank == root_rank) {
+        PetscInt vertex_start = 0;
+        PetscInt vertex_end = 0;
+        local_validation = DMPlexGetDepthStratum(
+            dm, 0, &vertex_start, &vertex_end);
+        if (local_validation == PETSC_SUCCESS &&
+            (vertex_start < chart_start ||
+             vertex_end < vertex_start ||
+             vertex_end > chart_end)) {
+            local_validation = PETSC_ERR_PLIB;
+        }
+
+        std::size_t vertex_identity_count = 0U;
+        if (local_validation == PETSC_SUCCESS) {
+            const auto vertex_count =
+                static_cast<std::size_t>(
+                    vertex_end - vertex_start);
+            if (root_vertex_coordinates_m.size() !=
+                vertex_count) {
+                local_validation = PETSC_ERR_ARG_SIZ;
+            }
+
+            std::vector<std::uint8_t>
+                seen_local(vertex_count, std::uint8_t{0U});
+            std::vector<std::uint8_t>
+                seen_point(vertex_count, std::uint8_t{0U});
+            for (const auto& identity : identities) {
+                if (identity.point < chart_start ||
+                    identity.point >= chart_end) {
+                    local_validation =
+                        PETSC_ERR_ARG_OUTOFRANGE;
+                    break;
+                }
+
+                const bool point_is_vertex =
+                    identity.point >= vertex_start &&
+                    identity.point < vertex_end;
+                if (identity.kind !=
+                    mpmc::mesh::EntityKind::vertex) {
+                    if (point_is_vertex) {
+                        local_validation =
+                            PETSC_ERR_ARG_INCOMP;
+                        break;
+                    }
+                    continue;
+                }
+                if (!point_is_vertex) {
+                    local_validation =
+                        PETSC_ERR_ARG_INCOMP;
+                    break;
+                }
+
+                const std::size_t local =
+                    static_cast<std::size_t>(
+                        identity.local.value());
+                const std::size_t point_slot =
+                    static_cast<std::size_t>(
+                        identity.point - vertex_start);
+                if (local >= vertex_count ||
+                    seen_local[local] !=
+                        std::uint8_t{0U} ||
+                    seen_point[point_slot] !=
+                        std::uint8_t{0U}) {
+                    local_validation =
+                        PETSC_ERR_ARG_INCOMP;
+                    break;
+                }
+
+                const auto coordinate =
+                    root_vertex_coordinates_m[local];
+                if (!std::isfinite(coordinate.x_m) ||
+                    !std::isfinite(coordinate.y_m) ||
+                    !std::isfinite(coordinate.z_m)) {
+                    local_validation = PETSC_ERR_FP;
+                    break;
+                }
+
+                seen_local[local] = std::uint8_t{1U};
+                seen_point[point_slot] =
+                    std::uint8_t{1U};
+                ++vertex_identity_count;
+            }
+            if (local_validation == PETSC_SUCCESS &&
+                vertex_identity_count != vertex_count) {
+                local_validation = PETSC_ERR_ARG_SIZ;
+            }
+        }
+    } else if (!identities.empty() ||
+               !root_vertex_coordinates_m.empty()) {
+        local_validation = PETSC_ERR_ARG_INCOMP;
+    }
+
+    int validation_code =
+        static_cast<int>(local_validation);
+    if (MPI_Bcast(
+            &validation_code,
+            1,
+            MPI_INT,
+            root_rank,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (validation_code !=
+        static_cast<int>(PETSC_SUCCESS)) {
+        return static_cast<PetscErrorCode>(
+            validation_code);
+    }
+
+    error = DMSetCoordinateDim(dm, 3);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscSection coordinate_section = nullptr;
+    error = PetscSectionCreate(
+        comm, &coordinate_section);
+    if (error != PETSC_SUCCESS) return error;
+
+    error = PetscSectionSetChart(
+        coordinate_section,
+        chart_start,
+        chart_end);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mpmc::mesh::EntityKind::vertex) {
+            continue;
+        }
+        error = PetscSectionSetDof(
+            coordinate_section,
+            identity.point,
+            3);
+        if (error != PETSC_SUCCESS) {
+            PetscSectionDestroy(&coordinate_section);
+            return error;
+        }
+    }
+    error = PetscSectionSetUp(coordinate_section);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    PetscInt coordinate_storage = 0;
+    error = PetscSectionGetStorageSize(
+        coordinate_section,
+        &coordinate_storage);
+    if (error != PETSC_SUCCESS ||
+        coordinate_storage < 0) {
+        PetscSectionDestroy(&coordinate_section);
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+
+    Vec coordinates = nullptr;
+    error = VecCreateSeq(
+        PETSC_COMM_SELF,
+        coordinate_storage,
+        &coordinates);
+    if (error != PETSC_SUCCESS) {
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+    error = VecSetBlockSize(coordinates, 3);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&coordinates);
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    if (mpi_rank == root_rank) {
+        PetscScalar* values = nullptr;
+        error = VecGetArray(coordinates, &values);
+        if (error != PETSC_SUCCESS) {
+            VecDestroy(&coordinates);
+            PetscSectionDestroy(&coordinate_section);
+            return error;
+        }
+
+        for (const auto& identity : identities) {
+            if (identity.kind !=
+                mpmc::mesh::EntityKind::vertex) {
+                continue;
+            }
+            PetscInt offset = -1;
+            error = PetscSectionGetOffset(
+                coordinate_section,
+                identity.point,
+                &offset);
+            if (error != PETSC_SUCCESS ||
+                offset < 0 ||
+                offset + 2 >= coordinate_storage) {
+                VecRestoreArray(coordinates, &values);
+                VecDestroy(&coordinates);
+                PetscSectionDestroy(&coordinate_section);
+                return error != PETSC_SUCCESS
+                           ? error
+                           : PETSC_ERR_PLIB;
+            }
+
+            const auto coordinate =
+                root_vertex_coordinates_m[
+                    static_cast<std::size_t>(
+                        identity.local.value())];
+            values[static_cast<std::size_t>(offset)] =
+                static_cast<PetscScalar>(
+                    coordinate.x_m);
+            values[static_cast<std::size_t>(
+                offset + 1)] =
+                static_cast<PetscScalar>(
+                    coordinate.y_m);
+            values[static_cast<std::size_t>(
+                offset + 2)] =
+                static_cast<PetscScalar>(
+                    coordinate.z_m);
+        }
+
+        error = VecRestoreArray(
+            coordinates, &values);
+        if (error != PETSC_SUCCESS) {
+            VecDestroy(&coordinates);
+            PetscSectionDestroy(&coordinate_section);
+            return error;
+        }
+    }
+
+    error = DMSetCoordinateSection(
+        dm, 3, coordinate_section);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&coordinates);
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+    error = DMSetCoordinatesLocal(
+        dm, coordinates);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&coordinates);
+        PetscSectionDestroy(&coordinate_section);
+        return error;
+    }
+
+    const PetscErrorCode vector_destroy_error =
+        VecDestroy(&coordinates);
+    const PetscErrorCode section_destroy_error =
+        PetscSectionDestroy(&coordinate_section);
+    if (vector_destroy_error != PETSC_SUCCESS) {
+        return vector_destroy_error;
+    }
+    return section_destroy_error;
+}
+
 inline PetscErrorCode create_root_dmplex_topology(
     MPI_Comm comm,
     PetscMPIInt root_rank,
@@ -1472,17 +1760,33 @@ inline PetscErrorCode create_root_dmplex_topology(
     PetscErrorCode error = PETSC_SUCCESS;
     PetscInt chart_start = 0;
     PetscInt chart_end = 0;
+    PetscInt root_dimension = 0;
     if (mpi_rank == root_rank) {
         error = DMPlexGetChart(
             serial_dm, &chart_start, &chart_end);
+        if (error == PETSC_SUCCESS) {
+            error = DMGetDimension(
+                serial_dm, &root_dimension);
+        }
         if (error != PETSC_SUCCESS) {
             DMDestroy(&serial_dm);
             return error;
         }
-        if (chart_start != 0) {
+        if (chart_start != 0 ||
+            root_dimension <= 0) {
             DMDestroy(&serial_dm);
             return PETSC_ERR_ARG_INCOMP;
         }
+    }
+
+    if (MPI_Bcast(
+            &root_dimension,
+            1,
+            MPIU_INT,
+            root_rank,
+            comm) != MPI_SUCCESS) {
+        if (serial_dm != nullptr) DMDestroy(&serial_dm);
+        return PETSC_ERR_MPI;
     }
 
     DM rooted_dm = nullptr;
@@ -1492,7 +1796,7 @@ inline PetscErrorCode create_root_dmplex_topology(
         return error;
     }
 
-    error = DMSetDimension(rooted_dm, 2);
+    error = DMSetDimension(rooted_dm, root_dimension);
     if (error != PETSC_SUCCESS) {
         DMDestroy(&rooted_dm);
         if (serial_dm != nullptr) DMDestroy(&serial_dm);
