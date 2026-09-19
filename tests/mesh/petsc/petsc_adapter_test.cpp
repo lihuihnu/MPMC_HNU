@@ -502,6 +502,158 @@ double serial_cell_volume_3d(
     return std::abs(signed_volume);
 }
 
+void verify_processed_grdecl_3d_identity_coordinates(
+    DM dm,
+    const std::vector<mesh_petsc::DMPlexPointIdentity>& identities,
+    const std::array<double, 36>& expected_vertex_coordinates) {
+    PetscInt dimension = -1;
+    PetscInt depth = -1;
+    require_petsc(
+        DMGetDimension(dm, &dimension),
+        "processed GRDECL distributed DM dimension");
+    require_petsc(
+        DMPlexGetDepth(dm, &depth),
+        "processed GRDECL distributed DMPlex depth");
+    require(
+        dimension == 3 && depth == 2,
+        "processed GRDECL distributed mesh must remain 3D partial interpolation");
+
+    auto coordinate_view =
+        get_serial_coordinate_view_3d(dm);
+    for (const auto& identity : identities) {
+        switch (identity.kind) {
+        case mesh::EntityKind::cell:
+            require(
+                identity.global.value() >= 1U &&
+                    identity.global.value() <= 2U,
+                "processed GRDECL distributed cell stable ID range");
+            break;
+        case mesh::EntityKind::face:
+            require(
+                identity.global.value() >= 1U &&
+                    identity.global.value() <= 11U,
+                "processed GRDECL distributed face stable ID range");
+            break;
+        case mesh::EntityKind::vertex: {
+            require(
+                identity.global.value() >= 1U &&
+                    identity.global.value() <= 12U,
+                "processed GRDECL distributed vertex stable ID range");
+            const auto actual =
+                serial_vertex_coordinate_3d(
+                    coordinate_view,
+                    identity.point);
+            const std::size_t slot =
+                static_cast<std::size_t>(
+                    identity.global.value() - 1U) *
+                3U;
+            constexpr double tolerance = 1.0e-12;
+            require(
+                std::abs(
+                    actual.x_m -
+                    expected_vertex_coordinates[slot]) <=
+                        tolerance &&
+                    std::abs(
+                        actual.y_m -
+                        expected_vertex_coordinates[slot + 1U]) <=
+                        tolerance &&
+                    std::abs(
+                        actual.z_m -
+                        expected_vertex_coordinates[slot + 2U]) <=
+                        tolerance,
+                "processed GRDECL distributed vertex coordinate by stable ID");
+            break;
+        }
+        case mesh::EntityKind::edge:
+            throw std::runtime_error(
+                "processed GRDECL distributed gate must not invent edge identities");
+        }
+    }
+    restore_serial_coordinate_view_3d(
+        &coordinate_view);
+}
+
+void require_processed_grdecl_identity_owner_counts(
+    const mesh::PartitionSnapshot& partition) {
+    std::array<int, 2> cells{0, 0};
+    std::array<int, 11> faces{
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::array<int, 12> vertices{
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+    const auto record =
+        [&](mesh::EntityKind kind, auto& counts) {
+            for (std::size_t local = 0U;
+                 local < partition.entity_count(kind);
+                 ++local) {
+                const auto index =
+                    mesh::LocalIndex{
+                        static_cast<
+                            mesh::LocalIndex::value_type>(
+                                local)};
+                const auto id =
+                    partition.global_id(kind, index);
+                require(
+                    id.value() >= 1U &&
+                        id.value() <= counts.size(),
+                    "processed GRDECL partition stable ID range");
+                if (partition.is_owned(kind, index)) {
+                    ++counts[
+                        static_cast<std::size_t>(
+                            id.value() - 1U)];
+                }
+            }
+        };
+
+    record(mesh::EntityKind::cell, cells);
+    record(mesh::EntityKind::face, faces);
+    record(mesh::EntityKind::vertex, vertices);
+
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            cells.data(),
+            static_cast<int>(cells.size()),
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce processed GRDECL cell owners");
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            faces.data(),
+            static_cast<int>(faces.size()),
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce processed GRDECL face owners");
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            vertices.data(),
+            static_cast<int>(vertices.size()),
+            MPI_INT,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce processed GRDECL vertex owners");
+
+    for (const int count : cells) {
+        require(
+            count == 1,
+            "each processed GRDECL stable cell ID must have exactly one owner");
+    }
+    for (const int count : faces) {
+        require(
+            count == 1,
+            "each processed GRDECL stable face ID must have exactly one owner");
+    }
+    for (const int count : vertices) {
+        require(
+            count == 1,
+            "each processed GRDECL stable vertex ID must have exactly one owner");
+    }
+}
+
 void verify_serial_dmplex_processed_grdecl() {
     const auto processed =
         processed_grdecl_two_by_one_all_active();
@@ -3917,6 +4069,300 @@ void verify_dmplex_distribute_overlap_identity() {
         "DMDestroy distributed DMPlex");
 }
 
+void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
+    int mpi_rank = -1;
+    int mpi_size = -1;
+    require(
+        MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &mpi_rank) == MPI_SUCCESS,
+        "MPI_Comm_rank processed GRDECL 3D distribute");
+    require(
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &mpi_size) == MPI_SUCCESS,
+        "MPI_Comm_size processed GRDECL 3D distribute");
+    require(
+        mpi_size == 2,
+        "processed GRDECL 3D distribute gate requires exactly two ranks");
+
+    std::optional<mesh::ActiveCornerPointGrid>
+        root_processed;
+    if (mpi_rank == 0) {
+        root_processed.emplace(
+            processed_grdecl_two_by_one_all_active());
+    }
+
+    std::array<double, 36>
+        expected_vertex_coordinates{};
+    if (mpi_rank == 0) {
+        require(
+            root_processed->topology.entity_count(
+                mesh::EntityKind::cell) == 2U &&
+                root_processed->topology.entity_count(
+                    mesh::EntityKind::face) == 11U &&
+                root_processed->topology.entity_count(
+                    mesh::EntityKind::vertex) == 12U,
+            "root processed GRDECL entity counts");
+
+        std::array<std::uint8_t, 12> seen{};
+        for (std::size_t local = 0U;
+             local < 12U;
+             ++local) {
+            const auto local_index =
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            local)};
+            const auto id =
+                root_processed->topology.global_id(
+                    mesh::EntityKind::vertex,
+                    local_index);
+            require(
+                id.value() >= 1U &&
+                    id.value() <= 12U,
+                "root processed GRDECL vertex ID range");
+            const std::size_t slot =
+                static_cast<std::size_t>(
+                    id.value() - 1U);
+            require(
+                seen[slot] == std::uint8_t{0U},
+                "root processed GRDECL duplicate vertex ID");
+            seen[slot] = std::uint8_t{1U};
+
+            const auto coordinate =
+                root_processed
+                    ->vertex_coordinates_m[local];
+            expected_vertex_coordinates[
+                3U * slot] = coordinate.x_m;
+            expected_vertex_coordinates[
+                3U * slot + 1U] = coordinate.y_m;
+            expected_vertex_coordinates[
+                3U * slot + 2U] = coordinate.z_m;
+        }
+    }
+    require(
+        MPI_Bcast(
+            expected_vertex_coordinates.data(),
+            static_cast<int>(
+                expected_vertex_coordinates.size()),
+            MPI_DOUBLE,
+            0,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Bcast processed GRDECL coordinate reference");
+
+    DM source_dm = nullptr;
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        source_identities;
+    require_petsc(
+        mesh_petsc::create_root_dmplex_topology(
+            PETSC_COMM_WORLD,
+            0,
+            mpi_rank == 0
+                ? &root_processed->topology
+                : nullptr,
+            &source_dm,
+            &source_identities),
+        "create rooted processed GRDECL 3D DMPlex");
+
+    std::span<const mesh::Coordinate3D>
+        root_coordinates;
+    if (mpi_rank == 0) {
+        root_coordinates =
+            root_processed->vertex_coordinates_m;
+    }
+    require_petsc(
+        mesh_petsc::attach_root_vertex_coordinates_3d(
+            source_dm,
+            0,
+            root_coordinates,
+            source_identities),
+        "attach rooted processed GRDECL 3D coordinates");
+    verify_processed_grdecl_3d_identity_coordinates(
+        source_dm,
+        source_identities,
+        expected_vertex_coordinates);
+
+    PetscInt source_start = -1;
+    PetscInt source_end = -1;
+    require_petsc(
+        DMPlexGetChart(
+            source_dm,
+            &source_start,
+            &source_end),
+        "rooted processed GRDECL source chart");
+    if (mpi_rank == 0) {
+        require(
+            source_start == 0 &&
+                source_end == 25 &&
+                source_identities.size() == 25U,
+            "root rank must hold complete processed GRDECL 3D DAG");
+    } else {
+        require(
+            source_start == 0 &&
+                source_end == 0 &&
+                source_identities.empty(),
+            "non-root rank must begin with empty processed GRDECL DAG");
+    }
+
+    PetscPartitioner partitioner = nullptr;
+    require_petsc(
+        DMPlexGetPartitioner(
+            source_dm,
+            &partitioner),
+        "processed GRDECL DMPlexGetPartitioner");
+    require_petsc(
+        PetscPartitionerSetType(
+            partitioner,
+            PETSCPARTITIONERSIMPLE),
+        "processed GRDECL simple partitioner");
+
+    PetscSF migration_sf = nullptr;
+    DM distributed_dm = nullptr;
+    require_petsc(
+        DMPlexDistribute(
+            source_dm,
+            0,
+            &migration_sf,
+            &distributed_dm),
+        "distribute processed GRDECL 3D overlap0");
+    require(
+        distributed_dm != nullptr &&
+            migration_sf != nullptr,
+        "processed GRDECL distribution outputs");
+
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        distributed_identities;
+    require_petsc(
+        mesh_petsc::migrate_dmplex_identities(
+            source_dm,
+            migration_sf,
+            source_identities,
+            distributed_dm,
+            &distributed_identities),
+        "migrate processed GRDECL identities after distribute");
+    verify_processed_grdecl_3d_identity_coordinates(
+        distributed_dm,
+        distributed_identities,
+        expected_vertex_coordinates);
+
+    require_petsc(
+        PetscSFDestroy(&migration_sf),
+        "destroy processed GRDECL distribution migration SF");
+    require_petsc(
+        DMDestroy(&source_dm),
+        "destroy rooted processed GRDECL source DM");
+
+    PetscInt distributed_overlap = -1;
+    require_petsc(
+        DMPlexGetOverlap(
+            distributed_dm,
+            &distributed_overlap),
+        "processed GRDECL overlap0 query");
+    require(
+        distributed_overlap == 0,
+        "processed GRDECL first distributed mesh must have overlap zero");
+
+    const auto distributed_strata =
+        plex_strata(distributed_dm);
+    require(
+        distributed_strata.cell_end -
+                distributed_strata.cell_start ==
+            1,
+        "processed GRDECL simple partitioner must assign one hexa per rank");
+
+    const auto distributed_partition =
+        partition_from_dm_point_sf(
+            distributed_dm,
+            distributed_identities,
+            mpi_rank,
+            mpi_size);
+    require(
+        distributed_partition.owned_count(
+            mesh::EntityKind::cell) == 1U &&
+            distributed_partition.ghost_count(
+                mesh::EntityKind::cell) == 0U,
+        "processed GRDECL overlap0 cell ownership");
+    require_processed_grdecl_identity_owner_counts(
+        distributed_partition);
+
+    PetscSF overlap_migration_sf = nullptr;
+    DM overlap_dm = nullptr;
+    require_petsc(
+        DMPlexDistributeOverlap(
+            distributed_dm,
+            1,
+            &overlap_migration_sf,
+            &overlap_dm),
+        "processed GRDECL depth-one overlap");
+    require(
+        overlap_dm != nullptr &&
+            overlap_migration_sf != nullptr,
+        "processed GRDECL depth-one overlap outputs");
+
+    std::vector<mesh_petsc::DMPlexPointIdentity>
+        overlap_identities;
+    require_petsc(
+        mesh_petsc::migrate_dmplex_identities(
+            distributed_dm,
+            overlap_migration_sf,
+            distributed_identities,
+            overlap_dm,
+            &overlap_identities),
+        "migrate processed GRDECL identities into overlap");
+    verify_processed_grdecl_3d_identity_coordinates(
+        overlap_dm,
+        overlap_identities,
+        expected_vertex_coordinates);
+
+    require_petsc(
+        PetscSFDestroy(&overlap_migration_sf),
+        "destroy processed GRDECL overlap migration SF");
+
+    PetscInt overlap_depth = -1;
+    require_petsc(
+        DMPlexGetOverlap(
+            overlap_dm,
+            &overlap_depth),
+        "processed GRDECL overlap depth query");
+    require(
+        overlap_depth == 1,
+        "processed GRDECL overlap mesh must record depth one");
+
+    const auto overlap_strata =
+        plex_strata(overlap_dm);
+    require(
+        overlap_strata.cell_end -
+                overlap_strata.cell_start ==
+            2,
+        "processed GRDECL depth-one overlap must expose both hexa cells");
+    require(
+        overlap_identities.size() == 25U,
+        "processed GRDECL depth-one overlap must expose full stable identity set");
+
+    const auto overlap_partition =
+        partition_from_dm_point_sf(
+            overlap_dm,
+            overlap_identities,
+            mpi_rank,
+            mpi_size);
+    require(
+        overlap_partition.owned_count(
+            mesh::EntityKind::cell) == 1U &&
+            overlap_partition.ghost_count(
+                mesh::EntityKind::cell) == 1U,
+        "processed GRDECL overlap must contain one owned and one ghost cell");
+    require_processed_grdecl_identity_owner_counts(
+        overlap_partition);
+
+    require_petsc(
+        DMDestroy(&overlap_dm),
+        "destroy processed GRDECL overlap DM");
+    require_petsc(
+        DMDestroy(&distributed_dm),
+        "destroy processed GRDECL distributed DM");
+}
+
 std::string gmsh_petsc_chain_fixture() {
     return R"msh($MeshFormat
 4.1 0 8
@@ -4721,6 +5167,7 @@ void run_two_rank_test() {
     verify_serial_dmplex_topology();
     verify_serial_dmplex_processed_grdecl();
     verify_dmplex_distribute_overlap_identity();
+    verify_processed_grdecl_3d_dmplex_distribute_overlap();
     verify_gmsh_import_through_dmplex_chain();
     verify_section(layout, numbering, mpi_rank);
     verify_sf(partition, plan, mpi_rank);
