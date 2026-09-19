@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <set>
 #include <sstream>
 #include <stdexcept>
