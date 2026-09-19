@@ -123,6 +123,19 @@ struct FaceBuild {
         CsrAdjacency::Offset>(value);
 }
 
+[[nodiscard]] inline std::size_t checked_multiply(
+    std::size_t left,
+    std::size_t right,
+    const char* message) {
+    if (left != 0U &&
+        right >
+            std::numeric_limits<std::size_t>::max() /
+                left) {
+        throw std::length_error(message);
+    }
+    return left * right;
+}
+
 [[nodiscard]] inline std::array<std::size_t, 4>
 face_corner_slots(std::size_t face_slot) {
     // Cell corner ordering is
@@ -306,6 +319,19 @@ process_active_corner_point_grid(
             raw.cell_count()) {
         throw std::invalid_argument(
             "mpmc::mesh::process_active_corner_point_grid: raw GRDECL cell counts are inconsistent");
+    }
+
+    const std::size_t logical_cell_count =
+        checked_multiply(
+            checked_multiply(
+                raw.dimensions[0],
+                raw.dimensions[1],
+                "mpmc::mesh::process_active_corner_point_grid: logical XY cell count overflow"),
+            raw.dimensions[2],
+            "mpmc::mesh::process_active_corner_point_grid: logical XYZ cell count overflow");
+    if (logical_cell_count != raw.cell_count()) {
+        throw std::invalid_argument(
+            "mpmc::mesh::process_active_corner_point_grid: dimensions do not match raw logical cell count");
     }
     if (!raw.topology.has_relation(
             EntityKind::cell,
@@ -585,9 +611,15 @@ process_active_corner_point_grid(
     cell_face_offsets.reserve(
         processed_cell_count + 1U);
     cell_vertices.reserve(
-        processed_cell_count * 8U);
+        checked_multiply(
+            processed_cell_count,
+            8U,
+            "mpmc::mesh::process_active_corner_point_grid: cell->vertex storage overflow"));
     cell_faces.reserve(
-        processed_cell_count * 6U);
+        checked_multiply(
+            processed_cell_count,
+            6U,
+            "mpmc::mesh::process_active_corner_point_grid: cell->face storage overflow"));
 
     for (std::size_t cell = 0U;
          cell < processed_cell_count;
@@ -636,7 +668,10 @@ process_active_corner_point_grid(
     face_cell_offsets.reserve(
         faces.size() + 1U);
     face_vertices.reserve(
-        faces.size() * 4U);
+        checked_multiply(
+            faces.size(),
+            4U,
+            "mpmc::mesh::process_active_corner_point_grid: face->vertex storage overflow"));
 
     for (const auto& face : faces) {
         for (const auto vertex :
