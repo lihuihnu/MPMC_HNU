@@ -4256,6 +4256,162 @@ void verify_stable_gated_tpfa_transport_stage(
         "one stable internal face must appear as one owner and one ghost copy");
 }
 
+
+void verify_target_local_gated_tpfa_view_stage(
+    const mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D& view,
+    const mesh_petsc::StableFaceGatedTpfaSnapshot3D& transport,
+    const mesh::TpfaInternalFaceTransmissibilitySnapshot3D& reference,
+    const mesh::Topology& reference_topology,
+    const std::vector<
+        mesh_petsc::DMPlexPointIdentity>& identities,
+    const mesh::PartitionSnapshot& partition) {
+    require(
+        view.geometry_policy()
+                .max_direct_normal_projection_angle_rad ==
+            transport.geometry_policy
+                .max_direct_normal_projection_angle_rad &&
+        view.k_policy()
+                .max_half_face_co_normal_angle_rad ==
+            transport.k_policy
+                .max_half_face_co_normal_angle_rad,
+        "target-local gated TPFA view retains transport policies");
+
+    std::size_t target_face_count = 0U;
+    std::size_t materialized_count = 0U;
+    std::uint64_t local_owned = 0U;
+    std::uint64_t local_ghost = 0U;
+
+    for (const auto& identity : identities) {
+        if (identity.kind !=
+            mesh::EntityKind::face) {
+            continue;
+        }
+        ++target_face_count;
+
+        const auto source_local =
+            reference_local_by_global(
+                reference_topology,
+                mesh::EntityKind::face,
+                identity.global);
+        const bool expected_internal =
+            reference.contains_internal_face(
+                source_local);
+
+        if (!expected_internal) {
+            require(
+                !view.contains_internal_face(
+                    identity.local),
+                "boundary target face must remain absent from assembly-facing TPFA view");
+            expect_throw<std::invalid_argument>(
+                [&] {
+                    (void)view.entry(
+                        identity.local);
+                });
+            continue;
+        }
+
+        require(
+            view.contains_internal_face(
+                identity.local),
+            "transported internal face must be addressable by target LocalIndex");
+        const auto& local_entry =
+            view.entry(identity.local);
+        const auto& expected =
+            reference.entry(source_local);
+
+        require(
+            local_entry.face ==
+                    identity.local &&
+                local_entry.global ==
+                    identity.global &&
+                view.global_id(
+                    identity.local) ==
+                    identity.global &&
+                local_entry.disposition ==
+                    expected.disposition &&
+                view.disposition(
+                    identity.local) ==
+                    expected.disposition,
+            "target-local gated TPFA entry identity/disposition");
+
+        const auto optional_value =
+            view.optional_transmissibility_m3(
+                identity.local);
+        if (expected.static_transmissibility.has_value()) {
+            ++materialized_count;
+            require(
+                optional_value.has_value(),
+                "materialized target-local TPFA view exposes optional T_f");
+            const double expected_value =
+                expected
+                    .static_transmissibility
+                    ->face_transmissibility_m3;
+            require(
+                *optional_value ==
+                    expected_value &&
+                view.transmissibility_m3(
+                    identity.local) ==
+                    expected_value,
+                "materialized target-local TPFA numeric accessor");
+        } else {
+            require(
+                !optional_value.has_value(),
+                "blocked target-local TPFA view exposes no optional T_f");
+            expect_throw<std::invalid_argument>(
+                [&] {
+                    (void)view.transmissibility_m3(
+                        identity.local);
+                });
+        }
+
+        if (partition.is_owned(
+                mesh::EntityKind::face,
+                identity.local)) {
+            ++local_owned;
+        } else {
+            require(
+                partition.is_ghost(
+                    mesh::EntityKind::face,
+                    identity.local),
+                "target-local gated TPFA non-owned face copy must be ghost");
+            ++local_ghost;
+        }
+    }
+
+    require(
+        view.target_face_count() ==
+                target_face_count &&
+            view.internal_face_count() ==
+                transport.entry_count() &&
+            view.materialized_face_count() ==
+                materialized_count &&
+            view.blocked_face_count() ==
+                view.internal_face_count() -
+                    materialized_count,
+        "target-local gated TPFA view counts");
+
+    std::array<std::uint64_t, 3> global_counts{
+        static_cast<std::uint64_t>(
+            view.internal_face_count()),
+        local_owned,
+        local_ghost};
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            global_counts.data(),
+            static_cast<int>(
+                global_counts.size()),
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce target-local gated TPFA view copies");
+    require(
+        global_counts[0] == 2U &&
+            global_counts[1] == 1U &&
+            global_counts[2] == 1U,
+        "target-local gated TPFA view must expose one owned and one ghost stable internal-face copy");
+}
+
 void verify_processed_grdecl_cell_field_stage(
     const mesh::DenseFieldSnapshot& actual,
     const mesh::DenseFieldSnapshot& reference,
@@ -4879,6 +5035,45 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         distributed_identities,
         distributed_partition);
 
+    std::optional<
+        mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
+        distributed_materialized_view;
+    std::optional<
+        mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
+        distributed_blocked_view;
+    require_petsc(
+        mesh_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
+            distributed_dm,
+            distributed_gated_materialized,
+            distributed_identities,
+            &distributed_materialized_view),
+        "build distributed target-local materialized TPFA view");
+    require_petsc(
+        mesh_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
+            distributed_dm,
+            distributed_gated_blocked,
+            distributed_identities,
+            &distributed_blocked_view),
+        "build distributed target-local blocked TPFA view");
+    require(
+        distributed_materialized_view.has_value() &&
+            distributed_blocked_view.has_value(),
+        "distributed target-local TPFA views materialized");
+    verify_target_local_gated_tpfa_view_stage(
+        *distributed_materialized_view,
+        distributed_gated_materialized,
+        reference_gated_materialized,
+        field_reference.topology,
+        distributed_identities,
+        distributed_partition);
+    verify_target_local_gated_tpfa_view_stage(
+        *distributed_blocked_view,
+        distributed_gated_blocked,
+        reference_gated_blocked,
+        field_reference.topology,
+        distributed_identities,
+        distributed_partition);
+
     std::array<
         std::optional<mesh::DenseFieldSnapshot>,
         4>
@@ -5082,6 +5277,45 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         overlap_identities,
         overlap_partition);
     verify_stable_gated_tpfa_transport_stage(
+        overlap_gated_blocked,
+        reference_gated_blocked,
+        field_reference.topology,
+        overlap_identities,
+        overlap_partition);
+
+    std::optional<
+        mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
+        overlap_materialized_view;
+    std::optional<
+        mesh_petsc::TargetLocalGatedTpfaTransmissibilityView3D>
+        overlap_blocked_view;
+    require_petsc(
+        mesh_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
+            overlap_dm,
+            overlap_gated_materialized,
+            overlap_identities,
+            &overlap_materialized_view),
+        "build overlap target-local materialized TPFA view");
+    require_petsc(
+        mesh_petsc::make_target_local_gated_tpfa_transmissibility_view_3d(
+            overlap_dm,
+            overlap_gated_blocked,
+            overlap_identities,
+            &overlap_blocked_view),
+        "build overlap target-local blocked TPFA view");
+    require(
+        overlap_materialized_view.has_value() &&
+            overlap_blocked_view.has_value(),
+        "overlap target-local TPFA views materialized");
+    verify_target_local_gated_tpfa_view_stage(
+        *overlap_materialized_view,
+        overlap_gated_materialized,
+        reference_gated_materialized,
+        field_reference.topology,
+        overlap_identities,
+        overlap_partition);
+    verify_target_local_gated_tpfa_view_stage(
+        *overlap_blocked_view,
         overlap_gated_blocked,
         reference_gated_blocked,
         field_reference.topology,
