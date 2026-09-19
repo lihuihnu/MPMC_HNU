@@ -1,4 +1,5 @@
 #include <mpmc/mesh/cartesian_2d.hpp>
+#include <mpmc/mesh/corner_point_geometry_3d.hpp>
 #include <mpmc/mesh/csr_adjacency.hpp>
 #include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/dof_layout.hpp>
@@ -6,6 +7,7 @@
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
+#include <mpmc/mesh/grdecl.hpp>
 #include <mpmc/mesh/gmsh_4_1.hpp>
 #include <mpmc/mesh/partition_snapshot.hpp>
 #include <mpmc/mesh/shared_entity_plan.hpp>
@@ -1928,6 +1930,426 @@ void vtu_ascii_invalid() {
     }
 }
 
+std::string grdecl_two_cell_fixture() {
+    return R"grdecl(-- minimal 2x1x1 Cartesian corner-point deck
+SPECGRID
+  2 1 1 1 F /
+COORD
+  0 0 0   0 0 1
+  1 0 0   1 0 1
+  2 0 0   2 0 1
+  0 1 0   0 1 1
+  1 1 0   1 1 1
+  2 1 0   2 1 1 /
+ZCORN
+  8*0 8*1 /
+ACTNUM
+  1 0 /
+PORO
+  0.20 0.35 /
+PERMX
+  100 200 /
+PERMY
+  50 75 /
+PERMZ
+  1.0D+1 2.0D+1 /
+)grdecl";
+}
+
+std::string grdecl_single_cell_fixture(
+    std::string_view zcorn,
+    int actnum) {
+    std::ostringstream output;
+    output
+        << "SPECGRID\n"
+        << " 1 1 1 1 F /\n"
+        << "COORD\n"
+        << " 0 0 0  0 0 1\n"
+        << " 1 0 0  1 0 1\n"
+        << " 0 1 0  0 1 1\n"
+        << " 1 1 0  1 1 1 /\n"
+        << "ZCORN\n "
+        << zcorn << " /\n"
+        << "ACTNUM\n "
+        << actnum << " /\n"
+        << "PORO\n 0.25 /\n"
+        << "PERMX\n 100 /\n"
+        << "PERMY\n 100 /\n"
+        << "PERMZ\n 10 /\n";
+    return output.str();
+}
+
+const mesh::DenseFieldSnapshot&
+grdecl_field(const mesh::GrdeclImportResult& imported,
+             std::string_view id) {
+    const auto found =
+        std::find_if(
+            imported.cell_fields.begin(),
+            imported.cell_fields.end(),
+            [id](const auto& field) {
+                return field.metadata().id == id;
+            });
+    require(
+        found != imported.cell_fields.end(),
+        "GRDECL field ID missing");
+    return *found;
+}
+
+void grdecl_import() {
+    constexpr double permeability_scale =
+        1.0e-15;
+    const auto imported =
+        mesh::import_grdecl(
+            grdecl_two_cell_fixture(),
+            mesh::GrdeclImportOptions{
+                2.0,
+                permeability_scale});
+
+    require(
+        imported.dimensions ==
+            std::array<std::size_t, 3>{
+                2U, 1U, 1U},
+        "GRDECL SPECGRID dimensions");
+    require(
+        imported.cell_count() == 2U &&
+        imported.active_cell_count() == 1U,
+        "GRDECL ACTNUM counts");
+    require(
+        imported.is_active(
+            mesh::LocalIndex{0U}) &&
+        !imported.is_active(
+            mesh::LocalIndex{1U}),
+        "GRDECL active/inactive alignment");
+
+    const auto& topology =
+        imported.topology;
+    require(
+        topology.entity_count(
+            mesh::EntityKind::cell) == 2U &&
+        topology.entity_count(
+            mesh::EntityKind::vertex) == 16U &&
+        topology.entity_count(
+            mesh::EntityKind::face) == 0U &&
+        topology.entity_count(
+            mesh::EntityKind::edge) == 0U,
+        "GRDECL minimal topology entity counts");
+    require(
+        topology.relation_count() == 1U &&
+        topology.has_relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::vertex),
+        "GRDECL baseline only materializes cell-to-corner relation");
+    require(
+        topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{0U}).value() == 1U &&
+        topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{1U}).value() == 2U,
+        "GRDECL logical cell stable IDs");
+    require(
+        topology.global_id(
+            mesh::EntityKind::vertex,
+            mesh::LocalIndex{15U}).value() == 16U,
+        "GRDECL cell-local corner stable IDs");
+
+    const auto& cell_vertices =
+        topology.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::vertex);
+    for (std::size_t cell = 0U;
+         cell < 2U;
+         ++cell) {
+        const auto row =
+            cell_vertices.adjacent(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            cell)});
+        require(
+            row.size() == 8U,
+            "GRDECL cell must retain eight local corners");
+        for (std::size_t corner = 0U;
+             corner < 8U;
+             ++corner) {
+            require(
+                row[corner].value() ==
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            cell * 8U + corner),
+                "GRDECL cell-local corner ordering");
+        }
+    }
+
+    const auto& geometry =
+        imported.geometry;
+    require(
+        geometry.cell_count() == 2U &&
+        geometry.vertex_count() == 16U,
+        "GRDECL corner geometry counts");
+    require_close(
+        geometry.cell_volume_m3(
+            mesh::LocalIndex{0U}),
+        8.0,
+        1.0e-13,
+        "GRDECL active cell volume");
+    require_close(
+        geometry.cell_volume_m3(
+            mesh::LocalIndex{1U}),
+        8.0,
+        1.0e-13,
+        "GRDECL inactive nondegenerate cell volume");
+
+    const auto first =
+        geometry.cell_corners_m(
+            mesh::LocalIndex{0U});
+    require_close(
+        first[0].x_m, 0.0, 0.0,
+        "GRDECL first corner x");
+    require_close(
+        first[0].y_m, 0.0, 0.0,
+        "GRDECL first corner y");
+    require_close(
+        first[0].z_m, 0.0, 0.0,
+        "GRDECL first corner z");
+    require_close(
+        first[7].x_m, 2.0, 0.0,
+        "GRDECL last corner x");
+    require_close(
+        first[7].y_m, 2.0, 0.0,
+        "GRDECL last corner y");
+    require_close(
+        first[7].z_m, 2.0, 0.0,
+        "GRDECL last corner z");
+
+    require(
+        imported.cell_fields.size() == 4U,
+        "GRDECL PORO/PERM field count");
+    const auto& poro =
+        grdecl_field(imported, "PORO");
+    const auto& permx =
+        grdecl_field(imported, "PERMX");
+    const auto& permy =
+        grdecl_field(imported, "PERMY");
+    const auto& permz =
+        grdecl_field(imported, "PERMZ");
+
+    require(
+        poro.location() ==
+            mesh::EntityKind::cell &&
+        poro.component_count() == 1U &&
+        poro.metadata().unit == "1",
+        "GRDECL PORO field contract");
+    require_close(
+        poro.value(
+            mesh::LocalIndex{1U}, 0U),
+        0.35,
+        0.0,
+        "GRDECL inactive PORO retained");
+
+    for (const auto* field :
+         {&permx, &permy, &permz}) {
+        require(
+            field->metadata().unit == "m2" &&
+            field->metadata().source.kind ==
+                mesh::FieldSourceKind::file_import &&
+            field->entity_count() == 2U,
+            "GRDECL permeability metadata/alignment");
+    }
+    require_close(
+        permx.value(
+            mesh::LocalIndex{0U}, 0U),
+        100.0 * permeability_scale,
+        1.0e-28,
+        "GRDECL PERMX SI conversion");
+    require_close(
+        permy.value(
+            mesh::LocalIndex{1U}, 0U),
+        75.0 * permeability_scale,
+        1.0e-28,
+        "GRDECL inactive PERMY retained");
+    require_close(
+        permz.value(
+            mesh::LocalIndex{1U}, 0U),
+        20.0 * permeability_scale,
+        1.0e-28,
+        "GRDECL Fortran-D exponent parsing");
+}
+
+void grdecl_inactive_degenerate() {
+    const auto inactive =
+        mesh::import_grdecl(
+            grdecl_single_cell_fixture(
+                "8*0", 0),
+            mesh::GrdeclImportOptions{
+                1.0, 1.0e-15});
+    require(
+        inactive.cell_count() == 1U &&
+        !inactive.is_active(
+            mesh::LocalIndex{0U}),
+        "GRDECL degenerate inactive identity");
+    require(
+        inactive.topology.global_id(
+            mesh::EntityKind::cell,
+            mesh::LocalIndex{0U}).value() == 1U,
+        "GRDECL degenerate inactive stable cell ID");
+    require_close(
+        inactive.geometry.cell_volume_m3(
+            mesh::LocalIndex{0U}),
+        0.0,
+        0.0,
+        "GRDECL degenerate inactive zero volume");
+    require_close(
+        grdecl_field(
+            inactive, "PORO")
+            .value(
+                mesh::LocalIndex{0U}, 0U),
+        0.25,
+        0.0,
+        "GRDECL degenerate inactive property retained");
+}
+
+void grdecl_invalid() {
+    const auto options =
+        mesh::GrdeclImportOptions{
+            1.0, 1.0e-15};
+
+    {
+        auto radial =
+            grdecl_two_cell_fixture();
+        const auto where =
+            radial.find("2 1 1 1 F");
+        require(
+            where != std::string::npos,
+            "GRDECL radial marker");
+        radial.replace(
+            where,
+            std::string{"2 1 1 1 F"}.size(),
+            "2 1 1 1 T");
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::import_grdecl(
+                    radial, options);
+            });
+    }
+
+    {
+        auto bad_actnum =
+            grdecl_two_cell_fixture();
+        const auto where =
+            bad_actnum.find(
+                "ACTNUM\n  1 0");
+        require(
+            where != std::string::npos,
+            "GRDECL ACTNUM marker");
+        bad_actnum.replace(
+            where,
+            std::string{
+                "ACTNUM\n  1 0"}.size(),
+            "ACTNUM\n  1 2");
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::import_grdecl(
+                    bad_actnum, options);
+            });
+    }
+
+    {
+        auto missing =
+            grdecl_two_cell_fixture();
+        const auto begin =
+            missing.find("PERMZ");
+        require(
+            begin != std::string::npos,
+            "GRDECL missing-keyword marker");
+        missing.erase(begin);
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::import_grdecl(
+                    missing, options);
+            });
+    }
+
+    {
+        auto bad_poro =
+            grdecl_two_cell_fixture();
+        const auto where =
+            bad_poro.find(
+                "0.20 0.35");
+        require(
+            where != std::string::npos,
+            "GRDECL PORO marker");
+        bad_poro.replace(
+            where,
+            std::string{"0.20 0.35"}.size(),
+            "0.20 1.35");
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::import_grdecl(
+                    bad_poro, options);
+            });
+    }
+
+    {
+        auto bad_perm =
+            grdecl_two_cell_fixture();
+        const auto where =
+            bad_perm.find(
+                "100 200");
+        require(
+            where != std::string::npos,
+            "GRDECL PERMX marker");
+        bad_perm.replace(
+            where,
+            std::string{"100 200"}.size(),
+            "100 -1");
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::import_grdecl(
+                    bad_perm, options);
+            });
+    }
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::import_grdecl(
+                grdecl_single_cell_fixture(
+                    "8*0", 1),
+                options);
+        });
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::import_grdecl(
+                grdecl_single_cell_fixture(
+                    "4*1 4*1 4*0 4*0", 0),
+                options);
+        });
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::import_grdecl(
+                grdecl_two_cell_fixture() +
+                    "\nINCLUDE\n 'other.inc' /\n",
+                options);
+        });
+
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::import_grdecl(
+                grdecl_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    0.0, 1.0e-15});
+        });
+    expect_throw<std::invalid_argument>(
+        [&] {
+            (void)mesh::import_grdecl(
+                grdecl_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 0.0});
+        });
+}
+
 void dof_layout_snapshot() {
     const auto topology = mesh::make_cartesian_topology_2d(2U, 1U);
     const auto layout = mesh::DofLayout::create(
@@ -2855,6 +3277,9 @@ int main(int argc, char** argv) {
         else if (name == "vtu_ascii_import") { vtu_ascii_import(); }
         else if (name == "vtu_ascii_roundtrip") { vtu_ascii_roundtrip(); }
         else if (name == "vtu_ascii_invalid") { vtu_ascii_invalid(); }
+        else if (name == "grdecl_import") { grdecl_import(); }
+        else if (name == "grdecl_inactive_degenerate") { grdecl_inactive_degenerate(); }
+        else if (name == "grdecl_invalid") { grdecl_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
         else if (name == "partition_serial_snapshot") { partition_serial_snapshot(); }
