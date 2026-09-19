@@ -54,6 +54,14 @@ struct CoordinateKey {
         return std::tie(left.x, left.y, left.z) <
                std::tie(right.x, right.y, right.z);
     }
+
+    [[nodiscard]] friend bool operator==(
+        const CoordinateKey& left,
+        const CoordinateKey& right) noexcept {
+        return left.x == right.x &&
+               left.y == right.y &&
+               left.z == right.z;
+    }
 };
 
 [[nodiscard]] inline CoordinateKey coordinate_key(
