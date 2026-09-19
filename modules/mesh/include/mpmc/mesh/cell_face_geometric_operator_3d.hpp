@@ -51,6 +51,33 @@ struct FaceTransmissibilityGeometry3D {
         internal_non_orthogonality;
 };
 
+/// Geometry-only disposition for an internal face.
+///
+/// direct_normal_projection_allowed means only that the current geometry meets
+/// the caller-supplied angular policy. It does not establish permeability-aware
+/// K-orthogonality and therefore is not a complete physical TPFA admissibility
+/// verdict.
+enum class TransmissibilityGeometryDisposition3D {
+    direct_normal_projection_allowed,
+    requires_non_orthogonal_treatment
+};
+
+/// Explicit geometry policy for deciding whether an internal face may use its
+/// normal projection without a non-orthogonal treatment.
+///
+/// No hidden default angle is provided. A value of 0 requires exact geometric
+/// orthogonality as represented by InternalFaceNonOrthogonality3D.
+struct TransmissibilityGeometryAdmissibilityPolicy3D {
+    double max_direct_normal_projection_angle_rad;
+};
+
+/// Auditable result of the geometry-only internal-face classification.
+struct TransmissibilityGeometryAdmissibility3D {
+    TransmissibilityGeometryDisposition3D disposition;
+    double non_orthogonality_angle_rad;
+    double max_direct_normal_projection_angle_rad;
+};
+
 /// Immutable 3D cell/face geometric-operator snapshot.
 ///
 /// The snapshot is aligned to the supplied Topology local cell/face ordering.
@@ -360,6 +387,55 @@ private:
     std::vector<UnitVector3D>
         face_owner_unit_normals_;
 };
+
+[[nodiscard]] inline TransmissibilityGeometryAdmissibility3D
+classify_internal_face_transmissibility_geometry(
+    const CellFaceGeometricOperator3D& geometry,
+    LocalIndex face,
+    TransmissibilityGeometryAdmissibilityPolicy3D policy) {
+    const double half_pi =
+        0.5 * std::acos(-1.0);
+    if (!std::isfinite(
+            policy.max_direct_normal_projection_angle_rad) ||
+        policy.max_direct_normal_projection_angle_rad < 0.0 ||
+        policy.max_direct_normal_projection_angle_rad >=
+            half_pi) {
+        throw std::invalid_argument(
+            "mpmc::mesh::classify_internal_face_transmissibility_geometry: maximum direct-projection angle must be finite in [0, pi/2)");
+    }
+
+    const auto neighbour =
+        geometry.face_neighbour(face);
+    const auto non_orthogonality =
+        geometry.internal_non_orthogonality(face);
+    if (!neighbour.has_value() ||
+        !non_orthogonality.has_value()) {
+        throw std::invalid_argument(
+            "mpmc::mesh::classify_internal_face_transmissibility_geometry: internal face geometry is required");
+    }
+
+    const double angle =
+        non_orthogonality->angle_rad;
+    if (!std::isfinite(angle) ||
+        angle < 0.0 ||
+        angle >= half_pi) {
+        throw std::invalid_argument(
+            "mpmc::mesh::classify_internal_face_transmissibility_geometry: invalid internal-face non-orthogonality angle");
+    }
+
+    const auto disposition =
+        angle <=
+                policy.max_direct_normal_projection_angle_rad
+            ? TransmissibilityGeometryDisposition3D::
+                  direct_normal_projection_allowed
+            : TransmissibilityGeometryDisposition3D::
+                  requires_non_orthogonal_treatment;
+
+    return TransmissibilityGeometryAdmissibility3D{
+        disposition,
+        angle,
+        policy.max_direct_normal_projection_angle_rad};
+}
 
 namespace cell_face_geometric_operator_3d_detail {
 
