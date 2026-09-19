@@ -5463,6 +5463,691 @@ make_cell_pair_sparsity_stencil_snapshot_3d(
     return PETSC_SUCCESS;
 }
 
+
+class PetscMpiAijSymbolicPreallocation3D {
+public:
+    PetscMpiAijSymbolicPreallocation3D(
+        mpmc::mesh::PartitionRank local_rank,
+        std::uint32_t rank_count,
+        PetscInt global_row_start,
+        PetscInt global_row_end,
+        PetscInt global_row_count,
+        std::vector<mpmc::mesh::LocalIndex>
+            owned_cells_in_petsc_row_order,
+        std::vector<mpmc::mesh::GlobalEntityId>
+            owned_cell_global_ids,
+        std::vector<PetscInt> owned_global_rows,
+        std::vector<PetscInt> diagonal_nnz,
+        std::vector<PetscInt> off_diagonal_nnz,
+        std::vector<PetscInt> local_cell_global_rows)
+        : local_rank_(local_rank),
+          rank_count_(rank_count),
+          global_row_start_(global_row_start),
+          global_row_end_(global_row_end),
+          global_row_count_(global_row_count),
+          owned_cells_in_petsc_row_order_(
+              std::move(
+                  owned_cells_in_petsc_row_order)),
+          owned_cell_global_ids_(
+              std::move(owned_cell_global_ids)),
+          owned_global_rows_(
+              std::move(owned_global_rows)),
+          diagonal_nnz_(
+              std::move(diagonal_nnz)),
+          off_diagonal_nnz_(
+              std::move(off_diagonal_nnz)),
+          local_cell_global_rows_(
+              std::move(local_cell_global_rows)) {
+        validate();
+    }
+
+    PetscMpiAijSymbolicPreallocation3D(
+        const PetscMpiAijSymbolicPreallocation3D&) =
+        default;
+    PetscMpiAijSymbolicPreallocation3D(
+        PetscMpiAijSymbolicPreallocation3D&&) noexcept =
+        default;
+    PetscMpiAijSymbolicPreallocation3D& operator=(
+        const PetscMpiAijSymbolicPreallocation3D&) =
+        delete;
+    PetscMpiAijSymbolicPreallocation3D& operator=(
+        PetscMpiAijSymbolicPreallocation3D&&) =
+        delete;
+    ~PetscMpiAijSymbolicPreallocation3D() = default;
+
+    [[nodiscard]] mpmc::mesh::PartitionRank
+    local_rank() const noexcept {
+        return local_rank_;
+    }
+
+    [[nodiscard]] std::uint32_t
+    rank_count() const noexcept {
+        return rank_count_;
+    }
+
+    [[nodiscard]] PetscInt
+    global_row_start() const noexcept {
+        return global_row_start_;
+    }
+
+    [[nodiscard]] PetscInt
+    global_row_end() const noexcept {
+        return global_row_end_;
+    }
+
+    [[nodiscard]] PetscInt
+    global_row_count() const noexcept {
+        return global_row_count_;
+    }
+
+    [[nodiscard]] PetscInt
+    local_owned_row_count() const noexcept {
+        return global_row_end_ -
+               global_row_start_;
+    }
+
+    [[nodiscard]] std::span<
+        const mpmc::mesh::LocalIndex>
+    owned_cells_in_petsc_row_order() const noexcept {
+        return owned_cells_in_petsc_row_order_;
+    }
+
+    [[nodiscard]] std::span<
+        const mpmc::mesh::GlobalEntityId>
+    owned_cell_global_ids() const noexcept {
+        return owned_cell_global_ids_;
+    }
+
+    [[nodiscard]] std::span<const PetscInt>
+    owned_global_rows() const noexcept {
+        return owned_global_rows_;
+    }
+
+    /// Direct inputs for a future MatMPIAIJSetPreallocation() call.
+    [[nodiscard]] std::span<const PetscInt>
+    diagonal_nnz() const noexcept {
+        return diagonal_nnz_;
+    }
+
+    [[nodiscard]] std::span<const PetscInt>
+    off_diagonal_nnz() const noexcept {
+        return off_diagonal_nnz_;
+    }
+
+    /// PETSc global row for any local cell, owned or ghost, resolved through
+    /// the collectively verified stable-cell numbering.
+    [[nodiscard]] PetscInt global_row(
+        mpmc::mesh::LocalIndex local_cell) const {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                local_cell.value());
+        if (local >=
+            local_cell_global_rows_.size()) {
+            throw std::out_of_range(
+                "mpmc::mesh_petsc::PetscMpiAijSymbolicPreallocation3D: local cell index out of range");
+        }
+        return local_cell_global_rows_[local];
+    }
+
+private:
+    void validate() {
+        if (rank_count_ == 0U ||
+            local_rank_.value() >= rank_count_ ||
+            global_row_start_ < 0 ||
+            global_row_end_ < global_row_start_ ||
+            global_row_count_ < global_row_end_) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::PetscMpiAijSymbolicPreallocation3D: invalid PETSc row ownership metadata");
+        }
+
+        const std::size_t owned_count =
+            owned_cells_in_petsc_row_order_.size();
+        if (owned_cell_global_ids_.size() !=
+                owned_count ||
+            owned_global_rows_.size() !=
+                owned_count ||
+            diagonal_nnz_.size() !=
+                owned_count ||
+            off_diagonal_nnz_.size() !=
+                owned_count ||
+            static_cast<std::size_t>(
+                global_row_end_ -
+                global_row_start_) !=
+                owned_count) {
+            throw std::invalid_argument(
+                "mpmc::mesh_petsc::PetscMpiAijSymbolicPreallocation3D: preallocation arrays do not match owned PETSc row count");
+        }
+
+        for (std::size_t i = 0U;
+             i < owned_count;
+             ++i) {
+            if (owned_global_rows_[i] !=
+                    global_row_start_ +
+                        static_cast<PetscInt>(i) ||
+                diagonal_nnz_[i] <= 0 ||
+                off_diagonal_nnz_[i] < 0) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::PetscMpiAijSymbolicPreallocation3D: invalid row order or structural nnz count");
+            }
+            if (i > 0U &&
+                !(owned_cell_global_ids_[i - 1U] <
+                  owned_cell_global_ids_[i])) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::PetscMpiAijSymbolicPreallocation3D: owned stable cell IDs must be strictly ordered within PETSc ownership range");
+            }
+        }
+
+        for (const PetscInt row :
+             local_cell_global_rows_) {
+            if (row < 0 ||
+                row >= global_row_count_) {
+                throw std::invalid_argument(
+                    "mpmc::mesh_petsc::PetscMpiAijSymbolicPreallocation3D: local stable cell did not resolve to a valid PETSc global row");
+            }
+        }
+    }
+
+    mpmc::mesh::PartitionRank local_rank_;
+    std::uint32_t rank_count_;
+    PetscInt global_row_start_;
+    PetscInt global_row_end_;
+    PetscInt global_row_count_;
+    std::vector<mpmc::mesh::LocalIndex>
+        owned_cells_in_petsc_row_order_;
+    std::vector<mpmc::mesh::GlobalEntityId>
+        owned_cell_global_ids_;
+    std::vector<PetscInt>
+        owned_global_rows_;
+    std::vector<PetscInt>
+        diagonal_nnz_;
+    std::vector<PetscInt>
+        off_diagonal_nnz_;
+    std::vector<PetscInt>
+        local_cell_global_rows_;
+};
+
+/// Convert owned-cell structural counts into PETSc MPIAIJ symbolic
+/// preallocation arrays and verify a one-to-one stable-cell <-> PETSc-row map.
+///
+/// This routine creates only a transient PetscLayout to obtain PETSc's actual
+/// contiguous rank ownership ranges. It does NOT create a Mat, insert matrix
+/// values, define a pressure variable, or consume any transmissibility.
+inline PetscErrorCode
+make_petsc_mpiaij_symbolic_preallocation_3d(
+    MPI_Comm comm,
+    const CellPairSparsityStencilSnapshot3D& sparsity,
+    const mpmc::mesh::PartitionSnapshot& partition,
+    std::optional<PetscMpiAijSymbolicPreallocation3D>*
+        output) {
+    if (output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+
+    PetscErrorCode error =
+        detail::validate_communicator(
+            comm,
+            partition.local_rank(),
+            partition.rank_count());
+    if (error != PETSC_SUCCESS) return error;
+
+    if (sparsity.local_rank() !=
+            partition.local_rank() ||
+        sparsity.rank_count() !=
+            partition.rank_count() ||
+        sparsity.local_cell_count() !=
+            partition.entity_count(
+                mpmc::mesh::EntityKind::cell) ||
+        sparsity.owned_cell_count() !=
+            partition.owned_count(
+                mpmc::mesh::EntityKind::cell)) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    PetscInt local_owned_rows = 0;
+    error = detail::checked_petsc_int_size(
+        partition.owned_count(
+            mpmc::mesh::EntityKind::cell),
+        &local_owned_rows);
+    if (error != PETSC_SUCCESS) return error;
+
+    PetscInt global_rows = 0;
+    if (MPI_Allreduce(
+            &local_owned_rows,
+            &global_rows,
+            1,
+            MPIU_INT,
+            MPI_SUM,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (global_rows < local_owned_rows) {
+        return PETSC_ERR_PLIB;
+    }
+
+    PetscLayout layout = nullptr;
+    error = PetscLayoutCreate(
+        comm,
+        &layout);
+    if (error != PETSC_SUCCESS) return error;
+
+    error = PetscLayoutSetLocalSize(
+        layout,
+        local_owned_rows);
+    if (error == PETSC_SUCCESS) {
+        error = PetscLayoutSetSize(
+            layout,
+            global_rows);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = PetscLayoutSetUp(
+            layout);
+    }
+
+    PetscInt row_start = -1;
+    PetscInt row_end = -1;
+    if (error == PETSC_SUCCESS) {
+        error = PetscLayoutGetRange(
+            layout,
+            &row_start,
+            &row_end);
+    }
+    if (error != PETSC_SUCCESS ||
+        row_start < 0 ||
+        row_end < row_start ||
+        row_end - row_start !=
+            local_owned_rows) {
+        PetscLayoutDestroy(&layout);
+        return error != PETSC_SUCCESS
+                   ? error
+                   : PETSC_ERR_PLIB;
+    }
+
+    std::vector<
+        OwnedCellStructuralCounts3D>
+            ordered_counts(
+                sparsity
+                    .owned_cell_counts()
+                    .begin(),
+                sparsity
+                    .owned_cell_counts()
+                    .end());
+    std::sort(
+        ordered_counts.begin(),
+        ordered_counts.end(),
+        [](const auto& left,
+           const auto& right) {
+            return left.cell_global <
+                   right.cell_global;
+        });
+
+    std::vector<mpmc::mesh::LocalIndex>
+        owned_cells;
+    std::vector<mpmc::mesh::GlobalEntityId>
+        owned_global_ids;
+    std::vector<PetscInt>
+        owned_global_rows;
+    std::vector<PetscInt>
+        diagonal_nnz;
+    std::vector<PetscInt>
+        off_diagonal_nnz;
+
+    const std::size_t owned_count =
+        ordered_counts.size();
+    owned_cells.reserve(owned_count);
+    owned_global_ids.reserve(owned_count);
+    owned_global_rows.reserve(owned_count);
+    diagonal_nnz.reserve(owned_count);
+    off_diagonal_nnz.reserve(owned_count);
+
+    for (std::size_t i = 0U;
+         i < owned_count;
+         ++i) {
+        const auto& counts =
+            ordered_counts[i];
+        try {
+            if (!partition.is_owned(
+                    mpmc::mesh::EntityKind::cell,
+                    counts.cell) ||
+                partition.global_id(
+                    mpmc::mesh::EntityKind::cell,
+                    counts.cell) !=
+                    counts.cell_global) {
+                PetscLayoutDestroy(&layout);
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        } catch (...) {
+            PetscLayoutDestroy(&layout);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        PetscInt d_nnz = 0;
+        PetscInt o_nnz = 0;
+        error = detail::checked_petsc_int_size(
+            counts.diagonal_block_nnz,
+            &d_nnz);
+        if (error == PETSC_SUCCESS) {
+            error = detail::checked_petsc_int_size(
+                counts.off_diagonal_block_nnz,
+                &o_nnz);
+        }
+        if (error != PETSC_SUCCESS ||
+            d_nnz <= 0 ||
+            d_nnz > local_owned_rows ||
+            o_nnz < 0 ||
+            o_nnz >
+                global_rows -
+                    local_owned_rows) {
+            PetscLayoutDestroy(&layout);
+            return error != PETSC_SUCCESS
+                       ? error
+                       : PETSC_ERR_ARG_INCOMP;
+        }
+
+        owned_cells.push_back(
+            counts.cell);
+        owned_global_ids.push_back(
+            counts.cell_global);
+        owned_global_rows.push_back(
+            row_start +
+            static_cast<PetscInt>(i));
+        diagonal_nnz.push_back(
+            d_nnz);
+        off_diagonal_nnz.push_back(
+            o_nnz);
+    }
+
+    if (owned_count !=
+        static_cast<std::size_t>(
+            local_owned_rows)) {
+        PetscLayoutDestroy(&layout);
+        return PETSC_ERR_PLIB;
+    }
+
+    if (owned_count >
+        static_cast<std::size_t>(
+            std::numeric_limits<int>::max())) {
+        PetscLayoutDestroy(&layout);
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    const int local_record_count =
+        static_cast<int>(owned_count);
+
+    int mpi_size = 0;
+    if (MPI_Comm_size(
+            comm,
+            &mpi_size) != MPI_SUCCESS ||
+        mpi_size <= 0) {
+        PetscLayoutDestroy(&layout);
+        return PETSC_ERR_MPI;
+    }
+
+    std::vector<int> record_counts(
+        static_cast<std::size_t>(mpi_size),
+        0);
+    if (MPI_Allgather(
+            &local_record_count,
+            1,
+            MPI_INT,
+            record_counts.data(),
+            1,
+            MPI_INT,
+            comm) != MPI_SUCCESS) {
+        PetscLayoutDestroy(&layout);
+        return PETSC_ERR_MPI;
+    }
+
+    std::vector<int> displacements(
+        static_cast<std::size_t>(mpi_size),
+        0);
+    int total_records = 0;
+    for (int rank = 0;
+         rank < mpi_size;
+         ++rank) {
+        const int count =
+            record_counts[
+                static_cast<std::size_t>(
+                    rank)];
+        if (count < 0 ||
+            count >
+                std::numeric_limits<int>::max() -
+                    total_records) {
+            PetscLayoutDestroy(&layout);
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        displacements[
+            static_cast<std::size_t>(
+                rank)] =
+            total_records;
+        total_records += count;
+    }
+    if (total_records != global_rows) {
+        PetscLayoutDestroy(&layout);
+        return PETSC_ERR_PLIB;
+    }
+
+    std::vector<std::uint64_t>
+        local_stable_ids;
+    std::vector<std::uint64_t>
+        local_rows_u64;
+    std::vector<std::uint32_t>
+        local_owner_ranks;
+    local_stable_ids.reserve(owned_count);
+    local_rows_u64.reserve(owned_count);
+    local_owner_ranks.reserve(owned_count);
+
+    for (std::size_t i = 0U;
+         i < owned_count;
+         ++i) {
+        local_stable_ids.push_back(
+            owned_global_ids[i].value());
+        local_rows_u64.push_back(
+            static_cast<std::uint64_t>(
+                owned_global_rows[i]));
+        local_owner_ranks.push_back(
+            partition.local_rank().value());
+    }
+
+    std::vector<std::uint64_t>
+        all_stable_ids(
+            static_cast<std::size_t>(
+                total_records));
+    std::vector<std::uint64_t>
+        all_rows_u64(
+            static_cast<std::size_t>(
+                total_records));
+    std::vector<std::uint32_t>
+        all_owner_ranks(
+            static_cast<std::size_t>(
+                total_records));
+
+    if (MPI_Allgatherv(
+            local_stable_ids.empty()
+                ? nullptr
+                : local_stable_ids.data(),
+            local_record_count,
+            MPI_UINT64_T,
+            all_stable_ids.empty()
+                ? nullptr
+                : all_stable_ids.data(),
+            record_counts.data(),
+            displacements.data(),
+            MPI_UINT64_T,
+            comm) != MPI_SUCCESS ||
+        MPI_Allgatherv(
+            local_rows_u64.empty()
+                ? nullptr
+                : local_rows_u64.data(),
+            local_record_count,
+            MPI_UINT64_T,
+            all_rows_u64.empty()
+                ? nullptr
+                : all_rows_u64.data(),
+            record_counts.data(),
+            displacements.data(),
+            MPI_UINT64_T,
+            comm) != MPI_SUCCESS ||
+        MPI_Allgatherv(
+            local_owner_ranks.empty()
+                ? nullptr
+                : local_owner_ranks.data(),
+            local_record_count,
+            MPI_UINT32_T,
+            all_owner_ranks.empty()
+                ? nullptr
+                : all_owner_ranks.data(),
+            record_counts.data(),
+            displacements.data(),
+            MPI_UINT32_T,
+            comm) != MPI_SUCCESS) {
+        PetscLayoutDestroy(&layout);
+        return PETSC_ERR_MPI;
+    }
+
+    std::vector<std::size_t>
+        by_row(
+            static_cast<std::size_t>(
+                total_records));
+    for (std::size_t i = 0U;
+         i < by_row.size();
+         ++i) {
+        by_row[i] = i;
+    }
+    std::sort(
+        by_row.begin(),
+        by_row.end(),
+        [&](std::size_t left,
+            std::size_t right) {
+            return all_rows_u64[left] <
+                   all_rows_u64[right];
+        });
+
+    for (std::size_t ordinal = 0U;
+         ordinal < by_row.size();
+         ++ordinal) {
+        const std::size_t slot =
+            by_row[ordinal];
+        if (all_rows_u64[slot] !=
+                ordinal ||
+            all_owner_ranks[slot] >=
+                partition.rank_count()) {
+            PetscLayoutDestroy(&layout);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        for (std::size_t prior = 0U;
+             prior < ordinal;
+             ++prior) {
+            if (all_stable_ids[
+                    by_row[prior]] ==
+                all_stable_ids[slot]) {
+                PetscLayoutDestroy(&layout);
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        }
+    }
+
+    const std::size_t local_cell_count =
+        partition.entity_count(
+            mpmc::mesh::EntityKind::cell);
+    std::vector<PetscInt>
+        local_cell_global_rows(
+            local_cell_count,
+            PetscInt{-1});
+
+    for (std::size_t local = 0U;
+         local < local_cell_count;
+         ++local) {
+        const auto cell =
+            mpmc::mesh::LocalIndex{
+                static_cast<
+                    mpmc::mesh::LocalIndex::value_type>(
+                        local)};
+        const auto stable_id =
+            partition.global_id(
+                mpmc::mesh::EntityKind::cell,
+                cell);
+
+        std::size_t match =
+            static_cast<std::size_t>(
+                total_records);
+        for (std::size_t record = 0U;
+             record <
+                 static_cast<std::size_t>(
+                     total_records);
+             ++record) {
+            if (all_stable_ids[record] ==
+                stable_id.value()) {
+                if (match !=
+                    static_cast<std::size_t>(
+                        total_records)) {
+                    PetscLayoutDestroy(&layout);
+                    return PETSC_ERR_ARG_INCOMP;
+                }
+                match = record;
+            }
+        }
+        if (match ==
+            static_cast<std::size_t>(
+                total_records)) {
+            PetscLayoutDestroy(&layout);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        if (all_rows_u64[match] >
+            static_cast<std::uint64_t>(
+                std::numeric_limits<PetscInt>::max()) ||
+            all_owner_ranks[match] !=
+                partition.owner_rank(
+                    mpmc::mesh::EntityKind::cell,
+                    cell).value()) {
+            PetscLayoutDestroy(&layout);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        const PetscInt global_row =
+            static_cast<PetscInt>(
+                all_rows_u64[match]);
+        const bool row_is_local =
+            global_row >= row_start &&
+            global_row < row_end;
+        if (partition.is_owned(
+                mpmc::mesh::EntityKind::cell,
+                cell) !=
+            row_is_local) {
+            PetscLayoutDestroy(&layout);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        local_cell_global_rows[local] =
+            global_row;
+    }
+
+    const PetscErrorCode destroy_error =
+        PetscLayoutDestroy(&layout);
+    if (destroy_error != PETSC_SUCCESS) {
+        return destroy_error;
+    }
+
+    try {
+        output->emplace(
+            partition.local_rank(),
+            partition.rank_count(),
+            row_start,
+            row_end,
+            global_rows,
+            std::move(owned_cells),
+            std::move(owned_global_ids),
+            std::move(owned_global_rows),
+            std::move(diagonal_nnz),
+            std::move(off_diagonal_nnz),
+            std::move(local_cell_global_rows));
+    } catch (...) {
+        output->reset();
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    return PETSC_SUCCESS;
+}
+
 inline PetscErrorCode migrate_dense_field_snapshot(
     DM source_dm,
     PetscSF migration_sf,
