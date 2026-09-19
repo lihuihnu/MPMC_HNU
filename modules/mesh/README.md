@@ -2,7 +2,7 @@
 
 `mpmc::mesh` 面向后续多相多组分流动离散，负责网格拓扑、几何、字段、求解自由度布局、文件 I/O 与并行分区元数据。网格层不得依赖 thermodynamics、flash、physics、runtime、前端或具体流动方程；PETSc/MPI 只允许出现在可选适配层，公共核心头文件不得泄漏 PETSc 类型。
 
-> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已能创建 point-major local `PetscSection`、PETSc-width local-to-global scalar map、按 kind 的 entity SF，以及与 `[cell][face][vertex]` chart 对齐的 combined point SF。2-rank gate 进一步用 `PetscSectionCreateGlobalSection()` 与 `PetscSFSetGraphSection()` 验证 PETSc owned/ghost global offset 编码可回映到同一个 core `GlobalDofIndex`，并完成多 DoF global-layout→local-layout broadcast。core 仍不依赖 PETSc/MPI；不含 DMPlex、残差、求解器或流动物理。
+> 当前状态：core topology/index、2D Cartesian topology/geometry、`FaceBoundarySnapshot`、`DenseFieldSnapshot`、`DofLayout`、`PartitionSnapshot`、`DofNumberingSnapshot` 与 `SharedEntityPlan` 已建立；可选 `mpmc::mesh_petsc` 已能创建 local/global `PetscSection`、PETSc-width local-to-global scalar map、entity/point/section SF，以及与这些 section 尺寸一致的真实 global `VECMPI` 与 local `VECSEQ`。2-rank gate 验证 global→local broadcast 与 local→global SUM/ADD：每个 shared DoF 只由唯一 owner 持有 global storage，owner+ghost local contributions 各累加一次，并能再次广播回全部 local slots。core 仍不依赖 PETSc/MPI；不含 DMPlex、Mat、残差、求解器或流动物理。
 
 ## 1. 目标
 
@@ -88,14 +88,16 @@
 
 `create_entity_sf()` 仍可按单一 `EntityKind` 建立 `PetscSF`，其 remote root index 直接等于 core `owner_local`。为服务完整 local `PetscSection`，新增 `create_point_sf()`：adapter 在真实 MPI communicator 上 `Allgather` 各 rank 的 cell/face/vertex local counts，据此把 `SharedEntityPlan` 的 kind-local `owner_local` 转换为远端 `[cell][face][vertex]` flattened point index，而不向 core contract 塞入 PETSc 专用 point base。adapter 会核对 communicator 的 rank/size、layout/partition entity counts，以及 leaf 的 ghost/owner/GlobalEntityId 后再创建 graph。
 
-2-rank gate 现在进一步调用 `PetscSectionCreateGlobalSection(localSection, pointSF, ...)` 与 `PetscSFSetGraphSection(sectionSF, localSection, globalSection)`。PETSc global section 的 owned offset 使用 PETSc 自身的并行 ownership layout；ghost point 则保存负编码 `-(owner_offset+1)`，所以它的数值顺序并不强制等于 core 的 `[cell][face][vertex] + GlobalEntityOrdinal` 编号。回归先由 owned PETSc offsets 建立 `PETSc-global-offset -> DofNumberingSnapshot::GlobalDofIndex` 映射，再验证 owned 正 offset 与 ghost 负 offset 都解析到本地 `local_to_global` 指向的同一 core GlobalDofIndex。随后 section-SF 对完整 10-DoF local array 执行一次 global-layout→local-layout broadcast，包含 cell point 上的 2-component `cell.primary` 与额外 cell DoF。
+2-rank gate 现在进一步调用 `PetscSectionCreateGlobalSection(localSection, pointSF, ...)` 与 `PetscSFSetGraphSection(sectionSF, localSection, globalSection)`。PETSc global section 的 owned offset 使用 PETSc 自身的并行 ownership layout；ghost point则保存负编码 `-(owner_offset+1)`，所以它的数值顺序并不强制等于 core 的 `[cell][face][vertex] + GlobalEntityOrdinal` 编号。回归先由 owned PETSc offsets 建立 `PETSc-global-offset -> DofNumberingSnapshot::GlobalDofIndex` 映射，再验证 owned 正 offset 与 ghost 负 offset 都解析到本地 `local_to_global` 指向的同一 core GlobalDofIndex。section-SF 对完整 10-DoF local array 执行 global-layout→local-layout broadcast，包含 cell point 上的 2-component `cell.primary` 与额外 cell DoF。
 
-当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现 DMPlex、constraint DoF、真实 halo buffer abstraction、solver/Vec/Mat integration 或 PETSc partitioner；这些不得由当前 adapter 冒充完成。
+在此基础上，adapter 新增 `create_section_vecs()`、`global_to_local()` 与 `local_to_global_add()`。global Vec 使用 communicator 上的 `VECMPI`，其每 rank local size 严格等于 global section owned storage；local Vec 使用 `PETSC_COMM_SELF` 的 `VECSEQ`，size 等于 local section 全 storage。global→local 直接以 section-SF + `MPIU_SCALAR/MPI_REPLACE` 将 owner storage 广播到 owner/ghost local slots。local→global ADD 不把已有 global 值覆盖掉：先把 local `PetscScalar` contributions 通过 section-SF + `MPIU_SUM` reduce 到临时 global Vec，再用 `VecAXPY` 加回目标 global Vec。synthetic 2-rank fixture 显式确认每个 core global DoF 恰有两份 local copy，并用不同 rank 的 contribution 编码验证 owner 与 ghost 各参与一次、没有重复计数或 ownership 错位。
+
+当前 PETSc gate 固定在官方 `ubuntu-24.04` runner 的 PETSc 3.19.6。尚未实现 DMPlex、constraint DoF、真实 halo buffer abstraction、Mat integration、残差/Jacobian 或 PETSc partitioner；这些不得由当前 adapter 冒充完成。
 
 后续适配层仍可负责：
 
 - 从核心拓扑创建或填充 DMPlex；
-- 在已有 point/global/section SF 基线之上加入 constraints 与稳定 Vec/Mat integration；
+- 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
 
