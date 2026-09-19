@@ -689,8 +689,22 @@ process_active_corner_point_grid(
                 "mpmc::mesh::process_active_corner_point_grid: active cell collapses to fewer than eight unique merged vertices");
         }
 
+        // Raw GRDECL corners use
+        // {LLL,HLL,LHL,HHL,LLH,HLH,LHH,HHH}. The processed computational
+        // topology uses the common linear-hexa ordering
+        // {LLL,HLL,HHL,LHL,LLH,HLH,HHH,LHH}, matching VTK/Gmsh connectivity.
+        // Face construction below still consumes the raw corner slots so the
+        // existing I/J/K face semantics are unchanged.
         processed_cell_vertices.push_back(
-            merged_vertices);
+            std::array<std::size_t, 8>{
+                merged_vertices[0],
+                merged_vertices[1],
+                merged_vertices[3],
+                merged_vertices[2],
+                merged_vertices[4],
+                merged_vertices[5],
+                merged_vertices[7],
+                merged_vertices[6]});
         processed_volumes.push_back(
             raw.geometry.cell_volume_m3(
                 raw_local));

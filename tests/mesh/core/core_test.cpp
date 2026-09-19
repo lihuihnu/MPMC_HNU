@@ -2948,6 +2948,51 @@ void active_corner_point_i_neighbor() {
         1.0e-14,
         "processed I-neighbor second volume");
 
+    const auto& processed_cell_vertices =
+        processed.topology.relation(
+            mesh::EntityKind::cell,
+            mesh::EntityKind::vertex);
+    const auto first_cell_vertices =
+        processed_cell_vertices.adjacent(
+            mesh::LocalIndex{0U});
+    require(
+        first_cell_vertices.size() == 8U,
+        "processed first hexa vertex count");
+    const std::array<mesh::Coordinate3D, 8>
+        expected_hexa_order{{
+            {0.0, 0.0, 0.0},
+            {1.0, 0.0, 0.0},
+            {1.0, 1.0, 0.0},
+            {0.0, 1.0, 0.0},
+            {0.0, 0.0, 1.0},
+            {1.0, 0.0, 1.0},
+            {1.0, 1.0, 1.0},
+            {0.0, 1.0, 1.0},
+        }};
+    for (std::size_t slot = 0U;
+         slot < expected_hexa_order.size();
+         ++slot) {
+        const auto actual =
+            processed.vertex_coordinates_m[
+                static_cast<std::size_t>(
+                    first_cell_vertices[slot].value())];
+        require_close(
+            actual.x_m,
+            expected_hexa_order[slot].x_m,
+            0.0,
+            "processed hexa canonical x");
+        require_close(
+            actual.y_m,
+            expected_hexa_order[slot].y_m,
+            0.0,
+            "processed hexa canonical y");
+        require_close(
+            actual.z_m,
+            expected_hexa_order[slot].z_m,
+            0.0,
+            "processed hexa canonical z");
+    }
+
     const auto& face_cells =
         processed.topology.relation(
             mesh::EntityKind::face,
