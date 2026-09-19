@@ -184,6 +184,122 @@ struct ParsedDocument {
     return result;
 }
 
+[[nodiscard]] inline int cell_orientation_sign(
+    LinearCellType3D type,
+    std::span<const LocalIndex> vertices,
+    std::span<const Coordinate3D> coordinates) {
+    const double length =
+        linear_cell_mesh_3d_detail::characteristic_length(
+            vertices,
+            coordinates);
+    const double tolerance =
+        4096.0 *
+        std::numeric_limits<double>::epsilon() *
+        length * length * length;
+
+    std::size_t positive = 0U;
+    std::size_t negative = 0U;
+    std::size_t degenerate = 0U;
+
+    const auto record =
+        [&](std::size_t a,
+            std::size_t b,
+            std::size_t c,
+            std::size_t d) {
+            const double volume =
+                linear_cell_mesh_3d_detail::signed_tetra_volume(
+                    coordinates[
+                        static_cast<std::size_t>(
+                            vertices[a].value())],
+                    coordinates[
+                        static_cast<std::size_t>(
+                            vertices[b].value())],
+                    coordinates[
+                        static_cast<std::size_t>(
+                            vertices[c].value())],
+                    coordinates[
+                        static_cast<std::size_t>(
+                            vertices[d].value())]);
+            if (volume > tolerance) {
+                ++positive;
+            } else if (volume < -tolerance) {
+                ++negative;
+            } else {
+                ++degenerate;
+            }
+        };
+
+    switch (type) {
+    case LinearCellType3D::tetrahedron:
+        record(0U, 1U, 2U, 3U);
+        break;
+    case LinearCellType3D::hexahedron:
+        record(0U, 1U, 3U, 4U);
+        record(1U, 2U, 3U, 6U);
+        record(1U, 3U, 4U, 6U);
+        record(1U, 4U, 5U, 6U);
+        record(3U, 4U, 6U, 7U);
+        break;
+    case LinearCellType3D::wedge:
+        record(0U, 1U, 2U, 3U);
+        record(1U, 2U, 3U, 4U);
+        record(2U, 3U, 4U, 5U);
+        break;
+    case LinearCellType3D::pyramid:
+        record(0U, 1U, 2U, 4U);
+        record(0U, 2U, 3U, 4U);
+        break;
+    }
+
+    if (degenerate != 0U ||
+        (positive != 0U &&
+         negative != 0U)) {
+        return 0;
+    }
+    if (negative != 0U &&
+        positive == 0U) {
+        return -1;
+    }
+    if (positive != 0U &&
+        negative == 0U) {
+        return 1;
+    }
+    return 0;
+}
+
+inline void canonicalize_external_cell_orientation(
+    LinearCellType3D type,
+    std::vector<LocalIndex>& vertices,
+    std::span<const Coordinate3D> coordinates) {
+    if (cell_orientation_sign(
+            type,
+            vertices,
+            coordinates) != -1) {
+        return;
+    }
+
+    // A consistently negative decomposition is a complete orientation reversal,
+    // not a folded cell. Canonicalize it at the file boundary while preserving
+    // the same unordered face vertex sets. Mixed-sign/degenerate cells are left
+    // untouched so make_linear_mesh_3d() continues to reject them strictly.
+    switch (type) {
+    case LinearCellType3D::tetrahedron:
+        std::swap(vertices[1], vertices[2]);
+        break;
+    case LinearCellType3D::hexahedron:
+        std::swap(vertices[1], vertices[3]);
+        std::swap(vertices[5], vertices[7]);
+        break;
+    case LinearCellType3D::wedge:
+        std::swap(vertices[1], vertices[2]);
+        std::swap(vertices[4], vertices[5]);
+        break;
+    case LinearCellType3D::pyramid:
+        std::swap(vertices[1], vertices[3]);
+        break;
+    }
+}
+
 inline void require_export_name(
     const GmshPhysicalName& name) {
     if ((name.dimension != 2 &&
@@ -352,6 +468,10 @@ import_gmsh_4_1_ascii_3d(
                     node_local_by_tag,
                     tag));
         }
+        canonicalize_external_cell_orientation(
+            type,
+            vertices,
+            coordinates);
         cells.push_back(
             LinearCell3D{
                 GlobalEntityId{

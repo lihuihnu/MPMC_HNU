@@ -384,31 +384,72 @@ void verify_grdecl_wrapper_rejection(
 int main(
     int argc,
     char** argv) {
-    try {
-        require(
-            argc == 6,
-            "usage: external_mesh_compatibility <gmsh2d> <gmsh3d> <vtu_bundle> <grdecl_tube> <grdecl_27cells>");
-
-        verify_gmsh_2d(
-            read_file(argv[1]));
-        verify_gmsh_3d(
-            read_file(argv[2]));
-        verify_vtu_bundle(
-            read_file(argv[3]));
-        verify_grdecl_tube(
-            read_file(argv[4]));
-        verify_grdecl_wrapper_rejection(
-            read_file(argv[5]));
-
-        std::cout
-            << "[PASS] external.mesh.compatibility"
-            << '\n';
-        return 0;
-    } catch (const std::exception& error) {
+    if (argc != 6) {
         std::cerr
             << "[FAIL] external.mesh.compatibility: "
-            << error.what()
+            << "usage: external_mesh_compatibility <gmsh2d> <gmsh3d> <vtu_bundle> <grdecl_tube> <grdecl_27cells>"
             << '\n';
         return 1;
     }
+
+    int failures = 0;
+    const auto run =
+        [&](std::string_view name,
+            auto&& function) {
+            try {
+                function();
+            } catch (const std::exception& error) {
+                ++failures;
+                std::cerr
+                    << "[FAIL] "
+                    << name
+                    << ": "
+                    << error.what()
+                    << '\n';
+            }
+        };
+
+    run(
+        "external.gmsh.2d.dealii",
+        [&] {
+            verify_gmsh_2d(
+                read_file(argv[1]));
+        });
+    run(
+        "external.gmsh.3d.dealii",
+        [&] {
+            verify_gmsh_3d(
+                read_file(argv[2]));
+        });
+    run(
+        "external.vtu.2d3d.dealii",
+        [&] {
+            verify_vtu_bundle(
+                read_file(argv[3]));
+        });
+    run(
+        "external.grdecl.opm_tube_to_vtu",
+        [&] {
+            verify_grdecl_tube(
+                read_file(argv[4]));
+        });
+    run(
+        "external.grdecl.opm_27cells_expected_grid_wrapper_rejection",
+        [&] {
+            verify_grdecl_wrapper_rejection(
+                read_file(argv[5]));
+        });
+
+    if (failures != 0) {
+        std::cerr
+            << "[FAIL] external.mesh.compatibility failures="
+            << failures
+            << '\n';
+        return 1;
+    }
+
+    std::cout
+        << "[PASS] external.mesh.compatibility"
+        << '\n';
+    return 0;
 }

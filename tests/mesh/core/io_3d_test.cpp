@@ -129,6 +129,39 @@ $EndElements
 )MSH";
 }
 
+
+std::string gmsh_reversed_hexa_fixture() {
+    return R"MSH($MeshFormat
+4.1 0 8
+$EndMeshFormat
+$Nodes
+1 8 1 8
+3 1 0 8
+1
+2
+3
+4
+5
+6
+7
+8
+0 0 0
+1 0 0
+1 0 1
+0 0 1
+0 1 0
+1 1 0
+1 1 1
+0 1 1
+$EndNodes
+$Elements
+1 1 100 100
+3 1 5 1
+100 1 2 3 4 5 6 7 8
+$EndElements
+)MSH";
+}
+
 std::string vtu_tetra_hexa_fixture() {
     return R"VTU(<?xml version="1.0"?>
 <VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian">
@@ -639,6 +672,46 @@ void verify_vtu_wedge_pyramid_roundtrip() {
         "VTU pyramid roundtrip volume");
 }
 
+
+void verify_gmsh_reversed_orientation_canonicalization() {
+    const auto first =
+        mesh::import_gmsh_4_1_ascii_3d(
+            gmsh_reversed_hexa_fixture(),
+            1.0);
+    require(
+        first.topology.entity_count(
+            mesh::EntityKind::cell) == 1U &&
+            first.topology.entity_count(
+                mesh::EntityKind::face) == 6U &&
+            first.topology.entity_count(
+                mesh::EntityKind::vertex) == 8U,
+        "reversed Gmsh hexa entity counts");
+    require_close(
+        first.cell_volumes_m3[0],
+        1.0,
+        1.0e-14,
+        "reversed Gmsh hexa canonical volume");
+
+    const auto exported =
+        mesh::export_gmsh_4_1_ascii_3d(first);
+    const auto second =
+        mesh::import_gmsh_4_1_ascii_3d(
+            exported,
+            1.0);
+    require_close(
+        second.cell_volumes_m3[0],
+        1.0,
+        1.0e-14,
+        "canonicalized Gmsh hexa roundtrip volume");
+    require(
+        same_ids(
+            first.topology.global_ids(
+                mesh::EntityKind::cell),
+            second.topology.global_ids(
+                mesh::EntityKind::cell)),
+        "canonicalized Gmsh hexa stable cell ID");
+}
+
 void verify_gmsh_roundtrip() {
     const auto first =
         mesh::import_gmsh_4_1_ascii_3d(
@@ -927,6 +1000,7 @@ int main() {
         verify_shared_tetra_face();
         verify_shared_hexa_face();
         verify_wedge_pyramid_geometry();
+        verify_gmsh_reversed_orientation_canonicalization();
         verify_gmsh_roundtrip();
         verify_gmsh_wedge_pyramid_roundtrip();
         verify_vtu_roundtrip();
