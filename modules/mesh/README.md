@@ -55,6 +55,8 @@ processed field projection 不依赖 raw/processed local index 偶然相同：�
 
 `CellFaceGeometricOperator3D` 是纯几何 immutable snapshot，消费 processed `Topology + vertex_coordinates_m + FaceGeometry3D`。每个 cell 必须恰有 8 个不同 shared vertices；每张 face support 必须是 1（boundary）或 2（internal），并要求 `FaceGeometry3D` owner 与 canonical `face->cell` 首项一致。当前 centroid contract 刻意沿用 8-corner arithmetic mean，不在此增量中引入另一套 volumetric-centroid 定义。对每张 face 保存 owner/neighbour local identity、cell-centroid→face-centroid displacement、owner/neighbour positive normal distance，并复用 `FaceGeometry3D` 的 area 与 owner-relative unit normal。normal distance 使用 face size/displacement 构造 scale-aware floating-point tolerance，零距离、负距离以及近退化距离一律拒绝；boundary face 的 neighbour 三项保持 absent。I-interface 与 K-interface 单元回归均要求两侧 distance=0.5 m，同时独立覆盖 owner distance=0、owner normal 反向导致负距离、internal neighbour distance=0 的拒绝。
 
+non-orthogonality 现在也是 internal-face core geometry contract：令 `d_cc = neighbour_centroid - owner_centroid`，owner-relative unit normal 为 `n`，定义 `cos(theta)=dot(d_cc,n)/|d_cc|`、`theta=acos(cos(theta))`；由于前一层已要求 owner/neighbour normal distance 都为正，所以不取绝对值，`dot(d_cc,n)=d_owner+d_neighbour>0`。`theta=0` 表示正交，趋近 `pi/2` 表示更强非正交；boundary face 不定义该量。新增合法 skewed `2×1×1` GRDECL fixture：外侧 pillar 保持 `x={0,2}`，共享 interface 的两条 pillar 分别位于 `(x,y)=(1.2,0)` 与 `(0.8,1)`，所有 pillar 垂直、ZCORN 仍为 `z=0/1`，因此两个 active hexa 均保持 volume=1 m3 且共享面完全闭合，但共享面法向不再平行 cell-center 连线。该 interface 的 8-corner cell centroids 为 `(0.5,0.5,0.5)` 与 `(1.5,0.5,0.5)`，face centroid=`(1,0.5,0.5)`，area=`sqrt(29)/5` m2，owner normal=`(5/sqrt(29),2/sqrt(29),0)`，两侧 normal distance=`2.5/sqrt(29)` m，`cos(theta)=5/sqrt(29)`，`theta≈0.380506 rad≈21.8014 deg`；这些量全部作为独立 regression 固定。
+
 `FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。
@@ -138,7 +140,7 @@ active face processor gate 使用两种正交共享方向：`2×1×1` 两 active
 
 后续适配层仍可负责：
 
-- 在已通过的 3D cell/face geometric-operator contract 上，下一步建议先增加一个合法但 skewed/non-orthogonal 的 corner-point fixture，验证 8-corner centroid contract、owner/neighbour positive normal distance 与 area/normal 输入在非正交几何下仍稳定，并显式记录 non-orthogonality；在这一步完成前仍不引入 permeability、transmissibility 数值、Darcy flux 或 residual；
+- 在已通过的 skewed/non-orthogonal 3D geometry gate 上，下一步建议只建立 transmissibility-geometry admissibility contract：区分 orthogonal TPFA 可直接使用的 normal projection 与需要 non-orthogonal correction/更一般离散的几何状态，并给出判据与状态语义；仍不把 `PERM*` 乘入、不计算 transmissibility 数值，也不进入 Darcy flux 或 residual；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
