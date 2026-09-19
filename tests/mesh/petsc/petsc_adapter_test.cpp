@@ -7065,6 +7065,207 @@ void verify_gmsh_import_through_dmplex_chain() {
         "destroy Gmsh source DM");
 }
 
+void run_three_rank_sparsity_test() {
+    int mpi_rank = -1;
+    int mpi_size = -1;
+    require(
+        MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &mpi_rank) == MPI_SUCCESS,
+        "3-rank sparsity MPI_Comm_rank");
+    require(
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &mpi_size) == MPI_SUCCESS,
+        "3-rank sparsity MPI_Comm_size");
+    require(
+        mpi_size == 3,
+        "owner-targeted sparsity test requires exactly three MPI ranks");
+    require(
+        mpi_rank >= 0 && mpi_rank < 3,
+        "unexpected 3-rank sparsity MPI rank");
+
+    const auto rank =
+        static_cast<std::uint32_t>(
+            mpi_rank);
+
+    mesh::Topology::EntityIds ids;
+    ids.cells = {
+        mesh::GlobalEntityId{1000U},
+        mesh::GlobalEntityId{2000U}};
+    const mesh::Topology topology{
+        std::move(ids),
+        {}};
+
+    mesh::EntityOwnerRanks owners;
+    owners.cells = {
+        mesh::PartitionRank{0U},
+        mesh::PartitionRank{2U}};
+    const auto partition =
+        mesh::PartitionSnapshot::create(
+            topology,
+            mesh::PartitionRank{rank},
+            3U,
+            std::move(owners));
+
+    const auto make_row =
+        [](mesh::LocalIndex face,
+           std::uint64_t face_global,
+           double transmissibility_m3) {
+            return mesh_petsc::
+                AssemblyReadyInternalConnectionRow3D{
+                    face,
+                    mesh::GlobalEntityId{
+                        face_global},
+                    mesh::LocalIndex{0U},
+                    mesh::GlobalEntityId{1000U},
+                    mesh::LocalIndex{1U},
+                    mesh::GlobalEntityId{2000U},
+                    transmissibility_m3};
+        };
+
+    std::vector<
+        mesh_petsc::AssemblyReadyInternalConnectionRow3D>
+        authoritative_rows;
+    std::vector<
+        mesh_petsc::AssemblyReadyInternalConnectionRow3D>
+        ghost_rows;
+
+    if (rank == 1U) {
+        authoritative_rows.push_back(
+            make_row(
+                mesh::LocalIndex{0U},
+                9000U,
+                1.0));
+        authoritative_rows.push_back(
+            make_row(
+                mesh::LocalIndex{1U},
+                9001U,
+                2.0));
+    } else {
+        ghost_rows.push_back(
+            make_row(
+                mesh::LocalIndex{0U},
+                9000U,
+                11.0));
+        ghost_rows.push_back(
+            make_row(
+                mesh::LocalIndex{1U},
+                9001U,
+                22.0));
+    }
+
+    const mesh_petsc::ParallelOwnedConnectionSchedule3D
+        schedule{
+            mesh::PartitionRank{rank},
+            3U,
+            std::move(authoritative_rows),
+            std::move(ghost_rows)};
+
+    std::optional<
+        mesh_petsc::CellPairSparsityStencilSnapshot3D>
+        snapshot;
+    require_petsc(
+        mesh_petsc::
+            make_cell_pair_sparsity_stencil_snapshot_3d(
+                PETSC_COMM_WORLD,
+                schedule,
+                partition,
+                &snapshot),
+        "owner-targeted 3-rank cell-pair sparsity");
+    require(
+        snapshot.has_value(),
+        "owner-targeted 3-rank sparsity snapshot");
+
+    if (rank == 1U) {
+        require(
+            partition.owned_count(
+                mesh::EntityKind::cell) == 0U &&
+                snapshot->coupling_count() == 0U &&
+                snapshot->owned_cell_count() == 0U,
+            "authoritative face rank that owns neither endpoint stores no cell-pair graph");
+    } else {
+        require(
+            partition.owned_count(
+                mesh::EntityKind::cell) == 1U &&
+                partition.ghost_count(
+                    mesh::EntityKind::cell) == 1U &&
+                snapshot->coupling_count() == 1U &&
+                snapshot->owned_cell_count() == 1U,
+            "endpoint owner receives exactly one deduplicated coupling");
+
+        const auto& pair =
+            snapshot->couplings().front();
+        require(
+            pair.first_cell ==
+                    mesh::LocalIndex{0U} &&
+                pair.second_cell ==
+                    mesh::LocalIndex{1U} &&
+                pair.first_cell_global ==
+                    mesh::GlobalEntityId{1000U} &&
+                pair.second_cell_global ==
+                    mesh::GlobalEntityId{2000U},
+            "owner-targeted coupling preserves canonical stable cell pair");
+
+        const auto owned_cell =
+            rank == 0U
+                ? mesh::LocalIndex{0U}
+                : mesh::LocalIndex{1U};
+        const auto ghost_cell =
+            rank == 0U
+                ? mesh::LocalIndex{1U}
+                : mesh::LocalIndex{0U};
+        require(
+            partition.is_owned(
+                mesh::EntityKind::cell,
+                owned_cell) &&
+                partition.is_ghost(
+                    mesh::EntityKind::cell,
+                    ghost_cell),
+            "3-rank fixture endpoint ownership");
+
+        const auto& counts =
+            snapshot->structural_counts(
+                owned_cell);
+        require(
+            counts.cell ==
+                    owned_cell &&
+                counts.cell_global ==
+                    partition.global_id(
+                        mesh::EntityKind::cell,
+                        owned_cell) &&
+                counts.diagonal_block_nnz == 1U &&
+                counts.off_diagonal_block_nnz == 1U,
+            "endpoint owner structural counts remain one self plus one remote neighbour");
+    }
+
+    const std::uint64_t local_couplings =
+        static_cast<std::uint64_t>(
+            snapshot->coupling_count());
+    std::array<std::uint64_t, 3>
+        all_couplings{};
+    require(
+        MPI_Allgather(
+            &local_couplings,
+            1,
+            MPI_UINT64_T,
+            all_couplings.data(),
+            1,
+            MPI_UINT64_T,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "gather 3-rank owner-targeted local coupling counts");
+    require(
+        all_couplings[0] == 1U &&
+            all_couplings[1] == 0U &&
+            all_couplings[2] == 1U,
+        "stable pair payload is present only on endpoint owner ranks");
+
+    require(
+        MPI_Barrier(
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "3-rank sparsity MPI_Barrier");
+}
+
 void run_two_rank_test() {
     int mpi_rank = -1;
     int mpi_size = -1;
@@ -7122,11 +7323,33 @@ int main(int argc, char** argv) {
 
     int result = 0;
     try {
-        run_two_rank_test();
+        int mpi_size = -1;
+        require(
+            MPI_Comm_size(
+                PETSC_COMM_WORLD,
+                &mpi_size) == MPI_SUCCESS,
+            "main MPI_Comm_size");
+
+        std::string_view pass_label;
+        if (mpi_size == 2) {
+            run_two_rank_test();
+            pass_label =
+                "mesh.petsc.synthetic_2rank";
+        } else if (mpi_size == 3) {
+            run_three_rank_sparsity_test();
+            pass_label =
+                "mesh.petsc.sparsity_owner_targeted_3rank";
+        } else {
+            throw std::runtime_error(
+                "PETSc integration test requires exactly two or three MPI ranks");
+        }
+
         int rank = -1;
         MPI_Comm_rank(PETSC_COMM_WORLD, &rank);
         if (rank == 0) {
-            std::cout << "[PASS] mesh.petsc.synthetic_2rank\n";
+            std::cout << "[PASS] "
+                      << pass_label
+                      << '\n';
         }
     } catch (const std::exception& error) {
         int rank = -1;
