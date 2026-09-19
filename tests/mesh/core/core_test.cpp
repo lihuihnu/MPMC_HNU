@@ -5517,7 +5517,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
     expect_throw<std::invalid_argument>(
         [&] {
             (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
-                geometry.face_count(),
+                geometry,
                 mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
                     -1.0},
                 mesh::KOrthogonalityAdmissibilityPolicy3D{
@@ -5527,7 +5527,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
     expect_throw<std::invalid_argument>(
         [&] {
             (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
-                geometry.face_count(),
+                geometry,
                 mesh::TransmissibilityGeometryAdmissibilityPolicy3D{
                     0.0},
                 mesh::KOrthogonalityAdmissibilityPolicy3D{
@@ -5545,7 +5545,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
         expect_throw<std::invalid_argument>(
             [&] {
                 (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
-                    geometry.face_count(),
+                geometry,
                     valid.geometry_policy(),
                     valid.k_policy(),
                     std::move(duplicate)};
@@ -5560,10 +5560,38 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
         expect_throw<std::invalid_argument>(
             [&] {
                 (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
-                    geometry.face_count(),
+                geometry,
                     valid.geometry_policy(),
                     valid.k_policy(),
                     {missing}};
+            });
+    }
+
+    {
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
+                    geometry,
+                    valid.geometry_policy(),
+                    valid.k_policy(),
+                    {}};
+            });
+    }
+
+    {
+        auto mismatched_policy =
+            valid_entry;
+        mismatched_policy
+            .admissibility.geometry
+            .max_direct_normal_projection_angle_rad =
+            1.0e-6;
+        expect_throw<std::invalid_argument>(
+            [&] {
+                (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
+                    geometry,
+                    valid.geometry_policy(),
+                    valid.k_policy(),
+                    {mismatched_policy}};
             });
     }
 
@@ -5578,7 +5606,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
         expect_throw<std::invalid_argument>(
             [&] {
                 (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
-                    geometry.face_count(),
+                geometry,
                     valid.geometry_policy(),
                     valid.k_policy(),
                     {non_finite}};
@@ -5597,7 +5625,7 @@ void tpfa_internal_face_transmissibility_snapshot_3d_invalid() {
         expect_throw<std::invalid_argument>(
             [&] {
                 (void)mesh::TpfaInternalFaceTransmissibilitySnapshot3D{
-                    geometry.face_count(),
+                geometry,
                     valid.geometry_policy(),
                     valid.k_policy(),
                     {blocked}};
