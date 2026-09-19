@@ -8,6 +8,7 @@
 
 #include <petscsection.h>
 #include <petscsf.h>
+#include <petscvec.h>
 
 #include <array>
 #include <cstddef>
@@ -581,6 +582,221 @@ inline PetscErrorCode create_entity_sf(
 
     *sf = local_sf;
     return PETSC_SUCCESS;
+}
+
+
+inline PetscErrorCode create_section_vecs(
+    MPI_Comm comm,
+    PetscSection local_section,
+    PetscSection global_section,
+    Vec* global_vec,
+    Vec* local_vec) {
+    if (global_vec == nullptr || local_vec == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    *global_vec = nullptr;
+    *local_vec = nullptr;
+    if (local_section == nullptr || global_section == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    PetscInt local_size = 0;
+    PetscInt owned_size = 0;
+    PetscErrorCode error =
+        PetscSectionGetStorageSize(local_section, &local_size);
+    if (error != PETSC_SUCCESS) return error;
+    error = PetscSectionGetConstrainedStorageSize(
+        global_section, &owned_size);
+    if (error != PETSC_SUCCESS) return error;
+    if (local_size < 0 || owned_size < 0) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    Vec global = nullptr;
+    error = VecCreateMPI(
+        comm, owned_size, PETSC_DETERMINE, &global);
+    if (error != PETSC_SUCCESS) return error;
+
+    Vec local = nullptr;
+    error = VecCreateSeq(PETSC_COMM_SELF, local_size, &local);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&global);
+        return error;
+    }
+
+    *global_vec = global;
+    *local_vec = local;
+    return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode global_to_local(
+    PetscSF section_sf,
+    Vec global_vec,
+    Vec local_vec) {
+    if (section_sf == nullptr ||
+        global_vec == nullptr ||
+        local_vec == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    PetscInt nroots = 0;
+    PetscInt nleaves = 0;
+    PetscErrorCode error =
+        PetscSFGetGraph(
+            section_sf, &nroots, &nleaves, nullptr, nullptr);
+    if (error != PETSC_SUCCESS) return error;
+    if (nroots < 0 || nleaves < 0) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    PetscInt global_local_size = 0;
+    PetscInt local_size = 0;
+    error = VecGetLocalSize(global_vec, &global_local_size);
+    if (error != PETSC_SUCCESS) return error;
+    error = VecGetLocalSize(local_vec, &local_size);
+    if (error != PETSC_SUCCESS) return error;
+    if (global_local_size != nroots || local_size != nleaves) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    const PetscScalar* roots = nullptr;
+    PetscScalar* leaves = nullptr;
+    error = VecGetArrayRead(global_vec, &roots);
+    if (error != PETSC_SUCCESS) return error;
+    error = VecGetArray(local_vec, &leaves);
+    if (error != PETSC_SUCCESS) {
+        VecRestoreArrayRead(global_vec, &roots);
+        return error;
+    }
+
+    PetscErrorCode communication_error =
+        PetscSFBcastBegin(
+            section_sf,
+            MPIU_SCALAR,
+            roots,
+            leaves,
+            MPI_REPLACE);
+    if (communication_error == PETSC_SUCCESS) {
+        communication_error =
+            PetscSFBcastEnd(
+                section_sf,
+                MPIU_SCALAR,
+                roots,
+                leaves,
+                MPI_REPLACE);
+    }
+
+    const PetscErrorCode local_restore_error =
+        VecRestoreArray(local_vec, &leaves);
+    const PetscErrorCode global_restore_error =
+        VecRestoreArrayRead(global_vec, &roots);
+
+    if (communication_error != PETSC_SUCCESS) {
+        return communication_error;
+    }
+    if (local_restore_error != PETSC_SUCCESS) {
+        return local_restore_error;
+    }
+    return global_restore_error;
+}
+
+inline PetscErrorCode local_to_global_add(
+    PetscSF section_sf,
+    Vec local_vec,
+    Vec global_vec) {
+    if (section_sf == nullptr ||
+        local_vec == nullptr ||
+        global_vec == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    PetscInt nroots = 0;
+    PetscInt nleaves = 0;
+    PetscErrorCode error =
+        PetscSFGetGraph(
+            section_sf, &nroots, &nleaves, nullptr, nullptr);
+    if (error != PETSC_SUCCESS) return error;
+    if (nroots < 0 || nleaves < 0) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    PetscInt global_local_size = 0;
+    PetscInt local_size = 0;
+    error = VecGetLocalSize(global_vec, &global_local_size);
+    if (error != PETSC_SUCCESS) return error;
+    error = VecGetLocalSize(local_vec, &local_size);
+    if (error != PETSC_SUCCESS) return error;
+    if (global_local_size != nroots || local_size != nleaves) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    Vec accumulated = nullptr;
+    error = VecDuplicate(global_vec, &accumulated);
+    if (error != PETSC_SUCCESS) return error;
+    error = VecSet(accumulated, PetscScalar{0.0});
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&accumulated);
+        return error;
+    }
+
+    const PetscScalar* leaves = nullptr;
+    PetscScalar* roots = nullptr;
+    error = VecGetArrayRead(local_vec, &leaves);
+    if (error != PETSC_SUCCESS) {
+        VecDestroy(&accumulated);
+        return error;
+    }
+    error = VecGetArray(accumulated, &roots);
+    if (error != PETSC_SUCCESS) {
+        VecRestoreArrayRead(local_vec, &leaves);
+        VecDestroy(&accumulated);
+        return error;
+    }
+
+    PetscErrorCode communication_error =
+        PetscSFReduceBegin(
+            section_sf,
+            MPIU_SCALAR,
+            leaves,
+            roots,
+            MPIU_SUM);
+    if (communication_error == PETSC_SUCCESS) {
+        communication_error =
+            PetscSFReduceEnd(
+                section_sf,
+                MPIU_SCALAR,
+                leaves,
+                roots,
+                MPIU_SUM);
+    }
+
+    const PetscErrorCode root_restore_error =
+        VecRestoreArray(accumulated, &roots);
+    const PetscErrorCode leaf_restore_error =
+        VecRestoreArrayRead(local_vec, &leaves);
+
+    if (communication_error == PETSC_SUCCESS &&
+        root_restore_error == PETSC_SUCCESS &&
+        leaf_restore_error == PETSC_SUCCESS) {
+        communication_error =
+            VecAXPY(
+                global_vec,
+                PetscScalar{1.0},
+                accumulated);
+    }
+
+    const PetscErrorCode destroy_error =
+        VecDestroy(&accumulated);
+    if (communication_error != PETSC_SUCCESS) {
+        return communication_error;
+    }
+    if (root_restore_error != PETSC_SUCCESS) {
+        return root_restore_error;
+    }
+    if (leaf_restore_error != PETSC_SUCCESS) {
+        return leaf_restore_error;
+    }
+    return destroy_error;
 }
 
 } // namespace mpmc::mesh_petsc
