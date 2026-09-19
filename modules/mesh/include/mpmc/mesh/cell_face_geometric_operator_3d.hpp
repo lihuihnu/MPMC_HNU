@@ -35,12 +35,13 @@ struct InternalFaceNonOrthogonality3D {
     double angle_rad;
 };
 
-/// Geometry-only inputs that a later two-point transmissibility kernel may consume.
+/// Method-neutral geometry for one cell-face connection.
 ///
-/// This contract deliberately contains no permeability, mobility, Darcy flux,
-/// residual, or transmissibility value. The owner normal points away from the
-/// owner cell. For an internal face both normal distances are strictly positive.
-struct FaceTransmissibilityGeometry3D {
+/// This contract contains only mesh geometry: no permeability, discretization policy,
+/// mobility, Darcy flux, residual, or transmissibility value. The owner normal
+/// points away from the owner cell. For an internal face both normal distances
+/// are strictly positive.
+struct FaceConnectionGeometry3D {
     LocalIndex owner;
     std::optional<LocalIndex> neighbour;
     double area_m2;
@@ -175,11 +176,11 @@ public:
             static_cast<std::size_t>(face.value()));
     }
 
-    [[nodiscard]] FaceTransmissibilityGeometry3D
-    transmissibility_geometry(LocalIndex face) const {
+    [[nodiscard]] FaceConnectionGeometry3D
+    face_connection_geometry(LocalIndex face) const {
         const std::size_t local =
             static_cast<std::size_t>(face.value());
-        return FaceTransmissibilityGeometry3D{
+        return FaceConnectionGeometry3D{
             face_owners_.at(local),
             face_neighbours_.at(local),
             face_areas_m2_.at(local),
