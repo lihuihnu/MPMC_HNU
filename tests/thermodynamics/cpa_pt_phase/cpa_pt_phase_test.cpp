@@ -1,4 +1,5 @@
 #include <mpmc/thermodynamics/cpa_pt_phase.hpp>
+#include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
 
 #include "test_support.hpp"
 
@@ -6,7 +7,9 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <iterator>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -225,6 +228,148 @@ void associating_component_permutation() {
             "CPA fugacity coefficients changed under component permutation");
 }
 
+
+void selected_phase_fugacity_contract() {
+    const auto parameters = cpa_pt_test::nonassociating_pure();
+    const auto phase = th::CpaPtPhase::from_parameters(parameters);
+    const Vec x{1.0};
+    constexpr double pressure = 1.0e5;
+    constexpr double temperature = 200.0;
+    const auto roots = phase.roots(pressure, temperature, x);
+    require(roots.status == th::CpaPtRootStatus::success &&
+                roots.roots.size() == 3U,
+            "CPA selected-phase fugacity root fixture");
+    constexpr std::size_t root_index = 2U;
+    const auto wrapped = th::evaluate_selected_phase_fugacity(
+        phase, pressure, temperature, std::span<const double>{x},
+        th::CpaSelectedPhase{root_index, {}});
+    require(wrapped.ln_phi.size() == roots.roots[root_index].ln_phi.size(),
+            "CPA selected-phase fugacity size changed");
+    for (std::size_t i = 0U; i < wrapped.ln_phi.size(); ++i) {
+        require(std::abs(wrapped.ln_phi[i] - roots.roots[root_index].ln_phi[i]) < 1.0e-14,
+                "CPA selected-phase fugacity changed selected root value");
+    }
+    bool caught = false;
+    try {
+        (void)th::evaluate_selected_phase_fugacity(
+            phase, pressure, temperature, std::span<const double>{x},
+            th::CpaSelectedPhase{3U, {}});
+    } catch (const std::out_of_range&) {
+        caught = true;
+    }
+    require(caught, "CPA selected-phase fugacity silently changed invalid root index");
+    static_assert(
+        th::SelectedPhaseFugacityCapabilities<th::CpaPtPhase>::derivative_support ==
+        th::SelectedPhaseFugacityDerivativeSupport::scalar_generic_first_order);
+}
+
+
+std::size_t nearest_root_index(
+    const th::CpaPtRootSet& roots,
+    double density) {
+    require(!roots.roots.empty(),
+            "CPA PT root set unexpectedly empty");
+    const auto found = std::min_element(
+        roots.roots.begin(),
+        roots.roots.end(),
+        [density](const auto& first, const auto& second) {
+            return std::abs(first.molar_density_mol_per_m3 - density) <
+                   std::abs(second.molar_density_mol_per_m3 - density);
+        });
+    return static_cast<std::size_t>(
+        std::distance(roots.roots.begin(), found));
+}
+
+void associating_selected_phase_derivatives() {
+    const auto parameters = cpa_pt_test::associating_binary(false);
+    const auto phase = th::CpaPtPhase::from_parameters(parameters);
+    constexpr double temperature = 330.0;
+    constexpr double density = 5000.0;
+    constexpr double x0 = 0.7;
+    const Vec composition{x0, 1.0 - x0};
+    const double pressure = reference_pressure(
+        temperature, density, composition, parameters);
+    const auto roots = phase.roots(
+        pressure, temperature, composition);
+    require(roots.status == th::CpaPtRootStatus::success,
+            "CPA derivative fixture has no resolved PT roots");
+    const std::size_t root_index =
+        nearest_root_index(roots, density);
+
+    using D = mpmc::ad::Dual<double, 3U>;
+    const D pressure_ad = D::variable(pressure, 0U);
+    const D temperature_ad = D::variable(temperature, 1U);
+    const std::array<D, 2> composition_ad{
+        D::variable(x0, 2U),
+        D{1.0 - x0, D::Gradient{0.0, 0.0, -1.0}}};
+
+    const auto evaluated = th::evaluate_selected_phase_fugacity(
+        phase,
+        pressure_ad,
+        temperature_ad,
+        std::span<const D>{composition_ad},
+        th::CpaSelectedPhase{root_index, {}});
+
+    require(evaluated.ln_phi.size() == 2U,
+            "CPA selected derivative fugacity size changed");
+    for (std::size_t component = 0U; component < 2U; ++component) {
+        require(std::abs(evaluated.ln_phi[component].value() -
+                         roots.roots[root_index].ln_phi[component]) < 1.0e-14,
+                "CPA selected derivative changed primal ln(phi)");
+    }
+
+    const auto fresh_ln_phi =
+        [&](double p, double temp, double first_fraction,
+            std::size_t component) {
+            const Vec x{first_fraction, 1.0 - first_fraction};
+            const auto perturbed = phase.roots(p, temp, x);
+            require(perturbed.status == th::CpaPtRootStatus::success,
+                    "CPA fresh derivative perturbation lost root set");
+            require(root_index < perturbed.roots.size(),
+                    "CPA fresh derivative perturbation changed selected root count");
+            return perturbed.roots[root_index].ln_phi[component];
+        };
+
+    const std::array<double, 3> steps{
+        std::max(100.0, 1.0e-5 * pressure),
+        1.0e-3,
+        1.0e-5};
+
+    for (std::size_t component = 0U; component < 2U; ++component) {
+        const double fd_pressure =
+            (fresh_ln_phi(pressure + steps[0], temperature, x0, component) -
+             fresh_ln_phi(pressure - steps[0], temperature, x0, component)) /
+            (2.0 * steps[0]);
+        const double fd_temperature =
+            (fresh_ln_phi(pressure, temperature + steps[1], x0, component) -
+             fresh_ln_phi(pressure, temperature - steps[1], x0, component)) /
+            (2.0 * steps[1]);
+        const double fd_composition =
+            (fresh_ln_phi(pressure, temperature, x0 + steps[2], component) -
+             fresh_ln_phi(pressure, temperature, x0 - steps[2], component)) /
+            (2.0 * steps[2]);
+
+        const std::array<double, 3> expected{
+            fd_pressure,
+            fd_temperature,
+            fd_composition};
+        const std::array<double, 3> absolute_tolerances{
+            5.0e-11,
+            5.0e-6,
+            5.0e-5};
+        for (std::size_t lane = 0U; lane < expected.size(); ++lane) {
+            const double actual =
+                evaluated.ln_phi[component].derivative(lane);
+            const double tolerance =
+                absolute_tolerances[lane] +
+                2.0e-3 * std::abs(expected[lane]);
+            require(std::isfinite(actual) &&
+                        std::abs(actual - expected[lane]) <= tolerance,
+                    "CPA selected-phase analytic/IFT derivative disagrees with fresh PT re-solves");
+        }
+    }
+}
+
 void evaluation_budget_is_explicit() {
     const auto parameters = cpa_pt_test::nonassociating_pure();
     const auto phase = th::CpaPtPhase::from_parameters(parameters);
@@ -242,6 +387,8 @@ constexpr Test tests[]{
     {"nonassociating_three_roots", nonassociating_srk_three_roots},
     {"associating_helmholtz", associating_helmholtz_chemical_potential},
     {"component_permutation", associating_component_permutation},
+    {"selected_phase_fugacity", selected_phase_fugacity_contract},
+    {"selected_phase_derivatives", associating_selected_phase_derivatives},
     {"evaluation_budget", evaluation_budget_is_explicit}};
 
 } // namespace

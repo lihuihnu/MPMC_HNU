@@ -1,4 +1,5 @@
 #include "test_support.hpp"
+#include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
 #include <mpmc/ad/runtime_differentiate.hpp>
 #include <iostream>
 #include <numeric>
@@ -455,6 +456,39 @@ void derivative_guard() {
     catch(const th::Pr76PhaseError& error) { caught=error.code()==th::Pr76PhaseErrorCode::ill_conditioned_derivative; }
     require(caught,"AD must reject unreliable root slopes");
 }
+
+template <typename T>
+void selected_phase_fugacity_contract() {
+    auto model = kernel<T>();
+    th::Pr76PhaseWorkspace<T> direct_workspace;
+    th::Pr76PhaseWorkspace<T> facade_workspace;
+    const std::vector<T> composition{T{0.25}, T{0.50}, T{0.25}};
+    const T pressure = T{1.0e6};
+    const T temperature = T{450.0};
+    const auto roots = model.roots_full(
+        pressure, temperature, composition, direct_workspace);
+    require(
+        roots.status == th::Pr76RootStatus::success && roots.count > 0U,
+        "PR76 selected-phase fugacity fixture has no resolved root");
+    const std::size_t root_index = roots.count - 1U;
+    const auto direct = model.evaluate_full(
+        pressure, temperature, composition, root_index, direct_workspace);
+    const auto wrapped = th::evaluate_selected_phase_fugacity(
+        model, pressure, temperature,
+        std::span<const T>{composition},
+        th::Pr76SelectedPhase{root_index, {}},
+        facade_workspace);
+    require(
+        wrapped.ln_phi.size() == direct.ln_phi.size(),
+        "PR76 selected-phase fugacity size changed");
+    for (std::size_t i = 0U; i < direct.ln_phi.size(); ++i) {
+        near(wrapped.ln_phi[i], static_cast<long double>(direct.ln_phi[i]));
+    }
+    static_assert(
+        th::SelectedPhaseFugacityCapabilities<th::Pr76Phase<T>>::derivative_support ==
+        th::SelectedPhaseFugacityDerivativeSupport::scalar_generic_first_order);
+}
+
 void headers() {
     auto model=kernel<double>();
     require(std::isfinite(pt_plain_header(model)),"plain PT header translation unit");
@@ -478,6 +512,7 @@ void run_typed(std::string_view name) {
     else if(name=="input_domains") {input_domains<T>();}
     else if(name=="ownership_recovery") {ownership_recovery<T>();}
     else if(name=="attraction_cancellation") {attraction_cancellation<T>();}
+    else if(name=="selected_phase_fugacity") {selected_phase_fugacity_contract<T>();}
     else {throw std::invalid_argument("unknown case");}
 }
 } // namespace

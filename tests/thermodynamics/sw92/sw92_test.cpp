@@ -1,4 +1,5 @@
 #include <test_support.hpp>
+#include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
 #include <iostream>
 #include <limits>
 #include <string_view>
@@ -122,7 +123,28 @@ void applicability_bounds(){
  st::expect_error<th::ContractError>([&]{(void)th::Sw92ParameterSet::create(invalid.catalog,invalid.order,invalid.input);});
 }
 void input_domains(){auto ps=st::binary_parameters(st::methane);auto m=th::Sw92Mixture<double>::from_parameters(ps);th::Sw92MixtureWorkspace<double>w;st::expect_error<std::domain_error>([&]{(void)m.evaluate(377.15,st::Vec{.4,.5},1,th::SwPhaseFamily::aqueous,w);});st::expect_error<std::domain_error>([&]{(void)m.evaluate(377.15,st::Vec{.5,.5},-1,th::SwPhaseFamily::aqueous,w);});st::expect_error<std::invalid_argument>([&]{(void)m.kij(377.15,1,static_cast<th::SwPhaseFamily>(99),0,1);});st::expect_error<std::out_of_range>([&]{(void)m.kij(377.15,1,th::SwPhaseFamily::aqueous,0,2);});auto p=th::Sw92Phase<double>::from_parameters(ps);th::Sw92PhaseWorkspace<double>pw;st::expect_error<std::domain_error>([&]{(void)p.roots(0,377.15,st::Vec{.5,.5},1,th::SwPhaseFamily::aqueous,pw);});st::expect_error<std::out_of_range>([&]{(void)p.evaluate(1e6,377.15,st::Vec{.5,.5},1,th::SwPhaseFamily::aqueous,3,pw);});}
+
+void selected_phase_fugacity_contract(){
+ auto ps=st::binary_parameters(st::co2);
+ auto phase=th::Sw92Phase<double>::from_parameters(ps);
+ th::Sw92PhaseWorkspace<double> direct_workspace,facade_workspace;
+ const st::Vec x{.7,.3};
+ constexpr double pressure=3.0e6,temperature=340.0,molality=0.0;
+ const auto roots=phase.roots(pressure,temperature,x,molality,th::SwPhaseFamily::nonaqueous,direct_workspace);
+ st::require(roots.status==th::Sw92RootStatus::success&&roots.count==3,"SW92 selected-phase fugacity root fixture");
+ constexpr std::size_t root_index=2U;
+ const auto direct=phase.evaluate(pressure,temperature,x,molality,th::SwPhaseFamily::nonaqueous,root_index,direct_workspace);
+ const auto wrapped=th::evaluate_selected_phase_fugacity(
+     phase,pressure,temperature,std::span<const double>{x},
+     th::Sw92SelectedPhase<double>{molality,th::SwPhaseFamily::nonaqueous,root_index,{}},
+     facade_workspace);
+ st::require(wrapped.ln_phi.size()==direct.ln_phi.size(),"SW92 selected-phase fugacity size");
+ for(std::size_t i=0;i<direct.ln_phi.size();++i) st::near(wrapped.ln_phi[i],direct.ln_phi[i],1e-13L);
+ static_assert(th::SelectedPhaseFugacityCapabilities<th::Sw92Phase<double>>::derivative_support==
+               th::SelectedPhaseFugacityDerivativeSupport::scalar_generic_first_order);
+}
+
 void headers(){st::require(sw92_headers(),"self-contained headers");}
-using Test=std::pair<std::string_view,void(*)()>;constexpr Test tests[]={{"contract",contract},{"water_alpha",water_alpha},{"bip_correlations",bip_correlations},{"mixing_reference",mixing_reference},{"phase_three_roots",phase_three_roots},{"phase_aqueous_reference",phase_aqueous_reference},{"permutations",permutations},{"background_pairs",background_pairs},{"runtime_snapshots",runtime_snapshots},{"applicability_bounds",applicability_bounds},{"input_domains",input_domains},{"headers",headers}};
+using Test=std::pair<std::string_view,void(*)()>;constexpr Test tests[]={{"contract",contract},{"water_alpha",water_alpha},{"bip_correlations",bip_correlations},{"mixing_reference",mixing_reference},{"phase_three_roots",phase_three_roots},{"phase_aqueous_reference",phase_aqueous_reference},{"permutations",permutations},{"background_pairs",background_pairs},{"runtime_snapshots",runtime_snapshots},{"applicability_bounds",applicability_bounds},{"input_domains",input_domains},{"selected_phase_fugacity",selected_phase_fugacity_contract},{"headers",headers}};
 }
 int main(int argc,char**argv){try{if(argc!=2)throw std::invalid_argument("one test name required");for(auto [n,f]:tests)if(n==argv[1]){f();std::cout<<"[PASS] "<<n<<'\n';return 0;}throw std::invalid_argument("unknown test");}catch(const std::exception&e){std::cerr<<"[FAIL] "<<e.what()<<'\n';return 1;}}

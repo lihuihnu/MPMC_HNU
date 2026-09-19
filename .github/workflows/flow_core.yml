@@ -1,0 +1,77 @@
+name: Flow natural-variable core contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flow/**'
+      - 'modules/ad/include/mpmc/ad/**'
+      - 'modules/ad/CMakeLists.txt'
+      - 'tests/flow/core/**'
+      - '.github/workflows/flow_core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure flow core contract
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flow/core \
+            -B build/flow-core \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_FLOW_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build flow core contract
+        run: |
+          cmake --build build/flow-core \
+            --target mpmc_flow_core_tests mpmc_flow_fugacity_tests \
+            --config ${{ matrix.config }} \
+            --parallel 2
+
+      - name: Run flow core contract
+        run: |
+          ctest --test-dir build/flow-core \
+            -C ${{ matrix.config }} \
+            -R '^flow[.](core|fugacity)[.]' \
+            --verbose \
+            --no-tests=error

@@ -67,6 +67,8 @@ jobs:
                       continue
                   if path == ".github/workflows/thermodynamics.yml":
                       infrastructure = True
+                  elif path == prefix + "selected_phase_fugacity.hpp":
+                      selected.add("pr76_pt")
                   elif path in [prefix + "pr76_phase.hpp", prefix + "pr76_roots.hpp"] or path.startswith("tests/thermodynamics/pr76_pt/"):
                       selected.add("pr76_pt")
                   elif path == prefix + "pr76_mixture.hpp":
@@ -114,6 +116,7 @@ jobs:
               (["tests/thermodynamics/pr76/pr76_test.cpp", prefix + "pr76_mixture.hpp"], ["pr76", "pr76_mixture", "pr76_pt"]),
               (["modules/thermodynamics/pr76_mixture.md"], []),
               ([prefix + "pr76_phase.hpp"], ["pr76_pt"]),
+              ([prefix + "selected_phase_fugacity.hpp"], ["pr76_pt"]),
               ([prefix + "pr76_roots.hpp"], ["pr76_pt"]),
               (["tests/thermodynamics/pr76_pt/pt_test.cpp"], ["pr76_pt"]),
               (["tests/thermodynamics/pr76_pt/test_support.hpp"], ["pr76_pt"]),
