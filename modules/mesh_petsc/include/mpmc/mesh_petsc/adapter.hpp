@@ -14,6 +14,7 @@
 #include <mpmc/mesh/tpfa_internal_face_transmissibility_snapshot_3d.hpp>
 
 #include <petscdmplex.h>
+#include <petscmat.h>
 #include <petscsection.h>
 #include <petscsf.h>
 #include <petscvec.h>
@@ -6254,6 +6255,179 @@ make_petsc_mpiaij_symbolic_preallocation_3d(
         return PETSC_ERR_ARG_INCOMP;
     }
 
+    return PETSC_SUCCESS;
+}
+
+/// Create an empty square MPIAIJ matrix using only the frozen symbolic
+/// preallocation bridge.
+///
+/// This gate materializes PETSc row/column ownership and calls
+/// MatMPIAIJSetPreallocation() with the bridge d_nnz/o_nnz arrays. It does not
+/// insert any matrix values, define any physical unknown, or consume a
+/// transmissibility/flux/residual quantity. The returned Mat remains value-free
+/// and is owned by the caller.
+inline PetscErrorCode
+create_empty_petsc_mpiaij_symbolic_matrix_3d(
+    MPI_Comm comm,
+    const PetscMpiAijSymbolicPreallocation3D& bridge,
+    Mat* matrix) {
+    if (matrix == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    if (*matrix != nullptr) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    PetscErrorCode error =
+        detail::validate_communicator(
+            comm,
+            bridge.local_rank(),
+            bridge.rank_count());
+    if (error != PETSC_SUCCESS) return error;
+
+    const PetscInt local_rows =
+        bridge.local_owned_row_count();
+    const PetscInt global_rows =
+        bridge.global_row_count();
+    if (local_rows < 0 ||
+        global_rows < local_rows) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    Mat created = nullptr;
+    error = MatCreate(
+        comm,
+        &created);
+    if (error == PETSC_SUCCESS) {
+        error = MatSetSizes(
+            created,
+            local_rows,
+            local_rows,
+            global_rows,
+            global_rows);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = MatSetType(
+            created,
+            MATMPIAIJ);
+    }
+    if (error == PETSC_SUCCESS) {
+        const auto diagonal_nnz =
+            bridge.diagonal_nnz();
+        const auto off_diagonal_nnz =
+            bridge.off_diagonal_nnz();
+        error = MatMPIAIJSetPreallocation(
+            created,
+            0,
+            diagonal_nnz.empty()
+                ? nullptr
+                : diagonal_nnz.data(),
+            0,
+            off_diagonal_nnz.empty()
+                ? nullptr
+                : off_diagonal_nnz.data());
+    }
+    if (error != PETSC_SUCCESS) {
+        MatDestroy(&created);
+        return error;
+    }
+
+    PetscBool is_mpiaij = PETSC_FALSE;
+    error = PetscObjectTypeCompare(
+        reinterpret_cast<PetscObject>(
+            created),
+        MATMPIAIJ,
+        &is_mpiaij);
+
+    PetscInt actual_local_rows = -1;
+    PetscInt actual_local_columns = -1;
+    PetscInt actual_global_rows = -1;
+    PetscInt actual_global_columns = -1;
+    PetscInt row_start = -1;
+    PetscInt row_end = -1;
+    PetscInt column_start = -1;
+    PetscInt column_end = -1;
+
+    if (error == PETSC_SUCCESS) {
+        error = MatGetLocalSize(
+            created,
+            &actual_local_rows,
+            &actual_local_columns);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = MatGetSize(
+            created,
+            &actual_global_rows,
+            &actual_global_columns);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = MatGetOwnershipRange(
+            created,
+            &row_start,
+            &row_end);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = MatGetOwnershipRangeColumn(
+            created,
+            &column_start,
+            &column_end);
+    }
+    if (error != PETSC_SUCCESS) {
+        MatDestroy(&created);
+        return error;
+    }
+
+    if (is_mpiaij != PETSC_TRUE ||
+        actual_local_rows != local_rows ||
+        actual_local_columns != local_rows ||
+        actual_global_rows != global_rows ||
+        actual_global_columns != global_rows ||
+        row_start != bridge.global_row_start() ||
+        row_end != bridge.global_row_end() ||
+        column_start != row_start ||
+        column_end != row_end) {
+        MatDestroy(&created);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    const auto owned_cells =
+        bridge.owned_cells_in_petsc_row_order();
+    const auto owned_global_rows =
+        bridge.owned_global_rows();
+    const auto owned_global_ids =
+        bridge.owned_cell_global_ids();
+    if (owned_cells.size() !=
+            owned_global_rows.size() ||
+        owned_cells.size() !=
+            owned_global_ids.size() ||
+        owned_cells.size() !=
+            static_cast<std::size_t>(
+                local_rows)) {
+        MatDestroy(&created);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    for (std::size_t index = 0U;
+         index < owned_cells.size();
+         ++index) {
+        const PetscInt expected_row =
+            row_start +
+            static_cast<PetscInt>(
+                index);
+        if (owned_global_rows[index] !=
+                expected_row ||
+            bridge.global_row(
+                owned_cells[index]) !=
+                expected_row ||
+            (index > 0U &&
+             !(owned_global_ids[index - 1U] <
+               owned_global_ids[index]))) {
+            MatDestroy(&created);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+    }
+
+    *matrix = created;
     return PETSC_SUCCESS;
 }
 
