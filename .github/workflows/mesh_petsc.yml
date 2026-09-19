@@ -1,0 +1,58 @@
+name: Mesh/discretization PETSc adapter correctness
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/mesh/include/**'
+      - 'modules/mesh_petsc/**'
+      - 'modules/discretization/**'
+      - 'modules/discretization_petsc/**'
+      - 'tests/mesh/petsc/**'
+      - '.github/workflows/mesh_petsc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mesh-discretization-petsc-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  petsc:
+    name: PETSc 3.19.6 mesh/discretization synthetic MPI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned PETSc and MPI runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpetsc-real3.19-dev=3.19.6+dfsg1-2.2ubuntu2 \
+            openmpi-bin
+          test "$(pkg-config --modversion PETSc)" = "3.19.6"
+          command -v mpiexec
+
+      - name: Configure mesh/discretization PETSc tests
+        run: |
+          cmake -S tests/mesh/petsc -B build/mesh-petsc \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++
+
+      - name: Build mesh/discretization PETSc tests
+        run: |
+          cmake --build build/mesh-petsc \
+            --target mpmc_mesh_discretization_petsc_tests \
+            --parallel 2
+
+      - name: Run PETSc MPI integration tests
+        run: |
+          ctest --test-dir build/mesh-petsc \
+            -R '^(mesh|discretization)[.]petsc[.]' \
+            --verbose \
+            --no-tests=error
