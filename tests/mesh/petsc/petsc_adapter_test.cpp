@@ -4586,6 +4586,154 @@ void verify_assembly_ready_internal_connection_table_stage(
     }
 }
 
+
+void verify_parallel_owned_connection_schedule_stage(
+    const mesh_petsc::ParallelOwnedConnectionSchedule3D& schedule,
+    const mesh_petsc::AssemblyReadyInternalConnectionTable3D& table,
+    const mesh::PartitionSnapshot& partition,
+    bool expect_one_global_materialized_connection) {
+    require(
+        schedule.local_rank() ==
+                partition.local_rank() &&
+            schedule.rank_count() ==
+                partition.rank_count() &&
+            schedule.local_copy_count() ==
+                table.row_count(),
+        "parallel owned connection schedule rank metadata and local copy count");
+
+    const auto verify_row_against_table =
+        [&](const mesh_petsc::
+                AssemblyReadyInternalConnectionRow3D& row,
+            bool should_be_owned) {
+            require(
+                table.contains_face(
+                    row.face),
+                "scheduled row must come from active connection table");
+            const auto& reference =
+                table.row(
+                    row.face);
+            require(
+                reference.face_global ==
+                        row.face_global &&
+                    reference.owner_cell_global ==
+                        row.owner_cell_global &&
+                    reference.neighbour_cell_global ==
+                        row.neighbour_cell_global &&
+                    reference.transmissibility_m3 ==
+                        row.transmissibility_m3,
+                "scheduled row must preserve table stable IDs and T_f");
+            require(
+                partition.global_id(
+                    mesh::EntityKind::face,
+                    row.face) ==
+                    row.face_global &&
+                partition.is_owned(
+                    mesh::EntityKind::face,
+                    row.face) ==
+                    should_be_owned &&
+                partition.is_ghost(
+                    mesh::EntityKind::face,
+                    row.face) !=
+                    should_be_owned,
+                "scheduled row role must match PartitionSnapshot face ownership");
+        };
+
+    for (const auto& row :
+         schedule.assembly_rows()) {
+        verify_row_against_table(
+            row, true);
+    }
+    for (const auto& row :
+         schedule.ghost_rows()) {
+        verify_row_against_table(
+            row, false);
+    }
+
+    std::array<std::uint64_t, 2> global_counts{
+        static_cast<std::uint64_t>(
+            schedule.authoritative_row_count()),
+        static_cast<std::uint64_t>(
+            schedule.ghost_row_count())};
+    require(
+        MPI_Allreduce(
+            MPI_IN_PLACE,
+            global_counts.data(),
+            static_cast<int>(
+                global_counts.size()),
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allreduce authoritative/ghost connection schedule counts");
+
+    if (!expect_one_global_materialized_connection) {
+        require(
+            global_counts[0] == 0U &&
+                global_counts[1] == 0U,
+            "blocked-only schedule must have no authoritative or ghost active rows");
+        return;
+    }
+
+    require(
+        global_counts[0] == 1U &&
+            global_counts[1] == 1U,
+        "one stable materialized face must have exactly one authoritative and one ghost row globally");
+    require(
+        schedule.local_copy_count() == 1U,
+        "two-rank fixture exposes exactly one local copy of materialized connection per rank");
+
+    const bool authoritative =
+        schedule.authoritative_row_count() == 1U;
+    require(
+        authoritative !=
+            (schedule.ghost_row_count() == 1U),
+        "local materialized connection copy must be exactly authoritative or ghost");
+
+    const auto& local_row =
+        authoritative
+            ? schedule.assembly_rows().front()
+            : schedule.ghost_rows().front();
+    std::array<std::uint64_t, 4> local_words{
+        authoritative ? 0U : 1U,
+        local_row.face_global.value(),
+        local_row.owner_cell_global.value(),
+        local_row.neighbour_cell_global.value()};
+    std::array<std::uint64_t, 8> all_words{};
+    require(
+        MPI_Allgather(
+            local_words.data(),
+            static_cast<int>(
+                local_words.size()),
+            MPI_UINT64_T,
+            all_words.data(),
+            static_cast<int>(
+                local_words.size()),
+            MPI_UINT64_T,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allgather authoritative/ghost connection stable IDs");
+
+    double local_t =
+        local_row.transmissibility_m3;
+    std::array<double, 2> all_t{};
+    require(
+        MPI_Allgather(
+            &local_t,
+            1,
+            MPI_DOUBLE,
+            all_t.data(),
+            1,
+            MPI_DOUBLE,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allgather authoritative/ghost connection T_f");
+
+    require(
+        all_words[0] != all_words[4] &&
+            all_words[1] == all_words[5] &&
+            all_words[2] == all_words[6] &&
+            all_words[3] == all_words[7] &&
+            all_t[0] == all_t[1],
+        "authoritative and ghost rows must be identical except for ownership role");
+}
+
 void verify_processed_grdecl_cell_field_stage(
     const mesh::DenseFieldSnapshot& actual,
     const mesh::DenseFieldSnapshot& reference,
@@ -5651,6 +5799,39 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         *overlap_blocked_view,
         field_reference,
         overlap_identities);
+
+    std::optional<
+        mesh_petsc::ParallelOwnedConnectionSchedule3D>
+        overlap_materialized_schedule;
+    std::optional<
+        mesh_petsc::ParallelOwnedConnectionSchedule3D>
+        overlap_blocked_schedule;
+    require_petsc(
+        mesh_petsc::make_parallel_owned_connection_schedule_3d(
+            *overlap_materialized_table,
+            overlap_partition,
+            &overlap_materialized_schedule),
+        "build parallel owned materialized connection schedule");
+    require_petsc(
+        mesh_petsc::make_parallel_owned_connection_schedule_3d(
+            *overlap_blocked_table,
+            overlap_partition,
+            &overlap_blocked_schedule),
+        "build parallel owned blocked-only connection schedule");
+    require(
+        overlap_materialized_schedule.has_value() &&
+            overlap_blocked_schedule.has_value(),
+        "parallel owned connection schedules constructed");
+    verify_parallel_owned_connection_schedule_stage(
+        *overlap_materialized_schedule,
+        *overlap_materialized_table,
+        overlap_partition,
+        true);
+    verify_parallel_owned_connection_schedule_stage(
+        *overlap_blocked_schedule,
+        *overlap_blocked_table,
+        overlap_partition,
+        false);
 
     std::optional<mesh::FaceGeometry3D>
         overlap_materialized_face_geometry;
