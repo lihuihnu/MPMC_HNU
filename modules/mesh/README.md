@@ -230,12 +230,9 @@ PETSc-side ownership extraction 与 core TPFA ownership extraction 均已完成�
 
 **四个 TPFA coefficient/transmissibility headers 的 ownership 迁移已经完成并通过独立 discretization core 与 PETSc 下游回归；当前仍不新增任何 `MatSetValues`、matrix coefficient insertion、pressure equation、mobility/gravity coupling、Darcy flux 或 residual。** 当前 empty MPIAIJ 与 structural column-pattern 仅作为已经验证的 symbolic prototype 保留。
 
-后续适配层仍可负责：
+PR #117 final residue / public API / CI ownership 静态审计已完成收口：mesh 公共头没有保留旧 `mesh::Tpfa*`、旧 `<mpmc/mesh/tpfa_...>` 或 transmissibility-specific public geometry 名称；`tests/mesh/core` 只拥有并链接 mesh core，TPFA/admissibility tests 由 `tests/discretization/core` 拥有；`mesh_external_compatibility.yml` 与 `mesh_baseline_benchmark.yml` 的 path filters 已补齐各自实际 include closure 的 mesh header 依赖。该审计只修 ownership、CI dependency 与文档一致性，不新增任何网格或离散功能。
 
-- mesh/discretization ownership cleanup 已完成；下一步只做 PR #117 最终 residue/API/CI 审计并决定是否结束 Draft，不继续扩展到 `MatSetValues`。
-- 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
-- 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
-- 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
+本 PR 到此停在已经建立的 symbolic boundary：后续若加入 constraints、稳定的 Mat 数值集成、守恒 residual/Jacobian、Darcy flux 或求解器，必须作为独立增量重新审计；PETSc 对象生命周期和错误码继续不得穿透核心网格接口。
 
 PETSc 可使用其已支持的 partitioner；核心模块不复制 ParMETIS/PT-Scotch 算法。没有 PETSc 时，仍必须能够构建、导入、检查、索引和以显式 partition plan 构造本地/ghost 视图。
 

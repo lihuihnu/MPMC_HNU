@@ -6,9 +6,11 @@ on:
     paths:
       - 'tests/mesh/benchmark/**'
       - 'modules/mesh/include/mpmc/mesh/cartesian_3d.hpp'
+      - 'modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp'
       - 'modules/mesh/include/mpmc/mesh/topology.hpp'
       - 'modules/mesh/include/mpmc/mesh/csr_adjacency.hpp'
       - 'modules/mesh/include/mpmc/mesh/dense_field.hpp'
+      - 'modules/mesh/include/mpmc/mesh/entity.hpp'
       - 'modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp'
       - 'modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp'
       - 'modules/mesh/include/mpmc/mesh/face_boundary.hpp'
