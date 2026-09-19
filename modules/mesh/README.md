@@ -65,6 +65,10 @@ permeability/K-orthogonality contract 现在建立在独立 `permeability_tensor
 
 `classify_internal_face_transmissibility_admissibility()` 现在把 geometry-side 与 K-side 状态组合为五种 auditable disposition：`direct_normal_projection_k_orthogonal_candidate`、仅 geometry 需要 non-orthogonal treatment、仅 K 需要 treatment、geometry+K 都需要 treatment、以及 degenerate permeability direction。I/K axis-aligned fixture 在 geometry/K 都使用 strict 0-rad policy 时进入 direct candidate；skewed fixture 在双 strict policy 下进入 geometry+K treatment。测试还分别放宽 geometry 或 K policy，验证两类限制可独立触发；只有两边 policy 都显式容许时才进入 candidate。这个 `candidate` 仍不计算 one-sided/two-point transmissibility、不做 harmonic averaging、不算 Darcy flux，也不装配 residual。
 
+one-sided TPFA half-connection coefficient contract 现在建立在独立 `tpfa_half_connection_3d.hpp` 中。单个 cell-face half connection 的输入只包含该 cell 的 Cartesian diagonal permeability `K[m2]`、该 cell 的 outward face unit normal `n[-]` 与 `cell centroid -> face centroid` displacement `d[m]`；定义 `q_half = n^T K d [m3]`、`r2=d^T d [m2]`、`c_half=q_half/r2 [m]`。face area 不属于这一层，因此这里得到的是 length-dimensional coefficient，而不是 area-scaled half transmissibility。owner helper 使用 canonical owner normal 与 owner displacement；internal neighbour helper 独立采用 `n_neighbour=-n_owner` 与 neighbour->face displacement，两侧从不在这一层 harmonic combine。
+
+half-connection degeneracy/sign contract 也已冻结：K components 必须 finite/non-negative，normal 必须 finite unit length，d 必须 finite 且 `d^T d>0`；`n^T K d` 按 `max(K)*|d|` 构造量纲一致的 `[m3]` floating-point tolerance，显著负值视为 outward-normal/cell->face sign violation 并拒绝，落在零容差内则保留为 `zero_projection` 且 coefficient=`0 m`，而不是把合法 zero permeability 当成几何错误。I-interface regression 固定 owner/neighbour coefficient=`200e-15/400e-15 m`，K-interface 固定 `20e-15/24e-15 m`；skewed interface 分别固定为 `1000/sqrt(29)e-15 m` 与 `2000/sqrt(29)e-15 m`，同时再次确认这些 scalar 虽可计算，strict geometry+K admissibility 仍为 `requires_geometry_and_k_non_orthogonal_treatment`。boundary owner half connection 可单独定义，boundary neighbour half connection 明确拒绝。这里仍没有乘 face area、没有 harmonic combination、没有 two-point transmissibility、没有 Darcy flux/residual。
+
 `FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。
@@ -148,7 +152,7 @@ active face processor gate 使用两种正交共享方向：`2×1×1` 两 active
 
 后续适配层仍可负责：
 
-- 在已通过的 geometry + diagonal-permeability + K-orthogonality 联合 contract 上，下一步建议先建立 one-sided TPFA co-normal coefficient contract，只定义每个 cell-face half connection 所需的 `n^T K d / |d|^2` 输入、单位、符号与退化拒绝规则，并继续把 owner/neighbour 两侧结果分开；暂不做 harmonic combination，不生成 two-point transmissibility，不进入 Darcy flux 或 residual；
+- 在已通过的 one-sided coefficient contract 上，下一步建议只增加 area-scaled one-sided half transmissibility contract：定义 `T_half = A_face * c_half [m3]`，继续保留 owner/neighbour 独立值并验证 zero-projection/单位/符号；仍不做 harmonic owner-neighbour combination，不生成 two-point face transmissibility，也不进入 Darcy flux 或 residual；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
