@@ -4,6 +4,7 @@
 #include <mpmc/mesh/permeability_tensor_3d.hpp>
 #include <mpmc/mesh/tpfa_static_face_transmissibility_3d.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -133,6 +134,30 @@ public:
 
 private:
     void validate_and_index() {
+        const double half_pi =
+            0.5 * std::acos(-1.0);
+        if (!std::isfinite(
+                geometry_policy_
+                    .max_direct_normal_projection_angle_rad) ||
+            geometry_policy_
+                    .max_direct_normal_projection_angle_rad <
+                0.0 ||
+            geometry_policy_
+                    .max_direct_normal_projection_angle_rad >=
+                half_pi ||
+            !std::isfinite(
+                k_policy_
+                    .max_half_face_co_normal_angle_rad) ||
+            k_policy_
+                    .max_half_face_co_normal_angle_rad <
+                0.0 ||
+            k_policy_
+                    .max_half_face_co_normal_angle_rad >=
+                half_pi) {
+            throw std::invalid_argument(
+                "mpmc::mesh::TpfaInternalFaceTransmissibilitySnapshot3D: admissibility policy angles must be finite in [0, pi/2)");
+        }
+
         materialized_face_count_ = 0U;
 
         for (std::size_t index = 0U;
@@ -161,6 +186,15 @@ private:
                     entry.static_transmissibility->disposition !=
                         TpfaStaticFaceTransmissibilityDisposition3D::
                             positive_harmonic_combination ||
+                    !std::isfinite(
+                        entry.static_transmissibility
+                            ->face_area_m2) ||
+                    entry.static_transmissibility
+                            ->face_area_m2 <=
+                        0.0 ||
+                    !std::isfinite(
+                        entry.static_transmissibility
+                            ->face_transmissibility_m3) ||
                     entry.static_transmissibility
                             ->face_transmissibility_m3 <=
                         0.0) {
