@@ -273,8 +273,7 @@ inline PetscErrorCode validate_stable_face_gated_tpfa_snapshot_3d(
                 .materialized_face_transmissibilities_m3[i]
                 .has_value();
         switch (snapshot.dispositions[i]) {
-        case mpmc::mesh::
-            TpfaInternalFaceTransmissibilityDisposition3D::
+        case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                 materialized:
             if (!has_value ||
                 !std::isfinite(
@@ -286,17 +285,13 @@ inline PetscErrorCode validate_stable_face_gated_tpfa_snapshot_3d(
                 return PETSC_ERR_ARG_INCOMP;
             }
             break;
-        case mpmc::mesh::
-            TpfaInternalFaceTransmissibilityDisposition3D::
+        case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                 blocked_geometry_non_orthogonal:
-        case mpmc::mesh::
-            TpfaInternalFaceTransmissibilityDisposition3D::
+        case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                 blocked_k_non_orthogonal:
-        case mpmc::mesh::
-            TpfaInternalFaceTransmissibilityDisposition3D::
+        case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                 blocked_geometry_and_k_non_orthogonal:
-        case mpmc::mesh::
-            TpfaInternalFaceTransmissibilityDisposition3D::
+        case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                 blocked_degenerate_permeability_direction:
             if (has_value) {
                 return PETSC_ERR_ARG_INCOMP;
@@ -655,53 +650,42 @@ inline PetscErrorCode migrate_stable_face_gated_tpfa_snapshot_3d(
             disposition_target_data[
                 static_cast<std::size_t>(
                     disposition_offset)];
-        mpmc::mesh::
-            TpfaInternalFaceTransmissibilityDisposition3D
+        mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D
                 disposition;
         switch (raw_disposition) {
         case static_cast<std::uint32_t>(
-                 mpmc::mesh::
-                     TpfaInternalFaceTransmissibilityDisposition3D::
+                 mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                          materialized):
             disposition =
-                mpmc::mesh::
-                    TpfaInternalFaceTransmissibilityDisposition3D::
+                mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                         materialized;
             break;
         case static_cast<std::uint32_t>(
-                 mpmc::mesh::
-                     TpfaInternalFaceTransmissibilityDisposition3D::
+                 mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                          blocked_geometry_non_orthogonal):
             disposition =
-                mpmc::mesh::
-                    TpfaInternalFaceTransmissibilityDisposition3D::
+                mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                         blocked_geometry_non_orthogonal;
             break;
         case static_cast<std::uint32_t>(
-                 mpmc::mesh::
-                     TpfaInternalFaceTransmissibilityDisposition3D::
+                 mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                          blocked_k_non_orthogonal):
             disposition =
-                mpmc::mesh::
-                    TpfaInternalFaceTransmissibilityDisposition3D::
+                mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                         blocked_k_non_orthogonal;
             break;
         case static_cast<std::uint32_t>(
-                 mpmc::mesh::
-                     TpfaInternalFaceTransmissibilityDisposition3D::
+                 mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                          blocked_geometry_and_k_non_orthogonal):
             disposition =
-                mpmc::mesh::
-                    TpfaInternalFaceTransmissibilityDisposition3D::
+                mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                         blocked_geometry_and_k_non_orthogonal;
             break;
         case static_cast<std::uint32_t>(
-                 mpmc::mesh::
-                     TpfaInternalFaceTransmissibilityDisposition3D::
+                 mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                          blocked_degenerate_permeability_direction):
             disposition =
-                mpmc::mesh::
-                    TpfaInternalFaceTransmissibilityDisposition3D::
+                mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                         blocked_degenerate_permeability_direction;
             break;
         default:
@@ -729,8 +713,7 @@ inline PetscErrorCode migrate_stable_face_gated_tpfa_snapshot_3d(
 
         std::optional<double> value;
         if (disposition ==
-            mpmc::mesh::
-                TpfaInternalFaceTransmissibilityDisposition3D::
+            mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                     materialized) {
             if (value_dof != 1) {
                 *target_snapshot =
@@ -926,8 +909,7 @@ public:
         return entry(face).global;
     }
 
-    [[nodiscard]] mpmc::mesh::
-        TpfaInternalFaceTransmissibilityDisposition3D
+    [[nodiscard]] mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D
     disposition(mpmc::mesh::LocalIndex face) const {
         return entry(face).disposition;
     }
@@ -1013,8 +995,7 @@ private:
                     .transmissibility_m3
                     .has_value();
             switch (local_entry.disposition) {
-            case mpmc::mesh::
-                TpfaInternalFaceTransmissibilityDisposition3D::
+            case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                     materialized:
                 if (!has_value ||
                     !std::isfinite(
@@ -1028,17 +1009,13 @@ private:
                 }
                 ++materialized_face_count_;
                 break;
-            case mpmc::mesh::
-                TpfaInternalFaceTransmissibilityDisposition3D::
+            case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                     blocked_geometry_non_orthogonal:
-            case mpmc::mesh::
-                TpfaInternalFaceTransmissibilityDisposition3D::
+            case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                     blocked_k_non_orthogonal:
-            case mpmc::mesh::
-                TpfaInternalFaceTransmissibilityDisposition3D::
+            case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                     blocked_geometry_and_k_non_orthogonal:
-            case mpmc::mesh::
-                TpfaInternalFaceTransmissibilityDisposition3D::
+            case mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                     blocked_degenerate_permeability_direction:
                 if (has_value) {
                     throw std::invalid_argument(
@@ -1451,8 +1428,7 @@ make_assembly_ready_internal_connection_table_3d(
     for (const auto& gated :
          view.entries()) {
         if (gated.disposition !=
-            mpmc::mesh::
-                TpfaInternalFaceTransmissibilityDisposition3D::
+            mpmc::discretization::TpfaInternalFaceTransmissibilityDisposition3D::
                     materialized) {
             continue;
         }
