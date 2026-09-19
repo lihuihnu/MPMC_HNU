@@ -3,6 +3,7 @@
 
 #include <mpmc/mesh/tpfa_half_connection_3d.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
