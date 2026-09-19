@@ -59,6 +59,12 @@ non-orthogonality 现在也是 internal-face core geometry contract：令 `d_cc 
 
 transmissibility-geometry admissibility 现在只做 geometry-side internal-face classification。`TransmissibilityGeometryAdmissibilityPolicy3D` 要求调用方显式提供 `max_direct_normal_projection_angle_rad`，core 不内置任意 5°/10° 等默认阈值；`0` 表示严格几何正交。`classify_internal_face_transmissibility_geometry()` 仅接受 internal face，并返回 `direct_normal_projection_allowed` 或 `requires_non_orthogonal_treatment`，同时回报实际 non-orthogonality angle 与本次 policy threshold。原 I/K 正交 fixture 在严格 0-rad policy 下必须 direct；约 21.8014° 的 skewed fixture 在严格 policy 下必须标记需要非正交处理，只有调用方显式给出大于该实际角度的 policy 时才允许 direct。boundary face、负阈值、NaN 以及 `>=pi/2` policy 均拒绝。这里的 `direct_normal_projection_allowed` 只表示几何满足显式角度 policy，并不代表完整 TPFA 物理可接受；由于尚未使用 permeability tensor，本 Gate 明确不宣称满足 K-orthogonality。
 
+permeability/K-orthogonality contract 现在建立在独立 `permeability_tensor_3d.hpp` 中。当前 processed `PERMX/PERMY/PERMZ` 必须是 topology-aligned scalar cell fields、unit=`m2`，并明确映射为当前 mesh/world Cartesian basis 下的 `diag(Kxx,Kyy,Kzz)=diag(PERMX,PERMY,PERMZ)`；仓库尚无局部主轴旋转或 off-diagonal tensor metadata，因此本 Gate 不猜 rotated tensor。零值允许保留为非负 permeability，但若某 half-face 的 co-normal direction 因零/退化 permeability 无法定义，则返回独立 `degenerate_permeability_direction` 状态。
+
+真正的 K-orthogonality 判据采用 half-face co-normal 形式，而不是把 `K*d_cc` 直接冒充 K-orthogonality：owner 侧检查 `K_owner*n_owner` 与 `owner_centroid->face_centroid` 的夹角，neighbour 侧用自身 outward normal `n_neighbour=-n_owner` 检查 `K_neighbour*n_neighbour` 与 `neighbour_centroid->face_centroid` 的夹角；`KOrthogonalityAdmissibilityPolicy3D` 同样要求调用方显式提供最大 half-face co-normal angle，`0` 表示严格 K-orthogonal。用户关心的 `K*d_cc` 与 owner face normal 的方向一致性仍作为 `CenterLinePermeabilityDirectionDiagnostic3D` 输出，但只作 diagnostic，不参与数学 K-orthogonality gate，因为对 anisotropic K 两者一般不等价。skewed fixture 中该差异被固定成 regression：center-line `K*d_cc` diagnostic angle 约 `21.8014°`，而标准 half-face co-normal angles 由于 `PERMX/PERMY` 各向异性分别约为 owner `11.3099°`、neighbour `8.5308°`。
+
+`classify_internal_face_transmissibility_admissibility()` 现在把 geometry-side 与 K-side 状态组合为五种 auditable disposition：`direct_normal_projection_k_orthogonal_candidate`、仅 geometry 需要 non-orthogonal treatment、仅 K 需要 treatment、geometry+K 都需要 treatment、以及 degenerate permeability direction。I/K axis-aligned fixture 在 geometry/K 都使用 strict 0-rad policy 时进入 direct candidate；skewed fixture 在双 strict policy 下进入 geometry+K treatment。测试还分别放宽 geometry 或 K policy，验证两类限制可独立触发；只有两边 policy 都显式容许时才进入 candidate。这个 `candidate` 仍不计算 one-sided/two-point transmissibility、不做 harmonic averaging、不算 Darcy flux，也不装配 residual。
+
 `FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。
@@ -142,7 +148,7 @@ active face processor gate 使用两种正交共享方向：`2×1×1` 两 active
 
 后续适配层仍可负责：
 
-- 在已通过的 geometry-side transmissibility admissibility contract 上，下一步建议先建立 permeability-tensor / K-orthogonality contract：明确当前 `PERMX/PERMY/PERMZ` 如何形成 cell-local tensor、如何判断 `K·d_cc` 与 face normal 的方向一致性，以及 geometry-direct 与 K-orthogonal 的联合状态；仍先不计算 transmissibility 数值、不进入 Darcy flux 或 residual；
+- 在已通过的 geometry + diagonal-permeability + K-orthogonality 联合 contract 上，下一步建议先建立 one-sided TPFA co-normal coefficient contract，只定义每个 cell-face half connection 所需的 `n^T K d / |d|^2` 输入、单位、符号与退化拒绝规则，并继续把 owner/neighbour 两侧结果分开；暂不做 harmonic combination，不生成 two-point transmissibility，不进入 Darcy flux 或 residual；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
