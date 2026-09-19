@@ -2405,6 +2405,32 @@ PERMZ
 )grdecl";
 }
 
+std::string grdecl_skewed_two_cell_fixture() {
+    return R"grdecl(-- valid skewed 2x1x1 corner-point deck
+SPECGRID
+  2 1 1 1 F /
+COORD
+  0.0 0 0   0.0 0 1
+  1.2 0 0   1.2 0 1
+  2.0 0 0   2.0 0 1
+  0.0 1 0   0.0 1 1
+  0.8 1 0   0.8 1 1
+  2.0 1 0   2.0 1 1 /
+ZCORN
+  8*0 8*1 /
+ACTNUM
+  2*1 /
+PORO
+  0.20 0.35 /
+PERMX
+  100 200 /
+PERMY
+  50 75 /
+PERMZ
+  10 20 /
+)grdecl";
+}
+
 std::string grdecl_fault_split_two_cell_fixture() {
     return R"grdecl(SPECGRID
   2 1 1 1 F /
@@ -3173,6 +3199,29 @@ void require_shared_operator_axis(
         inputs.neighbour_normal_distance_m.has_value(),
         "3D transmissibility neighbour distance");
 
+    const auto non_orthogonality =
+        op.internal_non_orthogonality(
+            interface);
+    require(
+        non_orthogonality.has_value() &&
+            inputs.internal_non_orthogonality.has_value(),
+        "3D internal face exposes non-orthogonality geometry");
+    require_close(
+        non_orthogonality->center_distance_m,
+        1.0,
+        1.0e-14,
+        "3D orthogonal center distance");
+    require_close(
+        non_orthogonality->normal_alignment_cosine,
+        1.0,
+        1.0e-14,
+        "3D orthogonal normal alignment cosine");
+    require_close(
+        non_orthogonality->angle_rad,
+        0.0,
+        1.0e-14,
+        "3D orthogonal non-orthogonality angle");
+
     const auto& face_cells =
         processed.topology.relation(
             mesh::EntityKind::face,
@@ -3196,8 +3245,10 @@ void require_shared_operator_axis(
                 !op.neighbour_to_face_displacement_m(
                     local).has_value() &&
                 !op.neighbour_normal_distance_m(
+                    local).has_value() &&
+                !op.internal_non_orthogonality(
                     local).has_value(),
-            "3D boundary face has no neighbour geometry");
+            "3D boundary face has no neighbour/non-orthogonality geometry");
         require(
             op.owner_normal_distance_m(local) > 0.0,
             "3D boundary owner normal distance positive");
@@ -3232,6 +3283,228 @@ void cell_face_geometric_operator_3d() {
         {0.0, 0.0, 0.5},
         {0.0, 0.0, -0.5},
         {0.0, 0.0, 1.0});
+}
+
+void cell_face_geometric_operator_3d_skewed() {
+    const auto processed =
+        mesh::process_active_corner_point_grid(
+            mesh::import_grdecl(
+                grdecl_skewed_two_cell_fixture(),
+                mesh::GrdeclImportOptions{
+                    1.0, 1.0e-15}));
+
+    require_active_processor_shape(
+        processed);
+    require_close(
+        processed.cell_volumes_m3[0],
+        1.0,
+        1.0e-14,
+        "skewed first cell volume");
+    require_close(
+        processed.cell_volumes_m3[1],
+        1.0,
+        1.0e-14,
+        "skewed second cell volume");
+
+    const auto op =
+        mesh::make_cell_face_geometric_operator_3d(
+            processed.topology,
+            processed.vertex_coordinates_m,
+            processed.face_geometry);
+    const auto interface =
+        only_shared_face(
+            processed.topology);
+
+    require_close(
+        op.cell_centroid_m(
+            mesh::LocalIndex{0U}).x_m,
+        0.5,
+        1.0e-14,
+        "skewed owner 8-corner centroid x");
+    require_close(
+        op.cell_centroid_m(
+            mesh::LocalIndex{0U}).y_m,
+        0.5,
+        1.0e-14,
+        "skewed owner 8-corner centroid y");
+    require_close(
+        op.cell_centroid_m(
+            mesh::LocalIndex{1U}).x_m,
+        1.5,
+        1.0e-14,
+        "skewed neighbour 8-corner centroid x");
+    require_close(
+        op.cell_centroid_m(
+            mesh::LocalIndex{1U}).y_m,
+        0.5,
+        1.0e-14,
+        "skewed neighbour 8-corner centroid y");
+
+    const auto face_centroid =
+        processed.face_geometry
+            .face_centroid_m(interface);
+    require_close(
+        face_centroid.x_m,
+        1.0,
+        1.0e-14,
+        "skewed interface centroid x");
+    require_close(
+        face_centroid.y_m,
+        0.5,
+        1.0e-14,
+        "skewed interface centroid y");
+    require_close(
+        face_centroid.z_m,
+        0.5,
+        1.0e-14,
+        "skewed interface centroid z");
+
+    const double sqrt29 =
+        std::sqrt(29.0);
+    const double expected_area =
+        sqrt29 / 5.0;
+    const double expected_normal_x =
+        5.0 / sqrt29;
+    const double expected_normal_y =
+        2.0 / sqrt29;
+    const double expected_distance =
+        2.5 / sqrt29;
+    const double expected_angle =
+        std::acos(expected_normal_x);
+
+    require_close(
+        processed.face_geometry
+            .face_area_m2(interface),
+        expected_area,
+        1.0e-14,
+        "skewed interface area");
+    const auto normal =
+        processed.face_geometry
+            .face_owner_unit_normal(
+                interface);
+    require_close(
+        normal.x,
+        expected_normal_x,
+        1.0e-14,
+        "skewed interface normal x");
+    require_close(
+        normal.y,
+        expected_normal_y,
+        1.0e-14,
+        "skewed interface normal y");
+    require_close(
+        normal.z,
+        0.0,
+        1.0e-14,
+        "skewed interface normal z");
+
+    const auto owner_displacement =
+        op.owner_to_face_displacement_m(
+            interface);
+    const auto neighbour_displacement =
+        op.neighbour_to_face_displacement_m(
+            interface);
+    require(
+        neighbour_displacement.has_value(),
+        "skewed interface neighbour displacement");
+    require_close(
+        owner_displacement.x_m,
+        0.5,
+        1.0e-14,
+        "skewed owner displacement x");
+    require_close(
+        owner_displacement.y_m,
+        0.0,
+        1.0e-14,
+        "skewed owner displacement y");
+    require_close(
+        neighbour_displacement->x_m,
+        -0.5,
+        1.0e-14,
+        "skewed neighbour displacement x");
+    require_close(
+        neighbour_displacement->y_m,
+        0.0,
+        1.0e-14,
+        "skewed neighbour displacement y");
+
+    require_close(
+        op.owner_normal_distance_m(
+            interface),
+        expected_distance,
+        1.0e-14,
+        "skewed owner positive normal distance");
+    require(
+        op.neighbour_normal_distance_m(
+            interface).has_value(),
+        "skewed neighbour normal distance exists");
+    require_close(
+        *op.neighbour_normal_distance_m(
+            interface),
+        expected_distance,
+        1.0e-14,
+        "skewed neighbour positive normal distance");
+    require(
+        op.owner_normal_distance_m(interface) > 0.0 &&
+            *op.neighbour_normal_distance_m(interface) > 0.0,
+        "skewed two-sided normal distances remain positive");
+
+    const auto non_orthogonality =
+        op.internal_non_orthogonality(
+            interface);
+    require(
+        non_orthogonality.has_value(),
+        "skewed internal face non-orthogonality exists");
+    require_close(
+        non_orthogonality
+            ->owner_to_neighbour_displacement_m.x_m,
+        1.0,
+        1.0e-14,
+        "skewed centre vector x");
+    require_close(
+        non_orthogonality
+            ->owner_to_neighbour_displacement_m.y_m,
+        0.0,
+        1.0e-14,
+        "skewed centre vector y");
+    require_close(
+        non_orthogonality->center_distance_m,
+        1.0,
+        1.0e-14,
+        "skewed centre distance");
+    require_close(
+        non_orthogonality
+            ->normal_alignment_cosine,
+        expected_normal_x,
+        1.0e-14,
+        "skewed normal alignment cosine");
+    require_close(
+        non_orthogonality->angle_rad,
+        expected_angle,
+        1.0e-14,
+        "skewed non-orthogonality angle");
+    require(
+        non_orthogonality->angle_rad >
+                20.0 * std::acos(-1.0) / 180.0 &&
+            non_orthogonality->angle_rad <
+                25.0 * std::acos(-1.0) / 180.0,
+        "skewed fixture must be visibly non-orthogonal");
+
+    const auto transmissibility_geometry =
+        op.transmissibility_geometry(
+            interface);
+    require(
+        transmissibility_geometry
+            .internal_non_orthogonality
+            .has_value(),
+        "skewed transmissibility geometry exposes non-orthogonality");
+    require_close(
+        transmissibility_geometry
+            .internal_non_orthogonality
+            ->angle_rad,
+        expected_angle,
+        1.0e-14,
+        "skewed transmissibility non-orthogonality angle");
 }
 
 mesh::FaceGeometry3D modified_face_geometry(
@@ -4284,6 +4557,7 @@ int main(int argc, char** argv) {
         else if (name == "active_corner_point_activity_mapping") { active_corner_point_activity_mapping(); }
         else if (name == "active_corner_point_invalid") { active_corner_point_invalid(); }
         else if (name == "cell_face_geometric_operator_3d") { cell_face_geometric_operator_3d(); }
+        else if (name == "cell_face_geometric_operator_3d_skewed") { cell_face_geometric_operator_3d_skewed(); }
         else if (name == "cell_face_geometric_operator_3d_invalid") { cell_face_geometric_operator_3d_invalid(); }
         else if (name == "dof_layout_snapshot") { dof_layout_snapshot(); }
         else if (name == "dof_layout_invalid") { dof_layout_invalid(); }
