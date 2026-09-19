@@ -71,6 +71,8 @@ half-connection degeneracy/sign contract 也已冻结：K components 必须 fini
 
 area-scaled one-sided half transmissibility contract 现在建立在独立 `tpfa_half_transmissibility_3d.hpp` 中，只做 `T_half=A_face*c_half`。结果对象保留原 `TpfaHalfConnectionCoefficient3D`，并附带 `face_area_m2` 与 `half_transmissibility_m3`，因此审计链保持 `n^T K d [m3] -> d^T d [m2] -> c_half [m] -> A_face [m2] -> T_half [m3]`。area 必须 finite 且严格为正；输入 half-connection 的 projection、numerator、denominator 与 coefficient 还会再次做一致性检查，`zero_projection` 必须精确保留为 `0 m3`，positive projection 必须得到 finite positive `T_half`。owner wrapper 直接使用该 face 的 area 与 owner half coefficient；internal neighbour wrapper 对同一 face area 独立缩放 neighbour half coefficient，不做任何 owner/neighbour combine。I-interface area=1 因而 owner/neighbour `T_half=200e-15/400e-15 m3`，K-interface 为 `20e-15/24e-15 m3`；skewed interface 使用 `A=sqrt(29)/5 m2`，把原 `1000/sqrt(29)e-15` 与 `2000/sqrt(29)e-15 m` 分别缩放为 `200e-15/400e-15 m3`。strict geometry+K admissibility 仍保持 non-orthogonal treatment 状态，说明 area scaling 不绕过上游 admissibility。boundary owner half transmissibility 可独立定义，boundary neighbour 继续拒绝。这里仍没有 harmonic combination、没有 two-point face transmissibility、没有 Darcy flux/residual。
 
+internal-face two-sided static transmissibility contract 现在建立在独立 `tpfa_static_face_transmissibility_3d.hpp` 中，只消费同一 physical face 上已经验证的 owner/neighbour `T_half [m3]`。两侧都为 finite positive 时定义 `T_f=T_o*T_n/(T_o+T_n) [m3]`；实现用代数等价的 `min(T_o,T_n)/(1+min/max)`，避免中间乘积 overflow，并允许极端动态范围下因舍入得到恰好等于较小 half。组合结果使用对交换完全对称的 disposition：`positive_harmonic_combination`、`zero_due_to_one_half`、`zero_due_to_both_halves`；交换 owner/neighbour 后 disposition、face area 与 `T_f` 必须不变。任一合法 `zero_projection` half 都使静态 face transmissibility 精确为 `0 m3`；both-zero 也为 0，但使用独立 both-zero 状态。负值、NaN/Inf、positive-projection 却为 zero、zero-projection 却为 positive、half 内部 numerator/denominator/coefficient 与 area-scaled value 不一致都拒绝；owner/neighbour half 还必须使用同一 face area。I-interface `200e-15/400e-15 m3` 合成为 `400/3 e-15 m3`，K-interface `20e-15/24e-15 m3` 合成为 `120/11 e-15 m3`；skewed interface 的 half values 同为 `200e-15/400e-15 m3`，因此静态组合也为 `400/3 e-15 m3`，但 strict geometry+K admissibility 仍保持 non-orthogonal treatment，说明“静态 scalar 可计算”仍不等于允许 direct TPFA。另有大 finite half 回归验证不会因 `T_o*T_n` 中间乘积溢出。这里仍没有 pressure、mobility、gravity、Darcy flux 或 residual。
+
 `FaceBoundarySnapshot` 与 geometry 独立，只消费 `Topology::face->cell`：一个相邻 cell 定义为 boundary，两个定义为 interior，0 个或多于 2 个都拒绝。每个 face 对齐保存 1-byte `FaceClassification` 与 32-bit `PhysicalTag`；tag `0` 保留为 untagged，非零 tag 只允许出现在 boundary face，同一 tag 可重复用于一个 physical group。这里不解释 tag 的任何压力/流量/壁面/井/材料语义。
 
 字段系统必须记录 entity location、component count、数值类型语义与单位/来源元数据，不允许仅靠字符串猜测布局。
@@ -154,7 +156,7 @@ active face processor gate 使用两种正交共享方向：`2×1×1` 两 active
 
 后续适配层仍可负责：
 
-- 在已通过的 area-scaled one-sided half transmissibility contract 上，下一步建议只建立 internal-face two-sided combination contract：明确 owner/neighbour 两个 `T_half` 的 harmonic combination、zero-side/degenerate-side 语义、单位与对称性，并继续只输出静态 face transmissibility；仍不引入 pressure、mobility、Darcy flux 或 residual；
+- 在已通过的 two-sided static face transmissibility contract 上，下一步建议建立一个 admissibility-gated internal-face transmissibility snapshot：只对 geometry/K 联合状态为 direct candidate 的 internal faces 物化 `T_f`，其余 face 保留明确的 blocked/non-orthogonal disposition；仍不引入 pressure、mobility、gravity、Darcy flux 或 residual；
 - 在已有 point/global/section SF 与 Vec 基线上加入 constraints 与稳定 Mat integration；
 - 使用 PETSc 的分发/overlap 机制验证 partition 与 ghost；
 - 保持 PETSc 对象生命周期和错误码不穿透到核心网格接口。
