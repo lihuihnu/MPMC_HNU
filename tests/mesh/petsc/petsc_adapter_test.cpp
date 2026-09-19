@@ -4883,6 +4883,174 @@ void verify_cell_pair_sparsity_stencil_stage(
         "both cell-row owner ranks reconstruct the same stable cell pair from authoritative rows only");
 }
 
+
+void verify_petsc_mpiaij_symbolic_preallocation_stage(
+    const mesh_petsc::PetscMpiAijSymbolicPreallocation3D& bridge,
+    const mesh_petsc::CellPairSparsityStencilSnapshot3D& sparsity,
+    const mesh::PartitionSnapshot& partition,
+    bool expect_remote_coupling) {
+    require(
+        bridge.local_rank() ==
+                partition.local_rank() &&
+            bridge.rank_count() ==
+                partition.rank_count() &&
+            bridge.local_owned_row_count() ==
+                static_cast<PetscInt>(
+                    partition.owned_count(
+                        mesh::EntityKind::cell)) &&
+            bridge.global_row_count() == 2 &&
+            bridge.global_row_end() -
+                    bridge.global_row_start() ==
+                1,
+        "symbolic MPIAIJ bridge PETSc row ownership metadata");
+
+    require(
+        bridge.owned_cells_in_petsc_row_order().size() ==
+                1U &&
+            bridge.owned_cell_global_ids().size() ==
+                1U &&
+            bridge.owned_global_rows().size() ==
+                1U &&
+            bridge.diagonal_nnz().size() ==
+                1U &&
+            bridge.off_diagonal_nnz().size() ==
+                1U,
+        "symbolic MPIAIJ bridge array sizes");
+
+    const auto owned_cell =
+        bridge.owned_cells_in_petsc_row_order()
+            .front();
+    const auto owned_global =
+        bridge.owned_cell_global_ids()
+            .front();
+    const PetscInt owned_row =
+        bridge.owned_global_rows()
+            .front();
+
+    require(
+        partition.is_owned(
+            mesh::EntityKind::cell,
+            owned_cell) &&
+            partition.global_id(
+                mesh::EntityKind::cell,
+                owned_cell) ==
+                owned_global &&
+            owned_row ==
+                bridge.global_row_start() &&
+            bridge.global_row(
+                owned_cell) ==
+                owned_row,
+        "symbolic MPIAIJ owned stable cell maps to PETSc local row range");
+
+    const auto& structural =
+        sparsity.structural_counts(
+            owned_cell);
+    require(
+        bridge.diagonal_nnz().front() ==
+                static_cast<PetscInt>(
+                    structural.diagonal_block_nnz) &&
+            bridge.off_diagonal_nnz().front() ==
+                static_cast<PetscInt>(
+                    structural.off_diagonal_block_nnz),
+        "symbolic MPIAIJ arrays exactly mirror structural d_nnz/o_nnz counts");
+
+    require(
+        bridge.diagonal_nnz().front() == 1 &&
+            bridge.off_diagonal_nnz().front() ==
+                (expect_remote_coupling ? 1 : 0),
+        "symbolic MPIAIJ fixture structural counts");
+
+    mesh::LocalIndex ghost_cell{0U};
+    bool found_ghost = false;
+    for (std::size_t local = 0U;
+         local < partition.entity_count(
+             mesh::EntityKind::cell);
+         ++local) {
+        const auto cell =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        local)};
+        if (partition.is_ghost(
+                mesh::EntityKind::cell,
+                cell)) {
+            ghost_cell = cell;
+            found_ghost = true;
+            break;
+        }
+    }
+    require(
+        found_ghost,
+        "symbolic MPIAIJ fixture resolves one ghost cell");
+
+    const PetscInt ghost_row =
+        bridge.global_row(
+            ghost_cell);
+    require(
+        ghost_row >= 0 &&
+            ghost_row <
+                bridge.global_row_count() &&
+            (ghost_row <
+                 bridge.global_row_start() ||
+             ghost_row >=
+                 bridge.global_row_end()),
+        "ghost stable cell row is outside local PETSc ownership range");
+
+    std::array<std::uint64_t, 2>
+        local_owned_record{
+            owned_global.value(),
+            static_cast<std::uint64_t>(
+                owned_row)};
+    std::array<std::uint64_t, 4>
+        all_owned_records{};
+    require(
+        MPI_Allgather(
+            local_owned_record.data(),
+            static_cast<int>(
+                local_owned_record.size()),
+            MPI_UINT64_T,
+            all_owned_records.data(),
+            static_cast<int>(
+                local_owned_record.size()),
+            MPI_UINT64_T,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        "MPI_Allgather stable cell to PETSc global-row numbering");
+
+    require(
+        all_owned_records[0] !=
+                all_owned_records[2] &&
+            all_owned_records[1] !=
+                all_owned_records[3] &&
+            ((all_owned_records[1] == 0U &&
+              all_owned_records[3] == 1U) ||
+             (all_owned_records[1] == 1U &&
+              all_owned_records[3] == 0U)),
+        "owned stable cell IDs map one-to-one onto PETSc global rows [0,2)");
+
+    const auto ghost_global =
+        partition.global_id(
+            mesh::EntityKind::cell,
+            ghost_cell);
+    bool ghost_matches_remote_owner = false;
+    for (std::size_t record = 0U;
+         record < 2U;
+         ++record) {
+        const std::size_t base =
+            2U * record;
+        if (all_owned_records[base] ==
+            ghost_global.value()) {
+            ghost_matches_remote_owner =
+                all_owned_records[
+                    base + 1U] ==
+                static_cast<std::uint64_t>(
+                    ghost_row);
+        }
+    }
+    require(
+        ghost_matches_remote_owner,
+        "point-SF ghost row resolves to the remote owner's stable-cell PETSc row");
+}
+
 void verify_processed_grdecl_cell_field_stage(
     const mesh::DenseFieldSnapshot& actual,
     const mesh::DenseFieldSnapshot& reference,
@@ -6011,6 +6179,43 @@ void verify_processed_grdecl_3d_dmplex_distribute_overlap() {
         overlap_partition,
         true);
     verify_cell_pair_sparsity_stencil_stage(
+        *blocked_sparsity,
+        overlap_partition,
+        false);
+
+    std::optional<
+        mesh_petsc::PetscMpiAijSymbolicPreallocation3D>
+        materialized_preallocation;
+    std::optional<
+        mesh_petsc::PetscMpiAijSymbolicPreallocation3D>
+        blocked_preallocation;
+    require_petsc(
+        mesh_petsc::make_petsc_mpiaij_symbolic_preallocation_3d(
+            overlap_dm,
+            *materialized_sparsity,
+            overlap_partition,
+            overlap_identities,
+            &materialized_preallocation),
+        "build materialized symbolic MPIAIJ preallocation bridge");
+    require_petsc(
+        mesh_petsc::make_petsc_mpiaij_symbolic_preallocation_3d(
+            overlap_dm,
+            *blocked_sparsity,
+            overlap_partition,
+            overlap_identities,
+            &blocked_preallocation),
+        "build blocked-only symbolic MPIAIJ preallocation bridge");
+    require(
+        materialized_preallocation.has_value() &&
+            blocked_preallocation.has_value(),
+        "symbolic MPIAIJ preallocation bridges constructed");
+    verify_petsc_mpiaij_symbolic_preallocation_stage(
+        *materialized_preallocation,
+        *materialized_sparsity,
+        overlap_partition,
+        true);
+    verify_petsc_mpiaij_symbolic_preallocation_stage(
+        *blocked_preallocation,
         *blocked_sparsity,
         overlap_partition,
         false);
