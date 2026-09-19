@@ -201,14 +201,12 @@ combine_fields(
     std::vector<DenseFieldSnapshot> result;
     result.reserve(
         first.size() + second.size());
-    result.insert(
-        result.end(),
-        first.begin(),
-        first.end());
-    result.insert(
-        result.end(),
-        second.begin(),
-        second.end());
+    for (const auto& field : first) {
+        result.push_back(field);
+    }
+    for (const auto& field : second) {
+        result.push_back(field);
+    }
     return result;
 }
 

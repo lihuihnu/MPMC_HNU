@@ -20,18 +20,6 @@ void require(
     }
 }
 
-void require_close(
-    double actual,
-    double expected,
-    double tolerance,
-    const char* message) {
-    if (!std::isfinite(actual) ||
-        std::abs(actual - expected) >
-            tolerance) {
-        throw std::runtime_error(message);
-    }
-}
-
 bool same_values(
     std::span<const double> left,
     std::span<const double> right,

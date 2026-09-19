@@ -39,64 +39,37 @@ jobs:
           set -euo pipefail
           mkdir -p build/external-samples
 
-          curl -fsSL --retry 3 \
-            https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/grid/grids/grid_in_msh_01.2d.v41.msh \
-            -o build/external-samples/dealii-2d.msh
-          test "$(git hash-object build/external-samples/dealii-2d.msh)" = \
-            "638a419514f00782902edb5abbfbabfd5118c9ce"
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/grid/grids/grid_in_msh_01.2d.v41.msh -o build/external-samples/dealii-2d.msh
+          test "$(git hash-object build/external-samples/dealii-2d.msh)" = "638a419514f00782902edb5abbfbabfd5118c9ce"
 
-          curl -fsSL --retry 3 \
-            https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/grid/grids/grid_in_msh_01.3d.v41.msh \
-            -o build/external-samples/dealii-3d.msh
-          test "$(git hash-object build/external-samples/dealii-3d.msh)" = \
-            "7ef8ec2c29d1ce8076629b6ff3da413773e28725"
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/grid/grids/grid_in_msh_01.3d.v41.msh -o build/external-samples/dealii-3d.msh
+          test "$(git hash-object build/external-samples/dealii-3d.msh)" = "7ef8ec2c29d1ce8076629b6ff3da413773e28725"
 
-          curl -fsSL --retry 3 \
-            https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/data_out/data_out_12.with_zlib=off.output \
-            -o build/external-samples/dealii-vtu-bundle.txt
-          test "$(git hash-object build/external-samples/dealii-vtu-bundle.txt)" = \
-            "8a758d03cc098b09f128b7c798651ae867253633"
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/data_out/data_out_12.with_zlib=off.output -o build/external-samples/dealii-vtu-bundle.txt
+          test "$(git hash-object build/external-samples/dealii-vtu-bundle.txt)" = "8a758d03cc098b09f128b7c798651ae867253633"
 
-          curl -fsSL --retry 3 \
-            https://raw.githubusercontent.com/OPM/opm-verteq/33db570bc86b54593fa351fbb28044b51d2a3238/examples/3d/data/tube.grdecl \
-            -o build/external-samples/opm-tube.grdecl
-          test "$(git hash-object build/external-samples/opm-tube.grdecl)" = \
-            "d6e5ed9993f59b5c432e009289cd5228e76d46fd"
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/OPM/opm-verteq/33db570bc86b54593fa351fbb28044b51d2a3238/examples/3d/data/tube.grdecl -o build/external-samples/opm-tube.grdecl
+          test "$(git hash-object build/external-samples/opm-tube.grdecl)" = "d6e5ed9993f59b5c432e009289cd5228e76d46fd"
 
-          curl -fsSL --retry 3 \
-            https://raw.githubusercontent.com/OPM/opm-upscaling/69fb6d4e38d06bd75a00ffab0368ff79cb2196f0/tests/input_data/grids/27cellsAniso.grdecl \
-            -o build/external-samples/opm-27cellsAniso.grdecl
-          test "$(git hash-object build/external-samples/opm-27cellsAniso.grdecl)" = \
-            "c427da4f83663b071c657ecded06bea30da50415"
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/OPM/opm-upscaling/69fb6d4e38d06bd75a00ffab0368ff79cb2196f0/tests/input_data/grids/27cellsAniso.grdecl -o build/external-samples/opm-27cellsAniso.grdecl
+          test "$(git hash-object build/external-samples/opm-27cellsAniso.grdecl)" = "c427da4f83663b071c657ecded06bea30da50415"
 
       - name: Configure external compatibility test
         run: |
-          cmake -S tests/mesh/external_compatibility \
-            -B build/mesh-external \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=g++
+          cmake -S tests/mesh/external_compatibility -B build/mesh-external -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
 
       - name: Build external compatibility test
         run: |
-          cmake --build build/mesh-external \
-            --target mpmc_mesh_external_compatibility \
-            --parallel 2
+          cmake --build build/mesh-external --target mpmc_mesh_external_compatibility --parallel 2
 
       - name: Read export and re-read external meshes
         shell: bash
         run: |
           set -euo pipefail
-          build/mesh-external/mpmc_mesh_external_compatibility \
-            build/external-samples/dealii-2d.msh \
-            build/external-samples/dealii-3d.msh \
-            build/external-samples/dealii-vtu-bundle.txt \
-            build/external-samples/opm-tube.grdecl \
-            build/external-samples/opm-27cellsAniso.grdecl \
-            | tee build/external-compatibility.txt
-
-          grep -q '^\[PASS\] external.mesh.compatibility$' \
-            build/external-compatibility.txt
-          grep -q '^\[PASS\] external.grdecl.opm_tube_native_roundtrip
+          build/mesh-external/mpmc_mesh_external_compatibility build/external-samples/dealii-2d.msh build/external-samples/dealii-3d.msh build/external-samples/dealii-vtu-bundle.txt build/external-samples/opm-tube.grdecl build/external-samples/opm-27cellsAniso.grdecl | tee build/external-compatibility.txt
+          grep -q '^\[PASS\] external.mesh.compatibility$' build/external-compatibility.txt
+          grep -q '^\[PASS\] external.grdecl.opm_tube_native_roundtrip$' build/external-compatibility.txt
+          grep -q '^grdecl_native_export=implemented_minimal_baseline$' build/external-compatibility.txt
 
       - name: Publish compatibility summary
         shell: bash
@@ -106,38 +79,7 @@ jobs:
             echo
             echo 'Pinned upstream samples are downloaded only for this run and verified by Git blob SHA.'
             echo
-            echo '```text'
+            echo '~~~text'
             cat build/external-compatibility.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
- \
-            build/external-compatibility.txt
-          grep -q '^grdecl_native_export=implemented_minimal_baseline
-
-      - name: Publish compatibility summary
-        shell: bash
-        run: |
-          {
-            echo '## External mesh compatibility'
-            echo
-            echo 'Pinned upstream samples are downloaded only for this run and verified by Git blob SHA.'
-            echo
-            echo '```text'
-            cat build/external-compatibility.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
- \
-            build/external-compatibility.txt
-
-      - name: Publish compatibility summary
-        shell: bash
-        run: |
-          {
-            echo '## External mesh compatibility'
-            echo
-            echo 'Pinned upstream samples are downloaded only for this run and verified by Git blob SHA.'
-            echo
-            echo '```text'
-            cat build/external-compatibility.txt
-            echo '```'
+            echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
