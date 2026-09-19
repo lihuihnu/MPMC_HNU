@@ -529,7 +529,7 @@ import_vtu_ascii_3d(
             DenseFieldSnapshot::create(
                 mesh.topology,
                 EntityKind::vertex,
-                field.components,
+                field.component_count,
                 std::move(field.values),
                 std::move(field.metadata)));
     }
@@ -544,7 +544,7 @@ import_vtu_ascii_3d(
             DenseFieldSnapshot::create(
                 mesh.topology,
                 EntityKind::cell,
-                field.components,
+                field.component_count,
                 std::move(field.values),
                 std::move(field.metadata)));
     }
