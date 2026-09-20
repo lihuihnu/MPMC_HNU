@@ -1217,3 +1217,150 @@ This slice still does **not** multiply by absolute permeability or transmissibil
 evaluate `rho*g`, construct a pressure potential difference, upwind mobility, create
 a Darcy face flux, assemble a spatial residual, add source/well terms or insert PETSc
 values.
+
+## 26. Two-cell / one-face phase-potential and upwind contract
+
+The first internal-face flow-direction contract is now defined without multiplying by
+static transmissibility and without creating a Darcy flux.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow/phase_potential_upwind.hpp>
+```
+
+### Geometry and direction
+
+The potential direction is frozen as **owner -> neighbour**:
+
+```text
+d_on = x_neighbour - x_owner [m].
+```
+
+The model-neutral flow core consumes only that displacement. It does not own mesh
+indices and does not recompute cell centers. A later mesh/flow adapter must use the
+existing mesh owner-to-neighbour cell-center displacement from
+`CellFaceGeometricOperator3D`.
+
+`g [m/s^2]` is the physical gravitational-acceleration vector. Thus in a coordinate
+system whose z-axis is positive upward, ordinary gravity has a negative z component.
+
+The phase potential difference is
+
+```text
+DeltaPhi_alpha =
+    (p_alpha,n - p_alpha,o)
+  - rho_alpha,* * g . d_on
+```
+
+in Pa.
+
+This convention is consistent with the already frozen Darcy form
+
+```text
+v_alpha = -K lambda_alpha (grad(p_alpha) - rho_alpha g).
+```
+
+A hydrostatic state therefore satisfies `DeltaPhi_alpha = 0`.
+
+### Face phase-density policy
+
+The v1 policy is explicit and unique:
+
+```text
+rho_alpha,* = 0.5 * (rho_alpha,o + rho_alpha,n).
+```
+
+It is represented by
+`FacePhaseDensityPolicy3P::arithmetic_mean_owner_neighbour`; unsupported enum values
+are rejected rather than silently mapped to another policy.
+
+Its split two-cell Jacobian is retained:
+
+```text
+d rho_* / d q_o = 0.5 d rho_o / d q_o
+d rho_* / d q_n = 0.5 d rho_n / d q_n.
+```
+
+This arithmetic face-density gravity baseline follows the standard form demonstrated
+in the SINTEF/MRST reservoir-simulation material, where the discrete gravity term uses
+`avg(rho)`; MRST multiphase flow also uses single-point upstream mobility weighting.
+
+Reference:
+- K.-A. Lie / SINTEF MRST book material, discrete Darcy flux with arithmetic
+  `avg(rho)`: https://www.sintef.no/contentassets/8af8db2e42614f7fb94fb0c68f5bc256/mrst-book-2015.pdf
+- SINTEF MRST multiphase implementation description: standard upstream mobility
+  weighting.
+
+### Potential Jacobian
+
+Geometry and gravity are frozen face data. With arithmetic face density,
+
+```text
+d DeltaPhi_alpha / d q_o =
+    - d p_alpha,o / d q_o
+    - 0.5 * (d rho_alpha,o / d q_o) * (g . d_on)
+
+d DeltaPhi_alpha / d q_n =
+    + d p_alpha,n / d q_n
+    - 0.5 * (d rho_alpha,n / d q_n) * (g . d_on).
+```
+
+Owner and neighbour gradients are stored separately because the two cells may have
+different dependent-component pivots. This contract does not invent a face-global
+natural-variable column numbering.
+
+### Upstream selection
+
+The future owner->neighbour phase flux is already frozen as
+
+```text
+F_alpha = -T_f * lambda_alpha,up * DeltaPhi_alpha
+```
+
+for positive materialized `T_f`, but this slice does **not** evaluate that expression.
+
+Therefore the single-point upstream rule is:
+
+```text
+DeltaPhi_alpha < 0  -> owner upstream
+DeltaPhi_alpha > 0  -> neighbour upstream
+DeltaPhi_alpha = 0  -> deterministic owner tie branch
+```
+
+The exact-zero state is a non-differentiable switching surface. It is exposed as
+`owner_exact_zero_tie`; selecting owner there is a deterministic branch convention,
+not a claim that the upwind selector has a classical derivative at zero.
+
+For a frozen nonzero branch, the upwind mobility Jacobian is exactly the selected
+cell's local mobility Jacobian and the opposite cell block is zero. The exact-zero tie
+publishes the same owner-branch Jacobian under the explicit tie status.
+
+### Identity boundary
+
+Owner and neighbour must use the same canonical component identity/order. Their local
+composition pivots may differ. Numerical phase slots are assumed to have already been
+aligned by the flow/phase-set orchestration; this face contract does not infer physical
+phase identity from density, Z or root ordering.
+
+### Validation ownership
+
+The dedicated `flow.potential.*` regression covers:
+
+- arithmetic face density and its split owner/neighbour Jacobians;
+- fresh owner/neighbour natural-variable perturbations against the published face-density,
+  phase-potential and branch-frozen upwind-mobility Jacobians for nonzero-drive phases;
+- the physical-gravity-vector sign convention;
+- owner->neighbour pressure and gravity potential direction;
+- one phase with neighbour upstream, one with owner upstream and one exact-zero tie;
+- branch-frozen upwind mobility values/Jacobians;
+- owner/neighbour orientation reversal: `DeltaPhi` changes sign and the same physical
+  upstream state remains selected for nonzero-drive phases;
+- zero-gravity reduction to `p_n-p_o`;
+- mismatched component identity, zero displacement, non-finite gravity, malformed local
+  Jacobian and unsupported density-policy rejection;
+- public-header self containment.
+
+This slice still does **not** consume `T_f`, multiply transmissibility, construct
+phase/component Darcy flux, choose a spatial upwind stencil beyond this one face,
+assemble a residual, add source/well terms or insert PETSc values.

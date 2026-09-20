@@ -71,13 +71,22 @@ target_link_libraries(
         mpmc::flow
         mpmc::ad)
 
+add_executable(
+    mpmc_flow_phase_potential_tests
+    phase_potential_upwind_test.cpp
+    phase_potential_upwind_header.cpp)
+target_link_libraries(
+    mpmc_flow_phase_potential_tests
+    PRIVATE mpmc::flow)
+
 foreach(target IN ITEMS
         mpmc_flow_core_tests
         mpmc_flow_fugacity_tests
         mpmc_flow_accumulation_tests
         mpmc_flow_accumulation_time_tests
         mpmc_flow_saturation_constitutive_tests
-        mpmc_flow_phase_transport_tests)
+        mpmc_flow_phase_transport_tests
+        mpmc_flow_phase_potential_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -220,5 +229,23 @@ foreach(case IN LISTS phase_transport_cases)
         flow.transport.${case}
         PROPERTIES
             LABELS "flow;natural_variables;transport;mass_density;viscosity;mobility"
+            TIMEOUT 30)
+endforeach()
+
+set(phase_potential_cases
+    potential_and_upwind
+    jacobian_fresh_perturbation
+    orientation_reversal
+    zero_gravity
+    invalid_inputs
+    headers)
+foreach(case IN LISTS phase_potential_cases)
+    add_test(
+        NAME flow.potential.${case}
+        COMMAND mpmc_flow_phase_potential_tests ${case})
+    set_tests_properties(
+        flow.potential.${case}
+        PROPERTIES
+            LABELS "flow;phase_potential;gravity;face_density;upwind"
             TIMEOUT 30)
 endforeach()
