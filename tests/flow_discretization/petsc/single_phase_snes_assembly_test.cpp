@@ -652,6 +652,24 @@ make_cells(
                     evaluation->transport,
                     evaluation->caloric,
                     evaluation->rock);
+            input.previous_energy_accumulation
+                ->state_identity.layout =
+                flow::NaturalVariableLayoutDescriptor{
+                    3U,
+                    2U,
+                    {2U, 2U}};
+            input.previous_energy_accumulation
+                ->state_identity.saturation =
+                {0.5, 0.5, 0.0};
+            input.previous_energy_accumulation
+                ->state_identity.phase_composition[0] =
+                {0.20, 0.50, 0.30};
+            input.previous_energy_accumulation
+                ->state_identity.phase_composition[1] =
+                {0.20, 0.50, 0.30};
+            input.previous_energy_accumulation
+                ->state_identity.phase_composition[2]
+                .clear();
         }
         result.push_back(
             std::move(input));

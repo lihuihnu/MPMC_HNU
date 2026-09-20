@@ -12,6 +12,9 @@ on:
       - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
       - 'modules/ad/include/mpmc/ad/**'
       - 'modules/ad/CMakeLists.txt'
+      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_phase_transition.hpp'
+      - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
       - 'tests/flow/core/**'
       - '.github/workflows/flow_core.yml'
   workflow_dispatch:
@@ -29,7 +32,7 @@ jobs:
     uses: ./.github/workflows/_incremental_path_gate.yml
     with:
       paths_json: >-
-        ["modules/flow/**","modules/thermodynamics/CMakeLists.txt","modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp","modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp","modules/ad/include/mpmc/ad/**","modules/ad/CMakeLists.txt","tests/flow/core/**",".github/workflows/flow_core.yml"]
+        ["modules/flow/**","modules/thermodynamics/CMakeLists.txt","modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp","modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp","modules/ad/include/mpmc/ad/**","modules/ad/CMakeLists.txt","modules/flash/include/mpmc/flash/pt_phase_set.hpp","modules/flash/include/mpmc/flash/pt_phase_transition.hpp","modules/flash/include/mpmc/flash/pt_flash_backend.hpp","tests/flow/core/**",".github/workflows/flow_core.yml"]
 
   core:
     needs: incremental-path-gate
@@ -81,7 +84,7 @@ jobs:
       - name: Build flow core contract
         run: |
           cmake --build build/flow-core \
-            --target mpmc_flow_core_tests mpmc_flow_fugacity_tests mpmc_flow_fugacity_linearization_tests mpmc_flow_accumulation_tests mpmc_flow_accumulation_time_tests mpmc_flow_energy_accumulation_tests mpmc_flow_saturation_constitutive_tests mpmc_flow_phase_transport_tests mpmc_flow_phase_potential_tests \
+            --target mpmc_flow_core_tests mpmc_flow_phase_transition_tests mpmc_flow_fugacity_tests mpmc_flow_fugacity_linearization_tests mpmc_flow_accumulation_tests mpmc_flow_accumulation_time_tests mpmc_flow_energy_accumulation_tests mpmc_flow_saturation_constitutive_tests mpmc_flow_phase_transport_tests mpmc_flow_phase_potential_tests \
             --config ${{ matrix.config }} \
             --parallel 2
 

@@ -3416,3 +3416,131 @@ PR76/SW92/CPA end-to-end validation.
 No phase switching, wells, boundary/source terms, single-phase reduction, equation
 scaling or custom ASM subdomains are introduced in this slice.
 
+
+
+## 44. Variable-cardinality phase-set transition contract
+
+The first explicit `1 <-> 2 <-> 3` transition contract is now separated from the
+fixed-cardinality residual/Jacobian implementations.
+
+A phase-count change is **not** authorized by clipping a small phase fraction or by
+deleting/adding a numerical slot. The transition sequence is:
+
+```text
+current accepted natural-variable state
+  -> stability / final phase-set / disappearance evidence
+  -> target topology candidate
+  -> fresh target-topology thermodynamic resolve/review
+  -> model-neutral target phase set
+  -> beta-to-saturation volume projection
+  -> new target natural-variable chart
+  -> fresh target natural-variable nonlinear solve
+  -> final target review
+```
+
+The standalone PT flash remains a phase-set/stability candidate generator. It never
+replaces the component, energy, or fugacity rows of the target natural-variable system.
+
+### 44.1 Appearance and disappearance evidence
+
+`PhaseSetTransitionCandidate` records the source/target active phase counts and the
+reason that the current topology is being challenged. Appearance may be triggered by
+initial stability, final phase-set instability, or provider topology evidence.
+Disappearance requires explicit disappearance/boundary evidence.
+
+A candidate with `target_resolve_required` cannot be projected into flow unknowns.
+Projection is allowed only after the target topology is freshly resolved and published
+as `target_resolved`. This preserves the existing flash-layer rule that a phase is
+never added or removed merely from a source-state fraction endpoint.
+
+The bridge from `PtFlashBackendResult` consumes only the generic accepted phase set
+and `PtPhaseTransitionReport`. It does not infer oil/gas/water, liquid/vapor,
+root identity, or phase family from slot order, density, or compressibility factor.
+
+### 44.2 Mole phase fraction is not saturation
+
+A flash candidate publishes mole phase fractions `beta_alpha`; the flow unknown is
+pore-volume saturation `S_alpha`. They are not interchangeable.
+
+For a freshly resolved target phase set with phase molar density
+`c_alpha [mol / phase-m^3]`, the transition projection uses
+
+```text
+v_alpha ~ beta_alpha / c_alpha
+
+S_alpha =
+    (beta_alpha / c_alpha)
+    / sum_gamma(beta_gamma / c_gamma)
+```
+
+and therefore
+
+```text
+c_mix =
+    1 / sum_gamma(beta_gamma / c_gamma).
+```
+
+No density is guessed by flow. The caller must supply the target selected-phase molar
+densities from the configured thermodynamic/property path.
+
+Each target phase composition must remain strictly positive and normalized. The new
+dependent composition component is selected deterministically as the largest target
+mole fraction for that phase, with the lowest canonical component index winning an
+exact tie. No epsilon floor, clipping, component permutation, or silent normalization
+is introduced.
+
+### 44.3 Material-balance guard
+
+Before a target phase set is projected, its overall composition
+
+```text
+z_i(target) = sum_alpha beta_alpha * x_alpha,i
+```
+
+is checked against the normalized source pore-volume component inventory. The declared
+transition material-balance tolerance is explicit. A phase-set candidate that changes
+the cell's overall component composition is rejected rather than repaired.
+
+The projection is an **initial guess for the target topology**, not an accepted flow
+solution. The target `P*Nc+1` natural-variable residual must still be solved.
+
+### 44.4 Conservative backward-Euler history migration
+
+Previous-time component and energy accumulation are physical conserved history, not
+phase-chart metadata. A phase-count transition therefore carries the previous
+
+- component accumulation `N_i [mol / bulk-m^3]`; and
+- total internal-energy accumulation `U [J / bulk-m^3]`
+
+forward **without recomputing them from the new phase set**.
+
+The transition history migration validates canonical component identity and frozen
+porosity, then copies the previous snapshots unchanged. The previous energy snapshot
+is allowed to retain its source phase-count/state identity while the current target
+state uses a different active phase count. The backward-Euler energy/component
+builders already consume the stored scalar history and do not require previous and
+current topology to match.
+
+The 1P and 2P PETSc assembly contexts no longer impose an extra previous-energy
+phase-count equality check; the 3P context already had topology-neutral history
+semantics.
+
+### 44.5 Per-cell cardinality planning
+
+`NaturalVariableActiveSetLayout` records per-cell
+
+```text
+q_c = P_c * Nc + 1
+```
+
+and deterministic prefix offsets for mixed `P_c in {1,2,3}` cells. This makes the
+required heterogeneous scalar cardinality explicit. For example, with `Nc=3` and
+cell phase counts `[1,2,3]`, local block widths are `[4,7,10]` and the packed
+scalar count is `21`.
+
+This slice does **not yet** replace the existing fixed-width mesh
+`DofLayout/DofNumberingSnapshot` or PETSc MPIAIJ materialization with a
+variable-per-cell section. Therefore fixed 1P, 2P, and 3P production systems remain
+individually operational, while mixed-cardinality global PETSc numbering/assembly is
+the remaining solver-structure step before automatic local switching can run in one
+distributed solve.

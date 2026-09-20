@@ -411,11 +411,6 @@ public:
                             ->state_identity
                             .component_ids !=
                             input.component_ids ||
-                        input
-                            .previous_energy_accumulation
-                            ->state_identity
-                            .layout.phase_count() !=
-                            1U ||
                         !near_roundoff(
                             input
                                 .previous_energy_accumulation

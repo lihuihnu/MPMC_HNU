@@ -9,6 +9,11 @@ if(NOT TARGET mpmc_ad)
         "${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad"
         ad-library)
 endif()
+if(NOT TARGET mpmc_flash)
+    add_subdirectory(
+        "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash"
+        flash-library)
+endif()
 enable_testing()
 
 option(
@@ -27,6 +32,16 @@ add_executable(
 target_link_libraries(
     mpmc_flow_core_tests
     PRIVATE mpmc::flow)
+
+add_executable(
+    mpmc_flow_phase_transition_tests
+    phase_set_transition_test.cpp
+    phase_set_transition_header.cpp)
+target_link_libraries(
+    mpmc_flow_phase_transition_tests
+    PRIVATE
+        mpmc::flow
+        mpmc::flash)
 
 add_executable(
     mpmc_flow_fugacity_tests
@@ -101,6 +116,7 @@ target_link_libraries(
 
 foreach(target IN ITEMS
         mpmc_flow_core_tests
+        mpmc_flow_phase_transition_tests
         mpmc_flow_fugacity_tests
         mpmc_flow_fugacity_linearization_tests
         mpmc_flow_accumulation_tests
@@ -172,6 +188,15 @@ foreach(case IN LISTS core_cases)
             LABELS "flow;natural_variables;contract"
             TIMEOUT 30)
 endforeach()
+
+add_test(
+    NAME flow.phase_transition.contract
+    COMMAND mpmc_flow_phase_transition_tests)
+set_tests_properties(
+    flow.phase_transition.contract
+    PROPERTIES
+        LABELS "flow;natural_variables;phase_transition;stability;conservation"
+        TIMEOUT 30)
 
 set(fugacity_cases
     residual_values
