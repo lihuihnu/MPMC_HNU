@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Existing audited pin.
         with:
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 0
       - name: Select by audited dependency boundaries
         id: scope
         env:
