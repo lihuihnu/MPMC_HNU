@@ -2911,3 +2911,120 @@ The complete-snapshot regression checks:
 No PETSc `Mat` or `Vec` is created or modified and no `MatSetValues` /
 `VecSetValues` call is introduced here.
 
+## 40. PETSc complete-system materialization and value insertion
+
+The validated complete natural-variable assembly snapshot can now be materialized into an
+assembled PETSc residual vector and Jacobian matrix without introducing any solver logic.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
+```
+
+### Scalar ownership
+
+The materializer reuses the complete snapshot's scalar ownership:
+
+```text
+[petsc_scalar_row_start, petsc_scalar_row_end)
+global scalar count
+q = 3*Nc + 1
+```
+
+and verifies that those scalar ranges are exactly the existing cell-level PETSc ownership
+ranges expanded by `q`.
+
+### Residual vector
+
+The materializer creates one MPI PETSc `Vec` with:
+
+```text
+local size  = owned cell count * q
+global size = global cell count * q
+```
+
+and inserts only the complete snapshot's residual entries with `INSERT_VALUES`, followed
+by `VecAssemblyBegin/End`.
+
+The vector intentionally contains the three equation families in their native units. No
+equation scaling, norm definition or solver convergence metric is introduced here.
+
+### Scalar MPIAIJ preallocation
+
+The existing cell-level symbolic counts remain the source of matrix capacity.
+
+For every scalar row of one owned cell:
+
+```text
+d_nnz_scalar = q * d_nnz_cell
+o_nnz_scalar = q * o_nnz_cell
+```
+
+These arrays are passed to `MatMPIAIJSetPreallocation()`.
+
+The matrix is configured with:
+
+```text
+MAT_IGNORE_ZERO_ENTRIES          = false
+MAT_NEW_NONZERO_ALLOCATION_ERR   = true
+```
+
+so snapshot locations cannot silently exceed the preallocated capacity.
+
+### Equation-aware location freeze
+
+Capacity preallocation is deliberately wider than the physical Jacobian for some rows,
+especially fugacity rows.
+
+The materializer therefore separates matrix structure from matrix values:
+
+1. write explicit zero at every actual `(row,column)` location in the complete snapshot;
+2. assemble the matrix;
+3. enable `MAT_NEW_NONZERO_LOCATION_ERR = true`;
+4. overwrite only those already-materialized locations with the snapshot's actual
+   Jacobian values;
+5. final-assemble the matrix.
+
+Thus component and energy neighbour blocks are materialized, while a fugacity neighbour
+location is **not** created merely because the cell-level MPIAIJ capacity could hold it.
+
+Exact-zero physical Jacobian entries still obtain a real matrix location because the
+structure-seeding pass uses `MAT_IGNORE_ZERO_ENTRIES=false`.
+
+### Ownership and failure semantics
+
+On success, the caller owns the returned `Vec` and `Mat` and must destroy them with
+`VecDestroy()` and `MatDestroy()`.
+
+On failure, both output handles remain null.
+
+The materializer verifies:
+
+- PETSc vector and matrix local/global sizes;
+- row and column ownership ranges;
+- `MATMPIAIJ` matrix type;
+- snapshot/cell-bridge rank and scalar-range consistency.
+
+It does not create a KSP or SNES object.
+
+### Two-rank validation
+
+The dedicated regression reads back:
+
+- every owned residual value with `VecGetValues`;
+- every explicit Jacobian triplet with `MatGetValues`.
+
+It additionally requires:
+
+- `MatInfo.mallocs == 0`, proving no dynamic nonzero growth was needed;
+- an exact-zero snapshot triplet can be overwritten and restored after location freeze,
+  proving that the zero location was materialized;
+- inserting a remote-neighbour column into a fugacity row is rejected by
+  `MAT_NEW_NONZERO_LOCATION_ERR`, even though the wider cell-level capacity exists;
+- inconsistent scalar cell-bridge metadata is collectively rejected before output
+  objects are returned.
+
+No KSP/SNES/Newton solve, equation scaling, line search, phase switching,
+boundary/source/well term or new physical model is added in this slice.
+

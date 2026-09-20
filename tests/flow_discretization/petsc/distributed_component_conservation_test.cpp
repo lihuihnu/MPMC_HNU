@@ -2,6 +2,7 @@
 #include <mpmc/flow_discretization_petsc/distributed_energy_conservation.hpp>
 #include <mpmc/flow_discretization_petsc/energy_global_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_assembly_snapshot.hpp>
+#include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
 #include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
 
@@ -24,6 +25,7 @@ bool distributed_component_conservation_header();
 bool distributed_energy_conservation_header();
 bool energy_global_assembly_mapping_header();
 bool complete_natural_variable_assembly_snapshot_header();
+bool complete_natural_variable_petsc_materialization_header();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -2980,6 +2982,553 @@ void complete_natural_variable_assembly_snapshot() {
     }
 }
 
+void complete_natural_variable_petsc_materialization() {
+    int rank = -1;
+    int size = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &size) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank/size query failed");
+    }
+    require_collective(
+        size == 2,
+        "PETSc materialization test requires exactly two ranks");
+
+    auto partition =
+        make_partition(rank);
+    auto schedule =
+        make_schedule(rank);
+
+    LocalInputs component_inputs{rank};
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+    auto component_snapshot =
+        build(
+            rank,
+            partition,
+            schedule,
+            component_inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            component_snapshot.has_value(),
+        "component snapshot for PETSc materialization failed");
+
+    EnergyLocalInputs energy_inputs{rank};
+    auto energy_snapshot =
+        build_energy(
+            partition,
+            schedule,
+            energy_inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            energy_snapshot.has_value(),
+        "energy snapshot for PETSc materialization failed");
+
+    const std::size_t q =
+        identity(UINT64_C(10))
+            .layout.unknown_count();
+    constexpr std::size_t n = 3U;
+    auto layout =
+        make_natural_variable_dof_layout(
+            rank,
+            q);
+    auto numbering =
+        make_reversed_mesh_dof_numbering(
+            rank,
+            layout,
+            partition);
+    auto cell_bridge =
+        make_cell_row_bridge(
+            rank);
+    auto cell_pattern =
+        make_cell_column_pattern(
+            rank);
+
+    std::optional<
+        fdp::ComponentConservationGlobalAssemblyEntries3D>
+        component_mapping;
+    error =
+        fdp::
+            make_component_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *component_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &component_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            component_mapping.has_value(),
+        "component mapping for PETSc materialization failed");
+
+    std::optional<
+        fdp::EnergyConservationGlobalAssemblyEntries3D>
+        energy_mapping;
+    error =
+        fdp::
+            make_energy_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *energy_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &energy_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            energy_mapping.has_value(),
+        "energy mapping for PETSc materialization failed");
+
+    const std::uint64_t stable_cell =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+    auto fugacity =
+        make_fugacity_linearization(
+            stable_cell);
+    const std::array<
+        fdp::OwnedCellFugacityEquilibriumLinearizationBinding3D,
+        1>
+        fugacity_bindings{{
+            {
+                mesh::LocalIndex{0U},
+                mesh::GlobalEntityId{
+                    stable_cell},
+                &fugacity}
+        }};
+    std::optional<
+        fdp::FugacityEquilibriumGlobalAssemblyEntries3D>
+        fugacity_mapping;
+    error =
+        fdp::
+            make_fugacity_equilibrium_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *component_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                fugacity_bindings,
+                &fugacity_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            fugacity_mapping.has_value(),
+        "fugacity mapping for PETSc materialization failed");
+
+    std::optional<
+        fdp::CompleteNaturalVariableAssemblySnapshot3D>
+        complete;
+    error =
+        fdp::
+            make_complete_natural_variable_assembly_snapshot_3d(
+                PETSC_COMM_WORLD,
+                *component_mapping,
+                *energy_mapping,
+                *fugacity_mapping,
+                partition,
+                cell_bridge,
+                cell_pattern,
+                &complete);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            complete.has_value(),
+        "complete snapshot for PETSc materialization failed");
+
+    Vec residual = nullptr;
+    Mat jacobian = nullptr;
+    error =
+        fdp::
+            materialize_complete_natural_variable_petsc_system_3d(
+                PETSC_COMM_WORLD,
+                *complete,
+                cell_bridge,
+                &residual,
+                &jacobian);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            residual != nullptr &&
+            jacobian != nullptr,
+        "PETSc complete-system materialization failed");
+
+    const PetscInt expected_start =
+        static_cast<PetscInt>(rank) *
+        static_cast<PetscInt>(q);
+    const PetscInt expected_end =
+        expected_start +
+        static_cast<PetscInt>(q);
+    const PetscInt global_count =
+        2 *
+        static_cast<PetscInt>(q);
+
+    PetscInt vec_local = -1;
+    PetscInt vec_global = -1;
+    PetscInt vec_start = -1;
+    PetscInt vec_end = -1;
+    PetscInt mat_local_rows = -1;
+    PetscInt mat_local_columns = -1;
+    PetscInt mat_global_rows = -1;
+    PetscInt mat_global_columns = -1;
+    PetscInt mat_start = -1;
+    PetscInt mat_end = -1;
+    PetscInt mat_column_start = -1;
+    PetscInt mat_column_end = -1;
+    PetscBool is_mpiaij =
+        PETSC_FALSE;
+
+    require_collective(
+        VecGetLocalSize(
+            residual,
+            &vec_local) ==
+                PETSC_SUCCESS &&
+            VecGetSize(
+                residual,
+                &vec_global) ==
+                PETSC_SUCCESS &&
+            VecGetOwnershipRange(
+                residual,
+                &vec_start,
+                &vec_end) ==
+                PETSC_SUCCESS &&
+            MatGetLocalSize(
+                jacobian,
+                &mat_local_rows,
+                &mat_local_columns) ==
+                PETSC_SUCCESS &&
+            MatGetSize(
+                jacobian,
+                &mat_global_rows,
+                &mat_global_columns) ==
+                PETSC_SUCCESS &&
+            MatGetOwnershipRange(
+                jacobian,
+                &mat_start,
+                &mat_end) ==
+                PETSC_SUCCESS &&
+            MatGetOwnershipRangeColumn(
+                jacobian,
+                &mat_column_start,
+                &mat_column_end) ==
+                PETSC_SUCCESS &&
+            PetscObjectTypeCompare(
+                reinterpret_cast<PetscObject>(
+                    jacobian),
+                MATMPIAIJ,
+                &is_mpiaij) ==
+                PETSC_SUCCESS,
+        "PETSc materialized system metadata query failed");
+
+    require_collective(
+        vec_local ==
+                static_cast<PetscInt>(q) &&
+            vec_global ==
+                global_count &&
+            vec_start ==
+                expected_start &&
+            vec_end ==
+                expected_end &&
+            mat_local_rows ==
+                static_cast<PetscInt>(q) &&
+            mat_local_columns ==
+                static_cast<PetscInt>(q) &&
+            mat_global_rows ==
+                global_count &&
+            mat_global_columns ==
+                global_count &&
+            mat_start ==
+                expected_start &&
+            mat_end ==
+                expected_end &&
+            mat_column_start ==
+                expected_start &&
+            mat_column_end ==
+                expected_end &&
+            is_mpiaij ==
+                PETSC_TRUE,
+        "PETSc materialized system size/ownership/type mismatch");
+
+    for (const auto& entry :
+         complete->residual_entries()) {
+        const PetscInt row =
+            entry.petsc_global_row;
+        PetscScalar actual{};
+        require_collective(
+            VecGetValues(
+                residual,
+                1,
+                &row,
+                &actual) ==
+                PETSC_SUCCESS,
+            "VecGetValues failed for materialized residual");
+        near_collective(
+            static_cast<double>(
+                PetscRealPart(actual)),
+            entry.native_value);
+    }
+
+    for (const auto& entry :
+         complete->jacobian_entries()) {
+        const PetscInt row =
+            entry.petsc_global_row;
+        const PetscInt column =
+            entry.petsc_global_column;
+        PetscScalar actual{};
+        require_collective(
+            MatGetValues(
+                jacobian,
+                1,
+                &row,
+                1,
+                &column,
+                &actual) ==
+                PETSC_SUCCESS,
+            "MatGetValues failed for materialized Jacobian");
+        near_collective(
+            static_cast<double>(
+                PetscRealPart(actual)),
+            entry.value);
+    }
+
+    MatInfo info{};
+    require_collective(
+        MatGetInfo(
+            jacobian,
+            MAT_LOCAL,
+            &info) ==
+                PETSC_SUCCESS &&
+            info.mallocs == 0.0,
+        "PETSc materialized Jacobian required dynamic nonzero allocation");
+
+    const auto zero_entry =
+        std::find_if(
+            complete->jacobian_entries().begin(),
+            complete->jacobian_entries().end(),
+            [](const auto& entry) {
+                return entry.value == 0.0;
+            });
+    require_collective(
+        zero_entry !=
+            complete->jacobian_entries().end(),
+        "PETSc materialization fixture lacks exact-zero structural entry");
+
+    const PetscInt zero_row =
+        zero_entry->petsc_global_row;
+    const PetscInt zero_column =
+        zero_entry->petsc_global_column;
+    const PetscScalar probe_value =
+        static_cast<PetscScalar>(
+            1.234567);
+    error =
+        MatSetValues(
+            jacobian,
+            1,
+            &zero_row,
+            1,
+            &zero_column,
+            &probe_value,
+            INSERT_VALUES);
+    require_collective(
+        error == PETSC_SUCCESS,
+        "existing exact-zero Jacobian location was not materialized");
+    const PetscErrorCode probe_begin_error =
+        MatAssemblyBegin(
+            jacobian,
+            MAT_FINAL_ASSEMBLY);
+    const PetscErrorCode probe_end_error =
+        MatAssemblyEnd(
+            jacobian,
+            MAT_FINAL_ASSEMBLY);
+    require_collective(
+        probe_begin_error ==
+                PETSC_SUCCESS &&
+            probe_end_error ==
+                PETSC_SUCCESS,
+        "assembly after exact-zero location probe failed");
+
+    PetscScalar probed{};
+    require_collective(
+        MatGetValues(
+            jacobian,
+            1,
+            &zero_row,
+            1,
+            &zero_column,
+            &probed) ==
+                PETSC_SUCCESS,
+        "readback after exact-zero location probe failed");
+    near_collective(
+        static_cast<double>(
+            PetscRealPart(probed)),
+        1.234567);
+
+    const PetscScalar restore_zero =
+        PetscScalar{0.0};
+    const PetscErrorCode restore_set_error =
+        MatSetValues(
+            jacobian,
+            1,
+            &zero_row,
+            1,
+            &zero_column,
+            &restore_zero,
+            INSERT_VALUES);
+    require_collective(
+        restore_set_error ==
+            PETSC_SUCCESS,
+        "restoring exact-zero Jacobian value insertion failed");
+    const PetscErrorCode restore_begin_error =
+        MatAssemblyBegin(
+            jacobian,
+            MAT_FINAL_ASSEMBLY);
+    const PetscErrorCode restore_end_error =
+        MatAssemblyEnd(
+            jacobian,
+            MAT_FINAL_ASSEMBLY);
+    require_collective(
+        restore_begin_error ==
+                PETSC_SUCCESS &&
+            restore_end_error ==
+                PETSC_SUCCESS,
+        "restoring exact-zero Jacobian assembly failed");
+
+    // Cell-level preallocation includes the neighbour block for every scalar
+    // row, but fugacity physics does not materialize that location. The
+    // location-freeze option must reject such an insertion.
+    const PetscInt fugacity_row =
+        expected_start +
+        static_cast<PetscInt>(
+            n + 1U);
+    const PetscInt remote_cell_row =
+        rank == 0
+            ? 1
+            : 0;
+    const PetscInt forbidden_column =
+        remote_cell_row *
+        static_cast<PetscInt>(q);
+    const PetscScalar forbidden_value =
+        PetscScalar{7.0};
+
+    require_collective(
+        PetscPushErrorHandler(
+            PetscReturnErrorHandler,
+            nullptr) ==
+            PETSC_SUCCESS,
+        "failed to install PETSc return-error handler");
+    const PetscErrorCode forbidden_error =
+        MatSetValues(
+            jacobian,
+            1,
+            &fugacity_row,
+            1,
+            &forbidden_column,
+            &forbidden_value,
+            INSERT_VALUES);
+    require_collective(
+        PetscPopErrorHandler() ==
+            PETSC_SUCCESS,
+        "failed to restore PETSc error handler");
+    require_collective(
+        forbidden_error !=
+            PETSC_SUCCESS,
+        "PETSc accepted a non-materialized fugacity neighbour location");
+
+    // Materializer metadata mismatch must be collectively rejected before
+    // creating any output objects.
+    {
+        const PetscInt cell_start =
+            cell_bridge.global_row_start();
+        const PetscInt cell_end =
+            cell_bridge.global_row_end();
+        auto bad_bridge =
+            dp::PetscMpiAijSymbolicPreallocation3D{
+                cell_bridge.local_rank(),
+                cell_bridge.rank_count(),
+                cell_start,
+                cell_end,
+                3,
+                std::vector<mesh::LocalIndex>(
+                    cell_bridge
+                        .owned_cells_in_petsc_row_order()
+                        .begin(),
+                    cell_bridge
+                        .owned_cells_in_petsc_row_order()
+                        .end()),
+                std::vector<mesh::GlobalEntityId>(
+                    cell_bridge
+                        .owned_cell_global_ids()
+                        .begin(),
+                    cell_bridge
+                        .owned_cell_global_ids()
+                        .end()),
+                std::vector<PetscInt>(
+                    cell_bridge
+                        .owned_global_rows()
+                        .begin(),
+                    cell_bridge
+                        .owned_global_rows()
+                        .end()),
+                std::vector<PetscInt>(
+                    cell_bridge
+                        .diagonal_nnz()
+                        .begin(),
+                    cell_bridge
+                        .diagonal_nnz()
+                        .end()),
+                std::vector<PetscInt>(
+                    cell_bridge
+                        .off_diagonal_nnz()
+                        .begin(),
+                    cell_bridge
+                        .off_diagonal_nnz()
+                        .end()),
+                rank == 0
+                    ? std::vector<PetscInt>{0, 1}
+                    : std::vector<PetscInt>{1, 0}};
+
+        Vec bad_residual = nullptr;
+        Mat bad_jacobian = nullptr;
+        const PetscErrorCode bad_error =
+            fdp::
+                materialize_complete_natural_variable_petsc_system_3d(
+                    PETSC_COMM_WORLD,
+                    *complete,
+                    bad_bridge,
+                    &bad_residual,
+                    &bad_jacobian);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                bad_residual == nullptr &&
+                bad_jacobian == nullptr,
+            "PETSc materializer metadata mismatch was not rejected collectively");
+    }
+
+    const PetscErrorCode vec_destroy_error =
+        VecDestroy(
+            &residual);
+    const PetscErrorCode mat_destroy_error =
+        MatDestroy(
+            &jacobian);
+    require_collective(
+        vec_destroy_error ==
+                PETSC_SUCCESS &&
+            mat_destroy_error ==
+                PETSC_SUCCESS,
+        "PETSc materialized system destroy failed");
+}
+
 void invalid_collective_energy_inputs() {
     int rank = -1;
     if (MPI_Comm_rank(
@@ -3203,6 +3752,9 @@ void headers() {
         complete_natural_variable_assembly_snapshot_header(),
         "complete natural-variable assembly snapshot header probe failed");
     require_collective(
+        complete_natural_variable_petsc_materialization_header(),
+        "complete natural-variable PETSc materialization header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -3238,6 +3790,7 @@ int main(int argc, char** argv) {
         distributed_energy_exchange();
         energy_global_assembly_mapping();
         complete_natural_variable_assembly_snapshot();
+        complete_natural_variable_petsc_materialization();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();
@@ -3250,7 +3803,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] complete natural-variable assembly snapshot\n";
+                << "[PASS] complete natural-variable PETSc materialization\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;
