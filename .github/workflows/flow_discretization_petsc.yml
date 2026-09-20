@@ -27,7 +27,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["modules/flow_discretization_petsc/**","modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp","modules/flow/include/mpmc/flow/fugacity_equilibrium_linearization.hpp","modules/flow_discretization/include/mpmc/flow_discretization/local_energy_conservation_residual.hpp","modules/flow_discretization/include/mpmc/flow_discretization/energy_face_flux.hpp","modules/flow/include/mpmc/flow/energy_accumulation.hpp","modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp","modules/flow_discretization/include/mpmc/flow_discretization/local_component_conservation_residual.hpp","modules/flow_discretization/include/mpmc/flow_discretization/normalized_component_face_contribution.hpp","modules/discretization_petsc/**","modules/mesh/include/mpmc/mesh/partition_snapshot.hpp","tests/flow_discretization/petsc/**",".github/workflows/flow_discretization_petsc.yml"]
+
   distributed:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: PETSc 3.19.6 distributed conservation 2-rank
     runs-on: ubuntu-24.04
     timeout-minutes: 15

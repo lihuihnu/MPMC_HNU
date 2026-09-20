@@ -21,7 +21,16 @@ concurrency:
   group: sw92-dual-model-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["modules/flash/include/mpmc/flash/pt_stability.hpp","modules/flash/include/mpmc/flash/sw92_stability.hpp","modules/flash/include/mpmc/flash/rachford_rice.hpp","modules/flash/include/mpmc/flash/pt_split.hpp","modules/flash/include/mpmc/flash/sw92_split.hpp","modules/flash/include/mpmc/flash/sw92_dual_model.hpp","modules/flash/CMakeLists.txt","modules/thermodynamics/**/*.hpp","modules/thermodynamics/**/CMakeLists.txt","tests/flash/sw92_dual_model/**",".github/workflows/sw92_dual_model.yml"]
+
   dual-model:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10

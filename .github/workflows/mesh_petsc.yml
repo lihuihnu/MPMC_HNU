@@ -21,7 +21,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["modules/mesh/include/**","modules/mesh_petsc/**","modules/discretization/**","modules/discretization_petsc/**","modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp","tests/mesh/petsc/**",".github/workflows/mesh_petsc.yml"]
+
   petsc:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: PETSc 3.19.6 mesh/discretization synthetic MPI
     runs-on: ubuntu-24.04
     timeout-minutes: 15

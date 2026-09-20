@@ -23,7 +23,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp","modules/flash/include/mpmc/flash/cpa_*.hpp","modules/flash/include/mpmc/flash/pt_*.hpp","tests/flash/cpa_physical_validation/test_support.hpp","tests/flash/cpa_performance_baseline/**",".github/workflows/cpa_performance_audit.yml"]
+
   paired-baseline:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: main vs PR head / ubuntu-24.04
     runs-on: ubuntu-24.04
     timeout-minutes: 30

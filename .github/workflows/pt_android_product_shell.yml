@@ -41,7 +41,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["modules/ad/**","modules/thermodynamics/**","modules/flash/**","modules/runtime/**","modules/model_configuration/**","modules/pt_process/src/configured_backends.cpp","modules/pt_process/src/parameter_snapshot_supplier.cpp","modules/pt_process/include/mpmc/pt_process/configured_backends.hpp","modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp","frontend/**","products/pt_android/**",".github/workflows/pt_android_product_shell.yml"]
+
   product-shell:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Android universal React + Capacitor + JNI product shell
     runs-on: ubuntu-24.04
     timeout-minutes: 45

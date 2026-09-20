@@ -26,7 +26,16 @@ concurrency:
   group: sw92-asymmetric-max2-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["tests/support/sw92/test_support.hpp","modules/flash/include/mpmc/flash/pt_stability.hpp","modules/flash/include/mpmc/flash/rachford_rice.hpp","modules/flash/include/mpmc/flash/sw92_stability.hpp","modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp","modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp","modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp","modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp","modules/flash/CMakeLists.txt","modules/thermodynamics/**/*.hpp","modules/thermodynamics/**/CMakeLists.txt","tests/flash/sw92_asymmetric_stability/**","tests/flash/sw92_asymmetric_fixed_pair/**","tests/flash/sw92_asymmetric_orchestration/**","tests/flash/sw92_asymmetric_max2/**",".github/workflows/sw92_asymmetric_max2.yml"]
+
   max2:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
