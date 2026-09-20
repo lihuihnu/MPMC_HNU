@@ -1094,6 +1094,17 @@ solve_natural_variable_snes_3d(
         return error;
     }
     if (static_cast<int>(reason) <= 0) {
+        (void)PetscPrintf(
+            comm,
+            "[natural-variable SNES] reason=%d iterations=%d function_evaluations=%d jacobian_evaluations=%d function_domain_errors=%d jacobian_domain_errors=%d line_search_prechecks=%d line_search_direction_changes=%d\n",
+            static_cast<int>(reason),
+            static_cast<int>(nonlinear_iterations),
+            static_cast<int>(callback_context.function_evaluations),
+            static_cast<int>(callback_context.jacobian_evaluations),
+            static_cast<int>(callback_context.function_domain_errors),
+            static_cast<int>(callback_context.jacobian_domain_errors),
+            static_cast<int>(callback_context.line_search_prechecks),
+            static_cast<int>(callback_context.line_search_direction_changes));
         (void)cleanup();
         return PETSC_ERR_NOT_CONVERGED;
     }
