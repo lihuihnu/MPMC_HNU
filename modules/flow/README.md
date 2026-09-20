@@ -3171,3 +3171,158 @@ PETSc system and checks:
 No state update, damping, line search, phase switching, SNES/Newton iteration, equation
 scaling, well term or boundary/source term is introduced in this slice.
 
+## 42. PETSc-owned nonlinear solve: Newton line search + GMRES + ASM
+
+The solver adapter now delegates nonlinear and linear orchestration directly to PETSc.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/natural_variable_snes_solver.hpp>
+```
+
+The default algorithm chain is fixed in this contract as:
+
+```text
+SNESNEWTONLS
+  -> SNESLINESEARCHBT
+  -> KSPGMRES
+  -> PCASM
+       overlap = 1
+       type    = restricted ASM
+```
+
+This layer contains no custom Newton iteration loop and no custom linear solver.
+
+### Evaluation boundary
+
+PETSc state `x` reaches flow physics only through two explicit callbacks:
+
+```text
+function(x)  -> F(x)
+jacobian(x)  -> J(x)
+```
+
+The SNES adapter itself does not evaluate EOS, flash, phase properties, accumulation,
+Darcy flux or energy flux.
+
+The function callback receives a PETSc residual `Vec`; the Jacobian callback receives an
+already allocated MPIAIJ `Mat`. The adapter zeros those objects, lets the evaluator
+insert the current values, and performs PETSc assembly.
+
+The Jacobian matrix is duplicated from the existing audited natural-variable matrix
+structure and keeps:
+
+```text
+MAT_NEW_NONZERO_LOCATION_ERR   = true
+MAT_NEW_NONZERO_ALLOCATION_ERR = true
+```
+
+so nonlinear iterations cannot silently widen the frozen fixed-three-phase sparsity.
+
+### PETSc 3.19 domain semantics
+
+PETSc 3.19.6 distinguishes two cases that must not be conflated.
+
+`SNESSetFunctionDomainError()` and `SNESSetJacobianDomainError()` are **hard**
+domain-error signals: they cause the nonlinear solve to diverge with a negative SNES
+convergence reason. They are therefore reserved for a state at which the authoritative
+model cannot be evaluated.
+
+Recoverable trial-step protection uses PETSc's line-search precheck instead:
+
+```cpp
+SNESLineSearchSetPreCheck(...)
+```
+
+The optional project callback receives the current state `X` and PETSc search direction
+`Y`. PETSc's backtracking line search forms trial states as:
+
+```text
+X_trial = X - lambda * Y
+```
+
+The precheck may modify `Y` and mark it changed before BT evaluates any trial state.
+Thus positive-support/simplex protection can remain a model-domain responsibility while
+Newton and line-search orchestration remain PETSc-owned.
+
+### Solver configuration boundary
+
+This first audited solver contract deliberately does **not** call
+`SNESSetFromOptions()`.
+
+Unrestricted PETSc options could switch to matrix-free or finite-difference Jacobian
+paths, which would violate the repository rule forbidding a production finite-difference
+Jacobian fallback.
+
+Future configurability must therefore enter through an explicit validated solver-settings
+contract that whitelists supported SNES/KSP/PC choices.
+
+### Result/provenance
+
+The returned solution is a caller-owned PETSc `Vec`.
+
+The solve report records, for every locally owned natural-variable scalar:
+
+- PETSc global scalar index;
+- independent mesh-global `GlobalDofIndex`;
+- stable cell identity;
+- natural-variable slot;
+- final value.
+
+It also records the actual PETSc solver types, nonlinear iteration count, evaluator call
+counts, hard-domain-error counts, line-search precheck counts and the final native
+function L2 norm.
+
+As before, the combined component/energy/fugacity norm contains heterogeneous native
+units and is only an algebraic SNES diagnostic until equation scaling is introduced.
+
+### Two-rank nonlinear regression
+
+The current regression retains:
+
+- two MPI ranks;
+- `Nc=3`;
+- `q=3*Nc+1=10` natural-variable scalars per cell;
+- existing PETSc scalar ownership;
+- stable-cell and reversed mesh-global provenance;
+- the same natural-variable Jacobian row/column locations.
+
+The nonlinear values are test-only manufactured values:
+
+```text
+F_i(x)  = log(x_i / x_i*)
+J_ii(x) = 1 / x_i
+```
+
+with:
+
+```text
+x0 = 10 * x*
+```
+
+The unconstrained full Newton direction would make the first trial negative. A
+`SNESLineSearchSetPreCheck()` regression computes one global safe scaling for the PETSc
+search direction, so the invalid trial is never passed to the function evaluator.
+
+The regression requires:
+
+- actual solver type `newtonls`;
+- actual line-search type `bt`;
+- actual outer KSP type `gmres`;
+- actual PC type `asm`;
+- default ASM overlap = 1;
+- positive SNES convergence reason;
+- at least one PETSc line-search precheck direction change;
+- zero hard function/Jacobian domain errors;
+- convergence to the known `x*`;
+- final function norm within the audited algebraic tolerance;
+- unchanged caller-owned initial-state vector;
+- exact PETSc / mesh-global / stable-cell natural-variable provenance.
+
+This is an orchestration and numbering regression, not a physical three-phase reference
+case.
+
+No phase switching, wells, boundary/source terms, equation scaling, custom ASM
+subdomains or production KSP tuning are added in this slice.
+

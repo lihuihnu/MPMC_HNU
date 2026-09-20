@@ -4,6 +4,7 @@
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_assembly_snapshot.hpp>
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
 #include <mpmc/flow_discretization_petsc/natural_variable_newton_linear_system.hpp>
+#include <mpmc/flow_discretization_petsc/natural_variable_snes_solver.hpp>
 #include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
 
@@ -28,6 +29,7 @@ bool energy_global_assembly_mapping_header();
 bool complete_natural_variable_assembly_snapshot_header();
 bool complete_natural_variable_petsc_materialization_header();
 bool natural_variable_newton_linear_system_header();
+bool natural_variable_snes_solver_header();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -4177,6 +4179,938 @@ void natural_variable_newton_linear_system() {
         "frozen Newton PETSc fixture cleanup failed");
 }
 
+
+fdp::CompleteNaturalVariableAssemblySnapshot3D
+make_snes_numbering_snapshot(
+    int rank) {
+    constexpr std::size_t n = 3U;
+    constexpr std::size_t q = 10U;
+    const PetscInt start =
+        static_cast<PetscInt>(
+            rank) *
+        static_cast<PetscInt>(
+            q);
+    const std::uint64_t stable_cell =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+
+    std::vector<
+        fdp::CompleteNaturalVariableResidualEntry3D>
+        residuals;
+    residuals.reserve(q);
+    for (std::size_t slot = 0U;
+         slot < q;
+         ++slot) {
+        const std::uint64_t mesh_global =
+            stable_cell == UINT64_C(10)
+                ? static_cast<std::uint64_t>(
+                      q + slot)
+                : static_cast<std::uint64_t>(
+                      slot);
+        const auto kind =
+            slot < n
+                ? fdp::NaturalVariableEquationKind3D::
+                      component_conservation
+                : (slot == n
+                       ? fdp::NaturalVariableEquationKind3D::
+                             energy_conservation
+                       : fdp::NaturalVariableEquationKind3D::
+                             fugacity_equilibrium);
+        residuals.push_back(
+            fdp::CompleteNaturalVariableResidualEntry3D{
+                start +
+                    static_cast<PetscInt>(
+                        slot),
+                mesh::GlobalDofIndex{
+                    mesh_global},
+                mesh::GlobalEntityId{
+                    stable_cell},
+                slot,
+                kind,
+                0.0});
+    }
+
+    std::vector<
+        fdp::CompleteNaturalVariableJacobianEntry3D>
+        jacobian;
+    jacobian.reserve(14U * q);
+    for (std::size_t row_slot = 0U;
+         row_slot < q;
+         ++row_slot) {
+        const auto kind =
+            row_slot < n
+                ? fdp::NaturalVariableEquationKind3D::
+                      component_conservation
+                : (row_slot == n
+                       ? fdp::NaturalVariableEquationKind3D::
+                             energy_conservation
+                       : fdp::NaturalVariableEquationKind3D::
+                             fugacity_equilibrium);
+        const PetscInt first_column =
+            row_slot <= n
+                ? PetscInt{0}
+                : start;
+        const PetscInt last_column =
+            row_slot <= n
+                ? PetscInt{20}
+                : start +
+                      static_cast<PetscInt>(
+                          q);
+
+        for (PetscInt global_column =
+                 first_column;
+             global_column < last_column;
+             ++global_column) {
+            const std::size_t column_slot =
+                static_cast<std::size_t>(
+                    global_column %
+                    static_cast<PetscInt>(
+                        q));
+            const std::uint64_t column_cell =
+                global_column <
+                        static_cast<PetscInt>(
+                            q)
+                    ? UINT64_C(10)
+                    : UINT64_C(20);
+            const std::uint64_t
+                mesh_global_column =
+                    column_cell ==
+                            UINT64_C(10)
+                        ? static_cast<
+                              std::uint64_t>(
+                                  q +
+                                  column_slot)
+                        : static_cast<
+                              std::uint64_t>(
+                                  column_slot);
+            jacobian.push_back(
+                fdp::CompleteNaturalVariableJacobianEntry3D{
+                    start +
+                        static_cast<PetscInt>(
+                            row_slot),
+                    global_column,
+                    residuals[row_slot]
+                        .mesh_global_row_dof,
+                    mesh::GlobalDofIndex{
+                        mesh_global_column},
+                    mesh::GlobalEntityId{
+                        stable_cell},
+                    mesh::GlobalEntityId{
+                        column_cell},
+                    row_slot,
+                    column_slot,
+                    kind,
+                    global_column ==
+                            start +
+                                static_cast<
+                                    PetscInt>(
+                                    row_slot)
+                        ? 1.0
+                        : 0.0});
+        }
+    }
+
+    return {
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    rank)},
+        2U,
+        "natural_state",
+        n,
+        q,
+        start,
+        start +
+            static_cast<PetscInt>(
+                q),
+        PetscInt{20},
+        std::move(residuals),
+        std::move(jacobian)};
+}
+
+double snes_target_value(
+    PetscInt global_scalar) {
+    if (global_scalar < 0) {
+        throw std::invalid_argument(
+            "negative SNES manufactured scalar index");
+    }
+    return 1.0 +
+        0.01 *
+            static_cast<double>(
+                global_scalar + 1);
+}
+
+struct SnesManufacturedContext {
+    PetscInt function_calls{};
+    PetscInt jacobian_calls{};
+    PetscInt precheck_calls{};
+    PetscInt precheck_changes{};
+};
+
+PetscErrorCode snes_manufactured_function(
+    Vec state,
+    Vec residual,
+    void* raw_context,
+    fdp::NaturalVariableSnesEvaluationStatus3D*
+        status) {
+    if (state == nullptr ||
+        residual == nullptr ||
+        raw_context == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<
+            SnesManufacturedContext*>(
+                raw_context);
+    ++context->function_calls;
+
+    PetscInt start = -1;
+    PetscInt end = -1;
+    PetscErrorCode error =
+        VecGetOwnershipRange(
+            state,
+            &start,
+            &end);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    const PetscScalar* x = nullptr;
+    error =
+        VecGetArrayRead(
+            state,
+            &x);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    bool domain_error = false;
+    for (PetscInt global = start;
+         global < end;
+         ++global) {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                global - start);
+        const double value =
+            static_cast<double>(
+                PetscRealPart(
+                    x[local]));
+        if (!std::isfinite(value) ||
+            value <= 0.0) {
+            domain_error = true;
+            break;
+        }
+    }
+
+    const PetscErrorCode restore_error =
+        VecRestoreArrayRead(
+            state,
+            &x);
+    if (restore_error !=
+        PETSC_SUCCESS) {
+        return restore_error;
+    }
+
+    if (domain_error) {
+        *status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    domain_error;
+        return PETSC_SUCCESS;
+    }
+
+    PetscScalar* f = nullptr;
+    error =
+        VecGetArray(
+            residual,
+            &f);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    error =
+        VecGetArrayRead(
+            state,
+            &x);
+    if (error != PETSC_SUCCESS) {
+        (void)VecRestoreArray(
+            residual,
+            &f);
+        return error;
+    }
+
+    for (PetscInt global = start;
+         global < end;
+         ++global) {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                global - start);
+        const double value =
+            static_cast<double>(
+                PetscRealPart(
+                    x[local]));
+        const double target =
+            snes_target_value(
+                global);
+        f[local] =
+            static_cast<PetscScalar>(
+                std::log(
+                    value /
+                    target));
+    }
+
+    const PetscErrorCode x_restore_error =
+        VecRestoreArrayRead(
+            state,
+            &x);
+    const PetscErrorCode f_restore_error =
+        VecRestoreArray(
+            residual,
+            &f);
+    if (x_restore_error !=
+        PETSC_SUCCESS) {
+        return x_restore_error;
+    }
+    if (f_restore_error !=
+        PETSC_SUCCESS) {
+        return f_restore_error;
+    }
+
+    *status =
+        fdp::
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode snes_manufactured_precheck(
+    Vec state,
+    Vec search_direction,
+    void* raw_context,
+    PetscBool* changed_direction) {
+    if (state == nullptr ||
+        search_direction == nullptr ||
+        raw_context == nullptr ||
+        changed_direction == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    auto* context =
+        static_cast<
+            SnesManufacturedContext*>(
+                raw_context);
+    ++context->precheck_calls;
+    *changed_direction =
+        PETSC_FALSE;
+
+    PetscInt start = -1;
+    PetscInt end = -1;
+    PetscErrorCode error =
+        VecGetOwnershipRange(
+            state,
+            &start,
+            &end);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    const PetscScalar* x = nullptr;
+    const PetscScalar* y = nullptr;
+    error =
+        VecGetArrayRead(
+            state,
+            &x);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecGetArrayRead(
+                search_direction,
+                &y);
+    }
+    if (error != PETSC_SUCCESS) {
+        if (x != nullptr) {
+            (void)VecRestoreArrayRead(
+                state,
+                &x);
+        }
+        return error;
+    }
+
+    double local_scale = 1.0;
+    for (PetscInt global = start;
+         global < end;
+         ++global) {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                global - start);
+        const double state_value =
+            static_cast<double>(
+                PetscRealPart(
+                    x[local]));
+        const double direction_value =
+            static_cast<double>(
+                PetscRealPart(
+                    y[local]));
+        if (!std::isfinite(state_value) ||
+            !std::isfinite(direction_value) ||
+            state_value <= 0.0) {
+            (void)VecRestoreArrayRead(
+                search_direction,
+                &y);
+            (void)VecRestoreArrayRead(
+                state,
+                &x);
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+
+        if (direction_value > 0.0 &&
+            state_value -
+                    direction_value <=
+                0.0) {
+            local_scale =
+                std::min(
+                    local_scale,
+                    0.8 *
+                        state_value /
+                        direction_value);
+        }
+    }
+
+    const PetscErrorCode y_restore =
+        VecRestoreArrayRead(
+            search_direction,
+            &y);
+    const PetscErrorCode x_restore =
+        VecRestoreArrayRead(
+            state,
+            &x);
+    if (y_restore != PETSC_SUCCESS) {
+        return y_restore;
+    }
+    if (x_restore != PETSC_SUCCESS) {
+        return x_restore;
+    }
+
+    double global_scale = 1.0;
+    if (MPI_Allreduce(
+            &local_scale,
+            &global_scale,
+            1,
+            MPI_DOUBLE,
+            MPI_MIN,
+            PetscObjectComm(
+                reinterpret_cast<PetscObject>(
+                    state))) !=
+        MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+
+    if (!std::isfinite(global_scale) ||
+        global_scale <= 0.0 ||
+        global_scale > 1.0) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    if (global_scale < 1.0) {
+        error =
+            VecScale(
+                search_direction,
+                static_cast<PetscScalar>(
+                    global_scale));
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+        ++context->precheck_changes;
+        *changed_direction =
+            PETSC_TRUE;
+    }
+
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode snes_manufactured_jacobian(
+    Vec state,
+    Mat jacobian,
+    void* raw_context,
+    fdp::NaturalVariableSnesEvaluationStatus3D*
+        status) {
+    if (state == nullptr ||
+        jacobian == nullptr ||
+        raw_context == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<
+            SnesManufacturedContext*>(
+                raw_context);
+    ++context->jacobian_calls;
+
+    PetscInt start = -1;
+    PetscInt end = -1;
+    PetscErrorCode error =
+        VecGetOwnershipRange(
+            state,
+            &start,
+            &end);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    const PetscScalar* x = nullptr;
+    error =
+        VecGetArrayRead(
+            state,
+            &x);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    for (PetscInt global = start;
+         global < end;
+         ++global) {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                global - start);
+        const double value =
+            static_cast<double>(
+                PetscRealPart(
+                    x[local]));
+        if (!std::isfinite(value) ||
+            value <= 0.0) {
+            const PetscErrorCode restore =
+                VecRestoreArrayRead(
+                    state,
+                    &x);
+            if (restore != PETSC_SUCCESS) {
+                return restore;
+            }
+            *status =
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        domain_error;
+            return PETSC_SUCCESS;
+        }
+
+        const PetscScalar derivative =
+            static_cast<PetscScalar>(
+                1.0 /
+                value);
+        error =
+            MatSetValues(
+                jacobian,
+                1,
+                &global,
+                1,
+                &global,
+                &derivative,
+                INSERT_VALUES);
+        if (error != PETSC_SUCCESS) {
+            (void)VecRestoreArrayRead(
+                state,
+                &x);
+            return error;
+        }
+    }
+
+    error =
+        VecRestoreArrayRead(
+            state,
+            &x);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    *status =
+        fdp::
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+    return PETSC_SUCCESS;
+}
+
+void natural_variable_snes_solver() {
+    int rank = -1;
+    int size = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &size) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank/size query failed");
+    }
+    require_collective(
+        size == 2,
+        "SNES natural-variable test requires exactly two ranks");
+
+    constexpr std::size_t q = 10U;
+    auto numbering =
+        make_snes_numbering_snapshot(
+            rank);
+    auto cell_bridge =
+        make_cell_row_bridge(
+            rank);
+
+    Vec unused_residual = nullptr;
+    Mat jacobian_template = nullptr;
+    PetscErrorCode error =
+        fdp::
+            materialize_complete_natural_variable_petsc_system_3d(
+                PETSC_COMM_WORLD,
+                numbering,
+                cell_bridge,
+                &unused_residual,
+                &jacobian_template);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            unused_residual != nullptr &&
+            jacobian_template != nullptr,
+        "SNES Jacobian structure template materialization failed");
+
+    Vec initial_state = nullptr;
+    const PetscErrorCode initial_duplicate_error =
+        VecDuplicate(
+            unused_residual,
+            &initial_state);
+    require_collective(
+        initial_duplicate_error ==
+                PETSC_SUCCESS,
+        "SNES initial-state allocation failed");
+
+    const PetscInt start =
+        numbering.petsc_scalar_row_start();
+    for (std::size_t slot = 0U;
+         slot < q;
+         ++slot) {
+        const PetscInt global =
+            start +
+            static_cast<PetscInt>(
+                slot);
+        const PetscScalar value =
+            static_cast<PetscScalar>(
+                10.0 *
+                snes_target_value(
+                    global));
+        require_collective(
+            VecSetValues(
+                initial_state,
+                1,
+                &global,
+                &value,
+                INSERT_VALUES) ==
+                PETSC_SUCCESS,
+            "SNES initial-state insertion failed");
+    }
+    const PetscErrorCode initial_begin =
+        VecAssemblyBegin(
+            initial_state);
+    const PetscErrorCode initial_end =
+        VecAssemblyEnd(
+            initial_state);
+    require_collective(
+        initial_begin ==
+                PETSC_SUCCESS &&
+            initial_end ==
+                PETSC_SUCCESS,
+        "SNES initial-state assembly failed");
+
+    Vec initial_before = nullptr;
+    const PetscErrorCode initial_before_duplicate =
+        VecDuplicate(
+            initial_state,
+            &initial_before);
+    const PetscErrorCode initial_before_copy =
+        VecCopy(
+            initial_state,
+            initial_before);
+    require_collective(
+        initial_before_duplicate ==
+                PETSC_SUCCESS &&
+            initial_before_copy ==
+                PETSC_SUCCESS,
+        "SNES initial-state preservation copy failed");
+
+    SnesManufacturedContext manufactured_context;
+    const fdp::NaturalVariableSnesEvaluator3D
+        evaluator{
+            snes_manufactured_function,
+            snes_manufactured_jacobian,
+            snes_manufactured_precheck,
+            &manufactured_context};
+
+    Vec solution = nullptr;
+    std::optional<
+        fdp::NaturalVariableSnesSolveReport3D>
+        report;
+    error =
+        fdp::
+            solve_natural_variable_snes_3d(
+                PETSC_COMM_WORLD,
+                numbering,
+                initial_state,
+                jacobian_template,
+                evaluator,
+                &solution,
+                &report);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            solution != nullptr &&
+            report.has_value(),
+        "PETSc SNES natural-variable solve failed");
+
+    require_collective(
+        report->snes_type() ==
+                std::string_view{
+                    SNESNEWTONLS} &&
+            report->line_search_type() ==
+                std::string_view{
+                    SNESLINESEARCHBT} &&
+            report->ksp_type() ==
+                std::string_view{
+                    KSPGMRES} &&
+            report->pc_type() ==
+                std::string_view{
+                    PCASM} &&
+            report->default_asm_overlap() ==
+                1 &&
+            static_cast<int>(
+                report->converged_reason()) >
+                0 &&
+            report->nonlinear_iterations() >
+                0 &&
+            report->function_evaluations() >=
+                report->nonlinear_iterations() &&
+            report->jacobian_evaluations() >
+                0 &&
+            report->function_domain_errors() ==
+                0 &&
+            report->jacobian_domain_errors() ==
+                0 &&
+            report->line_search_prechecks() >
+                0 &&
+            report->line_search_direction_changes() >
+                0,
+        "SNES/GMRES/ASM/BT configuration or domain handling mismatch");
+
+    require_collective(
+        manufactured_context.function_calls ==
+                report->function_evaluations() &&
+            manufactured_context.jacobian_calls ==
+                report->jacobian_evaluations() &&
+            manufactured_context.precheck_calls ==
+                report->line_search_prechecks() &&
+            manufactured_context.precheck_changes ==
+                report
+                    ->line_search_direction_changes(),
+        "SNES adapter callback/precheck accounting mismatch");
+
+    require_collective(
+        report->final_function_l2_norm() <=
+            2.0e-9,
+        "SNES final manufactured function norm is too large");
+
+    const std::uint64_t stable_cell =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+    const auto& cell_layout =
+        identity(stable_cell).layout;
+    require_collective(
+        report->locally_owned_solution().size() ==
+                q &&
+            cell_layout.unknown_count() ==
+                q,
+        "SNES solution/layout cardinality mismatch");
+
+    for (std::size_t slot = 0U;
+         slot < q;
+         ++slot) {
+        const PetscInt global =
+            start +
+            static_cast<PetscInt>(
+                slot);
+        const double target =
+            snes_target_value(
+                global);
+        PetscScalar actual{};
+        require_collective(
+            VecGetValues(
+                solution,
+                1,
+                &global,
+                &actual) ==
+                PETSC_SUCCESS,
+            "SNES solution Vec readback failed");
+        near_collective(
+            static_cast<double>(
+                PetscRealPart(
+                    actual)),
+            target,
+            5.0e-9,
+            5.0e-11);
+
+        const auto& entry =
+            report
+                ->locally_owned_solution()[
+                    slot];
+        const std::uint64_t
+            expected_mesh_global =
+                stable_cell ==
+                        UINT64_C(10)
+                    ? static_cast<
+                          std::uint64_t>(
+                              q +
+                              slot)
+                    : static_cast<
+                          std::uint64_t>(
+                              slot);
+        require_collective(
+            entry.petsc_global_scalar ==
+                    global &&
+                entry.mesh_global_dof ==
+                    mesh::GlobalDofIndex{
+                        expected_mesh_global} &&
+                entry.cell_global ==
+                    mesh::GlobalEntityId{
+                        stable_cell} &&
+                entry.natural_variable_slot ==
+                    slot,
+            "SNES solution global/local natural-variable numbering mismatch");
+        near_collective(
+            entry.value,
+            target,
+            5.0e-9,
+            5.0e-11);
+    }
+
+    Vec independent_residual = nullptr;
+    require_collective(
+        VecDuplicate(
+            solution,
+            &independent_residual) ==
+                PETSC_SUCCESS,
+        "SNES independent residual allocation failed");
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        final_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    error =
+        snes_manufactured_function(
+            solution,
+            independent_residual,
+            &manufactured_context,
+            &final_status);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            final_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success,
+        "SNES independent final residual evaluation failed");
+    const PetscErrorCode final_begin =
+        VecAssemblyBegin(
+            independent_residual);
+    const PetscErrorCode final_end =
+        VecAssemblyEnd(
+            independent_residual);
+    require_collective(
+        final_begin ==
+                PETSC_SUCCESS &&
+            final_end ==
+                PETSC_SUCCESS,
+        "SNES independent final residual assembly failed");
+
+    PetscReal independent_norm = 0.0;
+    require_collective(
+        VecNorm(
+            independent_residual,
+            NORM_2,
+            &independent_norm) ==
+                PETSC_SUCCESS,
+        "SNES independent final residual norm failed");
+    near_collective(
+        static_cast<double>(
+            independent_norm),
+        report->final_function_l2_norm(),
+        5.0e-8,
+        5.0e-11);
+
+    Vec initial_difference = nullptr;
+    const PetscErrorCode initial_difference_duplicate =
+        VecDuplicate(
+            initial_state,
+            &initial_difference);
+    const PetscErrorCode initial_difference_copy =
+        VecCopy(
+            initial_before,
+            initial_difference);
+    const PetscErrorCode initial_difference_axpy =
+        VecAXPY(
+            initial_difference,
+            PetscScalar{-1.0},
+            initial_state);
+    require_collective(
+        initial_difference_duplicate ==
+                PETSC_SUCCESS &&
+            initial_difference_copy ==
+                PETSC_SUCCESS &&
+            initial_difference_axpy ==
+                PETSC_SUCCESS,
+        "SNES initial-state preservation audit failed");
+
+    PetscReal initial_difference_norm = 0.0;
+    require_collective(
+        VecNorm(
+            initial_difference,
+            NORM_INFINITY,
+            &initial_difference_norm) ==
+                PETSC_SUCCESS &&
+            initial_difference_norm ==
+                PetscReal{0.0},
+        "SNES adapter modified caller initial-state Vec");
+
+    const PetscErrorCode initial_difference_destroy =
+        VecDestroy(
+            &initial_difference);
+    const PetscErrorCode independent_residual_destroy =
+        VecDestroy(
+            &independent_residual);
+    const PetscErrorCode solution_destroy =
+        VecDestroy(
+            &solution);
+    const PetscErrorCode initial_before_destroy =
+        VecDestroy(
+            &initial_before);
+    const PetscErrorCode initial_destroy =
+        VecDestroy(
+            &initial_state);
+    const PetscErrorCode unused_residual_destroy =
+        VecDestroy(
+            &unused_residual);
+    const PetscErrorCode jacobian_template_destroy =
+        MatDestroy(
+            &jacobian_template);
+    require_collective(
+        initial_difference_destroy ==
+                PETSC_SUCCESS &&
+            independent_residual_destroy ==
+                PETSC_SUCCESS &&
+            solution_destroy ==
+                PETSC_SUCCESS &&
+            initial_before_destroy ==
+                PETSC_SUCCESS &&
+            initial_destroy ==
+                PETSC_SUCCESS &&
+            unused_residual_destroy ==
+                PETSC_SUCCESS &&
+            jacobian_template_destroy ==
+                PETSC_SUCCESS,
+        "SNES manufactured PETSc fixture cleanup failed");
+}
+
 void invalid_collective_energy_inputs() {
     int rank = -1;
     if (MPI_Comm_rank(
@@ -4406,6 +5340,9 @@ void headers() {
         natural_variable_newton_linear_system_header(),
         "natural-variable Newton linear-system header probe failed");
     require_collective(
+        natural_variable_snes_solver_header(),
+        "natural-variable SNES solver header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -4443,6 +5380,7 @@ int main(int argc, char** argv) {
         complete_natural_variable_assembly_snapshot();
         complete_natural_variable_petsc_materialization();
         natural_variable_newton_linear_system();
+        natural_variable_snes_solver();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();
@@ -4455,7 +5393,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] frozen natural-variable Newton linear system\n";
+                << "[PASS] PETSc SNES natural-variable nonlinear solve\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;
