@@ -58,4 +58,4 @@ set_tests_properties(
     PROPERTIES
         LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;newton_linear_system;snes;gmres;asm;physical_assembly;owner_targeted"
         TIMEOUT 60
-        ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1")
+        ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1;OMPI_MCA_btl_vader_single_copy_mechanism=none")
