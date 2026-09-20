@@ -136,8 +136,10 @@ same_layout(
                second.component_count() &&
         first.unknown_count() ==
             second.unknown_count() &&
-        first.dependent_composition_component() ==
-            second.dependent_composition_component();
+        first.composition_pivot()
+                .dependent_components() ==
+            second.composition_pivot()
+                .dependent_components();
 }
 
 [[nodiscard]] inline bool
