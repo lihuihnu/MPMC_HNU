@@ -66,7 +66,8 @@ foreach(target IN ITEMS
         mpmc_flow_discretization_tests
         mpmc_flow_discretization_component_flux_tests
         mpmc_flow_discretization_scatter_tests
-        mpmc_flow_discretization_normalized_spatial_tests)
+        mpmc_flow_discretization_normalized_spatial_tests
+        mpmc_flow_discretization_local_conservation_tests)
     if(MSVC)
         target_compile_options(
             ${target}
@@ -99,7 +100,8 @@ if(MPMC_FLOW_DISCRETIZATION_ENABLE_SANITIZERS)
             mpmc_flow_discretization_tests
             mpmc_flow_discretization_component_flux_tests
             mpmc_flow_discretization_scatter_tests
-            mpmc_flow_discretization_normalized_spatial_tests)
+            mpmc_flow_discretization_normalized_spatial_tests
+            mpmc_flow_discretization_local_conservation_tests)
         target_compile_options(
             ${target}
             PRIVATE
