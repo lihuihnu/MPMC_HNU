@@ -85,6 +85,7 @@ endforeach()
 
 set(core_cases
     layout
+    composition_pivot
     valid_state
     invalid_state
     headers)

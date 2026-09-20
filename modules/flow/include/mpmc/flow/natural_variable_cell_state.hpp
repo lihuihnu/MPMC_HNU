@@ -137,7 +137,8 @@ validate_phase_properties(
 reconstruct_positive_composition(
     std::span<const double> independent,
     std::size_t expected_independent_count,
-    std::size_t phase_index) {
+    std::size_t phase_index,
+    std::size_t dependent_component) {
     if (independent.size() !=
         expected_independent_count) {
         throw std::invalid_argument(
@@ -145,11 +146,26 @@ reconstruct_positive_composition(
             std::to_string(phase_index) +
             " independent composition size mismatch");
     }
+    const std::size_t component_count =
+        expected_independent_count + 1U;
+    if (dependent_component >= component_count) {
+        throw std::invalid_argument(
+            "mpmc::flow: dependent composition component is out of range");
+    }
 
-    std::vector<double> full;
-    full.reserve(expected_independent_count + 1U);
+    std::vector<double> full(
+        component_count,
+        0.0);
     double sum = 0.0;
-    for (const double value : independent) {
+    std::size_t independent_index = 0U;
+    for (std::size_t component = 0U;
+         component < component_count;
+         ++component) {
+        if (component == dependent_component) {
+            continue;
+        }
+        const double value =
+            independent[independent_index++];
         if (!std::isfinite(value) ||
             value <= 0.0) {
             throw std::invalid_argument(
@@ -162,45 +178,221 @@ reconstruct_positive_composition(
             throw std::invalid_argument(
                 "mpmc::flow: composition sum is non-finite");
         }
-        full.push_back(value);
+        full[component] = value;
     }
 
-    const double final_value = 1.0 - sum;
-    if (!std::isfinite(final_value) ||
-        final_value <= 0.0) {
+    const double dependent_value =
+        1.0 - sum;
+    if (!std::isfinite(dependent_value) ||
+        dependent_value <= 0.0) {
         throw std::invalid_argument(
             std::string{"mpmc::flow: phase"} +
             std::to_string(phase_index) +
-            " reconstructed composition must be strictly positive");
+            " reconstructed dependent composition must be strictly positive");
     }
-    full.push_back(final_value);
+    full[dependent_component] =
+        dependent_value;
     return full;
 }
 
 } // namespace natural_variable_detail
 
+/// Frozen composition-coordinate pivot for one local three-phase chart.
+///
+/// Selection uses the largest current mole fraction in each phase. Exact ties
+/// select the smallest component index. The selected indices are immutable:
+/// callers must explicitly build a new pivot before changing coordinates.
+class NaturalVariableCompositionPivot3P {
+public:
+    [[nodiscard]] static NaturalVariableCompositionPivot3P
+    fixed_last(std::size_t component_count) {
+        validate_component_count(component_count);
+        return NaturalVariableCompositionPivot3P{
+            component_count,
+            {component_count - 1U,
+             component_count - 1U,
+             component_count - 1U}};
+    }
+
+    [[nodiscard]] static NaturalVariableCompositionPivot3P
+    from_dependent_components(
+        std::size_t component_count,
+        std::array<std::size_t, 3>
+            dependent_components) {
+        validate_component_count(component_count);
+        for (const auto component :
+             dependent_components) {
+            if (component >= component_count) {
+                throw std::invalid_argument(
+                    "mpmc::flow::NaturalVariableCompositionPivot3P: dependent component out of range");
+            }
+        }
+        return NaturalVariableCompositionPivot3P{
+            component_count,
+            dependent_components};
+    }
+
+    [[nodiscard]] static NaturalVariableCompositionPivot3P
+    select(
+        const std::array<
+            std::span<const double>,
+            3>& phase_compositions) {
+        const std::size_t component_count =
+            phase_compositions[0].size();
+        validate_component_count(component_count);
+        std::array<std::size_t, 3>
+            dependent_components{};
+
+        const long double tolerance =
+            4096.0L *
+            static_cast<long double>(
+                std::numeric_limits<double>::epsilon()) *
+            static_cast<long double>(
+                component_count);
+
+        for (std::size_t phase = 0U;
+             phase < fixed_three_phase_count;
+             ++phase) {
+            const auto composition =
+                phase_compositions[phase];
+            if (composition.size() !=
+                component_count) {
+                throw std::invalid_argument(
+                    "mpmc::flow::NaturalVariableCompositionPivot3P: phase composition sizes must match");
+            }
+
+            long double sum = 0.0L;
+            std::size_t best = 0U;
+            double best_value = -1.0;
+            for (std::size_t component = 0U;
+                 component < component_count;
+                 ++component) {
+                const double value =
+                    composition[component];
+                if (!std::isfinite(value) ||
+                    value <= 0.0) {
+                    throw std::invalid_argument(
+                        "mpmc::flow::NaturalVariableCompositionPivot3P: positive-support finite compositions required");
+                }
+                sum +=
+                    static_cast<long double>(
+                        value);
+                if (value > best_value) {
+                    best = component;
+                    best_value = value;
+                }
+            }
+            if (!std::isfinite(sum) ||
+                std::abs(sum - 1.0L) >
+                    tolerance) {
+                throw std::invalid_argument(
+                    "mpmc::flow::NaturalVariableCompositionPivot3P: phase composition must be normalized");
+            }
+            dependent_components[phase] =
+                best;
+        }
+
+        return NaturalVariableCompositionPivot3P{
+            component_count,
+            dependent_components};
+    }
+
+    [[nodiscard]] static NaturalVariableCompositionPivot3P
+    select(
+        const std::array<
+            std::vector<double>,
+            3>& phase_compositions) {
+        return select({
+            std::span<const double>{
+                phase_compositions[0]},
+            std::span<const double>{
+                phase_compositions[1]},
+            std::span<const double>{
+                phase_compositions[2]}});
+    }
+
+    [[nodiscard]] std::size_t
+    component_count() const noexcept {
+        return component_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    dependent_component(
+        PhaseSlot3 slot) const {
+        return dependent_components_[
+            natural_variable_detail::
+                checked_phase_index(slot)];
+    }
+
+    [[nodiscard]] const std::array<
+        std::size_t,
+        3>&
+    dependent_components() const noexcept {
+        return dependent_components_;
+    }
+
+private:
+    NaturalVariableCompositionPivot3P(
+        std::size_t component_count,
+        std::array<std::size_t, 3>
+            dependent_components)
+        : component_count_(component_count),
+          dependent_components_(
+              dependent_components) {}
+
+    static void validate_component_count(
+        std::size_t component_count) {
+        if (component_count < 2U) {
+            throw std::invalid_argument(
+                "mpmc::flow::NaturalVariableCompositionPivot3P: at least two components are required");
+        }
+    }
+
+    std::size_t component_count_;
+    std::array<std::size_t, 3>
+        dependent_components_;
+};
+
+struct NaturalVariableCompositionUnknownIdentity3P {
+    PhaseSlot3 phase{PhaseSlot3::phase0};
+    std::size_t component{};
+    friend bool operator==(
+        const NaturalVariableCompositionUnknownIdentity3P&,
+        const NaturalVariableCompositionUnknownIdentity3P&) =
+        default;
+};
+
+struct NaturalVariableFugacityRowIdentity3P {
+    PhaseSlot3 non_reference_phase{
+        PhaseSlot3::phase1};
+    std::size_t component{};
+    friend bool operator==(
+        const NaturalVariableFugacityRowIdentity3P&,
+        const NaturalVariableFugacityRowIdentity3P&) =
+        default;
+};
+
 /// Deterministic unknown/equation indexing for the fixed-three-phase
 /// non-isothermal natural-variable formulation.
 ///
-/// For Nc components:
-///   unknowns  = p_ref + T + 2 independent saturations
-///             + 3*(Nc-1) independent phase compositions
-///             = 3*Nc + 1
-///   equations = Nc component balances + 1 energy balance
-///             + 2*Nc fugacity-equality rows
-///             = 3*Nc + 1
-///
-/// phase0 is the local fugacity-reference phase. phase2 saturation and the
-/// final component fraction of every phase are dependent quantities.
+/// The component order is never changed by pivoting. Within each phase block,
+/// independent composition columns remain in canonical component-index order
+/// with the frozen dependent component omitted. Fugacity-equilibrium rows
+/// remain in canonical component order and are independent of the pivot.
 class NaturalVariableLayout3P {
 public:
     explicit NaturalVariableLayout3P(
         std::size_t component_count)
-        : component_count_(component_count) {
-        if (component_count_ < 2U) {
-            throw std::invalid_argument(
-                "mpmc::flow::NaturalVariableLayout3P: at least two components are required");
-        }
+        : NaturalVariableLayout3P(
+              NaturalVariableCompositionPivot3P::
+                  fixed_last(component_count)) {}
+
+    explicit NaturalVariableLayout3P(
+        NaturalVariableCompositionPivot3P pivot)
+        : component_count_(
+              pivot.component_count()),
+          composition_pivot_(
+              std::move(pivot)) {
         if (component_count_ >
             (std::numeric_limits<std::size_t>::max() - 1U) /
                 fixed_three_phase_count) {
@@ -222,6 +414,18 @@ public:
     [[nodiscard]] static constexpr PhaseSlot3
     fugacity_reference_phase() noexcept {
         return PhaseSlot3::phase0;
+    }
+
+    [[nodiscard]] const NaturalVariableCompositionPivot3P&
+    composition_pivot() const noexcept {
+        return composition_pivot_;
+    }
+
+    [[nodiscard]] std::size_t
+    dependent_composition_component(
+        PhaseSlot3 slot) const {
+        return composition_pivot_.
+            dependent_component(slot);
     }
 
     [[nodiscard]] std::size_t
@@ -258,6 +462,23 @@ public:
         return 2U + phase;
     }
 
+    [[nodiscard]] std::size_t
+    independent_composition_component(
+        PhaseSlot3 slot,
+        std::size_t independent_rank) const {
+        if (independent_rank >=
+            component_count_ - 1U) {
+            throw std::out_of_range(
+                "mpmc::flow::NaturalVariableLayout3P: independent composition rank out of range");
+        }
+        const std::size_t dependent =
+            dependent_composition_component(
+                slot);
+        return independent_rank < dependent
+            ? independent_rank
+            : independent_rank + 1U;
+    }
+
     [[nodiscard]] std::optional<std::size_t>
     independent_composition_unknown_index(
         PhaseSlot3 slot,
@@ -269,13 +490,47 @@ public:
             throw std::out_of_range(
                 "mpmc::flow::NaturalVariableLayout3P: component index out of range");
         }
-        if (component + 1U ==
-            component_count_) {
+        const std::size_t dependent =
+            dependent_composition_component(
+                slot);
+        if (component == dependent) {
             return std::nullopt;
         }
+        const std::size_t independent_rank =
+            component < dependent
+                ? component
+                : component - 1U;
         return 4U +
-               phase * (component_count_ - 1U) +
-               component;
+               phase *
+                   (component_count_ - 1U) +
+               independent_rank;
+    }
+
+    [[nodiscard]] std::optional<
+        NaturalVariableCompositionUnknownIdentity3P>
+    composition_unknown_identity(
+        std::size_t unknown_index) const {
+        if (unknown_index >=
+            unknown_count()) {
+            throw std::out_of_range(
+                "mpmc::flow::NaturalVariableLayout3P: unknown index out of range");
+        }
+        if (unknown_index < 4U) {
+            return std::nullopt;
+        }
+        const std::size_t local =
+            unknown_index - 4U;
+        const std::size_t block =
+            component_count_ - 1U;
+        const std::size_t phase =
+            local / block;
+        const std::size_t rank =
+            local % block;
+        return NaturalVariableCompositionUnknownIdentity3P{
+            static_cast<PhaseSlot3>(phase),
+            independent_composition_component(
+                static_cast<PhaseSlot3>(phase),
+                rank)};
     }
 
     [[nodiscard]] std::size_t
@@ -310,12 +565,41 @@ public:
                 "mpmc::flow::NaturalVariableLayout3P: fugacity component index out of range");
         }
         return component_count_ + 1U +
-               (phase - 1U) * component_count_ +
+               (phase - 1U) *
+                   component_count_ +
                component;
+    }
+
+    [[nodiscard]] std::optional<
+        NaturalVariableFugacityRowIdentity3P>
+    fugacity_equilibrium_row_identity(
+        std::size_t equation_index) const {
+        if (equation_index >=
+            equation_count()) {
+            throw std::out_of_range(
+                "mpmc::flow::NaturalVariableLayout3P: equation index out of range");
+        }
+        const std::size_t first =
+            component_count_ + 1U;
+        if (equation_index < first) {
+            return std::nullopt;
+        }
+        const std::size_t local =
+            equation_index - first;
+        const std::size_t phase_offset =
+            local / component_count_;
+        const std::size_t component =
+            local % component_count_;
+        return NaturalVariableFugacityRowIdentity3P{
+            static_cast<PhaseSlot3>(
+                phase_offset + 1U),
+            component};
     }
 
 private:
     std::size_t component_count_;
+    NaturalVariableCompositionPivot3P
+        composition_pivot_;
 };
 
 struct NaturalVariableCellStateInput3P {
@@ -325,6 +609,9 @@ struct NaturalVariableCellStateInput3P {
     std::array<double, 2> independent_saturations{};
     std::array<std::vector<double>, 3>
         independent_phase_compositions;
+    std::optional<
+        NaturalVariableCompositionPivot3P>
+        composition_pivot;
     std::array<PhasePropertyPrerequisiteInput, 3>
         phase_properties;
 };
@@ -340,7 +627,16 @@ public:
     [[nodiscard]] static NaturalVariableCellState3P
     create(NaturalVariableCellStateInput3P input) {
         NaturalVariableLayout3P layout{
-            input.component_ids.size()};
+            input.composition_pivot
+                ? *input.composition_pivot
+                : NaturalVariableCompositionPivot3P::
+                      fixed_last(
+                          input.component_ids.size())};
+        if (layout.component_count() !=
+            input.component_ids.size()) {
+            throw std::invalid_argument(
+                "mpmc::flow::NaturalVariableCellState3P: pivot/component count mismatch");
+        }
 
         for (std::size_t index = 0U;
              index < input.component_ids.size();
@@ -402,7 +698,10 @@ public:
                             .independent_phase_compositions
                             [phase],
                         layout.component_count() - 1U,
-                        phase);
+                        phase,
+                        layout.dependent_composition_component(
+                            static_cast<PhaseSlot3>(
+                                phase)));
             properties[phase] =
                 natural_variable_detail::
                     validate_phase_properties(

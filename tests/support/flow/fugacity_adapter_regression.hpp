@@ -54,10 +54,16 @@ evaluate_values(
         const auto slot =
             static_cast<flow::PhaseSlot3>(
                 phase);
-        compositions[phase].reserve(n);
+        compositions[phase].assign(
+            n,
+            0.0);
+        const std::size_t dependent =
+            layout
+                .dependent_composition_component(
+                    slot);
         double sum = 0.0;
         for (std::size_t component = 0U;
-             component + 1U < n;
+             component < n;
              ++component) {
             const auto index =
                 layout
@@ -65,17 +71,20 @@ evaluate_values(
                         slot,
                         component);
             if (!index) {
-                throw std::logic_error(
-                    "flow adapter regression: missing independent composition index");
+                if (component != dependent) {
+                    throw std::logic_error(
+                        "flow adapter regression: dependent composition identity mismatch");
+                }
+                continue;
             }
             const double value =
                 inputs[*index];
-            compositions[phase].push_back(
-                value);
+            compositions[phase][component] =
+                value;
             sum += value;
         }
-        compositions[phase].push_back(
-            1.0 - sum);
+        compositions[phase][dependent] =
+            1.0 - sum;
     }
 
     const flow::
@@ -133,8 +142,11 @@ void verify_accepted_state_and_jacobian(
                 n,
         "flow adapter regression: invalid phase composition shape");
 
+    const auto pivot =
+        flow::NaturalVariableCompositionPivot3P::
+            select(phase_compositions);
     const flow::NaturalVariableLayout3P
-        layout{n};
+        layout{pivot};
     std::vector<double> inputs(
         layout.unknown_count(),
         0.0);
@@ -166,16 +178,22 @@ void verify_accepted_state_and_jacobian(
             static_cast<flow::PhaseSlot3>(
                 phase);
         for (std::size_t component = 0U;
-             component + 1U < n;
+             component < n;
              ++component) {
             const auto index =
                 layout
                     .independent_composition_unknown_index(
                         slot,
                         component);
-            require(
-                index.has_value(),
-                "flow adapter regression: composition layout changed");
+            if (!index) {
+                require(
+                    component ==
+                        layout
+                            .dependent_composition_component(
+                                slot),
+                    "flow adapter regression: pivot identity changed");
+                continue;
+            }
             inputs[*index] =
                 phase_compositions[phase]
                                   [component];
@@ -204,11 +222,16 @@ void verify_accepted_state_and_jacobian(
                         flow::PhaseSlot3>(
                         phase);
                 D sum{};
-                compositions[phase]
-                    .reserve(n);
+                compositions[phase].assign(
+                    n,
+                    D{});
+                const std::size_t dependent =
+                    layout
+                        .dependent_composition_component(
+                            slot);
                 for (std::size_t component =
                          0U;
-                     component + 1U < n;
+                     component < n;
                      ++component) {
                     const auto index =
                         layout
@@ -216,17 +239,20 @@ void verify_accepted_state_and_jacobian(
                                 slot,
                                 component);
                     if (!index) {
-                        throw std::logic_error(
-                            "flow adapter regression: AD composition index missing");
+                        if (component != dependent) {
+                            throw std::logic_error(
+                                "flow adapter regression: AD pivot identity mismatch");
+                        }
+                        continue;
                     }
                     compositions[phase]
-                        .push_back(
-                            active[*index]);
+                                [component] =
+                        active[*index];
                     sum += active[*index];
                 }
                 compositions[phase]
-                    .push_back(
-                        D{1.0} - sum);
+                            [dependent] =
+                    D{1.0} - sum;
             }
 
             const D& pressure =
@@ -318,20 +344,31 @@ void verify_accepted_state_and_jacobian(
 
     const auto strongest_independent =
         [&](std::size_t phase) {
-            const double dependent =
+            const auto slot =
+                static_cast<flow::PhaseSlot3>(
+                    phase);
+            const std::size_t dependent_component =
+                layout
+                    .dependent_composition_component(
+                        slot);
+            const double dependent_value =
                 phase_compositions[phase]
-                                  .back();
+                                  [dependent_component];
             std::size_t best = 0U;
             double best_margin = 0.0;
             for (std::size_t component =
                      0U;
-                 component + 1U < n;
+                 component < n;
                  ++component) {
+                if (component ==
+                    dependent_component) {
+                    continue;
+                }
                 const double margin =
                     std::min(
                         phase_compositions[
                             phase][component],
-                        dependent);
+                        dependent_value);
                 if (margin >
                     best_margin) {
                     best = component;

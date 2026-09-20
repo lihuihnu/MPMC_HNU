@@ -9,6 +9,7 @@ on:
       - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp'
       - 'modules/flow/CMakeLists.txt'
+      - 'modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp'
       - 'modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp'
       - 'modules/flow/include/mpmc/flow/thermodynamics_fugacity_adapters.hpp'
       - 'tests/support/flow/fugacity_adapter_regression.hpp'

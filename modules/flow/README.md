@@ -619,7 +619,7 @@ flash remain independent of flow.
 The adapter boundary is validated inside the existing owners of the accepted three-phase fixtures rather than by copying fixture data into flow tests:
 
 - **PR76:** Li–Firoozabadi 2012 sour-gas literature benchmark after accepted three-phase max3 closure and final stability review;
-- **SW92:** authoritative Profile-C Sample-6 three-phase publication, preserving AQ/NA family metadata and the selected root branch carried by each published phase. The adapter/Jacobian regression uses the repository's already-verified reversed component permutation of the same accepted state so the current fixed-last dependent composition coordinate does not place the ~7.45e-12 aqueous trace fraction behind a subtractive `1-sum(x)` reconstruction;
+- **SW92:** authoritative Profile-C Sample-6 three-phase publication, preserving AQ/NA family metadata and the selected root branch carried by each published phase. The regression now keeps the authoritative component order; the natural-variable pivot selects a well-conditioned dependent component per phase instead of reconstructing the ~7.45e-12 aqueous trace component;
 - **CPA:** the repository's accepted max3 symmetric structural fixture. It remains explicitly synthetic and is used only for equation/software validation, not physical validation.
 
 For each state, the integration regression transfers `activity.branch` directly into the adapter selection. SW92 additionally transfers the published thermodynamic family and configured NaCl molality. No root is reconstructed from density, Z or slot ordering.
@@ -647,11 +647,77 @@ The regressions require:
 
 Finite differences are test-only cross-checks. Production residual/Jacobian evaluation remains AD/analytic through the selected EoS branch.
 
-The Sample-6 audit exposed a numerical limitation of the current local coordinate
-contract: always choosing the final component as the dependent mole fraction is
-ill-conditioned when that component is trace-level. No tolerance was relaxed and no
-composition was clipped. This slice uses an already validated component permutation;
-before global Newton integration, dependent-component pivoting should be made explicit
-rather than relying on component order.
+The Sample-6 audit exposed the numerical limitation of a fixed-last dependent
+composition. That limitation is removed by the pivot contract below; no component
+permutation, clipping or tolerance relaxation is required.
 
 This slice still does not construct component or energy conservation rows, Darcy face fluxes, time-discretization terms, a global Newton system, PETSc matrix values, phase switching or wells.
+
+## 21. Natural-variable dependent-component pivot contract
+
+A local natural-variable chart now owns an explicit
+`NaturalVariableCompositionPivot3P`. The pivot is selected from the **current full
+positive-support phase compositions** before a local linearization begins.
+
+For each phase independently:
+
+1. choose the component with the largest mole fraction as the dependent component;
+2. if two or more components are exactly tied, choose the lowest canonical component
+   index;
+3. freeze that choice for the lifetime of the local chart/Jacobian evaluation;
+4. repivot only by explicitly constructing a new chart from a new accepted/current
+   composition state.
+
+The selection rule makes the reconstructed value
+
+```text
+x_dep = 1 - sum(x_independent)
+```
+
+the largest available composition coordinate, which avoids forcing a trace component
+through subtractive reconstruction. The pivot selector requires normalized, finite,
+strictly positive compositions and never clips or renormalizes them.
+
+### Stable identity and ordering
+
+Pivoting changes **coordinates**, not component identity.
+
+- external component IDs and their canonical order are unchanged;
+- each phase's independent composition block is ordered by canonical component index
+  with only that phase's dependent component omitted;
+- `independent_composition_unknown_index(phase, component)` maps a physical component
+  identity to its frozen Jacobian column, returning no column only for the dependent
+  component;
+- `composition_unknown_identity(column)` provides the inverse phase/component
+  identity for every composition column;
+- fugacity-equilibrium rows remain ordered by non-reference phase and canonical
+  component index, independent of the pivot;
+- `fugacity_equilibrium_row_identity(row)` exposes that invariant row identity.
+
+Therefore repivoting may change Jacobian **column coordinates**, but never silently
+reorders components or residual equations. A solver that accepts a new pivot must also
+accept the new explicit chart metadata; a pivot is never changed inside one residual or
+Jacobian evaluation.
+
+### Backward-compatible fixed-last input
+
+The existing count-only `NaturalVariableLayout3P(Nc)` constructor and cell-state input
+without an explicit pivot retain the original fixed-last chart for compatibility.
+Production code that starts from full phase compositions should select and pass an
+explicit pivot. `NaturalVariableCellStateInput3P::composition_pivot` preserves that
+chart when reconstructing the validated full composition.
+
+### Integration evidence
+
+The PR76, SW92 and CPA accepted-three-phase adapter/Jacobian regressions now all select
+their pivot directly from the accepted full phase compositions.
+
+Most importantly, SW92 Profile-C Sample-6 is again tested in its authoritative normal
+component order. Its aqueous final component is approximately `7.45e-12`, but the
+pivot selects the dominant aqueous component instead, so the trace fraction remains an
+independent physical coordinate rather than the subtraction remainder.
+
+The regressions continue to require the same `2*Nc` residual closure, finite AD
+Jacobian, zero saturation columns under `pc=none`, and fixed-branch central-perturbation
+agreement. This pivot slice still does not add conservation, Darcy flux, time stepping,
+global Newton/PETSc assembly, phase switching or wells.

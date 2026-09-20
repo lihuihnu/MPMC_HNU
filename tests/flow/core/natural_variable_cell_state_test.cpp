@@ -184,6 +184,222 @@ void layout() {
         "reference phase");
 }
 
+
+void composition_pivot() {
+    const std::array<std::vector<double>, 3>
+        compositions{
+            std::vector<double>{0.10, 0.70, 0.20},
+            std::vector<double>{0.60, 0.20, 0.20},
+            std::vector<double>{0.20, 0.30, 0.50}};
+    const auto pivot =
+        fl::NaturalVariableCompositionPivot3P::
+            select(compositions);
+
+    require(
+        pivot.component_count() == 3U &&
+            pivot.dependent_component(
+                fl::PhaseSlot3::phase0) == 1U &&
+            pivot.dependent_component(
+                fl::PhaseSlot3::phase1) == 0U &&
+            pivot.dependent_component(
+                fl::PhaseSlot3::phase2) == 2U,
+        "largest-composition pivot selection changed");
+
+    const fl::NaturalVariableLayout3P layout{
+        pivot};
+    require(
+        layout
+                .independent_composition_unknown_index(
+                    fl::PhaseSlot3::phase0,
+                    0U) ==
+            std::optional<std::size_t>{4U} &&
+            !layout
+                 .independent_composition_unknown_index(
+                     fl::PhaseSlot3::phase0,
+                     1U)
+                 .has_value() &&
+            layout
+                .independent_composition_unknown_index(
+                    fl::PhaseSlot3::phase0,
+                    2U) ==
+            std::optional<std::size_t>{5U} &&
+            !layout
+                 .independent_composition_unknown_index(
+                     fl::PhaseSlot3::phase1,
+                     0U)
+                 .has_value() &&
+            layout
+                .independent_composition_unknown_index(
+                    fl::PhaseSlot3::phase1,
+                    1U) ==
+            std::optional<std::size_t>{6U} &&
+            layout
+                .independent_composition_unknown_index(
+                    fl::PhaseSlot3::phase1,
+                    2U) ==
+            std::optional<std::size_t>{7U} &&
+            layout
+                .independent_composition_unknown_index(
+                    fl::PhaseSlot3::phase2,
+                    0U) ==
+            std::optional<std::size_t>{8U} &&
+            layout
+                .independent_composition_unknown_index(
+                    fl::PhaseSlot3::phase2,
+                    1U) ==
+            std::optional<std::size_t>{9U} &&
+            !layout
+                 .independent_composition_unknown_index(
+                     fl::PhaseSlot3::phase2,
+                     2U)
+                 .has_value(),
+        "pivoted composition-column mapping changed");
+
+    const auto column5 =
+        layout.composition_unknown_identity(5U);
+    const auto column6 =
+        layout.composition_unknown_identity(6U);
+    const auto column9 =
+        layout.composition_unknown_identity(9U);
+    require(
+        column5 &&
+            column5->phase ==
+                fl::PhaseSlot3::phase0 &&
+            column5->component == 2U &&
+            column6 &&
+            column6->phase ==
+                fl::PhaseSlot3::phase1 &&
+            column6->component == 1U &&
+            column9 &&
+            column9->phase ==
+                fl::PhaseSlot3::phase2 &&
+            column9->component == 1U,
+        "composition unknown identity reverse mapping changed");
+
+    const auto phase1_row =
+        layout.fugacity_equilibrium_row_identity(
+            layout
+                .fugacity_equilibrium_equation_index(
+                    fl::PhaseSlot3::phase1,
+                    2U));
+    const auto phase2_row =
+        layout.fugacity_equilibrium_row_identity(
+            layout
+                .fugacity_equilibrium_equation_index(
+                    fl::PhaseSlot3::phase2,
+                    0U));
+    require(
+        phase1_row &&
+            phase1_row->non_reference_phase ==
+                fl::PhaseSlot3::phase1 &&
+            phase1_row->component == 2U &&
+            phase2_row &&
+            phase2_row->non_reference_phase ==
+                fl::PhaseSlot3::phase2 &&
+            phase2_row->component == 0U,
+        "fugacity row identity changed under composition pivot");
+
+    const fl::NaturalVariableLayout3P default_layout{
+        3U};
+    require(
+        layout
+                .fugacity_equilibrium_equation_index(
+                    fl::PhaseSlot3::phase1,
+                    2U) ==
+            default_layout
+                .fugacity_equilibrium_equation_index(
+                    fl::PhaseSlot3::phase1,
+                    2U) &&
+            layout
+                .fugacity_equilibrium_equation_index(
+                    fl::PhaseSlot3::phase2,
+                    0U) ==
+            default_layout
+                .fugacity_equilibrium_equation_index(
+                    fl::PhaseSlot3::phase2,
+                    0U),
+        "residual row order depends on pivot");
+
+    const std::array<std::vector<double>, 3>
+        tied{
+            std::vector<double>{0.45, 0.45, 0.10},
+            std::vector<double>{0.20, 0.40, 0.40},
+            std::vector<double>{0.50, 0.25, 0.25}};
+    const auto tied_pivot =
+        fl::NaturalVariableCompositionPivot3P::
+            select(tied);
+    require(
+        tied_pivot.dependent_component(
+            fl::PhaseSlot3::phase0) == 0U &&
+            tied_pivot.dependent_component(
+                fl::PhaseSlot3::phase1) == 1U,
+        "pivot tie-break is not lowest component index");
+
+    const std::array<std::vector<double>, 3>
+        trace{
+            std::vector<double>{
+                0.9991426078018199,
+                0.0008573921907259,
+                7.4541155e-12},
+            std::vector<double>{0.30, 0.20, 0.50},
+            std::vector<double>{0.10, 0.80, 0.10}};
+    const auto trace_pivot =
+        fl::NaturalVariableCompositionPivot3P::
+            select(trace);
+    require(
+        trace_pivot.dependent_component(
+            fl::PhaseSlot3::phase0) == 0U,
+        "trace final component was selected as dependent");
+
+    auto input = valid_input();
+    input.composition_pivot = pivot;
+    input.independent_phase_compositions = {
+        std::vector<double>{0.10, 0.20},
+        std::vector<double>{0.20, 0.20},
+        std::vector<double>{0.20, 0.30}};
+    const auto state =
+        fl::NaturalVariableCellState3P::create(
+            std::move(input));
+    require(
+        state.component_ids()[0] == "A" &&
+            state.component_ids()[1] == "B" &&
+            state.component_ids()[2] == "C" &&
+            state.layout()
+                    .dependent_composition_component(
+                        fl::PhaseSlot3::phase0) ==
+                1U,
+        "pivot changed ordered component identity");
+    for (std::size_t phase = 0U;
+         phase < 3U;
+         ++phase) {
+        const auto actual =
+            state.phase_composition(
+                static_cast<fl::PhaseSlot3>(
+                    phase));
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            near(
+                actual[component],
+                compositions[phase]
+                            [component]);
+        }
+    }
+
+    expect_invalid(
+        [] {
+            const std::array<std::vector<double>, 3>
+                invalid{
+                    std::vector<double>{0.5, 0.5, 0.0},
+                    std::vector<double>{0.4, 0.3, 0.3},
+                    std::vector<double>{0.4, 0.3, 0.3}};
+            (void)fl::
+                NaturalVariableCompositionPivot3P::
+                    select(invalid);
+        },
+        "positive-support");
+}
+
 void valid_state() {
     const auto state =
         fl::NaturalVariableCellState3P::create(
@@ -435,6 +651,7 @@ using Test =
 
 constexpr Test tests[]{
     {"layout", layout},
+    {"composition_pivot", composition_pivot},
     {"valid_state", valid_state},
     {"invalid_state", invalid_state},
     {"headers", headers}};

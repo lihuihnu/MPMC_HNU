@@ -20,6 +20,7 @@ on:
       - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase_closure.hpp'
       - 'modules/thermodynamics/**/*.hpp'
       - 'modules/flow/CMakeLists.txt'
+      - 'modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp'
       - 'modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp'
       - 'modules/flow/include/mpmc/flow/thermodynamics_fugacity_adapters.hpp'
       - 'tests/support/flow/fugacity_adapter_regression.hpp'
