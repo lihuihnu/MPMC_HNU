@@ -36,6 +36,8 @@ bool single_phase_snes_assembly_header();
 void single_phase_snes_physical_assembly_test();
 bool two_phase_snes_assembly_header();
 void two_phase_snes_physical_assembly_test();
+bool variable_cardinality_natural_variable_numbering_header();
+void variable_cardinality_natural_variable_numbering_test();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -5358,6 +5360,9 @@ void headers() {
         two_phase_snes_assembly_header(),
         "two-phase SNES assembly header probe failed");
     require_collective(
+        variable_cardinality_natural_variable_numbering_header(),
+        "variable-cardinality natural-variable numbering header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -5399,6 +5404,7 @@ int main(int argc, char** argv) {
         fixed_three_phase_snes_physical_assembly_test();
         single_phase_snes_physical_assembly_test();
         two_phase_snes_physical_assembly_test();
+        variable_cardinality_natural_variable_numbering_test();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();
@@ -5411,7 +5417,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] PETSc SNES fixed-three-phase + single-phase + two-phase production assembly\n";
+                << "[PASS] PETSc SNES fixed-three-phase + single-phase + two-phase + variable-cardinality numbering\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;

@@ -12,6 +12,7 @@ add_executable(
     fixed_three_phase_snes_assembly_test.cpp
     single_phase_snes_assembly_test.cpp
     two_phase_snes_assembly_test.cpp
+    variable_cardinality_natural_variable_numbering_test.cpp
     distributed_component_conservation_header.cpp
     distributed_energy_conservation_header.cpp
     energy_global_assembly_mapping_header.cpp
@@ -22,6 +23,7 @@ add_executable(
     fixed_three_phase_snes_assembly_header.cpp
     single_phase_snes_assembly_header.cpp
     two_phase_snes_assembly_header.cpp
+    variable_cardinality_natural_variable_numbering_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(

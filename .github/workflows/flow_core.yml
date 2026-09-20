@@ -92,6 +92,6 @@ jobs:
         run: |
           ctest --test-dir build/flow-core \
             -C ${{ matrix.config }} \
-            -R '^flow[.](core|fugacity|fugacity_linearization|accumulation|accumulation_time|energy_accumulation|constitutive|transport|potential)[.]' \
+            -R '^flow[.](core|phase_transition|fugacity|fugacity_linearization|accumulation|accumulation_time|energy_accumulation|constitutive|transport|potential)[.]' \
             --verbose \
             --no-tests=error

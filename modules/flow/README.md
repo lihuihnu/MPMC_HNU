@@ -3544,3 +3544,43 @@ variable-per-cell section. Therefore fixed 1P, 2P, and 3P production systems rem
 individually operational, while mixed-cardinality global PETSc numbering/assembly is
 the remaining solver-structure step before automatic local switching can run in one
 distributed solve.
+
+
+## 45. Variable-cardinality cell DoF and PETSc scalar numbering bridge
+
+The distributed active-set foundation now has a dedicated ragged natural-variable
+numbering bridge in `flow_discretization_petsc`. It does not change the generic
+fixed-width `mesh::DofLayout`; instead it consumes the existing cell
+`PartitionSnapshot` plus the active phase count `P_c` for every local owned/ghost
+cell.
+
+For each cell,
+
+```text
+q_c = P_c * Nc + 1,  P_c in {1,2,3}.
+```
+
+Local packed DoFs are entity-major with variable width. PETSc scalar ownership is
+rank-contiguous; within each rank, owned cells are ordered by stable
+`GlobalEntityId`. Each owner publishes its stable cell ID, active phase count,
+scalar width and global scalar start. Ghost copies must resolve to exactly the same
+published width/start, otherwise construction fails collectively.
+
+The bridge exposes:
+
+- per-cell local packed scalar offset and width;
+- per-cell PETSc global scalar start;
+- local packed scalar -> PETSc global scalar mapping;
+- owned PETSc scalar range and global scalar count;
+- a ragged local `PetscSection` with one DoF block per cell;
+- a distributed PETSc `Vec` whose ownership range matches the ragged numbering.
+
+The 2-rank regression uses `Nc=3` with three stable cells simultaneously carrying
+`P=[1,2,3]`. Their widths are `[4,7,10]`, the global scalar count is `21`,
+and owner/ghost copies agree on every scalar index. A deliberately inconsistent ghost
+phase count is rejected collectively.
+
+This bridge establishes heterogeneous distributed numbering only. Complete
+component/energy/fugacity residual assembly and MPIAIJ symbolic preallocation still
+need to be generalized from uniform `q` to per-row-cell/per-column-cell widths before
+mixed-cardinality SNES can assemble one coupled Jacobian.
