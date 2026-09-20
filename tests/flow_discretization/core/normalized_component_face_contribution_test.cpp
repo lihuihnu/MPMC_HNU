@@ -698,7 +698,7 @@ void invalid_inputs() {
                     nonconservative,
                     {2.0, 5.0});
         },
-        "not exactly conservative");
+        "does not close");
 
     auto wrong_total = source;
     wrong_total.owner_total_face_rate_mol_per_s +=
