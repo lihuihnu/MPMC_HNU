@@ -9,6 +9,7 @@ enable_testing()
 add_executable(
     mpmc_flow_discretization_petsc_tests
     distributed_component_conservation_test.cpp
+    fixed_three_phase_snes_assembly_test.cpp
     distributed_component_conservation_header.cpp
     distributed_energy_conservation_header.cpp
     energy_global_assembly_mapping_header.cpp
@@ -16,6 +17,7 @@ add_executable(
     complete_natural_variable_petsc_materialization_header.cpp
     natural_variable_newton_linear_system_header.cpp
     natural_variable_snes_solver_header.cpp
+    fixed_three_phase_snes_assembly_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(
@@ -48,6 +50,6 @@ add_test(
 set_tests_properties(
     flow_discretization.petsc.distributed_owner_targeted_conservation
     PROPERTIES
-        LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;newton_linear_system;snes;gmres;asm;owner_targeted"
+        LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;newton_linear_system;snes;gmres;asm;physical_assembly;owner_targeted"
         TIMEOUT 60
         ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1")

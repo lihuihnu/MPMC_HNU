@@ -3326,3 +3326,93 @@ case.
 No phase switching, wells, boundary/source terms, equation scaling, custom ASM
 subdomains or production KSP tuning are added in this slice.
 
+## 43. Fixed-three-phase production assembly callbacks for PETSc SNES
+
+The PETSc SNES adapter can now consume the existing fixed-three-phase flow assembly instead
+of a manufactured nonlinear function.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/fixed_three_phase_snes_assembly.hpp>
+```
+
+The assembly context owns no EOS formula and no alternative conservation equation. For
+each SNES state it performs:
+
+```text
+PETSc owned x
+  -> q-scaled PetscSF owned/ghost state exchange
+  -> current-cell property/fugacity evaluator on each frozen local chart
+  -> existing component + energy backward-Euler accumulation
+  -> existing mobility / phase-potential / upwind path
+  -> existing admissibility-gated TPFA phase flux
+  -> existing component molar flux + conservative scatter + bulk-volume normalization
+  -> existing advective enthalpy + conductive energy + bulk-volume normalization
+  -> existing distributed owner-targeted component/energy conservation
+  -> existing component/energy/fugacity global scalar mappings
+  -> CompleteNaturalVariableAssemblySnapshot3D
+```
+
+Both the SNES function callback and Jacobian callback rebuild this chain from the current
+PETSc state. No residual/Jacobian value is cached across nonlinear states and no
+finite-difference path is added.
+
+### MPI state exchange
+
+The global SNES vector stores only owned scalar blocks. The context constructs one
+q-scaled `PetscSF` from the existing cell ownership/global-row bridge and broadcasts
+owned values to the local owned+depth-1-ghost cell blocks before any face evaluation.
+
+This keeps authoritative owner/neighbour face evaluation on the existing overlap and does
+not introduce a state `MPI_Allgather`.
+
+### Frozen-chart positive-support precheck
+
+The context supplies the SNES line-search precheck for the real natural-variable chart.
+It keeps the per-cell dependent-component pivot frozen and limits PETSc's search
+direction when a full trial would violate:
+
+- positive reference pressure;
+- positive temperature;
+- positive `S0`, `S1`, or reconstructed `S2=1-S0-S1`;
+- positive independent composition coordinates;
+- positive reconstructed dependent composition in every phase.
+
+The precheck only scales the PETSc search direction by one globally consistent safe
+factor. It does not clip, renormalize, repivot, switch phase sets, or implement a second
+line-search loop.
+
+### Controlled two-rank regression
+
+The regression uses the production accumulation, TPFA, component/energy face,
+distributed-conservation and global-mapping builders. The only controlled part is the
+cell closure providing simple analytic property/fugacity values and derivatives.
+
+The controlled case sets relative permeability and thermal face conductance to zero.
+Spatial component/energy flux is therefore physically zero, but the full authoritative
+face/TPFA/distributed path is still executed. Previous component and energy storage are
+generated at the known target with the same production accumulation builders.
+
+The six local fugacity rows constrain the six composition coordinates, the energy row
+constrains temperature, and the three component rows constrain pressure plus the two
+independent saturations. The resulting per-cell 10-by-10 Jacobian is full rank; no
+regularization or artificial diagonal shift is applied.
+
+The regression verifies:
+
+- PETSc owned-to-ghost state propagation through `PetscSF`;
+- every function/Jacobian callback re-evaluates the current state;
+- convergence through the existing `SNESNEWTONLS + BT + GMRES + ASM(1)` adapter;
+- final state equals the known fixed-three-phase target;
+- independent final production assembly has small residual;
+- final production Jacobian entries are finite;
+- frozen PETSc / mesh-global / stable-cell / natural-variable provenance remains intact.
+
+This controlled closure is a software assembly/orchestration regression only. It is not
+an independent physical three-phase validation case and does not replace later
+PR76/SW92/CPA end-to-end validation.
+
+No phase switching, wells, boundary/source terms, single-phase reduction, equation
+scaling or custom ASM subdomains are introduced in this slice.
+

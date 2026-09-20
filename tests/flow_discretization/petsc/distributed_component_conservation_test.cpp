@@ -30,6 +30,8 @@ bool complete_natural_variable_assembly_snapshot_header();
 bool complete_natural_variable_petsc_materialization_header();
 bool natural_variable_newton_linear_system_header();
 bool natural_variable_snes_solver_header();
+bool fixed_three_phase_snes_assembly_header();
+void fixed_three_phase_snes_physical_assembly_test();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -5343,6 +5345,9 @@ void headers() {
         natural_variable_snes_solver_header(),
         "natural-variable SNES solver header probe failed");
     require_collective(
+        fixed_three_phase_snes_assembly_header(),
+        "fixed-three-phase SNES assembly header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -5381,6 +5386,7 @@ int main(int argc, char** argv) {
         complete_natural_variable_petsc_materialization();
         natural_variable_newton_linear_system();
         natural_variable_snes_solver();
+        fixed_three_phase_snes_physical_assembly_test();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();
@@ -5393,7 +5399,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] PETSc SNES natural-variable nonlinear solve\n";
+                << "[PASS] PETSc SNES fixed-three-phase production assembly\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;
