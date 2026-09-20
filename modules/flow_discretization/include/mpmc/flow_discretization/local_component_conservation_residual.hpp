@@ -233,16 +233,6 @@ inline void validate_state_identity(
         }
     }
 
-    if (identity.saturation.size() !=
-            identity.layout.phase_count() ||
-        identity.phase_composition.size() !=
-            identity.layout.phase_count()) {
-        throw std::invalid_argument(
-            std::string{"mpmc::flow_discretization: invalid "} +
-            name +
-            " phase-cardinality metadata");
-    }
-
     double saturation_sum = 0.0;
     for (double value : identity.saturation) {
         if (!std::isfinite(value) ||
@@ -294,6 +284,18 @@ inline void validate_state_identity(
                 " phase-composition identity must close to one");
         }
     }
+    for (std::size_t phase =
+             identity.layout.phase_count();
+         phase < mpmc::flow::fixed_three_phase_count;
+         ++phase) {
+        if (identity.saturation[phase] != 0.0 ||
+            !identity.phase_composition[phase].empty()) {
+            throw std::invalid_argument(
+                std::string{"mpmc::flow_discretization: "} +
+                name +
+                " inactive phase sidecar must be zero/empty");
+        }
+    }
 }
 
 [[nodiscard]] inline bool same_state_identity(
@@ -307,17 +309,6 @@ inline void validate_state_identity(
         !near_roundoff(
             first.temperature_k,
             second.temperature_k)) {
-        return false;
-    }
-
-    if (first.saturation.size() !=
-            first.layout.phase_count() ||
-        second.saturation.size() !=
-            second.layout.phase_count() ||
-        first.phase_composition.size() !=
-            first.layout.phase_count() ||
-        second.phase_composition.size() !=
-            second.layout.phase_count()) {
         return false;
     }
 
@@ -340,6 +331,17 @@ inline void validate_state_identity(
                     second.phase_composition[phase][component])) {
                 return false;
             }
+        }
+    }
+    for (std::size_t phase =
+             first.layout.phase_count();
+         phase < mpmc::flow::fixed_three_phase_count;
+         ++phase) {
+        if (first.saturation[phase] != 0.0 ||
+            second.saturation[phase] != 0.0 ||
+            !first.phase_composition[phase].empty() ||
+            !second.phase_composition[phase].empty()) {
+            return false;
         }
     }
     return true;

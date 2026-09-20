@@ -462,6 +462,7 @@ make_component_conservation_global_assembly_entries_3d(
 
     std::size_t component_count = 0U;
     std::size_t q = 0U;
+    std::size_t phase_count = 0U;
     std::size_t variable_index = 0U;
     PetscInt scalar_row_start = -1;
     PetscInt scalar_row_end = -1;
@@ -537,7 +538,7 @@ make_component_conservation_global_assembly_entries_3d(
             dof_layout.variable(
                 variable_index);
         q = variable.component_count;
-        const std::size_t phase_count =
+        phase_count =
             q > 1U
                 ? (q - 1U) / component_count
                 : 0U;

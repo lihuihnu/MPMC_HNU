@@ -19,6 +19,13 @@ namespace mpmc::flow {
 inline constexpr std::size_t fixed_three_phase_count = 3U;
 
 
+enum class PhaseSlot3 : std::uint8_t {
+    phase0 = 0,
+    phase1 = 1,
+    phase2 = 2,
+};
+
+struct NaturalVariableCompositionUnknownIdentity3P;
 class NaturalVariableLayout3P;
 
 class NaturalVariableCompositionPivotDescriptor {
@@ -27,22 +34,42 @@ public:
 
     explicit NaturalVariableCompositionPivotDescriptor(
         std::vector<std::size_t> dependent_components)
-        : dependent_components_(
-              std::move(dependent_components)) {}
+        : active_count_(dependent_components.size()) {
+        if (active_count_ == 0U ||
+            active_count_ > fixed_three_phase_count) {
+            throw std::invalid_argument(
+                "mpmc::flow::NaturalVariableCompositionPivotDescriptor: active phase count must be in [1,3]");
+        }
+        for (std::size_t phase = 0U;
+             phase < active_count_;
+             ++phase) {
+            dependent_components_[phase] =
+                dependent_components[phase];
+        }
+    }
 
-    [[nodiscard]] const std::vector<std::size_t>&
+    [[nodiscard]] const std::array<std::size_t, 3>&
     dependent_components() const noexcept {
         return dependent_components_;
     }
 
+    [[nodiscard]] std::size_t
+    active_count() const noexcept {
+        return active_count_;
+    }
+
 private:
-    std::vector<std::size_t> dependent_components_;
+    std::array<std::size_t, 3>
+        dependent_components_{};
+    std::size_t active_count_{};
 };
 
 /// Phase-cardinality-neutral local natural-variable layout descriptor.
 ///
-/// This is metadata only. It preserves block width/equation positions across
-/// 1/2/3-phase reduced systems without exposing phase-specific coordinates.
+/// Unknown ordering for P active phases is:
+///   p, T, P-1 saturations, P*(Nc-1) independent compositions.
+/// Therefore q = P*Nc+1.  The fixed-size pivot sidecar preserves the existing
+/// 3P public metadata surface; entries >= phase_count() are inactive metadata.
 class NaturalVariableLayoutDescriptor {
 public:
     NaturalVariableLayoutDescriptor(
@@ -56,14 +83,17 @@ public:
         if (component_count_ < 2U ||
             phase_count_ == 0U ||
             phase_count_ > fixed_three_phase_count ||
-            composition_pivot_.dependent_components().size() !=
+            composition_pivot_.active_count() !=
                 phase_count_) {
             throw std::invalid_argument(
                 "mpmc::flow::NaturalVariableLayoutDescriptor: invalid component/phase cardinality");
         }
-        for (const auto dependent :
-             composition_pivot_.dependent_components()) {
-            if (dependent >= component_count_) {
+        for (std::size_t phase = 0U;
+             phase < phase_count_;
+             ++phase) {
+            if (composition_pivot_
+                    .dependent_components()[phase] >=
+                component_count_) {
                 throw std::invalid_argument(
                     "mpmc::flow::NaturalVariableLayoutDescriptor: dependent component out of range");
             }
@@ -111,6 +141,82 @@ public:
         return 1U;
     }
 
+    [[nodiscard]] std::optional<std::size_t>
+    independent_saturation_unknown_index(
+        PhaseSlot3 slot) const {
+        const std::size_t phase =
+            static_cast<std::size_t>(slot);
+        if (phase >= phase_count_) {
+            throw std::out_of_range(
+                "mpmc::flow::NaturalVariableLayoutDescriptor: phase is inactive");
+        }
+        if (phase + 1U == phase_count_) {
+            return std::nullopt;
+        }
+        return 2U + phase;
+    }
+
+    [[nodiscard]] std::size_t
+    dependent_composition_component(
+        PhaseSlot3 slot) const {
+        const std::size_t phase =
+            static_cast<std::size_t>(slot);
+        if (phase >= phase_count_) {
+            throw std::out_of_range(
+                "mpmc::flow::NaturalVariableLayoutDescriptor: phase is inactive");
+        }
+        return composition_pivot_
+            .dependent_components()[phase];
+    }
+
+    [[nodiscard]] std::size_t
+    independent_composition_component(
+        PhaseSlot3 slot,
+        std::size_t independent_rank) const {
+        if (independent_rank >=
+            component_count_ - 1U) {
+            throw std::out_of_range(
+                "mpmc::flow::NaturalVariableLayoutDescriptor: independent composition rank out of range");
+        }
+        const std::size_t dependent =
+            dependent_composition_component(slot);
+        return independent_rank < dependent
+            ? independent_rank
+            : independent_rank + 1U;
+    }
+
+    [[nodiscard]] std::optional<std::size_t>
+    independent_composition_unknown_index(
+        PhaseSlot3 slot,
+        std::size_t component) const {
+        const std::size_t phase =
+            static_cast<std::size_t>(slot);
+        if (phase >= phase_count_ ||
+            component >= component_count_) {
+            throw std::out_of_range(
+                "mpmc::flow::NaturalVariableLayoutDescriptor: composition index out of range");
+        }
+        const std::size_t dependent =
+            dependent_composition_component(slot);
+        if (component == dependent) {
+            return std::nullopt;
+        }
+        const std::size_t rank =
+            component < dependent
+                ? component
+                : component - 1U;
+        const std::size_t composition_start =
+            2U + (phase_count_ - 1U);
+        return composition_start +
+            phase * (component_count_ - 1U) +
+            rank;
+    }
+
+    [[nodiscard]] std::optional<
+        NaturalVariableCompositionUnknownIdentity3P>
+    composition_unknown_identity(
+        std::size_t unknown_index) const;
+
     [[nodiscard]] std::size_t
     component_conservation_equation_index(
         std::size_t component) const {
@@ -131,21 +237,13 @@ public:
         return composition_pivot_;
     }
 
+    [[nodiscard]] operator NaturalVariableLayout3P() const;
+
 private:
     std::size_t component_count_{};
     std::size_t phase_count_{};
     NaturalVariableCompositionPivotDescriptor
         composition_pivot_;
-};
-
-
-/// Generic numerical phase slots for the fixed-three-phase interior contract.
-///
-/// These slots intentionally carry no oil/gas/water or liquid/vapor identity.
-enum class PhaseSlot3 : std::uint8_t {
-    phase0 = 0,
-    phase1 = 1,
-    phase2 = 2,
 };
 
 /// Input form for phase properties required by the first non-isothermal
@@ -723,6 +821,56 @@ private:
         composition_pivot_;
 };
 
+
+inline std::optional<
+    NaturalVariableCompositionUnknownIdentity3P>
+NaturalVariableLayoutDescriptor::
+composition_unknown_identity(
+    std::size_t unknown_index) const {
+    if (unknown_index >= unknown_count()) {
+        throw std::out_of_range(
+            "mpmc::flow::NaturalVariableLayoutDescriptor: unknown index out of range");
+    }
+    const std::size_t composition_start =
+        2U + (phase_count_ - 1U);
+    if (unknown_index < composition_start) {
+        return std::nullopt;
+    }
+    const std::size_t local =
+        unknown_index - composition_start;
+    const std::size_t block =
+        component_count_ - 1U;
+    const std::size_t phase =
+        local / block;
+    const std::size_t rank =
+        local % block;
+    if (phase >= phase_count_) {
+        throw std::logic_error(
+            "mpmc::flow::NaturalVariableLayoutDescriptor: malformed composition block");
+    }
+    const auto slot =
+        static_cast<PhaseSlot3>(phase);
+    return NaturalVariableCompositionUnknownIdentity3P{
+        slot,
+        independent_composition_component(
+            slot,
+            rank)};
+}
+
+inline NaturalVariableLayoutDescriptor::
+operator NaturalVariableLayout3P() const {
+    if (phase_count_ !=
+        fixed_three_phase_count) {
+        throw std::invalid_argument(
+            "mpmc::flow::NaturalVariableLayoutDescriptor: only a three-phase descriptor converts to NaturalVariableLayout3P");
+    }
+    return NaturalVariableLayout3P{
+        NaturalVariableCompositionPivot3P::
+            from_dependent_components(
+                component_count_,
+                composition_pivot_
+                    .dependent_components())};
+}
 
 inline NaturalVariableLayoutDescriptor::
 NaturalVariableLayoutDescriptor(

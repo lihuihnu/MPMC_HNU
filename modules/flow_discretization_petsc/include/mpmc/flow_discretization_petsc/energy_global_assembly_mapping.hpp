@@ -297,6 +297,7 @@ make_energy_conservation_global_assembly_entries_3d(
 
     std::size_t q = 0U;
     std::size_t component_count = 0U;
+    std::size_t phase_count = 0U;
     std::uint64_t local_component_count = 0U;
     for (const auto& row : conservation.owned_rows()) {
         const std::uint64_t row_count =
@@ -398,7 +399,7 @@ make_energy_conservation_global_assembly_entries_3d(
         const auto& variable =
             dof_layout.variable(variable_index);
         q = variable.component_count;
-        const std::size_t phase_count =
+        phase_count =
             q > 1U
                 ? (q - 1U) / component_count
                 : 0U;

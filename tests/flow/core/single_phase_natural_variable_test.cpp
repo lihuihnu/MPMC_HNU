@@ -102,9 +102,13 @@ void single_phase_natural_variable_contract() {
     require(
         identity.layout.phase_count() == 1U &&
             identity.layout.unknown_count() == 4U &&
-            identity.saturation.size() == 1U &&
-            identity.phase_composition.size() == 1U,
-        "single-phase identity retained inactive phase slots");
+            identity.saturation[0] == 1.0 &&
+            identity.saturation[1] == 0.0 &&
+            identity.saturation[2] == 0.0 &&
+            identity.phase_composition[0].size() == 3U &&
+            identity.phase_composition[1].empty() &&
+            identity.phase_composition[2].empty(),
+        "single-phase identity retained stale inactive phase data");
 
     const std::size_t q =
         layout.unknown_count();

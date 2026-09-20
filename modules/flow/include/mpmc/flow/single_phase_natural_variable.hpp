@@ -388,11 +388,13 @@ make_state_identity(
             state.component_ids().end()},
         state.reference_pressure_pa(),
         state.temperature_k(),
-        {1.0},
+        {1.0, 0.0, 0.0},
         {
             std::vector<double>{
                 state.phase_composition().begin(),
-                state.phase_composition().end()}}};
+                state.phase_composition().end()},
+            std::vector<double>{},
+            std::vector<double>{}}};
 }
 
 [[nodiscard]] inline bool

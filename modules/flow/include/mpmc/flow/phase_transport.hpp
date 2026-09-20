@@ -42,8 +42,8 @@ struct NaturalVariableStateIdentity {
     std::vector<std::string> component_ids;
     double reference_pressure_pa{};
     double temperature_k{};
-    std::vector<double> saturation;
-    std::vector<std::vector<double>>
+    std::array<double, 3> saturation{};
+    std::array<std::vector<double>, 3>
         phase_composition;
 };
 
@@ -177,11 +177,8 @@ make_state_identity(
             state.component_ids().end()},
         state.reference_pressure_pa(),
         state.temperature_k(),
-        std::vector<double>(
-            fixed_three_phase_count,
-            0.0),
-        std::vector<std::vector<double>>(
-            fixed_three_phase_count)};
+        {},
+        {}};
 
     for (std::size_t phase = 0U;
          phase < fixed_three_phase_count;
@@ -214,19 +211,10 @@ inline void validate_state_identity(
             fixed_three_phase_count ||
         identity.layout.composition_pivot()
                 .dependent_components() !=
-            std::vector<std::size_t>{
-                layout.composition_pivot()
-                    .dependent_components()
-                    .begin(),
-                layout.composition_pivot()
-                    .dependent_components()
-                    .end()} ||
+            layout.composition_pivot()
+                .dependent_components() ||
         identity.layout.unknown_count() !=
             layout.unknown_count() ||
-        identity.saturation.size() !=
-            fixed_three_phase_count ||
-        identity.phase_composition.size() !=
-            fixed_three_phase_count ||
         !near_roundoff(
             identity.reference_pressure_pa,
             state.reference_pressure_pa()) ||

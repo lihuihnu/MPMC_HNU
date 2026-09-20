@@ -172,19 +172,10 @@ inline void validate_state_identity(
             mpmc::flow::fixed_three_phase_count ||
         identity.layout.composition_pivot()
                 .dependent_components() !=
-            std::vector<std::size_t>{
-                layout.composition_pivot()
-                    .dependent_components()
-                    .begin(),
-                layout.composition_pivot()
-                    .dependent_components()
-                    .end()} ||
+            layout.composition_pivot()
+                .dependent_components() ||
         identity.layout.unknown_count() !=
             layout.unknown_count() ||
-        identity.saturation.size() !=
-            mpmc::flow::fixed_three_phase_count ||
-        identity.phase_composition.size() !=
-            mpmc::flow::fixed_three_phase_count ||
         !near_roundoff(
             identity.reference_pressure_pa,
             state.reference_pressure_pa()) ||
