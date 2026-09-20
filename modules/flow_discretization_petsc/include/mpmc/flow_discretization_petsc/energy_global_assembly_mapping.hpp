@@ -126,10 +126,16 @@ private:
             local_rank_.value() >= rank_count_ ||
             natural_variable_id_.empty() ||
             component_count_ < 2U ||
-            natural_variable_count_ !=
-                mpmc::flow::fixed_three_phase_count *
-                    component_count_ +
-                    1U ||
+            natural_variable_count_ <= 1U ||
+            (natural_variable_count_ - 1U) %
+                    component_count_ !=
+                0U ||
+            (natural_variable_count_ - 1U) /
+                    component_count_ ==
+                0U ||
+            (natural_variable_count_ - 1U) /
+                    component_count_ >
+                mpmc::flow::fixed_three_phase_count ||
             petsc_scalar_row_start_ < 0 ||
             petsc_scalar_row_end_ < petsc_scalar_row_start_ ||
             petsc_scalar_row_count_ < petsc_scalar_row_end_) {
