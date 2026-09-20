@@ -42,11 +42,21 @@ add_executable(
 target_link_libraries(
     mpmc_flow_discretization_normalized_spatial_tests
     PRIVATE mpmc::flow_discretization)
+
+add_executable(
+    mpmc_flow_discretization_local_conservation_tests
+    local_component_conservation_residual_test.cpp
+    local_component_conservation_residual_header.cpp)
+target_link_libraries(
+    mpmc_flow_discretization_local_conservation_tests
+    PRIVATE mpmc::flow_discretization)
+
 foreach(target IN ITEMS
         mpmc_flow_discretization_tests
         mpmc_flow_discretization_component_flux_tests
         mpmc_flow_discretization_scatter_tests
-        mpmc_flow_discretization_normalized_spatial_tests)
+        mpmc_flow_discretization_normalized_spatial_tests
+        mpmc_flow_discretization_local_conservation_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -176,5 +186,23 @@ foreach(case IN LISTS normalized_spatial_cases)
         flow_discretization.normalized_spatial.${case}
         PROPERTIES
             LABELS "flow_discretization;component_flux;bulk_volume;normalized_spatial"
+            TIMEOUT 30)
+endforeach()
+
+set(local_conservation_cases
+    multi_face_residual_and_blocks
+    jacobian_fresh_source_perturbation
+    zero_primal_nonzero_jacobian
+    invalid_inputs
+    headers)
+
+foreach(case IN LISTS local_conservation_cases)
+    add_test(
+        NAME flow_discretization.local_conservation.${case}
+        COMMAND mpmc_flow_discretization_local_conservation_tests ${case})
+    set_tests_properties(
+        flow_discretization.local_conservation.${case}
+        PROPERTIES
+            LABELS "flow_discretization;component_conservation;local_residual;multi_face"
             TIMEOUT 30)
 endforeach()

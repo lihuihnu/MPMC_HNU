@@ -1815,3 +1815,96 @@ The dedicated `flow_discretization.normalized_spatial.*` suite covers:
 This slice still does **not** sum multiple faces into a cell, combine normalized spatial
 contributions with the backward-Euler accumulation residual, add source/well terms,
 assign global rows/columns, or insert PETSc matrix/vector values.
+
+## 31. Local multi-face component conservation residual contract
+
+The first complete **local component-conservation residual** now combines the existing
+backward-Euler accumulation contribution with all already-normalized internal-face
+spatial contributions incident on one cell:
+
+```text
+R_i,c =
+    R_i,c^acc
+  + sum_{f in internal(c)} R_i,c^(face,V)
+```
+
+Every term is in:
+
+```text
+mol / (bulk-m^3 s)
+```
+
+so no unit conversion is performed inside this builder.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization/local_component_conservation_residual.hpp>
+```
+
+### Explicit local-cell binding
+
+The caller supplies:
+
+- the frozen local `NaturalVariableStateIdentity3P`;
+- the explicit local cell bulk volume `V_b,c [m^3]`;
+- one validated `BackwardEulerComponentAccumulationResidual3P`;
+- zero or more borrowed normalized internal-face contributions, each with an explicit
+  statement that the local cell is the face owner or neighbour.
+
+The side is never inferred by comparing numerical state values. Two different cells may
+legitimately have identical `p/T/S/x`, so equal state payloads are not promoted to cell
+identity.
+
+Every selected incident face must match the local component order, frozen natural-variable
+chart/pivot and local bulk volume. Duplicate face identities are rejected.
+
+### Jacobian structure
+
+The local diagonal block is assembled as:
+
+```text
+dR_c/dq_c =
+    dR_c^acc/dq_c
+  + sum_f dR_c^(face,V)/dq_c.
+```
+
+For every incident internal face, the opposite-cell derivative is retained as a separate
+off-diagonal block:
+
+```text
+dR_c/dq_neighbour(f).
+```
+
+These blocks remain keyed by the local face identity. This slice deliberately does not
+invent global cell-column numbering and does not use numerical state equality to guess a
+neighbour cell. A later topology/global-assembly layer may map each face to the
+authoritative neighbour and coalesce duplicate cell-pair blocks if required.
+
+Component-to-total closure is revalidated for the accumulation input, every normalized
+face payload, the final local residual, the final diagonal Jacobian and every neighbour
+block. The upstream rigid-grid contract remains unchanged:
+
+```text
+dV_b = 0.
+```
+
+### Validation ownership
+
+The dedicated `flow_discretization.local_conservation.*` regression covers:
+
+- two incident internal faces with the local cell appearing once as owner and once as
+  neighbour;
+- accumulation + multi-face residual summation;
+- local diagonal and per-face neighbour Jacobian blocks;
+- fresh perturbation of the accumulation and face source payloads for every local and
+  neighbour natural-variable column;
+- zero primal residual with nonzero structural Jacobian;
+- duplicate face, null binding, wrong side/state, inconsistent bulk volume, malformed
+  accumulation/face closure and unsupported side rejection;
+- public-header self containment.
+
+This slice still does **not** add boundary fluxes, source/well terms, energy residuals,
+fugacity-row global assembly, global row/column numbering, PETSc Mat/Vec insertion,
+Newton/time-step orchestration or phase switching.
+
