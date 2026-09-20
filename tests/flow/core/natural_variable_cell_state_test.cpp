@@ -573,7 +573,7 @@ void invalid_state() {
                     NaturalVariableCellState3P::
                         create(std::move(input));
             },
-            "reconstructed composition");
+            "reconstructed dependent composition");
     }
     {
         auto input = valid_input();
