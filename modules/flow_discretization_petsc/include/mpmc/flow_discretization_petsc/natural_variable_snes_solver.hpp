@@ -1173,6 +1173,74 @@ solve_natural_variable_snes_3d(
             static_cast<int>(ksp_reason),
             static_cast<int>(ksp_iterations),
             static_cast<double>(ksp_residual_norm));
+
+        PCFailedReason top_pc_reason =
+            PC_NOERROR;
+        (void)PCGetFailedReason(
+            pc,
+            &top_pc_reason);
+        PetscInt local_sub_count = 0;
+        KSP* local_sub_ksp = nullptr;
+        const PetscErrorCode sub_error =
+            PCASMGetSubKSP(
+                pc,
+                &local_sub_count,
+                nullptr,
+                &local_sub_ksp);
+        int diagnostic_rank = -1;
+        (void)MPI_Comm_rank(
+            comm,
+            &diagnostic_rank);
+        (void)PetscPrintf(
+            PETSC_COMM_SELF,
+            "[natural-variable ASM] rank=%d top_pc_failed_reason=%d sub_query_error=%d sub_count=%d\n",
+            diagnostic_rank,
+            static_cast<int>(top_pc_reason),
+            static_cast<int>(sub_error),
+            static_cast<int>(local_sub_count));
+        if (sub_error == PETSC_SUCCESS) {
+            for (PetscInt sub = 0;
+                 sub < local_sub_count;
+                 ++sub) {
+                const char* sub_ksp_type = nullptr;
+                KSPConvergedReason sub_ksp_reason =
+                    KSP_CONVERGED_ITERATING;
+                PC sub_pc = nullptr;
+                const char* sub_pc_type = nullptr;
+                PCFailedReason sub_pc_reason =
+                    PC_NOERROR;
+                (void)KSPGetType(
+                    local_sub_ksp[sub],
+                    &sub_ksp_type);
+                (void)KSPGetConvergedReason(
+                    local_sub_ksp[sub],
+                    &sub_ksp_reason);
+                (void)KSPGetPC(
+                    local_sub_ksp[sub],
+                    &sub_pc);
+                if (sub_pc != nullptr) {
+                    (void)PCGetType(
+                        sub_pc,
+                        &sub_pc_type);
+                    (void)PCGetFailedReason(
+                        sub_pc,
+                        &sub_pc_reason);
+                }
+                (void)PetscPrintf(
+                    PETSC_COMM_SELF,
+                    "[natural-variable ASM] rank=%d sub=%d ksp_type=%s ksp_reason=%d pc_type=%s pc_failed_reason=%d\n",
+                    diagnostic_rank,
+                    static_cast<int>(sub),
+                    sub_ksp_type != nullptr
+                        ? sub_ksp_type
+                        : "<null>",
+                    static_cast<int>(sub_ksp_reason),
+                    sub_pc_type != nullptr
+                        ? sub_pc_type
+                        : "<null>",
+                    static_cast<int>(sub_pc_reason));
+            }
+        }
         (void)cleanup();
         return PETSC_ERR_NOT_CONVERGED;
     }
