@@ -19,6 +19,8 @@ bool single_phase_natural_variable_header();
 void single_phase_natural_variable_contract();
 bool two_phase_natural_variable_header();
 void two_phase_natural_variable_contract();
+bool cross_cardinality_phase_identity_header();
+void cross_cardinality_phase_identity_contract();
 
 namespace {
 
@@ -652,6 +654,10 @@ void two_phase_reduction() {
     two_phase_natural_variable_contract();
 }
 
+void cross_cardinality_phase_identity() {
+    cross_cardinality_phase_identity_contract();
+}
+
 void headers() {
     require(
         natural_variable_cell_state_header(),
@@ -662,6 +668,9 @@ void headers() {
     require(
         two_phase_natural_variable_header(),
         "two-phase public-header probe failed");
+    require(
+        cross_cardinality_phase_identity_header(),
+        "cross-cardinality phase-identity public-header probe failed");
 }
 
 using Test =
@@ -674,6 +683,7 @@ constexpr Test tests[]{
     {"invalid_state", invalid_state},
     {"single_phase_reduction", single_phase_reduction},
     {"two_phase_reduction", two_phase_reduction},
+    {"cross_cardinality_phase_identity", cross_cardinality_phase_identity},
     {"headers", headers}};
 
 } // namespace

@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_MIXED_CARDINALITY_PHYSICAL_SNES_ASSEMBLY_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_MIXED_CARDINALITY_PHYSICAL_SNES_ASSEMBLY_HPP
 
+#include <mpmc/flow/cross_cardinality_phase_identity.hpp>
 #include <mpmc/flow_discretization_petsc/fixed_three_phase_snes_assembly.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_snes_assembly.hpp>
 #include <mpmc/flow_discretization_petsc/two_phase_snes_assembly.hpp>
@@ -70,6 +71,9 @@ using MixedCardinalityCrossPhaseFaceEvaluator3D =
     PetscErrorCode (*)(
         const MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D&
             face_input,
+        const mpmc::flow::
+            CrossCardinalityFacePhaseIdentityPlan&
+                phase_identity_plan,
         const MixedCardinalityPhysicalCurrentCellLinearization3D&
             owner,
         const MixedCardinalityPhysicalCurrentCellLinearization3D&
@@ -557,6 +561,9 @@ public:
             MixedCardinalityPhysicalSnesCellInput3D>
             cell_inputs,
         std::vector<
+            mpmc::flow::FrozenActivePhaseIdentityMap>
+            phase_identity_maps,
+        std::vector<
             MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D>
             face_inputs,
         MixedCardinalityPhysicalCellEvaluatorBindings3D
@@ -589,6 +596,10 @@ public:
 
         PetscErrorCode local_error =
             PETSC_SUCCESS;
+        std::vector<
+            mpmc::flow::
+                CrossCardinalityFacePhaseIdentityPlan>
+            face_phase_identity_plans;
         try {
             if (!std::isfinite(
                     time_step_seconds) ||
@@ -620,6 +631,8 @@ public:
                 cell_inputs.size() !=
                     partition.entity_count(
                         mpmc::mesh::EntityKind::cell) ||
+                phase_identity_maps.size() !=
+                    cell_inputs.size() ||
                 face_inputs.size() !=
                     schedule.assembly_rows().size() ||
                 cell_evaluators.single_phase.evaluator ==
@@ -660,6 +673,9 @@ public:
                         cell_index) !=
                         record.owner_rank ||
                     phase_count(input) !=
+                        record.phase_count ||
+                    phase_identity_maps[local]
+                            .phase_count() !=
                         record.phase_count ||
                     component_ids(input).size() !=
                         numbering.component_count() ||
@@ -715,6 +731,9 @@ public:
                 }
             }
 
+            face_phase_identity_plans.reserve(
+                face_inputs.size());
+
             for (std::size_t index = 0U;
                  index < face_inputs.size();
                  ++index) {
@@ -754,8 +773,21 @@ public:
                     numbering.cell(
                         row.neighbour_cell)
                         .phase_count;
-                if (owner_phase_count !=
+                auto phase_plan =
+                    mpmc::flow::
+                        make_cross_cardinality_face_phase_identity_plan(
+                            phase_identity_maps.at(
+                                static_cast<std::size_t>(
+                                    row.owner_cell.value())),
+                            phase_identity_maps.at(
+                                static_cast<std::size_t>(
+                                    row.neighbour_cell.value())));
+                const bool direct_fixed_cardinality_tpfa =
+                    owner_phase_count ==
                         neighbour_phase_count &&
+                    phase_plan
+                        .slot_aligned_same_active_set();
+                if (!direct_fixed_cardinality_tpfa &&
                     cross_phase_face_evaluator
                             .evaluator ==
                         nullptr) {
@@ -763,6 +795,8 @@ public:
                         PETSC_ERR_SUP;
                     break;
                 }
+                face_phase_identity_plans.push_back(
+                    std::move(phase_plan));
             }
         } catch (...) {
             local_error =
@@ -806,6 +840,8 @@ public:
                 numbering,
                 time_step_seconds,
                 std::move(cell_inputs),
+                std::move(phase_identity_maps),
+                std::move(face_phase_identity_plans),
                 std::move(face_inputs),
                 cell_evaluators,
                 cross_phase_face_evaluator,
@@ -847,6 +883,13 @@ private:
             MixedCardinalityPhysicalSnesCellInput3D>
             cell_inputs,
         std::vector<
+            mpmc::flow::FrozenActivePhaseIdentityMap>
+            phase_identity_maps,
+        std::vector<
+            mpmc::flow::
+                CrossCardinalityFacePhaseIdentityPlan>
+            face_phase_identity_plans,
+        std::vector<
             MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D>
             face_inputs,
         MixedCardinalityPhysicalCellEvaluatorBindings3D
@@ -863,6 +906,11 @@ private:
               time_step_seconds),
           cell_inputs_(
               std::move(cell_inputs)),
+          phase_identity_maps_(
+              std::move(phase_identity_maps)),
+          face_phase_identity_plans_(
+              std::move(
+                  face_phase_identity_plans)),
           face_inputs_(
               std::move(face_inputs)),
           cell_evaluators_(
@@ -1830,18 +1878,14 @@ private:
                     const auto& row =
                         schedule_
                             ->assembly_rows()[index];
-                    const auto& owner_record =
-                        numbering_->cell(
-                            row.owner_cell);
-                    const auto& neighbour_record =
-                        numbering_->cell(
-                            row.neighbour_cell);
-
                     std::optional<
                         MixedCardinalityPhysicalFaceLinearization3D>
                         face;
-                    if (owner_record.phase_count ==
-                        neighbour_record.phase_count) {
+                    const auto& phase_plan =
+                        face_phase_identity_plans_
+                            .at(index);
+                    if (phase_plan
+                            .slot_aligned_same_active_set()) {
                         face.emplace(
                             build_same_cardinality_face(
                                 row,
@@ -1874,6 +1918,7 @@ private:
                             cross_phase_face_evaluator_
                                 .evaluator(
                                     face_inputs_[index],
+                                    phase_plan,
                                     *current.at(
                                         static_cast<std::size_t>(
                                             row.owner_cell.value())),
@@ -2168,6 +2213,13 @@ private:
     std::vector<
         MixedCardinalityPhysicalSnesCellInput3D>
         cell_inputs_;
+    std::vector<
+        mpmc::flow::FrozenActivePhaseIdentityMap>
+        phase_identity_maps_;
+    std::vector<
+        mpmc::flow::
+            CrossCardinalityFacePhaseIdentityPlan>
+        face_phase_identity_plans_;
     std::vector<
         MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D>
         face_inputs_;

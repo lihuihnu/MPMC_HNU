@@ -28,7 +28,9 @@ add_executable(
     single_phase_natural_variable_test.cpp
     single_phase_natural_variable_header.cpp
     two_phase_natural_variable_test.cpp
-    two_phase_natural_variable_header.cpp)
+    two_phase_natural_variable_header.cpp
+    cross_cardinality_phase_identity_test.cpp
+    cross_cardinality_phase_identity_header.cpp)
 target_link_libraries(
     mpmc_flow_core_tests
     PRIVATE mpmc::flow)
@@ -177,6 +179,7 @@ set(core_cases
     invalid_state
     single_phase_reduction
     two_phase_reduction
+    cross_cardinality_phase_identity
     headers)
 foreach(case IN LISTS core_cases)
     add_test(

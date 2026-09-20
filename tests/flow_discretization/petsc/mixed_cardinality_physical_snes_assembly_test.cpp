@@ -1497,6 +1497,48 @@ make_cell_inputs(
     return result;
 }
 
+[[nodiscard]]
+std::vector<
+    flow::FrozenActivePhaseIdentityMap>
+make_phase_identity_maps() {
+    const flow::FrozenPhysicalPhaseIdentity
+        aqueous{
+            "fixture/mixed-physical-dispatch",
+            "aqueous"};
+    const flow::FrozenPhysicalPhaseIdentity
+        hydrocarbon0{
+            "fixture/mixed-physical-dispatch",
+            "hydrocarbon-0"};
+    const flow::FrozenPhysicalPhaseIdentity
+        hydrocarbon1{
+            "fixture/mixed-physical-dispatch",
+            "hydrocarbon-1"};
+
+    return {
+        flow::FrozenActivePhaseIdentityMap{
+            {aqueous}},
+        flow::FrozenActivePhaseIdentityMap{
+            {aqueous}},
+        flow::FrozenActivePhaseIdentityMap{
+            {
+                aqueous,
+                hydrocarbon0}},
+        flow::FrozenActivePhaseIdentityMap{
+            {
+                aqueous,
+                hydrocarbon0}},
+        flow::FrozenActivePhaseIdentityMap{
+            {
+                aqueous,
+                hydrocarbon0,
+                hydrocarbon1}},
+        flow::FrozenActivePhaseIdentityMap{
+            {
+                aqueous,
+                hydrocarbon0,
+                hydrocarbon1}}};
+}
+
 void insert_target(
     Vec state,
     const fdp::
@@ -1653,6 +1695,7 @@ void mixed_cardinality_physical_snes_assembly_test() {
                     pattern,
                     1.0,
                     std::move(cell_inputs),
+                    make_phase_identity_maps(),
                     std::move(face_inputs),
                     {
                         {&evaluate_1p, &audit},
@@ -1885,6 +1928,7 @@ void mixed_cardinality_physical_snes_assembly_test() {
                     pattern,
                     1.0,
                     std::move(cross_cells),
+                    make_phase_identity_maps(),
                     std::move(cross_faces),
                     {
                         {&evaluate_1p, &audit},
