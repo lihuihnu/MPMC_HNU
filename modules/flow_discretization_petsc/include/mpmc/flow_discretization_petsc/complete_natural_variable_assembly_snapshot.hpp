@@ -523,9 +523,9 @@ make_complete_natural_variable_assembly_snapshot_3d(
                 : 0U;
         if (q <= 1U ||
             (q - 1U) % n != 0U ||
-            (phase_count != 1U &&
-             phase_count !=
-                 mpmc::flow::fixed_three_phase_count) ||
+            phase_count == 0U ||
+            phase_count >
+                mpmc::flow::fixed_three_phase_count ||
             (phase_count == 1U &&
              (!fugacity.residual_entries().empty() ||
               !fugacity.jacobian_entries().empty())) ||
