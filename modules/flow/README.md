@@ -1618,3 +1618,98 @@ fixtures; they are not physical property validation.
 This slice still does **not** scatter flux into owner/neighbour conservation residual
 rows, add accumulation and spatial terms together, introduce source/well terms, or
 insert PETSc matrix/vector values.
+
+## 29. Two-cell conservative component face-rate scatter contract
+
+The component molar face flux is now mapped conservatively to the two adjacent cell
+**face-rate contributions**, without combining it with accumulation.
+
+For a component flux whose positive direction is owner -> neighbour:
+
+```text
+R_i,o^face = + n_dot_i^f
+R_i,n^face = - n_dot_i^f
+```
+
+Both quantities remain in:
+
+```text
+mol/s
+```
+
+They are deliberately named face-rate contributions rather than a complete cell
+residual. The existing backward-Euler accumulation contribution remains in
+`mol/(bulk-m^3 s)`; the two are not added in this slice.
+
+### Four explicit Jacobian blocks
+
+The scatter publishes all four local row/column blocks:
+
+```text
+d R_owner^face     / d q_owner
+d R_owner^face     / d q_neighbour
+d R_neighbour^face / d q_owner
+d R_neighbour^face / d q_neighbour
+```
+
+and freezes strict antisymmetry:
+
+```text
+d R_owner^face / d q_owner
+  = + d n_dot^f / d q_owner
+
+d R_neighbour^face / d q_owner
+  = - d n_dot^f / d q_owner
+
+d R_owner^face / d q_neighbour
+  = + d n_dot^f / d q_neighbour
+
+d R_neighbour^face / d q_neighbour
+  = - d n_dot^f / d q_neighbour.
+```
+
+The same exact sign relation is retained for the total molar face-rate diagnostic.
+
+Owner and neighbour keep their independent frozen natural-variable charts and
+dependent-component pivots. No global matrix numbering is introduced here.
+
+### Exact conservation
+
+For every canonical component:
+
+```text
+R_i,o^face + R_i,n^face = 0
+```
+
+and for every owner/neighbour natural-variable column:
+
+```text
+d R_i,o^face + d R_i,n^face = 0.
+```
+
+The scatter uses exact sign negation of the already-validated component face flux and
+its Jacobians. It does not recompute phase flux, upwind state, molar density,
+composition or transmissibility.
+
+A zero primal face rate does **not** imply a zero Jacobian. The contract preserves
+nonzero derivatives even when the current face-rate value is exactly zero.
+
+### Validation ownership
+
+The dedicated `flow_discretization.scatter.*` regression covers:
+
+- positive owner->neighbour and negative component face-rate signs;
+- exact component-wise owner/neighbour conservation;
+- all four owner/neighbour Jacobian blocks;
+- exact Jacobian antisymmetry for both owner and neighbour columns;
+- fresh perturbation of the source component face flux against both scattered row
+  derivatives;
+- zero primal face rate with nonzero Jacobian preservation;
+- source component/total molar-flux closure and differentiated-closure validation;
+- malformed identity/shape, non-finite derivative and inconsistent total rejection;
+- public-header self containment.
+
+This slice still does **not** introduce cell bulk volume, divide spatial face rates by
+cell volume, combine face-rate and accumulation units, assemble multi-face cell
+residuals, add source/well terms, assign global matrix rows/columns, or insert PETSc
+values.

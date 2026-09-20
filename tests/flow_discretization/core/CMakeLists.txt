@@ -26,9 +26,18 @@ add_executable(
 target_link_libraries(
     mpmc_flow_discretization_component_flux_tests
     PRIVATE mpmc::flow_discretization)
+
+add_executable(
+    mpmc_flow_discretization_scatter_tests
+    conservative_component_face_rate_scatter_test.cpp
+    conservative_component_face_rate_scatter_header.cpp)
+target_link_libraries(
+    mpmc_flow_discretization_scatter_tests
+    PRIVATE mpmc::flow_discretization)
 foreach(target IN ITEMS
         mpmc_flow_discretization_tests
-        mpmc_flow_discretization_component_flux_tests)
+        mpmc_flow_discretization_component_flux_tests
+        mpmc_flow_discretization_scatter_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -36,7 +45,8 @@ endforeach()
 
 foreach(target IN ITEMS
         mpmc_flow_discretization_tests
-        mpmc_flow_discretization_component_flux_tests)
+        mpmc_flow_discretization_component_flux_tests
+        mpmc_flow_discretization_scatter_tests)
     if(MSVC)
         target_compile_options(
             ${target}
@@ -67,7 +77,8 @@ if(MPMC_FLOW_DISCRETIZATION_ENABLE_SANITIZERS)
     endif()
     foreach(target IN ITEMS
             mpmc_flow_discretization_tests
-            mpmc_flow_discretization_component_flux_tests)
+            mpmc_flow_discretization_component_flux_tests
+            mpmc_flow_discretization_scatter_tests)
         target_compile_options(
             ${target}
             PRIVATE
@@ -116,5 +127,24 @@ foreach(case IN LISTS component_flux_cases)
         flow_discretization.component_flux.${case}
         PROPERTIES
             LABELS "flow_discretization;component_flux;molar;upwind"
+            TIMEOUT 30)
+endforeach()
+
+set(scatter_cases
+    conservative_values
+    strict_jacobian_antisymmetry
+    jacobian_fresh_source_perturbation
+    zero_primal_nonzero_jacobian
+    invalid_source
+    headers)
+
+foreach(case IN LISTS scatter_cases)
+    add_test(
+        NAME flow_discretization.scatter.${case}
+        COMMAND mpmc_flow_discretization_scatter_tests ${case})
+    set_tests_properties(
+        flow_discretization.scatter.${case}
+        PROPERTIES
+            LABELS "flow_discretization;component_flux;conservation;scatter"
             TIMEOUT 30)
 endforeach()
