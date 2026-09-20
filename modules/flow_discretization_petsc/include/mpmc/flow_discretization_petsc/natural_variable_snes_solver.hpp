@@ -1043,7 +1043,10 @@ solve_natural_variable_snes_3d(
         "mpmc_natural_variable_";
     constexpr const char* asm_sub_pc_option =
         "-mpmc_natural_variable_sub_pc_type";
+    constexpr const char* asm_sub_pc_reorder_option =
+        "-mpmc_natural_variable_sub_pc_factor_nonzeros_along_diagonal";
     bool asm_sub_pc_option_installed = false;
+    bool asm_sub_pc_reorder_option_installed = false;
     if (error == PETSC_SUCCESS) {
         error =
             PCSetOptionsPrefix(
@@ -1057,6 +1060,15 @@ solve_natural_variable_snes_3d(
                 asm_sub_pc_option,
                 "lu");
         asm_sub_pc_option_installed =
+            error == PETSC_SUCCESS;
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            PetscOptionsSetValue(
+                nullptr,
+                asm_sub_pc_reorder_option,
+                "0.0");
+        asm_sub_pc_reorder_option_installed =
             error == PETSC_SUCCESS;
     }
     if (error == PETSC_SUCCESS) {
@@ -1091,6 +1103,11 @@ solve_natural_variable_snes_3d(
                 PETSC_TRUE);
     }
     if (error != PETSC_SUCCESS) {
+        if (asm_sub_pc_reorder_option_installed) {
+            (void)PetscOptionsClearValue(
+                nullptr,
+                asm_sub_pc_reorder_option);
+        }
         if (asm_sub_pc_option_installed) {
             (void)PetscOptionsClearValue(
                 nullptr,
@@ -1108,13 +1125,26 @@ solve_natural_variable_snes_3d(
 
     PetscErrorCode options_clear_error =
         PETSC_SUCCESS;
-    if (asm_sub_pc_option_installed) {
+    if (asm_sub_pc_reorder_option_installed) {
         options_clear_error =
+            PetscOptionsClearValue(
+                nullptr,
+                asm_sub_pc_reorder_option);
+        asm_sub_pc_reorder_option_installed =
+            false;
+    }
+    if (asm_sub_pc_option_installed) {
+        const PetscErrorCode clear_pc_type_error =
             PetscOptionsClearValue(
                 nullptr,
                 asm_sub_pc_option);
         asm_sub_pc_option_installed =
             false;
+        if (options_clear_error == PETSC_SUCCESS &&
+            clear_pc_type_error != PETSC_SUCCESS) {
+            options_clear_error =
+                clear_pc_type_error;
+        }
     }
     if (error == PETSC_SUCCESS &&
         options_clear_error !=
