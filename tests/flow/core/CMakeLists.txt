@@ -36,6 +36,14 @@ target_link_libraries(
         mpmc::ad)
 
 add_executable(
+    mpmc_flow_fugacity_linearization_tests
+    fugacity_equilibrium_linearization_test.cpp
+    fugacity_equilibrium_linearization_header.cpp)
+target_link_libraries(
+    mpmc_flow_fugacity_linearization_tests
+    PRIVATE mpmc::flow)
+
+add_executable(
     mpmc_flow_accumulation_tests
     component_accumulation_test.cpp
     component_accumulation_header.cpp)
@@ -82,6 +90,7 @@ target_link_libraries(
 foreach(target IN ITEMS
         mpmc_flow_core_tests
         mpmc_flow_fugacity_tests
+        mpmc_flow_fugacity_linearization_tests
         mpmc_flow_accumulation_tests
         mpmc_flow_accumulation_time_tests
         mpmc_flow_saturation_constitutive_tests
@@ -163,6 +172,21 @@ foreach(case IN LISTS fugacity_cases)
         flow.fugacity.${case}
         PROPERTIES
             LABELS "flow;natural_variables;fugacity;thermodynamics_boundary"
+            TIMEOUT 30)
+endforeach()
+
+set(fugacity_linearization_cases
+    carrier
+    invalid_inputs
+    headers)
+foreach(case IN LISTS fugacity_linearization_cases)
+    add_test(
+        NAME flow.fugacity_linearization.${case}
+        COMMAND mpmc_flow_fugacity_linearization_tests ${case})
+    set_tests_properties(
+        flow.fugacity_linearization.${case}
+        PROPERTIES
+            LABELS "flow;natural_variables;fugacity;linearization"
             TIMEOUT 30)
 endforeach()
 

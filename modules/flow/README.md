@@ -2220,3 +2220,123 @@ agree with the PETSc Section representation.
 No `Mat`, `Vec`, `MatSetValues`, `VecSetValues`, Newton iteration, energy/fugacity
 rows, boundary/source/well terms or phase switching are introduced in this slice.
 
+## 35. Fugacity-equilibrium local linearization and global assembly mapping
+
+The fixed-three-phase fugacity-equilibrium rows now have a dedicated frozen
+linearization carrier and a global scalar mapping bridge.
+
+### Local carrier
+
+Public entry:
+
+```cpp
+#include <mpmc/flow/fugacity_equilibrium_linearization.hpp>
+```
+
+`FugacityEquilibriumResidualLinearization3P` stores:
+
+- the frozen `NaturalVariableLayout3P` chart;
+- canonical component identity/order;
+- the existing `2*Nc` fugacity residual values;
+- an already-computed `(2*Nc) x q` Jacobian.
+
+It does **not** evaluate an EOS, select roots/families/phases, or finite-difference the
+thermodynamics. The derivative payload is supplied by the existing scalar-generic
+fugacity residual path and selected-phase thermodynamic adapters.
+
+The carrier validates shape, finiteness and local/global fugacity-row ordering before
+the PETSc layer can consume it.
+
+### Equation rows
+
+For reference phase `phase0`, the two equilibrium blocks are:
+
+```text
+phase1 vs phase0 : Nc rows
+phase2 vs phase0 : Nc rows
+```
+
+and map through the existing natural-variable equation contract:
+
+```text
+component rows : 0 ... Nc-1
+energy row     : Nc
+fugacity rows  : Nc+1 ... 3*Nc
+```
+
+For `Nc=3`, one cell block therefore uses:
+
+```text
+0,1,2 -> component conservation
+3     -> reserved energy row
+4..9  -> fugacity equilibrium
+```
+
+The energy slot remains untouched by this slice.
+
+### Global fugacity mapping
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
+```
+
+The mapping reuses exactly the same:
+
+- `DofLayout`;
+- `DofNumberingSnapshot`;
+- `PetscMpiAijSymbolicPreallocation3D`;
+- `OwnedCellStructuralColumnPatternSnapshot3D`;
+- natural-variable PETSc scalar block width `q=3*Nc+1`;
+
+as component conservation.
+
+Every fugacity row is local thermodynamics, so it emits only the cell-diagonal
+natural-variable Jacobian block:
+
+```text
+row    -> owned cell fugacity equation slot
+column -> same cell natural-variable slot 0..q-1
+```
+
+No spatial neighbour Jacobian is invented.
+
+Different dependent-component pivots remain frozen per-cell chart semantics. The
+binding must match the exact chart already carried by the distributed owned component
+row for that cell.
+
+### Numbering provenance
+
+As with component rows, every fugacity residual/Jacobian entry stores both:
+
+- PETSc rank-contiguous global scalar row/column;
+- independent mesh-global `GlobalDofIndex` provenance.
+
+The two numbering spaces are explicitly cross-checked but never assumed numerically
+equal.
+
+### Validation
+
+Flow core adds dedicated carrier regressions for:
+
+- `2*Nc` row ordering;
+- pivot-aware equation indices;
+- full `2*Nc x q` Jacobian indexing;
+- malformed shape/component identity;
+- non-finite residual/Jacobian rejection;
+- public-header self containment.
+
+The 2-rank PETSc regression additionally checks:
+
+- fugacity rows occupy exactly slots `Nc+1 ... 3*Nc`;
+- the energy row remains unoccupied;
+- all `2*Nc*q` dense local Jacobian scalars map to the same cell block;
+- current pc=none exact-zero saturation derivatives are retained rather than dropped;
+- reversed mesh-global/PETSc numbering remains distinct;
+- pivot/chart mismatch is collectively rejected;
+- missing owned-cell fugacity linearization is collectively rejected.
+
+No `MatSetValues`, `VecSetValues`, energy residual, boundary/source/well term,
+Newton iteration or phase switching is introduced here.
+

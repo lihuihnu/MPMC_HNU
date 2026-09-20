@@ -1,5 +1,6 @@
 #include <mpmc/flow_discretization_petsc/distributed_component_conservation.hpp>
 #include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
+#include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
 
 #include <petscsys.h>
 
@@ -18,6 +19,7 @@
 
 bool distributed_component_conservation_header();
 bool global_component_assembly_mapping_header();
+bool fugacity_equilibrium_global_assembly_mapping_header();
 
 namespace {
 
@@ -1262,6 +1264,426 @@ void global_component_assembly_mapping() {
     }
 }
 
+flow::FugacityEquilibriumResidualLinearization3P
+make_fugacity_linearization(
+    std::uint64_t stable_cell) {
+    const auto state =
+        identity(stable_cell);
+    const auto chart =
+        state.layout;
+    const std::size_t n =
+        chart.component_count();
+    const std::size_t q =
+        chart.unknown_count();
+    const std::size_t rows =
+        2U * n;
+    const double factor =
+        stable_cell == UINT64_C(10)
+            ? 1.0
+            : 1.5;
+
+    std::vector<double> values(
+        rows,
+        0.0);
+    std::vector<double> derivatives(
+        rows * q,
+        0.0);
+
+    for (std::size_t row = 0U;
+         row < rows;
+         ++row) {
+        values[row] =
+            factor *
+            0.01 *
+            static_cast<double>(
+                row + 1U);
+        for (std::size_t column = 0U;
+             column < q;
+             ++column) {
+            // pc=none local fugacity rows currently do not depend on the two
+            // independent saturation coordinates. Keep those exact zeros in
+            // the dense assembly-ready block.
+            if (column == 2U ||
+                column == 3U) {
+                derivatives[
+                    row * q +
+                    column] =
+                    0.0;
+            } else {
+                derivatives[
+                    row * q +
+                    column] =
+                    factor *
+                    0.001 *
+                    static_cast<double>(
+                        1U +
+                        row * 100U +
+                        column);
+            }
+        }
+    }
+
+    return {
+        chart,
+        state.component_ids,
+        flow::FugacityEquilibriumResidual3P<double>{
+            n,
+            std::move(values)},
+        q,
+        std::move(derivatives)};
+}
+
+void fugacity_global_assembly_mapping() {
+    int rank = -1;
+    int size = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &size) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank/size query failed");
+    }
+    require_collective(
+        size == 2,
+        "fugacity global mapping test requires exactly two ranks");
+
+    auto partition =
+        make_partition(rank);
+    auto schedule =
+        make_schedule(rank);
+    LocalInputs inputs{rank};
+
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+    auto conservation =
+        build(
+            rank,
+            partition,
+            schedule,
+            inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            conservation.has_value(),
+        "distributed snapshot for fugacity mapping failed");
+
+    const std::size_t q =
+        identity(10U)
+            .layout.unknown_count();
+    auto layout =
+        make_natural_variable_dof_layout(
+            rank,
+            q);
+    auto numbering =
+        make_reversed_mesh_dof_numbering(
+            rank,
+            layout,
+            partition);
+    auto cell_bridge =
+        make_cell_row_bridge(
+            rank);
+    auto cell_pattern =
+        make_cell_column_pattern(
+            rank);
+
+    const std::uint64_t stable_cell =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+    auto fugacity =
+        make_fugacity_linearization(
+            stable_cell);
+
+    const std::array<
+        fdp::OwnedCellFugacityEquilibriumLinearizationBinding3D,
+        1>
+        bindings{{
+            {
+                mesh::LocalIndex{0U},
+                mesh::GlobalEntityId{
+                    stable_cell},
+                &fugacity}
+        }};
+
+    std::optional<
+        fdp::FugacityEquilibriumGlobalAssemblyEntries3D>
+        mapping;
+    error =
+        fdp::
+            make_fugacity_equilibrium_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *conservation,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                bindings,
+                &mapping);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            mapping.has_value(),
+        "fugacity global assembly mapping failed");
+
+    const auto& result =
+        *mapping;
+    const PetscInt expected_start =
+        static_cast<PetscInt>(
+            rank) *
+        static_cast<PetscInt>(
+            q);
+    const PetscInt expected_end =
+        expected_start +
+        static_cast<PetscInt>(
+            q);
+    const PetscInt expected_count =
+        2 *
+        static_cast<PetscInt>(
+            q);
+
+    require_collective(
+        result.petsc_scalar_row_start() ==
+                expected_start &&
+            result.petsc_scalar_row_end() ==
+                expected_end &&
+            result.petsc_scalar_row_count() ==
+                expected_count &&
+            result.component_count() == 3U &&
+            result.natural_variable_count() ==
+                q &&
+            result.residual_entries().size() ==
+                6U &&
+            result.jacobian_entries().size() ==
+                6U * q,
+        "fugacity global mapping range/cardinality mismatch");
+
+    const PetscInt energy_row =
+        expected_start + 3;
+    require_collective(
+        std::none_of(
+            result.residual_entries().begin(),
+            result.residual_entries().end(),
+            [energy_row](const auto& entry) {
+                return entry.petsc_global_row ==
+                    energy_row;
+            }),
+        "fugacity mapping occupied the reserved energy row");
+
+    for (std::size_t local_row = 0U;
+         local_row < 6U;
+         ++local_row) {
+        const std::size_t phase =
+            1U +
+            local_row / 3U;
+        const std::size_t component =
+            local_row % 3U;
+        const auto slot =
+            static_cast<flow::PhaseSlot3>(
+                phase);
+        const std::size_t equation_slot =
+            fugacity.equation_index(
+                slot,
+                component);
+        require_collective(
+            equation_slot ==
+                4U + local_row,
+            "fugacity equation slot ordering changed");
+
+        const auto& residual =
+            result.residual_entries()[
+                local_row];
+        const PetscInt expected_row =
+            expected_start +
+            static_cast<PetscInt>(
+                equation_slot);
+        const std::uint64_t
+            expected_mesh_row =
+                (stable_cell ==
+                         UINT64_C(10)
+                     ? static_cast<
+                           std::uint64_t>(
+                               q)
+                     : UINT64_C(0)) +
+                static_cast<std::uint64_t>(
+                    equation_slot);
+
+        require_collective(
+            residual.petsc_global_row ==
+                    expected_row &&
+                residual.mesh_global_row_dof ==
+                    mesh::GlobalDofIndex{
+                        expected_mesh_row} &&
+                residual.row_cell_global ==
+                    mesh::GlobalEntityId{
+                        stable_cell} &&
+                residual.non_reference_phase ==
+                    slot &&
+                residual.component ==
+                    component,
+            "fugacity residual row/provenance mapping mismatch");
+        near_collective(
+            residual.value,
+            fugacity.residual(
+                slot,
+                component));
+
+        require_collective(
+            static_cast<std::uint64_t>(
+                residual.petsc_global_row) !=
+                residual
+                    .mesh_global_row_dof
+                    .value(),
+            "fugacity mesh-global DoF was conflated with PETSc row");
+
+        for (std::size_t column = 0U;
+             column < q;
+             ++column) {
+            const std::size_t entry_index =
+                local_row * q +
+                column;
+            const auto& entry =
+                result.jacobian_entries()[
+                    entry_index];
+            const PetscInt expected_column =
+                expected_start +
+                static_cast<PetscInt>(
+                    column);
+            const std::uint64_t
+                expected_mesh_column =
+                    (stable_cell ==
+                             UINT64_C(10)
+                         ? static_cast<
+                               std::uint64_t>(
+                                   q)
+                         : UINT64_C(0)) +
+                    static_cast<std::uint64_t>(
+                        column);
+
+            require_collective(
+                entry.petsc_global_row ==
+                        expected_row &&
+                    entry.petsc_global_column ==
+                        expected_column &&
+                    entry.mesh_global_row_dof ==
+                        residual
+                            .mesh_global_row_dof &&
+                    entry.mesh_global_column_dof ==
+                        mesh::GlobalDofIndex{
+                            expected_mesh_column} &&
+                    entry.row_cell_global ==
+                        mesh::GlobalEntityId{
+                            stable_cell} &&
+                    entry.non_reference_phase ==
+                        slot &&
+                    entry.component ==
+                        component &&
+                    entry.natural_variable_column ==
+                        column,
+                "fugacity Jacobian scalar mapping mismatch");
+            near_collective(
+                entry.value,
+                fugacity.d_residual(
+                    slot,
+                    component,
+                    column));
+        }
+    }
+
+    std::uint64_t local_zero_count = 0U;
+    for (const auto& entry :
+         result.jacobian_entries()) {
+        if (entry.value == 0.0) {
+            ++local_zero_count;
+        }
+    }
+    std::uint64_t global_zero_count = 0U;
+    if (MPI_Allreduce(
+            &local_zero_count,
+            &global_zero_count,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) !=
+        MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI_Allreduce failed for fugacity zero-entry audit");
+    }
+    require_collective(
+        global_zero_count == 24U,
+        "fugacity zero saturation-column entries were not retained");
+
+    {
+        auto wrong_chart =
+            make_fugacity_linearization(
+                rank == 0
+                    ? UINT64_C(20)
+                    : UINT64_C(10));
+        const std::array<
+            fdp::OwnedCellFugacityEquilibriumLinearizationBinding3D,
+            1>
+            bad_bindings{{
+                {
+                    mesh::LocalIndex{0U},
+                    mesh::GlobalEntityId{
+                        stable_cell},
+                    &wrong_chart}
+            }};
+        std::optional<
+            fdp::FugacityEquilibriumGlobalAssemblyEntries3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_fugacity_equilibrium_global_assembly_entries_3d(
+                    PETSC_COMM_WORLD,
+                    *conservation,
+                    partition,
+                    layout,
+                    numbering,
+                    cell_bridge,
+                    cell_pattern,
+                    "natural_state",
+                    bad_bindings,
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "fugacity pivot/chart mismatch was not rejected collectively");
+    }
+
+    {
+        const std::span<
+            const fdp::
+                OwnedCellFugacityEquilibriumLinearizationBinding3D>
+            missing{};
+        std::optional<
+            fdp::FugacityEquilibriumGlobalAssemblyEntries3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_fugacity_equilibrium_global_assembly_entries_3d(
+                    PETSC_COMM_WORLD,
+                    *conservation,
+                    partition,
+                    layout,
+                    numbering,
+                    cell_bridge,
+                    cell_pattern,
+                    "natural_state",
+                    missing,
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "missing fugacity binding was not rejected collectively");
+    }
+}
+
 void invalid_collective_inputs() {
     int rank = -1;
     if (MPI_Comm_rank(
@@ -1362,6 +1784,9 @@ void headers() {
     require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
+    require_collective(
+        fugacity_equilibrium_global_assembly_mapping_header(),
+        "fugacity equilibrium global assembly mapping header probe failed");
 }
 
 } // namespace
@@ -1390,6 +1815,7 @@ int main(int argc, char** argv) {
 
         distributed_exchange();
         global_component_assembly_mapping();
+        fugacity_global_assembly_mapping();
         invalid_collective_inputs();
         headers();
 
@@ -1399,7 +1825,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] distributed component conservation and global assembly mapping\n";
+                << "[PASS] distributed component/fugacity global assembly mapping\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;
