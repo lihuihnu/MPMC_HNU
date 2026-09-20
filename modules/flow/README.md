@@ -948,3 +948,133 @@ The independent `flow.accumulation_time.*` regression covers:
 This slice still does **not** add face flux, Darcy velocity, source/well terms,
 mobility, gravity, capillary pressure, global Newton/PETSc assembly or any nonlinear
 solve.
+
+## 24. Model-neutral three-phase saturation constitutive contract
+
+The first Darcy prerequisites are now frozen without constructing a face flux.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow/saturation_constitutive.hpp>
+```
+
+The local positive-support saturation chart is exactly the fixed-three-phase
+natural-variable chart:
+
+```text
+q_S = (S0, S1)
+S2  = 1 - S0 - S1
+```
+
+with all three saturations finite and strictly positive. No clipping, endpoint
+regularization or hidden effective-saturation transform is performed by the generic
+wrapper.
+
+### Relative permeability
+
+A relative-permeability evaluator consumes the full three-phase saturation state and
+returns
+
+```text
+kr_alpha  [dimensionless], alpha = phase0, phase1, phase2.
+```
+
+The model-neutral layer requires only finite nonnegative values. A stricter declared
+bound such as `kr <= 1`, residual saturations, endpoint values, interpolation policy
+or a particular Corey/Stone normalization belongs to the configured model and its
+reference/provenance contract.
+
+No default Corey, Brooks-Corey, Stone or tabulated model is installed by this slice.
+In particular, Stone-type oil/water/gas assumptions must later be bound through an
+explicit physical-role map; numerical phase slots are never promoted to those roles by
+the generic wrapper.
+
+### Optional capillary pressure
+
+Capillary pressure is represented by offsets relative to the fixed natural-variable
+reference phase `phase0`:
+
+```text
+pc_0 = 0
+pc_1 = p_phase1 - p_phase0
+pc_2 = p_phase2 - p_phase0
+```
+
+and resolved phase pressures are
+
+```text
+p_phase0 = p_ref
+p_phase1 = p_ref + pc_1
+p_phase2 = p_ref + pc_2.
+```
+
+The sign convention is therefore explicit and model-independent. Capillary offsets may
+be positive or negative, but every resolved phase pressure must remain finite and
+strictly positive.
+
+Capillary pressure is disabled only by the explicit built-in
+`NoCapillaryPressure3P`, which returns identically zero offsets and therefore zero
+saturation derivatives. Missing/absent capillary data is not interpreted as `none`.
+
+The first contract remains stateless: capillary hysteresis/scanning curves are not
+supported here.
+
+### Differentiable saturation interface
+
+Both relative-permeability and capillary evaluators are scalar-generic callable
+contracts. The scalar type supplied for `S0/S1` is preserved through
+
+- reconstructed `S2`;
+- `kr_alpha`;
+- capillary offsets;
+- resolved phase pressures.
+
+Consequently an analytic scalar-generic constitutive model can be evaluated directly
+with the existing forward-AD scalar and expose exact derivatives with respect to
+
+```text
+(S0, S1).
+```
+
+The generic layer contributes the exact chart derivative
+
+```text
+dS2/dS0 = -1
+dS2/dS1 = -1.
+```
+
+It does not finite-difference a constitutive law, does not differentiate clipping and
+does not switch models/roles inside one evaluation.
+
+### Phase-role/provenance boundary
+
+A concrete law may capture residual saturations, endpoints, saturation normalization,
+wettability/phase-role mapping, tables, parameter provenance and reference revision in
+its configured evaluator. If a law requires water/oil/gas or wetting/non-wetting
+identity, construction of that evaluator must reject missing/incompatible role mapping
+before it is passed to the model-neutral flow wrapper.
+
+The generic contract itself only consumes numerical `phase0/phase1/phase2` slots.
+
+### Validation ownership
+
+The dedicated `flow.constitutive.*` regression covers:
+
+- positive-support `S0/S1 -> S2` reconstruction;
+- three dimensionless relative-permeability outputs;
+- explicit capillary-offset sign convention and actual phase pressure resolution;
+- forward-AD derivatives of `kr`, `pc` and resolved pressure with respect to both
+  `S0` and `S1`;
+- the exact zero value/zero derivative behavior of `NoCapillaryPressure3P`;
+- zero/invalid saturation, negative/non-finite relative permeability, non-finite
+  capillary pressure and non-positive resolved pressure rejection;
+- public-header self containment.
+
+The synthetic polynomial `kr` and linear capillary law used by the regression are
+structural derivative fixtures only. They are not physical constitutive models and
+provide no reservoir parameters or validation data.
+
+This slice still does **not** divide by viscosity, construct phase mobility, evaluate
+gravity, create a Darcy face flux, apply transmissibility, assemble a spatial residual,
+add source/well terms or insert PETSc values.

@@ -51,11 +51,22 @@ target_link_libraries(
     mpmc_flow_accumulation_time_tests
     PRIVATE mpmc::flow)
 
+add_executable(
+    mpmc_flow_saturation_constitutive_tests
+    saturation_constitutive_test.cpp
+    saturation_constitutive_header.cpp)
+target_link_libraries(
+    mpmc_flow_saturation_constitutive_tests
+    PRIVATE
+        mpmc::flow
+        mpmc::ad)
+
 foreach(target IN ITEMS
         mpmc_flow_core_tests
         mpmc_flow_fugacity_tests
         mpmc_flow_accumulation_tests
-        mpmc_flow_accumulation_time_tests)
+        mpmc_flow_accumulation_time_tests
+        mpmc_flow_saturation_constitutive_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -165,5 +176,22 @@ foreach(case IN LISTS accumulation_time_cases)
         flow.accumulation_time.${case}
         PROPERTIES
             LABELS "flow;natural_variables;accumulation;time_discretization;conservation"
+            TIMEOUT 30)
+endforeach()
+
+set(saturation_constitutive_cases
+    primal
+    differentiable_chart
+    no_capillary
+    invalid_inputs
+    headers)
+foreach(case IN LISTS saturation_constitutive_cases)
+    add_test(
+        NAME flow.constitutive.${case}
+        COMMAND mpmc_flow_saturation_constitutive_tests ${case})
+    set_tests_properties(
+        flow.constitutive.${case}
+        PROPERTIES
+            LABELS "flow;natural_variables;relative_permeability;capillary_pressure;constitutive"
             TIMEOUT 30)
 endforeach()
