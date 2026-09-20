@@ -60,6 +60,14 @@ target_link_libraries(
     PRIVATE mpmc::flow)
 
 add_executable(
+    mpmc_flow_energy_accumulation_tests
+    energy_accumulation_test.cpp
+    energy_accumulation_header.cpp)
+target_link_libraries(
+    mpmc_flow_energy_accumulation_tests
+    PRIVATE mpmc::flow)
+
+add_executable(
     mpmc_flow_saturation_constitutive_tests
     saturation_constitutive_test.cpp
     saturation_constitutive_header.cpp)
@@ -93,6 +101,7 @@ foreach(target IN ITEMS
         mpmc_flow_fugacity_linearization_tests
         mpmc_flow_accumulation_tests
         mpmc_flow_accumulation_time_tests
+        mpmc_flow_energy_accumulation_tests
         mpmc_flow_saturation_constitutive_tests
         mpmc_flow_phase_transport_tests
         mpmc_flow_phase_potential_tests)
@@ -220,6 +229,23 @@ foreach(case IN LISTS accumulation_time_cases)
         flow.accumulation_time.${case}
         PROPERTIES
             LABELS "flow;natural_variables;accumulation;time_discretization;conservation"
+            TIMEOUT 30)
+endforeach()
+
+set(energy_accumulation_cases
+    accumulation_and_backward_euler
+    jacobian_fresh_perturbation
+    zero_residual_nonzero_jacobian
+    invalid_inputs
+    headers)
+foreach(case IN LISTS energy_accumulation_cases)
+    add_test(
+        NAME flow.energy_accumulation.${case}
+        COMMAND mpmc_flow_energy_accumulation_tests ${case})
+    set_tests_properties(
+        flow.energy_accumulation.${case}
+        PROPERTIES
+            LABELS "flow;natural_variables;energy;accumulation;conservation"
             TIMEOUT 30)
 endforeach()
 

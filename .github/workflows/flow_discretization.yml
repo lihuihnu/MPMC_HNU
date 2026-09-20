@@ -11,6 +11,7 @@ on:
       - 'modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp'
       - 'modules/flow/include/mpmc/flow/component_accumulation.hpp'
       - 'modules/flow/include/mpmc/flow/component_accumulation_time.hpp'
+      - 'modules/flow/include/mpmc/flow/energy_accumulation.hpp'
       - 'modules/flow/CMakeLists.txt'
       - 'modules/discretization/include/mpmc/discretization/tpfa_internal_face_transmissibility_snapshot_3d.hpp'
       - 'modules/discretization/include/mpmc/discretization/tpfa_static_face_transmissibility_3d.hpp'
@@ -78,7 +79,7 @@ jobs:
       - name: Build flow-discretization contract
         run: |
           cmake --build build/flow-discretization \
-            --target mpmc_flow_discretization_tests mpmc_flow_discretization_component_flux_tests mpmc_flow_discretization_scatter_tests mpmc_flow_discretization_normalized_spatial_tests mpmc_flow_discretization_local_conservation_tests mpmc_flow_discretization_multi_cell_conservation_tests \
+            --target mpmc_flow_discretization_tests mpmc_flow_discretization_component_flux_tests mpmc_flow_discretization_scatter_tests mpmc_flow_discretization_normalized_spatial_tests mpmc_flow_discretization_local_conservation_tests mpmc_flow_discretization_multi_cell_conservation_tests mpmc_flow_discretization_energy_tests \
             --config ${{ matrix.config }} \
             --parallel 2
 
@@ -86,6 +87,6 @@ jobs:
         run: |
           ctest --test-dir build/flow-discretization \
             -C ${{ matrix.config }} \
-            -R '^flow_discretization[.](tpfa_phase_flux|component_flux|scatter|normalized_spatial|local_conservation|multi_cell_conservation)[.]' \
+            -R '^flow_discretization[.](tpfa_phase_flux|component_flux|scatter|normalized_spatial|local_conservation|multi_cell_conservation|energy_conservation)[.]' \
             --verbose \
             --no-tests=error

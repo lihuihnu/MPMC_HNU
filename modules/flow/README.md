@@ -2340,3 +2340,212 @@ The 2-rank PETSc regression additionally checks:
 No `MatSetValues`, `VecSetValues`, energy residual, boundary/source/well term,
 Newton iteration or phase switching is introduced here.
 
+## 36. Local non-isothermal energy conservation contract
+
+The fixed-three-phase natural-variable model now has its first complete **local energy
+equation** through accumulation plus internal-face advection/conduction.
+
+### Bulk energy storage
+
+Public entry:
+
+```cpp
+#include <mpmc/flow/energy_accumulation.hpp>
+```
+
+The bulk-volume internal-energy storage is:
+
+```text
+E_bulk =
+    phi * sum_alpha(S_alpha * rho_alpha * u_alpha)
+  + (1 - phi) * e_r
+```
+
+with units:
+
+```text
+J / bulk-m^3
+```
+
+where:
+
+- `rho_alpha [kg/m^3]` is phase mass density;
+- `u_alpha [J/kg]` is phase specific internal energy;
+- `e_r [J/rock-m^3]` is explicit stationary-rock volumetric internal energy.
+
+The rock model is intentionally caller-supplied. This layer does **not** invent a rock
+density, heat capacity, reference temperature or reference internal energy.
+
+The current rigid/static porous-medium contract freezes:
+
+```text
+d(phi) = 0
+d(V_b) = 0
+```
+
+and therefore excludes geomechanical pore-volume work.
+
+Backward Euler gives:
+
+```text
+R_E^acc =
+    (E_bulk^(n+1) - E_bulk^n) / dt
+```
+
+in:
+
+```text
+W / bulk-m^3.
+```
+
+The previous storage and time step are frozen; the Jacobian contains only derivatives of
+the current natural-variable state.
+
+### Caloric derivative carrier
+
+`PhaseCaloricPropertyNaturalVariableLinearization3P` carries exact current-state:
+
+- specific enthalpy `h_alpha [J/kg]`;
+- specific internal energy `u_alpha [J/kg]`;
+- their full natural-variable gradients.
+
+Primal values are copied from the validated `NaturalVariableCellState3P`; the carrier
+therefore cannot silently mix caloric values from another thermodynamic state.
+
+### Internal-face energy rate
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization/energy_face_flux.hpp>
+```
+
+The advective energy rate reuses the already-frozen phase Darcy upwind branch:
+
+```text
+Q_adv^f =
+    sum_alpha(
+        rho_alpha,up
+      * h_alpha,up
+      * F_alpha)
+```
+
+with `F_alpha [m^3/s]`, so `Q_adv^f [W]`.
+
+The same upstream side is used for density and enthalpy. The Jacobian differentiates both
+the upstream `rho*h` payload and the existing phase volumetric flux.
+
+Conductive heat is:
+
+```text
+Q_cond^f = G_f * (T_owner - T_neighbour)
+```
+
+with:
+
+```text
+G_f [W/K]
+dG_f = 0
+```
+
+and total internal-face rate:
+
+```text
+Q_E^f = Q_adv^f + Q_cond^f.
+```
+
+Positive `Q_E^f` means owner -> neighbour.
+
+`G_f` is supplied explicitly. Although mesh core already has scalar/full symmetric
+conductivity field contracts, this slice does **not** guess a thermal interpretation or
+derive a face conductance from those tensors. Conductivity-to-face discretization remains
+a separate future contract.
+
+### Bulk-volume normalization and conservative scatter
+
+For explicit positive cell bulk volumes:
+
+```text
+R_E,o^(face,V) = +Q_E^f / V_b,o
+R_E,n^(face,V) = -Q_E^f / V_b,n
+```
+
+in:
+
+```text
+W / bulk-m^3.
+```
+
+With rigid `dV_b=0`, the Jacobian uses the same fixed-volume scaling.
+
+Unequal cell volumes do not preserve direct normalized antisymmetry. The exact physical
+invariant is volume weighted:
+
+```text
+V_b,o * R_E,o^(face,V)
++ V_b,n * R_E,n^(face,V)
+= 0
+```
+
+and the corresponding invariant is checked for every owner and neighbour
+natural-variable Jacobian column.
+
+### Local energy residual
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization/local_energy_conservation_residual.hpp>
+```
+
+For one cell:
+
+```text
+R_E,c =
+    R_E,c^acc
+  + sum_f R_E,c^(face,V)
+```
+
+with a local diagonal Jacobian and one explicit neighbour Jacobian block per incident
+internal face.
+
+The current equation includes:
+
+- fluid internal-energy storage;
+- stationary-rock thermal storage;
+- advective phase enthalpy transport;
+- conductive heat transport.
+
+The current v1 deliberately excludes kinetic-energy storage and gravitational potential
+energy storage. Gravity can still affect the energy equation indirectly through the
+already-defined phase Darcy flux used by the advective enthalpy term.
+
+### Validation
+
+Flow core energy tests cover:
+
+- fluid + stationary-rock bulk storage;
+- backward-Euler units and current-only Jacobian;
+- fresh perturbation of every natural-variable column against the assembled storage
+  Jacobian;
+- zero accumulation residual with nonzero current-state Jacobian;
+- snapshot closure, porosity, gradient shape and finite-value rejection;
+- public-header self containment.
+
+Flow-discretization energy tests cover:
+
+- mixed owner/neighbour frozen upstream branches;
+- `rho*h*F` advective rate;
+- fixed-`G_f` conductive heat;
+- fresh source perturbation of owner and neighbour face Jacobians;
+- unequal-volume normalization;
+- local energy residual assembly;
+- two-cell closed-patch primal energy conservation;
+- volume-weighted cross-cell Jacobian conservation;
+- invalid conductance, volume and duplicate-face rejection;
+- public-header self containment.
+
+This slice still does **not** implement energy global/PETSc row mapping, conductivity
+tensor -> thermal face conductance discretization, boundary/source/well terms,
+`MatSetValues`, `VecSetValues`, Newton iteration or phase switching.
+
