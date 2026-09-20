@@ -18,7 +18,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        [".github/workflows/cpa_thermopack_oracle.yml","tests/flash/cpa_thermopack_oracle/**","modules/flash/cpa_thermopack_mapping.md","modules/flash/cpa_flash.md"]
+
   pinned-thermopack-oracle:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Pinned ThermoPack SRK-CPA oracle
     runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 30
@@ -43,9 +52,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --filter=blob:none https://github.com/thermotools/thermopack.git build/thermopack
-          git -C build/thermopack checkout --detach d68c794c7342bfc6938eb424a1fbb88b7780b738
-          test "$(git -C build/thermopack rev-parse HEAD)" = "d68c794c7342bfc6938eb424a1fbb88b7780b738"
+          revision=d68c794c7342bfc6938eb424a1fbb88b7780b738
+          rm -rf build/thermopack
+          git init build/thermopack
+          git -C build/thermopack remote add origin https://github.com/thermotools/thermopack.git
+          for attempt in 1 2 3; do
+            if git -C build/thermopack \
+                -c http.version=HTTP/1.1 \
+                fetch --no-tags --depth=1 origin "$revision"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Pinned ThermoPack fetch failed after 3 attempts" >&2
+              exit 1
+            fi
+            rm -rf build/thermopack/.git/objects/pack/*
+            sleep $((attempt * 5))
+          done
+          git -C build/thermopack checkout --detach FETCH_HEAD
+          test "$(git -C build/thermopack rev-parse HEAD)" = "$revision"
 
       - name: Build pinned ThermoPack
         shell: bash

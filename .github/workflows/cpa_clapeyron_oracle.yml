@@ -15,7 +15,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        [".github/workflows/cpa_clapeyron_oracle.yml","tests/flash/cpa_clapeyron_oracle/**","tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json"]
+
   pinned-clapeyron-oracle:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Pinned Clapeyron sCPA oracle
     runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 60

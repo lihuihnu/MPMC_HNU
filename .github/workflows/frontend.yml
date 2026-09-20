@@ -16,7 +16,16 @@ concurrency:
   group: frontend-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["api/**","frontend/**","modules/model_configuration_grpc/proto/**","buf.model.yaml",".github/workflows/frontend.yml",".gitignore"]
+
   verify:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Node 24 · typecheck, test, build
     runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 15

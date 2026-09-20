@@ -19,7 +19,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["products/pt/CMakeLists.txt","products/pt/product-staging-manifest.json.in","products/pt/installer/**","products/pt/tests/test_product_boundary.py",".github/workflows/pt_signed_installer_gate.yml"]
+
   candidate:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }} unsigned candidate + signing readiness
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30

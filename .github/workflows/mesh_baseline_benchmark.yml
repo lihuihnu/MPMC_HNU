@@ -25,7 +25,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: >-
+        ["tests/mesh/benchmark/**","modules/mesh/include/mpmc/mesh/cartesian_3d.hpp","modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp","modules/mesh/include/mpmc/mesh/topology.hpp","modules/mesh/include/mpmc/mesh/csr_adjacency.hpp","modules/mesh/include/mpmc/mesh/dense_field.hpp","modules/mesh/include/mpmc/mesh/entity.hpp","modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp","modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp","modules/mesh/include/mpmc/mesh/face_boundary.hpp",".github/workflows/mesh_baseline_benchmark.yml"]
+
   baseline:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Private Linux x64 GCC Release fixed workload
     runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 10
