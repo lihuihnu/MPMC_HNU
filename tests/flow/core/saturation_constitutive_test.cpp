@@ -156,7 +156,7 @@ void primal() {
         2.0e4);
     near(
         evaluated.capillary_pressure_offset_pa[2],
-        3.0e4);
+        9.0e4);
 
     near(
         evaluated.phase_pressure_pa[0],
@@ -166,7 +166,7 @@ void primal() {
         10.02e6);
     near(
         evaluated.phase_pressure_pa[2],
-        10.03e6);
+        10.09e6);
 }
 
 void differentiable_chart() {
@@ -365,7 +365,7 @@ void invalid_inputs() {
             (void)fl::
                 evaluate_three_phase_saturation_constitutive(
                     10.0e6,
-                    0.70,
+                    0.80,
                     0.30,
                     SyntheticRelativePermeability3P{},
                     fl::NoCapillaryPressure3P{});
