@@ -43,10 +43,19 @@ target_link_libraries(
     mpmc_flow_accumulation_tests
     PRIVATE mpmc::flow)
 
+add_executable(
+    mpmc_flow_accumulation_time_tests
+    component_accumulation_time_test.cpp
+    component_accumulation_time_header.cpp)
+target_link_libraries(
+    mpmc_flow_accumulation_time_tests
+    PRIVATE mpmc::flow)
+
 foreach(target IN ITEMS
         mpmc_flow_core_tests
         mpmc_flow_fugacity_tests
-        mpmc_flow_accumulation_tests)
+        mpmc_flow_accumulation_tests
+        mpmc_flow_accumulation_time_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -139,5 +148,22 @@ foreach(case IN LISTS accumulation_cases)
         flow.accumulation.${case}
         PROPERTIES
             LABELS "flow;natural_variables;accumulation;conservation"
+            TIMEOUT 30)
+endforeach()
+
+set(accumulation_time_cases
+    backward_euler
+    previous_is_frozen
+    near_steady_roundoff
+    invalid_inputs
+    headers)
+foreach(case IN LISTS accumulation_time_cases)
+    add_test(
+        NAME flow.accumulation_time.${case}
+        COMMAND mpmc_flow_accumulation_time_tests ${case})
+    set_tests_properties(
+        flow.accumulation_time.${case}
+        PROPERTIES
+            LABELS "flow;natural_variables;accumulation;time_discretization;conservation"
             TIMEOUT 30)
 endforeach()

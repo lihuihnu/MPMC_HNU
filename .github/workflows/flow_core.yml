@@ -69,7 +69,7 @@ jobs:
       - name: Build flow core contract
         run: |
           cmake --build build/flow-core \
-            --target mpmc_flow_core_tests mpmc_flow_fugacity_tests mpmc_flow_accumulation_tests \
+            --target mpmc_flow_core_tests mpmc_flow_fugacity_tests mpmc_flow_accumulation_tests mpmc_flow_accumulation_time_tests \
             --config ${{ matrix.config }} \
             --parallel 2
 
@@ -77,6 +77,6 @@ jobs:
         run: |
           ctest --test-dir build/flow-core \
             -C ${{ matrix.config }} \
-            -R '^flow[.](core|fugacity|accumulation)[.]' \
+            -R '^flow[.](core|fugacity|accumulation|accumulation_time)[.]' \
             --verbose \
             --no-tests=error

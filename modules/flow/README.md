@@ -846,3 +846,105 @@ validation and supplies no scientific property data.
 This slice still does **not** add `dt`, accumulation residual assembly, face fluxes,
 Darcy velocity, mobility, gravity, capillary pressure, wells, global Newton or PETSc
 value insertion.
+
+## 23. Backward-Euler local accumulation residual contract
+
+The first time-discrete conservation contribution is now defined strictly from the
+already validated current/previous pore-volume accumulation snapshots:
+
+```text
+R_i^acc = (N_i^(n+1) - N_i^n) / dt
+```
+
+with
+
+```text
+R_i^acc [mol / (bulk-m^3 s)].
+```
+
+This remains a **local cell accumulation/time operator only**. It does not contain a
+face flux, source, well, Darcy velocity, mobility, gravity or global residual assembly.
+
+### Inputs and frozen history
+
+`build_backward_euler_component_accumulation_residual()` consumes:
+
+- a validated current/previous `PoreVolumeComponentAccumulationPair3P`;
+- the current `PoreVolumeComponentAccumulationLinearization3P`;
+- an explicit finite `dt > 0` in seconds.
+
+The previous snapshot and `dt` are frozen inputs. They are not natural-variable
+unknowns and are not differentiated.
+
+The builder requires:
+
+- current/previous canonical component IDs/order to match;
+- current/previous porosity to match under the rigid-medium contract;
+- current linearization component identity to match the current snapshot;
+- current linearization porosity to match the current snapshot;
+- current Jacobian shape to match its frozen `NaturalVariableLayout3P`;
+- finite Jacobian entries and differentiated component closure.
+
+### Current-state Jacobian
+
+For the frozen current chart:
+
+```text
+d R_i^acc / d q^(n+1)
+    = (1/dt) * d N_i^(n+1) / d q^(n+1).
+```
+
+No derivative of `N_i^n` appears. Changing the previous snapshot may change the
+residual value but must leave the current Jacobian unchanged.
+
+The published result retains:
+
+- current `NaturalVariableLayout3P` and its composition pivot;
+- canonical component row identity;
+- `dt [s]`;
+- porosity;
+- per-component residual `mol / (bulk-m^3 s)`;
+- total accumulation residual;
+- the complete current-state Jacobian;
+- the corresponding total-residual gradient.
+
+### Conservation checks
+
+The primal time-discrete component residuals must satisfy
+
+```text
+sum_i R_i^acc
+  = [N_total^(n+1) - N_total^n] / dt.
+```
+
+For every current natural-variable column:
+
+```text
+sum_i dR_i^acc/dq
+  = (1/dt) * dN_total^(n+1)/dq.
+```
+
+The builder verifies both identities and rejects non-finite scaled values. Because
+backward differencing can subtract two large nearly equal inventories, the floating-point
+closure check is scaled by the original current/previous inventory magnitude rather than
+the already-cancelled residual magnitude. This preserves the upstream machine-roundoff
+integrity contract without relaxing any physical convergence tolerance.
+
+### Validation ownership
+
+The independent `flow.accumulation_time.*` regression covers:
+
+- exact backward-Euler component residual values;
+- canonical component-row identity;
+- exact `1/dt` scaling of every current Jacobian entry;
+- total component/total accumulation closure;
+- changing previous accumulation changes the residual but not the Jacobian;
+- invalid/NaN/non-positive `dt`;
+- current-linearization component/porosity mismatch;
+- malformed Jacobian shape;
+- non-finite derivative and differentiated-closure rejection;
+- public-header self containment.
+
+This slice still does **not** add face flux, Darcy velocity, source/well terms,
+mobility, gravity, capillary pressure, global Newton/PETSc assembly or any nonlinear
+solve.

@@ -75,6 +75,7 @@ struct PoreVolumeComponentAccumulationLinearization3P {
         pore_volume_component_accumulation_convention;
 
     NaturalVariableLayout3P layout;
+    double porosity{};
     std::vector<std::string> component_ids;
     std::size_t input_count{};
     std::vector<double> component_jacobian;
@@ -449,6 +450,7 @@ build_pore_volume_component_accumulation_linearization(
     PoreVolumeComponentAccumulationLinearization3P
         result{
             layout,
+            porosity,
             std::vector<std::string>{
                 current.component_ids().begin(),
                 current.component_ids().end()},
