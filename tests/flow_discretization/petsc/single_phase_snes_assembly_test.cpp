@@ -815,20 +815,25 @@ void single_phase_snes_physical_assembly_test() {
             &initial_assembly,
             &initial_status);
     require_collective(
-        error == PETSC_SUCCESS &&
-            initial_status ==
-                fdp::NaturalVariableSnesEvaluationStatus3D::
-                    success &&
-            initial_assembly.has_value() &&
-            initial_assembly->component_count() ==
-                3U &&
-            initial_assembly
-                    ->natural_variable_count() ==
-                4U &&
-            initial_assembly->residual_entries()
-                    .size() ==
-                4U,
-        "single-phase complete assembly did not reduce to Nc+1");
+        error == PETSC_SUCCESS,
+        "single-phase initial production assembly returned PETSc error");
+    require_collective(
+        initial_status ==
+            fdp::NaturalVariableSnesEvaluationStatus3D::
+                success,
+        "single-phase initial production assembly reported domain error");
+    require_collective(
+        initial_assembly.has_value(),
+        "single-phase initial production assembly returned no snapshot");
+    require_collective(
+        initial_assembly->component_count() == 3U,
+        "single-phase complete assembly component count mismatch");
+    require_collective(
+        initial_assembly->natural_variable_count() == 4U,
+        "single-phase complete assembly did not use Nc+1 block width");
+    require_collective(
+        initial_assembly->residual_entries().size() == 4U,
+        "single-phase complete assembly did not expose exactly Nc+1 owned rows");
 
     for (const auto& entry :
          initial_assembly->residual_entries()) {
