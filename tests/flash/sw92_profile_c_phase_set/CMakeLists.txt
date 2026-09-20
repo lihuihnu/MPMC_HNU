@@ -10,7 +10,7 @@ enable_testing()
 add_executable(mpmc_sw92_profile_c_phase_set_tests
     sw92_profile_c_phase_set_test.cpp
     sw92_profile_c_phase_set_header.cpp)
-target_link_libraries(mpmc_sw92_profile_c_phase_set_tests PRIVATE mpmc::flash mpmc::flow)
+target_link_libraries(mpmc_sw92_profile_c_phase_set_tests PRIVATE mpmc::flash mpmc::flow_thermodynamics)
 target_include_directories(mpmc_sw92_profile_c_phase_set_tests PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../../support/flow")
 target_include_directories(mpmc_sw92_profile_c_phase_set_tests PRIVATE

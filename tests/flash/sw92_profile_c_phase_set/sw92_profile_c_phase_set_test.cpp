@@ -173,9 +173,14 @@ void publish_sample6_three_phase() {
 
 
 void flow_fugacity_adapter_on_sample6_three_phase() {
-    const auto model = sample6::model();
+    // Use the already-regressed component-permuted representation of the same
+    // accepted Sample-6 state. The current natural-variable baseline makes the
+    // final component dependent; normal Sample-6 ordering puts a ~7.45e-12
+    // aqueous trace component in that subtractive 1-sum coordinate, which is
+    // numerically ill-conditioned even though the physical state is unchanged.
+    const auto model = sample6::model(true);
     const auto result = fl::solve_sw92_profile_c_pt_phase_set(
-        1.0e7, 350.0, sample6::feed(), model, 0.0);
+        1.0e7, 350.0, sample6::feed(true), model, 0.0);
     require_publication_basics(result, 3U);
 
     const auto& phases =

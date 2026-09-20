@@ -36,7 +36,7 @@ set_target_properties(mpmc_pr76_three_phase_reference_test PROPERTIES CXX_EXTENS
 
 add_executable(mpmc_pr76_sour_gas_three_phase_tests
     pr76_sour_gas_three_phase_test.cpp)
-target_link_libraries(mpmc_pr76_sour_gas_three_phase_tests PRIVATE mpmc::flash mpmc::flow)
+target_link_libraries(mpmc_pr76_sour_gas_three_phase_tests PRIVATE mpmc::flash mpmc::flow_thermodynamics)
 target_include_directories(mpmc_pr76_sour_gas_three_phase_tests PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../../support/flow")
 set_target_properties(mpmc_pr76_sour_gas_three_phase_tests PROPERTIES CXX_EXTENSIONS OFF)

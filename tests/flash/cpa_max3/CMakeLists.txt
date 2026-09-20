@@ -11,7 +11,7 @@ option(MPMC_CPA_MAX3_ENABLE_SANITIZERS
        "Enable ASan/UBSan for CPA max3 tests" OFF)
 
 add_executable(mpmc_cpa_max3_tests cpa_max3_test.cpp)
-target_link_libraries(mpmc_cpa_max3_tests PRIVATE mpmc::flash mpmc::flow)
+target_link_libraries(mpmc_cpa_max3_tests PRIVATE mpmc::flash mpmc::flow_thermodynamics)
 target_include_directories(mpmc_cpa_max3_tests PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../../support/flow")
 set_target_properties(mpmc_cpa_max3_tests PROPERTIES CXX_EXTENSIONS OFF)

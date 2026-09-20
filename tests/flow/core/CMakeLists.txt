@@ -4,9 +4,11 @@ project(mpmc_flow_core_tests LANGUAGES CXX)
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow"
     flow-library)
-add_subdirectory(
-    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad"
-    ad-library)
+if(NOT TARGET mpmc_ad)
+    add_subdirectory(
+        "${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad"
+        ad-library)
+endif()
 enable_testing()
 
 option(
@@ -29,7 +31,9 @@ add_executable(
     thermodynamics_fugacity_adapters_header.cpp)
 target_link_libraries(
     mpmc_flow_fugacity_tests
-    PRIVATE mpmc::flow mpmc::ad)
+    PRIVATE
+        mpmc::flow_thermodynamics
+        mpmc::ad)
 
 foreach(target IN ITEMS
         mpmc_flow_core_tests

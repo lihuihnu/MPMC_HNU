@@ -609,15 +609,17 @@ It exposes three fixed-branch evaluators:
 
 Each evaluator stores only a model reference and the three caller-supplied selected-phase records. A phase-slot evaluation forwards the exact supplied `p,T,x` to the thermodynamics-owned selected-phase fugacity façade. The adapters do not perform root searches, family selection, Gibbs ranking, density/Z sorting or phase-identity inference.
 
-This is the first intentional production dependency from `mpmc::flow` to
-`mpmc::thermodynamics`. The direction is one-way; thermodynamics and flash remain independent of flow.
+The base `mpmc::flow` target remains thermodynamics-independent. Concrete
+EoS consumption is isolated in the `mpmc::flow_thermodynamics` interface target,
+which depends one-way on `mpmc::flow + mpmc::thermodynamics`; thermodynamics and
+flash remain independent of flow.
 
 ### Accepted-state integration evidence
 
 The adapter boundary is validated inside the existing owners of the accepted three-phase fixtures rather than by copying fixture data into flow tests:
 
 - **PR76:** Li–Firoozabadi 2012 sour-gas literature benchmark after accepted three-phase max3 closure and final stability review;
-- **SW92:** authoritative Profile-C Sample-6 three-phase publication, preserving AQ/NA family metadata and the selected root branch carried by each published phase;
+- **SW92:** authoritative Profile-C Sample-6 three-phase publication, preserving AQ/NA family metadata and the selected root branch carried by each published phase. The adapter/Jacobian regression uses the repository's already-verified reversed component permutation of the same accepted state so the current fixed-last dependent composition coordinate does not place the ~7.45e-12 aqueous trace fraction behind a subtractive `1-sum(x)` reconstruction;
 - **CPA:** the repository's accepted max3 symmetric structural fixture. It remains explicitly synthetic and is used only for equation/software validation, not physical validation.
 
 For each state, the integration regression transfers `activity.branch` directly into the adapter selection. SW92 additionally transfers the published thermodynamic family and configured NaCl molality. No root is reconstructed from density, Z or slot ordering.
@@ -644,5 +646,12 @@ The regressions require:
 - pressure, temperature, one phase-1 composition column and one phase-2 composition column to agree with fixed-branch fresh central perturbations.
 
 Finite differences are test-only cross-checks. Production residual/Jacobian evaluation remains AD/analytic through the selected EoS branch.
+
+The Sample-6 audit exposed a numerical limitation of the current local coordinate
+contract: always choosing the final component as the dependent mole fraction is
+ill-conditioned when that component is trace-level. No tolerance was relaxed and no
+composition was clipped. This slice uses an already validated component permutation;
+before global Newton integration, dependent-component pivoting should be made explicit
+rather than relying on component order.
 
 This slice still does not construct component or energy conservation rows, Darcy face fluxes, time-discretization terms, a global Newton system, PETSc matrix values, phase switching or wells.
