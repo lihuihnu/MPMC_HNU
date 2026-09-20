@@ -42,6 +42,7 @@ bool variable_cardinality_snes_assembly_header();
 void variable_cardinality_snes_assembly_test();
 bool mixed_cardinality_physical_snes_assembly_header();
 void mixed_cardinality_physical_snes_assembly_test();
+bool cross_cardinality_tpfa_bridge_header();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -5373,6 +5374,9 @@ void headers() {
         mixed_cardinality_physical_snes_assembly_header(),
         "mixed-cardinality physical SNES assembly header probe failed");
     require_collective(
+        cross_cardinality_tpfa_bridge_header(),
+        "cross-cardinality TPFA bridge header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -5429,7 +5433,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] PETSc SNES fixed-three-phase + single-phase + two-phase + mixed-cardinality 1P/2P/3P physical dispatcher\n";
+                << "[PASS] PETSc SNES mixed-cardinality 1P/2P/3P physical dispatcher + cross-cardinality TPFA bridge\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;

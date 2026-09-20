@@ -1,4 +1,4 @@
-#include <mpmc/flow_discretization_petsc/mixed_cardinality_physical_snes_assembly.hpp>
+#include <mpmc/flow_discretization_petsc/cross_cardinality_tpfa_bridge.hpp>
 
 #include <petscmat.h>
 #include <petscvec.h>
@@ -1063,7 +1063,7 @@ make_cell_bridge(
                 mesh::GlobalEntityId{UINT64_C(50)}},
             {0, 1, 2},
             {1, 1, 1},
-            {1, 1, 1},
+            {1, 2, 1},
             local_cell_rows};
     }
     return {
@@ -1082,7 +1082,7 @@ make_cell_bridge(
             mesh::GlobalEntityId{UINT64_C(60)}},
         {3, 4, 5},
         {1, 1, 1},
-        {1, 1, 1},
+        {2, 1, 1},
         local_cell_rows};
 }
 
@@ -1106,13 +1106,13 @@ make_cell_pattern(
                 {
                     mesh::LocalIndex{2U},
                     mesh::GlobalEntityId{UINT64_C(30)},
-                    1, 1U, 1U, 1U, 1U},
+                    1, 1U, 1U, 1U, 2U},
                 {
                     mesh::LocalIndex{4U},
                     mesh::GlobalEntityId{UINT64_C(50)},
-                    2, 2U, 1U, 2U, 1U}},
+                    2, 2U, 1U, 3U, 1U}},
             {0, 1, 2},
-            {3, 4, 5}};
+            {3, 3, 4, 5}};
     }
     return {
         mesh::PartitionRank{1U},
@@ -1125,17 +1125,17 @@ make_cell_pattern(
             {
                 mesh::LocalIndex{1U},
                 mesh::GlobalEntityId{UINT64_C(20)},
-                3, 0U, 1U, 0U, 1U},
+                3, 0U, 1U, 0U, 2U},
             {
                 mesh::LocalIndex{3U},
                 mesh::GlobalEntityId{UINT64_C(40)},
-                4, 1U, 1U, 1U, 1U},
+                4, 1U, 1U, 2U, 1U},
             {
                 mesh::LocalIndex{5U},
                 mesh::GlobalEntityId{UINT64_C(60)},
-                5, 2U, 1U, 2U, 1U}},
+                5, 2U, 1U, 3U, 1U}},
         {3, 4, 5},
-        {0, 1, 2}};
+        {0, 1, 1, 2}};
 }
 
 [[nodiscard]]
@@ -1539,6 +1539,273 @@ make_phase_identity_maps() {
                 hydrocarbon1}}};
 }
 
+
+[[nodiscard]]
+flow::FrozenActivePhaseIdentityMap
+phase_identity_map_for_stable(
+    std::uint64_t stable) {
+    const auto maps =
+        make_phase_identity_maps();
+    const std::size_t index =
+        static_cast<std::size_t>(
+            stable / UINT64_C(10) -
+            UINT64_C(1));
+    return maps.at(index);
+}
+
+PetscErrorCode
+evaluate_absent_phase_extension(
+    const fdp::
+        MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D&,
+    const flow::
+        CrossCardinalityFacePhaseIdentityBinding&
+            phase_binding,
+    fdp::CrossCardinalityAbsentPhaseSide3D
+        absent_side,
+    const fdp::
+        MixedCardinalityPhysicalCurrentCellLinearization3D&
+            owner,
+    const fdp::
+        MixedCardinalityPhysicalCurrentCellLinearization3D&
+            neighbour,
+    void*,
+    std::optional<
+        flow::
+            AbsentPhasePotentialExtensionLinearization>*
+                output,
+    fdp::NaturalVariableSnesEvaluationStatus3D*
+        status) {
+    if (output == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+
+    try {
+        const auto& absent_cell =
+            absent_side ==
+                    fdp::
+                        CrossCardinalityAbsentPhaseSide3D::
+                            owner
+                ? owner
+                : neighbour;
+        const auto identity =
+            std::visit(
+                [](const auto& typed) {
+                    return typed.transport.state_identity;
+                },
+                absent_cell);
+        const std::size_t q =
+            identity.layout.unknown_count();
+
+        std::vector<double>
+            pressure_gradient(
+                q,
+                0.0);
+        pressure_gradient[
+            identity.layout
+                .pressure_unknown_index()] =
+            1.0;
+        std::vector<double>
+            density_gradient(
+                q,
+                0.0);
+
+        double density =
+            1.0;
+        if (phase_binding
+                .identity.opaque_phase_key ==
+            "hydrocarbon-0") {
+            density = 1.5;
+        } else if (
+            phase_binding
+                .identity.opaque_phase_key ==
+            "hydrocarbon-1") {
+            density = 1.8;
+        }
+
+        output->emplace(
+            phase_binding.identity,
+            identity.reference_pressure_pa,
+            density,
+            q,
+            std::move(
+                pressure_gradient),
+            std::move(
+                density_gradient),
+            "fixture/cross-cardinality-potential-extension/v1");
+        *status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+        return PETSC_SUCCESS;
+    } catch (const std::invalid_argument&) {
+        *status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    domain_error;
+        return PETSC_SUCCESS;
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+}
+
+void check_direct_cross_cardinality_bridge(
+    std::uint64_t owner_stable,
+    std::uint64_t neighbour_stable,
+    std::size_t face_index,
+    DispatchAudit* audit) {
+    const auto owner =
+        evaluate_target(
+            owner_stable,
+            audit);
+    const auto neighbour =
+        evaluate_target(
+            neighbour_stable,
+            audit);
+    const auto plan =
+        flow::
+            make_cross_cardinality_face_phase_identity_plan(
+                phase_identity_map_for_stable(
+                    owner_stable),
+                phase_identity_map_for_stable(
+                    neighbour_stable));
+
+    fdp::CrossCardinalityTpfaBridgeBinding3D
+        bridge_binding{
+            &evaluate_absent_phase_extension,
+            nullptr};
+    std::optional<
+        fdp::
+            MixedCardinalityPhysicalFaceLinearization3D>
+        face;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+
+    const auto face_input =
+        make_face_input(
+            face_index,
+            UINT64_C(1000) +
+                static_cast<std::uint64_t>(
+                    face_index));
+    const PetscErrorCode error =
+        fdp::
+            evaluate_standard_cross_cardinality_tpfa_face_3d(
+                face_input,
+                plan,
+                {2.0, 3.0},
+                owner,
+                neighbour,
+                &bridge_binding,
+                &face,
+                &status);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            face.has_value(),
+        "standard cross-cardinality TPFA bridge evaluation failed");
+
+    const auto& component =
+        face->component;
+    const auto& energy =
+        face->energy;
+    require_collective(
+        component.owner_state_identity
+                    .layout.phase_count() ==
+                phase_count_for(
+                    owner_stable) &&
+            component.neighbour_state_identity
+                    .layout.phase_count() ==
+                phase_count_for(
+                    neighbour_stable) &&
+            component
+                    .owner_row_neighbour_column_jacobian
+                    .size() ==
+                component.component_count() *
+                    component
+                        .neighbour_state_identity
+                        .layout.unknown_count() &&
+            component
+                    .neighbour_row_owner_column_jacobian
+                    .size() ==
+                component.component_count() *
+                    component
+                        .owner_state_identity
+                        .layout.unknown_count(),
+        "cross-cardinality TPFA rectangular Jacobian shape mismatch");
+
+    double component_norm = 0.0;
+    for (const double value :
+         component
+             .owner_component_contribution_mol_per_bulk_m3_s) {
+        component_norm +=
+            std::abs(value);
+    }
+    require_collective(
+        component_norm > 0.0 &&
+            std::abs(
+                energy
+                    .owner_contribution_w_per_bulk_m3) >
+                0.0,
+        "cross-cardinality bridge did not produce physical component/energy flux");
+
+    for (std::size_t component_index = 0U;
+         component_index <
+            component.component_count();
+         ++component_index) {
+        const double owner_rate =
+            component
+                .owner_component_contribution_mol_per_bulk_m3_s[
+                    component_index] *
+            component.bulk_volume
+                .owner_bulk_volume_m3;
+        const double neighbour_rate =
+            component
+                .neighbour_component_contribution_mol_per_bulk_m3_s[
+                    component_index] *
+            component.bulk_volume
+                .neighbour_bulk_volume_m3;
+        require_collective(
+            std::abs(
+                owner_rate +
+                neighbour_rate) <
+                1.0e-12 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            owner_rate)),
+            "cross-cardinality component face rate is not conservative");
+    }
+
+    const double owner_energy =
+        energy
+            .owner_contribution_w_per_bulk_m3 *
+        energy.bulk_volume
+            .owner_bulk_volume_m3;
+    const double neighbour_energy =
+        energy
+            .neighbour_contribution_w_per_bulk_m3 *
+        energy.bulk_volume
+            .neighbour_bulk_volume_m3;
+    require_collective(
+        std::abs(
+            owner_energy +
+            neighbour_energy) <
+            1.0e-12 *
+                std::max(
+                    1.0,
+                    std::abs(
+                        owner_energy)),
+        "cross-cardinality energy face rate is not conservative");
+}
+
 void insert_target(
     Vec state,
     const fdp::
@@ -1940,6 +2207,314 @@ void mixed_cardinality_physical_snes_assembly_test() {
         error == PETSC_ERR_SUP &&
             !rejected.has_value(),
         "cross-cardinality TPFA face was not rejected without an explicit bridge");
+
+    // Explicit potential extensions enable the standard physical bridge for
+    // all three mixed-cardinality pair classes. The bridge computes actual
+    // TPFA component/energy flux from active upwind payloads and never requests
+    // absent-side composition or enthalpy.
+    check_direct_cross_cardinality_bridge(
+        UINT64_C(20),
+        UINT64_C(30),
+        3U,
+        &audit);
+    check_direct_cross_cardinality_bridge(
+        UINT64_C(20),
+        UINT64_C(50),
+        4U,
+        &audit);
+    check_direct_cross_cardinality_bridge(
+        UINT64_C(40),
+        UINT64_C(50),
+        5U,
+        &audit);
+
+    // The 1P<->2P face is now admitted through the standard bridge into the
+    // real distributed dispatcher. Rank 0 owns the authoritative face while
+    // cell20 is owned by rank 1, so this exercises off-process residual and
+    // rectangular Jacobian insertion, not just a direct local bridge call.
+    auto bridged_cells =
+        make_cell_inputs(
+            rank,
+            &audit);
+    auto bridged_faces =
+        make_face_inputs(
+            rank,
+            true);
+    fdp::CrossCardinalityTpfaBridgeBinding3D
+        standard_bridge{
+            &evaluate_absent_phase_extension,
+            nullptr};
+    std::optional<
+        fdp::
+            MixedCardinalityPhysicalSnesAssemblyContext3D>
+        bridged_context;
+    error =
+        fdp::
+            MixedCardinalityPhysicalSnesAssemblyContext3D::
+                create(
+                    PETSC_COMM_WORLD,
+                    cross_schedule,
+                    partition,
+                    *numbering,
+                    bridge,
+                    pattern,
+                    1.0,
+                    std::move(bridged_cells),
+                    make_phase_identity_maps(),
+                    std::move(bridged_faces),
+                    {
+                        {&evaluate_1p, &audit},
+                        {&evaluate_2p, &audit},
+                        {&evaluate_3p, &audit}},
+                    {
+                        &fdp::
+                            evaluate_standard_cross_cardinality_tpfa_face_3d,
+                        &standard_bridge},
+                    &bridged_context);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            bridged_context.has_value(),
+        "standard cross-cardinality bridge was not admitted by distributed dispatcher");
+
+    Mat bridged_jacobian = nullptr;
+    error =
+        bridged_context
+            ->create_jacobian_structure(
+                &bridged_jacobian);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            bridged_jacobian != nullptr,
+        "failed to create bridged cross-cardinality MPIAIJ structure");
+
+    Vec bridged_state = nullptr;
+    error =
+        fdp::
+            create_variable_cardinality_natural_variable_vec_3d(
+                PETSC_COMM_WORLD,
+                *numbering,
+                &bridged_state);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            bridged_state != nullptr,
+        "failed to create bridged cross-cardinality state");
+    insert_target(
+        bridged_state,
+        *numbering);
+
+    Vec bridged_residual = nullptr;
+    error =
+        VecDuplicate(
+            bridged_state,
+            &bridged_residual);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecSet(
+                bridged_residual,
+                PetscScalar{0.0});
+    }
+    auto bridged_evaluator =
+        bridged_context->snes_evaluator();
+    status =
+        fdp::
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            bridged_evaluator.function(
+                bridged_state,
+                bridged_residual,
+                bridged_evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyBegin(
+                bridged_residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyEnd(
+                bridged_residual);
+    }
+    PetscReal bridged_norm = 0.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                bridged_residual,
+                NORM_2,
+                &bridged_norm);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            bridged_norm > 0.0,
+        "distributed cross-cardinality face did not contribute a physical residual");
+
+    error =
+        MatZeroEntries(
+            bridged_jacobian);
+    status =
+        fdp::
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            bridged_evaluator.jacobian(
+                bridged_state,
+                bridged_jacobian,
+                bridged_evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyBegin(
+                bridged_jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyEnd(
+                bridged_jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success,
+        "distributed cross-cardinality Jacobian assembly failed");
+
+    std::array<double, 4>
+        local_cross_rate{};
+    if (rank == 0) {
+        const auto& cell30 =
+            numbering->cell(
+                mesh::LocalIndex{2U});
+        for (std::size_t row = 0U;
+             row < local_cross_rate.size();
+             ++row) {
+            const PetscInt index =
+                cell30.petsc_global_scalar_start +
+                static_cast<PetscInt>(row);
+            PetscScalar value = 0.0;
+            if (VecGetValues(
+                    bridged_residual,
+                    1,
+                    &index,
+                    &value) !=
+                PETSC_SUCCESS) {
+                throw std::runtime_error(
+                    "failed to read cell30 bridged residual");
+            }
+            local_cross_rate[row] =
+                static_cast<double>(
+                    PetscRealPart(value)) *
+                4.0;
+        }
+    } else {
+        const auto& cell20 =
+            numbering->cell(
+                mesh::LocalIndex{1U});
+        for (std::size_t row = 0U;
+             row < local_cross_rate.size();
+             ++row) {
+            const PetscInt index =
+                cell20.petsc_global_scalar_start +
+                static_cast<PetscInt>(row);
+            PetscScalar value = 0.0;
+            if (VecGetValues(
+                    bridged_residual,
+                    1,
+                    &index,
+                    &value) !=
+                PETSC_SUCCESS) {
+                throw std::runtime_error(
+                    "failed to read cell20 bridged residual");
+            }
+            local_cross_rate[row] =
+                static_cast<double>(
+                    PetscRealPart(value)) *
+                3.0;
+        }
+    }
+
+    std::array<double, 4>
+        global_cross_rate{};
+    require_collective(
+        MPI_Allreduce(
+            local_cross_rate.data(),
+            global_cross_rate.data(),
+            static_cast<int>(
+                global_cross_rate.size()),
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce bridged cross-face conservation rows");
+    bool conserved = true;
+    for (const double value :
+         global_cross_rate) {
+        conserved =
+            conserved &&
+            std::abs(value) <
+                1.0e-10;
+    }
+    require_collective(
+        conserved,
+        "distributed cross-cardinality component/energy face rows are not conservative");
+
+    bool cross_block_nonzero = true;
+    {
+        const auto& row_cell =
+            numbering->cell(
+                rank == 0
+                    ? mesh::LocalIndex{2U}
+                    : mesh::LocalIndex{1U});
+        const auto& column_cell =
+            numbering->cell(
+                rank == 0
+                    ? mesh::LocalIndex{1U}
+                    : mesh::LocalIndex{2U});
+        const PetscInt row =
+            row_cell
+                .petsc_global_scalar_start;
+        const PetscInt column =
+            column_cell
+                .petsc_global_scalar_start;
+        PetscScalar value = 0.0;
+        cross_block_nonzero =
+            MatGetValues(
+                bridged_jacobian,
+                1,
+                &row,
+                1,
+                &column,
+                &value) ==
+                PETSC_SUCCESS &&
+            std::isfinite(
+                static_cast<double>(
+                    PetscRealPart(value))) &&
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(value))) >
+                0.0;
+    }
+    require_collective(
+        cross_block_nonzero,
+        "distributed 4x7/7x4 cross-cardinality Jacobian block is missing");
+
+    require_collective(
+        VecDestroy(&bridged_residual) ==
+                PETSC_SUCCESS &&
+            VecDestroy(&bridged_state) ==
+                PETSC_SUCCESS &&
+            MatDestroy(&bridged_jacobian) ==
+                PETSC_SUCCESS,
+        "bridged cross-cardinality fixture cleanup failed");
 
     require_collective(
         VecDestroy(&solution) ==

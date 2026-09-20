@@ -74,6 +74,8 @@ using MixedCardinalityCrossPhaseFaceEvaluator3D =
         const mpmc::flow::
             CrossCardinalityFacePhaseIdentityPlan&
                 phase_identity_plan,
+        mpmc::flow_discretization::
+            TwoCellBulkVolume3D bulk_volume,
         const MixedCardinalityPhysicalCurrentCellLinearization3D&
             owner,
         const MixedCardinalityPhysicalCurrentCellLinearization3D&
@@ -1919,6 +1921,15 @@ private:
                                 .evaluator(
                                     face_inputs_[index],
                                     phase_plan,
+                                    {
+                                        bulk_volume(
+                                            cell_inputs_.at(
+                                                static_cast<std::size_t>(
+                                                    row.owner_cell.value()))),
+                                        bulk_volume(
+                                            cell_inputs_.at(
+                                                static_cast<std::size_t>(
+                                                    row.neighbour_cell.value())))},
                                     *current.at(
                                         static_cast<std::size_t>(
                                             row.owner_cell.value())),
