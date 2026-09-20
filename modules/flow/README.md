@@ -1364,3 +1364,135 @@ The dedicated `flow.potential.*` regression covers:
 This slice still does **not** consume `T_f`, multiply transmissibility, construct
 phase/component Darcy flux, choose a spatial upwind stencil beyond this one face,
 assemble a residual, add source/well terms or insert PETSc values.
+## 27. Materialized-TPFA internal-face phase Darcy flux contract
+
+The first actual spatial phase-flow quantity is isolated in a cross-module adapter:
+
+```text
+modules/flow_discretization
+target: mpmc::flow_discretization
+```
+
+This keeps `mpmc::flow` independent of mesh/discretization ownership. The adapter
+depends on both `mpmc::flow` and `mpmc::discretization`.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization/tpfa_phase_darcy_flux.hpp>
+```
+
+### Admissibility-gate requirement
+
+The builder consumes an existing
+`TpfaInternalFaceTransmissibilityEntry3D`. It accepts the face only when all of the
+following already hold:
+
+```text
+entry.disposition == materialized
+entry.admissibility.disposition ==
+    direct_normal_projection_k_orthogonal_candidate
+entry.static_transmissibility exists
+static disposition == positive_harmonic_combination
+T_f > 0 and finite
+face area > 0 and finite
+```
+
+A blocked/non-orthogonal/degenerate face cannot manufacture a phase flux by supplying a
+number manually. Zero static transmissibility is also rejected in this first
+materialized-positive contract.
+
+The adapter does not recompute geometry, permeability, half transmissibility,
+K-orthogonality or the harmonic combination.
+
+### Phase volumetric Darcy flux
+
+For each aligned phase slot:
+
+```text
+F_alpha =
+    -T_f * lambda_alpha,up * DeltaPhi_alpha
+```
+
+with units:
+
+```text
+T_f          [m^3]
+lambda       [1/(Pa s)]
+DeltaPhi     [Pa]
+F_alpha      [m^3/s]
+```
+
+The sign remains the owner-to-neighbour convention:
+
+```text
+F_alpha > 0  -> owner -> neighbour
+F_alpha < 0  -> neighbour -> owner.
+```
+
+The input `DeltaPhi` and upwind state are not recomputed here. They come from the
+already-validated `TwoCellPhasePotentialUpwindLinearization3P` contract.
+
+### Frozen static transmissibility
+
+Under the current rigid mesh / static permeability contract, `T_f` is frozen for this
+local nonlinear derivative. Therefore:
+
+```text
+d T_f = 0
+```
+
+and
+
+```text
+dF_alpha =
+  -T_f [
+      lambda_alpha,up * dDeltaPhi_alpha
+    + DeltaPhi_alpha * dlambda_alpha,up
+  ].
+```
+
+Owner and neighbour Jacobian blocks remain separate because their natural-variable
+charts/pivots may differ.
+
+A future poromechanics/permeability-dependent transmissibility model would require a new
+explicit derivative contract; it must not be smuggled into this static-TPFA path.
+
+### Exact-zero upwind tie
+
+If the upstream contract reports `owner_exact_zero_tie`, then
+
+```text
+DeltaPhi_alpha = 0
+F_alpha = 0
+```
+
+and the published derivative is the already-declared frozen owner branch:
+
+```text
+dF_alpha =
+    -T_f * lambda_alpha,owner * dDeltaPhi_alpha.
+```
+
+The `DeltaPhi * dlambda` term vanishes at the exact zero primal. This remains a branch
+derivative on a non-smooth switching surface, not a claim that the global upwind map is
+classically differentiable there.
+
+### Validation ownership
+
+The dedicated `flow_discretization.tpfa_phase_flux.*` suite checks:
+
+- only materialized/direct/positive-harmonic/positive-`T_f` entries are accepted;
+- phase volumetric flux value and owner->neighbour sign convention;
+- owner and neighbour Jacobian blocks against the analytic product rule;
+- fresh perturbation of `DeltaPhi` and branch-frozen `lambda_up` against the
+  published flux Jacobian;
+- exact-zero tie flux and owner-branch derivative;
+- blocked, mismatched-admissibility, missing-`T_f`, zero-`T_f` and malformed
+  phase-potential payload rejection;
+- face/state identity propagation;
+- public-header self containment.
+
+This slice still does **not** multiply by `c_alpha x_alpha,i`, construct component
+molar face flux, assemble owner/neighbour conservation residual rows, add source/well
+terms, or insert PETSc matrix/vector values.

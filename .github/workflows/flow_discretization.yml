@@ -1,0 +1,87 @@
+name: Flow-discretization TPFA phase flux
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flow_discretization/**'
+      - 'modules/flow/include/mpmc/flow/phase_potential_upwind.hpp'
+      - 'modules/flow/include/mpmc/flow/phase_transport.hpp'
+      - 'modules/flow/include/mpmc/flow/saturation_constitutive.hpp'
+      - 'modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp'
+      - 'modules/flow/CMakeLists.txt'
+      - 'modules/discretization/include/mpmc/discretization/tpfa_internal_face_transmissibility_snapshot_3d.hpp'
+      - 'modules/discretization/include/mpmc/discretization/tpfa_static_face_transmissibility_3d.hpp'
+      - 'modules/discretization/include/mpmc/discretization/transmissibility_admissibility_3d.hpp'
+      - 'modules/discretization/CMakeLists.txt'
+      - 'modules/mesh/include/mpmc/mesh/entity.hpp'
+      - 'tests/flow_discretization/core/**'
+      - '.github/workflows/flow_discretization.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-discretization-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure flow-discretization contract
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flow_discretization/core \
+            -B build/flow-discretization \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_FLOW_DISCRETIZATION_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build flow-discretization contract
+        run: |
+          cmake --build build/flow-discretization \
+            --target mpmc_flow_discretization_tests \
+            --config ${{ matrix.config }} \
+            --parallel 2
+
+      - name: Run flow-discretization contract
+        run: |
+          ctest --test-dir build/flow-discretization \
+            -C ${{ matrix.config }} \
+            -R '^flow_discretization[.]tpfa_phase_flux[.]' \
+            --verbose \
+            --no-tests=error
