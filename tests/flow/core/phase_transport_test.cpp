@@ -384,8 +384,6 @@ FreshProperties evaluate_fresh(
             fl::PhaseSlot3::phase1)];
     const double s2 =
         1.0 - s0 - s1;
-    const std::array<double, 3>
-        saturation{s0, s1, s2};
 
     FreshProperties result;
     result.pressure = {
