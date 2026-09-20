@@ -1094,9 +1094,23 @@ solve_natural_variable_snes_3d(
         return error;
     }
     if (static_cast<int>(reason) <= 0) {
+        KSPConvergedReason ksp_reason =
+            KSP_CONVERGED_ITERATING;
+        PetscInt ksp_iterations = -1;
+        PetscReal ksp_residual_norm =
+            std::numeric_limits<PetscReal>::quiet_NaN();
+        (void)KSPGetConvergedReason(
+            ksp,
+            &ksp_reason);
+        (void)KSPGetIterationNumber(
+            ksp,
+            &ksp_iterations);
+        (void)KSPGetResidualNorm(
+            ksp,
+            &ksp_residual_norm);
         (void)PetscPrintf(
             comm,
-            "[natural-variable SNES] reason=%d iterations=%d function_evaluations=%d jacobian_evaluations=%d function_domain_errors=%d jacobian_domain_errors=%d line_search_prechecks=%d line_search_direction_changes=%d\n",
+            "[natural-variable SNES] reason=%d iterations=%d function_evaluations=%d jacobian_evaluations=%d function_domain_errors=%d jacobian_domain_errors=%d line_search_prechecks=%d line_search_direction_changes=%d ksp_reason=%d ksp_iterations=%d ksp_residual_norm=%.17g\n",
             static_cast<int>(reason),
             static_cast<int>(nonlinear_iterations),
             static_cast<int>(callback_context.function_evaluations),
@@ -1104,7 +1118,10 @@ solve_natural_variable_snes_3d(
             static_cast<int>(callback_context.function_domain_errors),
             static_cast<int>(callback_context.jacobian_domain_errors),
             static_cast<int>(callback_context.line_search_prechecks),
-            static_cast<int>(callback_context.line_search_direction_changes));
+            static_cast<int>(callback_context.line_search_direction_changes),
+            static_cast<int>(ksp_reason),
+            static_cast<int>(ksp_iterations),
+            static_cast<double>(ksp_residual_norm));
         (void)cleanup();
         return PETSC_ERR_NOT_CONVERGED;
     }
