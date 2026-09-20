@@ -124,21 +124,6 @@ collective_error(
         global);
 }
 
-[[nodiscard]] inline PetscErrorCode
-report_stage_error(
-    MPI_Comm comm,
-    const char* stage,
-    PetscErrorCode error) {
-    if (error != PETSC_SUCCESS) {
-        (void)PetscPrintf(
-            comm,
-            "[single-phase assembly] stage=%s petsc_error=%d\n",
-            stage,
-            static_cast<int>(error));
-    }
-    return error;
-}
-
 [[nodiscard]] inline bool
 same_layout(
     const mpmc::flow::NaturalVariableLayout1P& first,
@@ -598,10 +583,7 @@ public:
                 comm_,
                 error);
         if (error != PETSC_SUCCESS) {
-            return report_stage_error(
-                comm_,
-                "state_exchange",
-                error);
+            return error;
         }
 
         const std::size_t local_cell_count =
@@ -702,10 +684,7 @@ public:
                 comm_,
                 local_error);
         if (error != PETSC_SUCCESS) {
-            return report_stage_error(
-                comm_,
-                "cell_closure",
-                error);
+            return error;
         }
 
         int global_domain = 0;
@@ -822,10 +801,7 @@ public:
                 comm_,
                 local_error);
         if (error != PETSC_SUCCESS) {
-            return report_stage_error(
-                comm_,
-                "accumulation",
-                error);
+            return error;
         }
 
         std::vector<
@@ -913,10 +889,7 @@ public:
                 comm_,
                 local_error);
         if (error != PETSC_SUCCESS) {
-            return report_stage_error(
-                comm_,
-                "face_flux",
-                error);
+            return error;
         }
 
         std::vector<DistributedCellStateBinding3D>
@@ -1007,10 +980,7 @@ public:
                 component_faces,
                 &component_conservation);
         if (error != PETSC_SUCCESS) {
-            return report_stage_error(
-                comm_,
-                "distributed_component",
-                error);
+            return error;
         }
 
         std::optional<
@@ -1025,10 +995,7 @@ public:
                 energy_faces,
                 &energy_conservation);
         if (error != PETSC_SUCCESS) {
-            return report_stage_error(
-                comm_,
-                "distributed_energy",
-                error);
+            return error;
         }
 
         std::optional<
@@ -1046,10 +1013,7 @@ public:
                 natural_variable_id_,
                 &component_global);
         if (error != PETSC_SUCCESS) {
-            return report_stage_error(
-                comm_,
-                "component_global_mapping",
-                error);
+            return error;
         }
 
         std::optional<
@@ -1067,10 +1031,7 @@ public:
                 natural_variable_id_,
                 &energy_global);
         if (error != PETSC_SUCCESS) {
-            return report_stage_error(
-                comm_,
-                "energy_global_mapping",
-                error);
+            return error;
         }
 
         FugacityEquilibriumGlobalAssemblyEntries3D
@@ -1102,12 +1063,7 @@ public:
                 *cell_bridge_,
                 *cell_pattern_,
                 output);
-        return error == PETSC_SUCCESS
-            ? PETSC_SUCCESS
-            : report_stage_error(
-                  comm_,
-                  "complete_snapshot",
-                  error);
+        return error;
     }
 
     [[nodiscard]] PetscErrorCode

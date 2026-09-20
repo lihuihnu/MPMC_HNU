@@ -915,6 +915,18 @@ void single_phase_snes_physical_assembly_test() {
             audit.calls > calls_before,
         "PETSc SNES failed on reduced single-phase production assembly");
 
+    require_collective(
+        report->snes_type() ==
+                std::string_view{SNESNEWTONLS} &&
+            report->line_search_type() ==
+                std::string_view{SNESLINESEARCHBT} &&
+            report->ksp_type() ==
+                std::string_view{KSPGMRES} &&
+            report->pc_type() ==
+                std::string_view{PCASM} &&
+            report->default_asm_overlap() == 1,
+        "single-phase solve did not use NewtonLS/BT + GMRES + ASM(1)");
+
     const auto target =
         target_state(
             rank == 0
