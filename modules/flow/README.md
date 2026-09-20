@@ -2001,3 +2001,114 @@ This slice still does **not** implement distributed owner-targeted residual/Jaco
 exchange, boundary/source/well terms, energy/fugacity rows, global scalar numbering,
 PETSc Mat/Vec insertion, Newton iteration or phase switching.
 
+## 33. Distributed owner-targeted component conservation exchange
+
+The first distributed finite-volume component-row exchange is isolated in a PETSc/MPI
+adapter module:
+
+```text
+modules/flow_discretization_petsc
+target: mpmc::flow_discretization_petsc
+```
+
+The core `mpmc::flow_discretization` public API remains PETSc/MPI-free.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/distributed_component_conservation.hpp>
+```
+
+### Authoritative-face evaluation and endpoint ownership
+
+Only:
+
+```text
+ParallelOwnedConnectionSchedule3D::assembly_rows()
+```
+
+generate physical spatial contributions. A ghost schedule row never evaluates or
+duplicates flux/residual physics.
+
+For every authoritative internal face, the face-owning rank creates exactly two
+endpoint-row payloads:
+
+```text
+authoritative face
+    -> owner-cell row payload
+    -> neighbour-cell row payload
+```
+
+Each payload is routed to the `PartitionSnapshot::owner_rank(cell)` of its target
+endpoint. The face-owner rank is not assumed to own either endpoint cell.
+
+No process-local index crosses MPI. The exchange transports stable target/column cell IDs
+and stable face ID, then the receiver resolves its own local/ghost indices.
+
+### Payload and validation
+
+The owner-targeted payload carries:
+
+- stable target cell ID;
+- stable opposite/column cell ID;
+- stable face ID;
+- exact frozen-state/chart fingerprints for target and column cells;
+- target bulk volume;
+- normalized component and total spatial values;
+- target-row diagonal face Jacobian;
+- opposite-cell off-diagonal Jacobian.
+
+State fingerprints include canonical component order, dependent-component pivots,
+`p/T/S/x` and therefore reject stale or mismatched ghost charts before assembly.
+
+The endpoint owner requires the target, column and face stable IDs to exist in its local
+overlap and requires the local schedule copy to preserve the same canonical
+owner/neighbour orientation.
+
+### Complete owned rows
+
+The endpoint owner starts from its authoritative backward-Euler accumulation row and adds
+all received face-side payloads.
+
+The result retains:
+
+- complete owned-cell component residual;
+- complete owned-cell diagonal natural-variable Jacobian;
+- per-face neighbour blocks;
+- off-diagonal blocks coalesced by stable neighbour cell identity;
+- contributing stable face IDs for every cell-pair block.
+
+No global scalar DoF number is assigned in this layer.
+
+### Global conservation gate
+
+After owner-targeted exchange, every rank contributes only its final owned rows to the
+collective closed-patch audit:
+
+```text
+sum_owned_cells V_b,c * R_i,c^spatial = 0
+```
+
+for every component and for the total molar diagnostic.
+
+The dedicated two-rank regression additionally reconstructs the final distributed owned
+rows and, for each source cell and every column of its frozen natural-variable chart,
+checks:
+
+```text
+sum_owned_target_cells
+    V_b,target * dR_target^spatial / dq_source = 0.
+```
+
+The fixture deliberately reverses local cell ordering between the two ranks so passing
+the test requires stable-ID routing rather than accidental LocalIndex agreement.
+
+### Communication boundary
+
+The implementation uses owner-targeted `MPI_Alltoallv` for fixed-width metadata and
+numeric endpoint payloads. It does not create a PETSc matrix/vector and does not call
+`MatSetValues`, `VecSetValues` or any nonlinear solver operation.
+
+This slice still does **not** add boundary/source/well terms, energy/fugacity rows,
+global scalar numbering, PETSc value insertion, Newton iteration or phase switching.
+

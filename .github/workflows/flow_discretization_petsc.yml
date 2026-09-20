@@ -1,0 +1,61 @@
+name: Flow-discretization PETSc/MPI owner exchange
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/flow_discretization_petsc/**'
+      - 'modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp'
+      - 'modules/flow_discretization/include/mpmc/flow_discretization/local_component_conservation_residual.hpp'
+      - 'modules/flow_discretization/include/mpmc/flow_discretization/normalized_component_face_contribution.hpp'
+      - 'modules/discretization_petsc/**'
+      - 'modules/mesh/include/mpmc/mesh/partition_snapshot.hpp'
+      - 'tests/flow_discretization/petsc/**'
+      - '.github/workflows/flow_discretization_petsc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-discretization-petsc-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  distributed:
+    name: PETSc 3.19.6 distributed conservation 2-rank
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned PETSc and MPI runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpetsc-real3.19-dev=3.19.6+dfsg1-2.2ubuntu2 \
+            openmpi-bin
+          test "$(pkg-config --modversion PETSc)" = "3.19.6"
+          command -v mpiexec
+
+      - name: Configure flow-discretization PETSc tests
+        run: |
+          cmake -S tests/flow_discretization/petsc \
+            -B build/flow-discretization-petsc \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++
+
+      - name: Build flow-discretization PETSc tests
+        run: |
+          cmake --build build/flow-discretization-petsc \
+            --target mpmc_flow_discretization_petsc_tests \
+            --parallel 2
+
+      - name: Run distributed conservation test
+        run: |
+          ctest --test-dir build/flow-discretization-petsc \
+            -R '^flow_discretization[.]petsc[.]distributed_owner_targeted_conservation$' \
+            --verbose \
+            --no-tests=error
