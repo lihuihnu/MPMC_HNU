@@ -52,7 +52,7 @@ jobs:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Android universal React + Capacitor + JNI product shell
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 45
     env:
       NDK_VERSION: 30.0.16248370

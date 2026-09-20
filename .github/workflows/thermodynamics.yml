@@ -151,11 +151,11 @@ jobs:
               print("Changed paths:", json.dumps(paths, ensure_ascii=False))
               selected = suites_for(paths)
           platforms = [
-              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "config": "Debug",
+              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "mpmc_hnu", "config": "Debug",
                "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
-              {"name": "Clang Release", "os": "ubuntu-24.04", "config": "Release",
+              {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "mpmc_hnu", "config": "Release",
                "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
-              {"name": "MSVC Release", "os": "windows-2022", "config": "Release",
+              {"name": "MSVC Release", "os": "windows-2022", "runner": "windows-2022", "config": "Release",
                "compiler": "", "sanitizer": "OFF"},
           ]
           targets = {"contracts": "mpmc_thermodynamics_contract_tests",
@@ -172,7 +172,7 @@ jobs:
     needs: select
     if: needs.select.outputs.has_work == 'true'
     name: ${{ matrix.suite }} / ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false

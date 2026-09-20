@@ -20,7 +20,7 @@ concurrency:
 jobs:
   core:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -28,16 +28,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: mpmc_hnu
             build_type: Debug
             compiler: -DCMAKE_CXX_COMPILER=g++
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: mpmc_hnu
             build_type: Release
             compiler: -DCMAKE_CXX_COMPILER=clang++
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             build_type: Release
             compiler: ''
             sanitizer: 'OFF'

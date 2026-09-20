@@ -21,7 +21,7 @@ concurrency:
 jobs:
   candidate:
     name: ${{ matrix.name }} unsigned candidate + signing readiness
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -29,16 +29,19 @@ jobs:
         include:
           - name: Linux x64 DEB
             os: ubuntu-24.04
+            runner: mpmc_hnu
             profile: linux-x86_64-release
             target: linux-x86_64
             extension: deb
           - name: Windows x64 MSI
             os: windows-2022
+            runner: windows-2022
             profile: windows-x86_64-release
             target: windows-x86_64
             extension: msi
           - name: macOS arm64 PKG
             os: macos-15
+            runner: macos-15
             profile: macos-armv8-release
             target: macos-arm64
             extension: pkg

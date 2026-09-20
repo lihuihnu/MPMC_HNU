@@ -20,7 +20,7 @@ concurrency:
 jobs:
   pinned-thermopack-oracle:
     name: Pinned ThermoPack SRK-CPA oracle
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 30
 
     steps:

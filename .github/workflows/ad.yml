@@ -133,11 +133,11 @@ jobs:
               print("Changed paths:", json.dumps(paths, ensure_ascii=False))
               selected = suites_for(paths)
           platforms = [
-              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "build_type": "Debug",
+              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "mpmc_hnu", "build_type": "Debug",
                "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
-              {"name": "Clang Release", "os": "ubuntu-24.04", "build_type": "Release",
+              {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "mpmc_hnu", "build_type": "Release",
                "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
-              {"name": "MSVC Release", "os": "windows-2022", "build_type": "Release",
+              {"name": "MSVC Release", "os": "windows-2022", "runner": "windows-2022", "build_type": "Release",
                "compiler": "", "sanitizer": "OFF"},
           ]
           matrix = {"include": [{**p, "suite": s} for s in selected for p in platforms]}
@@ -150,7 +150,7 @@ jobs:
     needs: select
     if: needs.select.outputs.has_work == 'true'
     name: ${{ matrix.suite }} / ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
       fail-fast: false

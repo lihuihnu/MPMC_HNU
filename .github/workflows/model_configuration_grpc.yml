@@ -46,7 +46,7 @@ concurrency:
 jobs:
   linux:
     name: ${{ matrix.name }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 15
     strategy:
       fail-fast: false

@@ -32,7 +32,7 @@ jobs:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: PETSc 3.19.6 mesh/discretization synthetic MPI
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

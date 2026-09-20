@@ -63,7 +63,7 @@ jobs:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Seed ${{ matrix.name }} dependencies
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -71,12 +71,15 @@ jobs:
         include:
           - name: Linux x64 Release
             os: ubuntu-24.04
+            runner: mpmc_hnu
             profile: linux-x86_64-release
           - name: Windows x64 Release
             os: windows-2022
+            runner: windows-2022
             profile: windows-x86_64-release
           - name: macOS arm64 Release
             os: macos-15
+            runner: macos-15
             profile: macos-armv8-release
 
     env:
@@ -125,7 +128,7 @@ jobs:
   stage:
     name: ${{ matrix.name }}
     needs: seed
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -133,12 +136,15 @@ jobs:
         include:
           - name: Linux x64 Release
             os: ubuntu-24.04
+            runner: mpmc_hnu
             profile: linux-x86_64-release
           - name: Windows x64 Release
             os: windows-2022
+            runner: windows-2022
             profile: windows-x86_64-release
           - name: macOS arm64 Release
             os: macos-15
+            runner: macos-15
             profile: macos-armv8-release
 
     env:
@@ -222,7 +228,7 @@ jobs:
   desktop:
     name: ${{ matrix.name }} Electron vertical slice
     needs: stage
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -230,18 +236,21 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-24.04
+            runner: mpmc_hnu
             profile: linux-x86_64-release
             electron_platform: linux
             electron_arch: x64
             host_executable: mpmc_pt_service_host
           - name: Windows x64
             os: windows-2022
+            runner: windows-2022
             profile: windows-x86_64-release
             electron_platform: win32
             electron_arch: x64
             host_executable: mpmc_pt_service_host.exe
           - name: macOS arm64
             os: macos-15
+            runner: macos-15
             profile: macos-armv8-release
             electron_platform: darwin
             electron_arch: arm64

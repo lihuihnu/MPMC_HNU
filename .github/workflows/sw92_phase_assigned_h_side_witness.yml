@@ -31,7 +31,7 @@ jobs:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -39,16 +39,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: mpmc_hnu
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: mpmc_hnu
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'

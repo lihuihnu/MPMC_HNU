@@ -17,7 +17,7 @@ concurrency:
 jobs:
   pinned-clapeyron-oracle:
     name: Pinned Clapeyron sCPA oracle
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 60
     steps:
       - name: Checkout MPMC_HNU
