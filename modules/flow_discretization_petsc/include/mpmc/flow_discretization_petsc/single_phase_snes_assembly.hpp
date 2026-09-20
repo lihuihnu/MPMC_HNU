@@ -124,6 +124,21 @@ collective_error(
         global);
 }
 
+[[nodiscard]] inline PetscErrorCode
+report_stage_error(
+    MPI_Comm comm,
+    const char* stage,
+    PetscErrorCode error) {
+    if (error != PETSC_SUCCESS) {
+        (void)PetscPrintf(
+            comm,
+            "[single-phase assembly] stage=%s petsc_error=%d\n",
+            stage,
+            static_cast<int>(error));
+    }
+    return error;
+}
+
 [[nodiscard]] inline bool
 same_layout(
     const mpmc::flow::NaturalVariableLayout1P& first,
@@ -583,7 +598,10 @@ public:
                 comm_,
                 error);
         if (error != PETSC_SUCCESS) {
-            return error;
+            return report_stage_error(
+                comm_,
+                "state_exchange",
+                error);
         }
 
         const std::size_t local_cell_count =
@@ -684,7 +702,10 @@ public:
                 comm_,
                 local_error);
         if (error != PETSC_SUCCESS) {
-            return error;
+            return report_stage_error(
+                comm_,
+                "cell_closure",
+                error);
         }
 
         int global_domain = 0;
@@ -801,7 +822,10 @@ public:
                 comm_,
                 local_error);
         if (error != PETSC_SUCCESS) {
-            return error;
+            return report_stage_error(
+                comm_,
+                "accumulation",
+                error);
         }
 
         std::vector<
@@ -889,7 +913,10 @@ public:
                 comm_,
                 local_error);
         if (error != PETSC_SUCCESS) {
-            return error;
+            return report_stage_error(
+                comm_,
+                "face_flux",
+                error);
         }
 
         std::vector<DistributedCellStateBinding3D>
@@ -980,7 +1007,10 @@ public:
                 component_faces,
                 &component_conservation);
         if (error != PETSC_SUCCESS) {
-            return error;
+            return report_stage_error(
+                comm_,
+                "distributed_component",
+                error);
         }
 
         std::optional<
@@ -995,7 +1025,10 @@ public:
                 energy_faces,
                 &energy_conservation);
         if (error != PETSC_SUCCESS) {
-            return error;
+            return report_stage_error(
+                comm_,
+                "distributed_energy",
+                error);
         }
 
         std::optional<
@@ -1013,7 +1046,10 @@ public:
                 natural_variable_id_,
                 &component_global);
         if (error != PETSC_SUCCESS) {
-            return error;
+            return report_stage_error(
+                comm_,
+                "component_global_mapping",
+                error);
         }
 
         std::optional<
@@ -1031,7 +1067,10 @@ public:
                 natural_variable_id_,
                 &energy_global);
         if (error != PETSC_SUCCESS) {
-            return error;
+            return report_stage_error(
+                comm_,
+                "energy_global_mapping",
+                error);
         }
 
         FugacityEquilibriumGlobalAssemblyEntries3D
@@ -1053,15 +1092,22 @@ public:
                 {},
                 {}};
 
-        return make_complete_natural_variable_assembly_snapshot_3d(
-            comm_,
-            *component_global,
-            *energy_global,
-            empty_fugacity,
-            *partition_,
-            *cell_bridge_,
-            *cell_pattern_,
-            output);
+        error =
+            make_complete_natural_variable_assembly_snapshot_3d(
+                comm_,
+                *component_global,
+                *energy_global,
+                empty_fugacity,
+                *partition_,
+                *cell_bridge_,
+                *cell_pattern_,
+                output);
+        return error == PETSC_SUCCESS
+            ? PETSC_SUCCESS
+            : report_stage_error(
+                  comm_,
+                  "complete_snapshot",
+                  error);
     }
 
     [[nodiscard]] PetscErrorCode
