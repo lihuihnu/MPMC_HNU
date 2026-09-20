@@ -215,6 +215,8 @@ void variable_cardinality_natural_variable_numbering_test() {
                 : std::array<std::size_t, 3>{
                       0U, 7U, 17U};
 
+    bool local_cell_metadata_ok = true;
+    bool local_scalar_mapping_ok = true;
     for (std::size_t local = 0U;
          local < local_stable.size();
          ++local) {
@@ -228,20 +230,18 @@ void variable_cardinality_natural_variable_numbering_test() {
         const std::uint64_t stable =
             local_stable[local];
 
-        require_variable_collective(
+        local_cell_metadata_ok =
+            local_cell_metadata_ok &&
             record.cell_global.value() ==
-                    stable &&
-                record.phase_count ==
-                    expected_phase_count(
-                        stable) &&
-                record.scalar_count ==
-                    expected_width(stable) &&
-                record.local_scalar_offset ==
-                    expected_offsets[local] &&
-                record.petsc_global_scalar_start ==
-                    expected_global_start(
-                        stable),
-            "variable-cardinality cell DoF metadata mismatch");
+                stable &&
+            record.phase_count ==
+                expected_phase_count(stable) &&
+            record.scalar_count ==
+                expected_width(stable) &&
+            record.local_scalar_offset ==
+                expected_offsets[local] &&
+            record.petsc_global_scalar_start ==
+                expected_global_start(stable);
 
         for (std::size_t slot = 0U;
              slot < record.scalar_count;
@@ -250,19 +250,25 @@ void variable_cardinality_natural_variable_numbering_test() {
                 expected_global_start(
                     stable) +
                 static_cast<PetscInt>(slot);
-            require_variable_collective(
+            local_scalar_mapping_ok =
+                local_scalar_mapping_ok &&
                 numbering->petsc_global_scalar(
                     cell,
                     slot) ==
-                        expected &&
-                    numbering
-                            ->local_packed_scalar_global_index(
-                                record.local_scalar_offset +
-                                slot) ==
-                        expected,
-                "owner/ghost scalar numbering disagrees");
+                    expected &&
+                numbering
+                        ->local_packed_scalar_global_index(
+                            record.local_scalar_offset +
+                            slot) ==
+                    expected;
         }
     }
+    require_variable_collective(
+        local_cell_metadata_ok,
+        "variable-cardinality cell DoF metadata mismatch");
+    require_variable_collective(
+        local_scalar_mapping_ok,
+        "owner/ghost scalar numbering disagrees");
 
     require_variable_collective(
         numbering->is_owned_cell(
@@ -349,6 +355,7 @@ void variable_cardinality_natural_variable_numbering_test() {
             vector != nullptr,
         "failed to create mixed-cardinality PETSc Vec");
 
+    bool local_insert_ok = true;
     for (const auto& record :
          numbering->cells()) {
         if (record.owner_rank !=
@@ -365,17 +372,20 @@ void variable_cardinality_natural_variable_numbering_test() {
             const PetscScalar value =
                 static_cast<PetscScalar>(
                     index + 1);
-            require_variable_collective(
+            local_insert_ok =
+                local_insert_ok &&
                 VecSetValues(
                     vector,
                     1,
                     &index,
                     &value,
                     INSERT_VALUES) ==
-                    PETSC_SUCCESS,
-                "failed to insert mixed-cardinality owned scalar");
+                    PETSC_SUCCESS;
         }
     }
+    require_variable_collective(
+        local_insert_ok,
+        "failed to insert mixed-cardinality owned scalar");
     require_variable_collective(
         VecAssemblyBegin(vector) ==
                 PETSC_SUCCESS &&
@@ -391,6 +401,7 @@ void variable_cardinality_natural_variable_numbering_test() {
             &local_values) ==
             PETSC_SUCCESS,
         "failed to access mixed-cardinality PETSc Vec");
+    bool local_values_ok = true;
     for (PetscInt local = 0;
          local <
              numbering
@@ -404,12 +415,15 @@ void variable_cardinality_natural_variable_numbering_test() {
             static_cast<double>(
                 PetscRealPart(
                     local_values[local]));
-        require_variable_collective(
+        local_values_ok =
+            local_values_ok &&
             value ==
                 static_cast<double>(
-                    global + 1),
-            "mixed-cardinality PETSc Vec ownership/value mismatch");
+                    global + 1);
     }
+    require_variable_collective(
+        local_values_ok,
+        "mixed-cardinality PETSc Vec ownership/value mismatch");
     require_variable_collective(
         VecRestoreArrayRead(
             vector,
