@@ -2788,3 +2788,126 @@ incomplete structural pattern.
 No PETSc `Mat` or `Vec` is created or modified and no `MatSetValues` /
 `VecSetValues` call is introduced in this slice.
 
+## 39. Complete natural-variable assembly snapshot
+
+The three equation families now combine into one validated assembly-ready snapshot before
+any PETSc value insertion occurs.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/complete_natural_variable_assembly_snapshot.hpp>
+```
+
+The snapshot consumes the already-validated global mappings for:
+
+- component conservation;
+- energy conservation;
+- fugacity equilibrium.
+
+It does not re-evaluate any physics, EOS, flux, accumulation or derivative.
+
+### Native residual semantics are retained
+
+The unified residual entry stores one equation-kind discriminator because the three row
+families do not share one physical unit:
+
+```text
+component conservation : mol / (bulk-m^3 s)
+energy conservation    : W / bulk-m^3
+fugacity equilibrium   : dimensionless log residual
+```
+
+The snapshot unifies numbering and structure, not physical dimensions.
+
+### Complete owned residual rows
+
+For every rank, the combined residual entries must cover exactly:
+
+```text
+[petsc_scalar_row_start, petsc_scalar_row_end)
+```
+
+with one entry per owned scalar row.
+
+Each row also stores:
+
+- PETSc global scalar row;
+- independent mesh-global `GlobalDofIndex`;
+- stable row-cell identity;
+- equation slot;
+- equation family;
+- native residual value.
+
+The equation slot must satisfy:
+
+```text
+row % q == equation_slot
+```
+
+and must agree with the equation family:
+
+```text
+0 ... Nc-1    -> component
+Nc            -> energy
+Nc+1 ... 3Nc  -> fugacity
+```
+
+There are no row gaps or collisions.
+
+### Complete Jacobian triplets
+
+All component, energy and fugacity Jacobian entries are copied into one globally sorted
+`(row,column,value)` set.
+
+The snapshot rejects:
+
+- duplicate `(row,column)` pairs;
+- non-owned rows;
+- columns outside the global scalar range;
+- row/equation provenance mismatch;
+- natural-variable column-slot mismatch;
+- stable column cells that do not resolve through the local owned/ghost overlap.
+
+Exact zero values are preserved.
+
+### Symbolic compatibility is equation-aware
+
+The existing cell-level symbolic pattern remains authoritative.
+
+For component and energy rows, the exact scalar column set must equal all `q` columns
+of:
+
+```text
+self cell
++ every structural neighbour cell.
+```
+
+For fugacity rows, the exact scalar column set is only the self-cell `q` columns,
+because local thermodynamic equilibrium has no spatial neighbour derivative.
+
+Thus the symbolic MPIAIJ cell pattern remains a safe superset for the complete system
+without inventing fake fugacity neighbour coupling.
+
+### Two-rank validation
+
+The existing two-rank fixture continues to reverse both local cell ordering and
+mesh-global entity ordinals relative to PETSc ownership.
+
+The complete-snapshot regression checks:
+
+- exactly `q=3*Nc+1` owned residual entries per owned cell;
+- component / energy / fugacity row-family counts;
+- contiguous row ownership with no gap or collision;
+- globally unique `(row,column)` triplets;
+- component and energy rows contain self + neighbour scalar blocks;
+- fugacity rows contain only self scalar blocks;
+- exact-zero Jacobian entries survive the merge;
+- metadata mismatch is collectively rejected;
+- a syntactically valid energy row deliberately collided with component row 0 is
+  collectively rejected;
+- an incomplete symbolic neighbour pattern is collectively rejected.
+
+No PETSc `Mat` or `Vec` is created or modified and no `MatSetValues` /
+`VecSetValues` call is introduced here.
+

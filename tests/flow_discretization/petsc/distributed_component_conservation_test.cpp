@@ -1,6 +1,7 @@
 #include <mpmc/flow_discretization_petsc/distributed_component_conservation.hpp>
 #include <mpmc/flow_discretization_petsc/distributed_energy_conservation.hpp>
 #include <mpmc/flow_discretization_petsc/energy_global_assembly_mapping.hpp>
+#include <mpmc/flow_discretization_petsc/complete_natural_variable_assembly_snapshot.hpp>
 #include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
 
@@ -22,6 +23,7 @@
 bool distributed_component_conservation_header();
 bool distributed_energy_conservation_header();
 bool energy_global_assembly_mapping_header();
+bool complete_natural_variable_assembly_snapshot_header();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -2516,6 +2518,468 @@ void energy_global_assembly_mapping() {
     }
 }
 
+void complete_natural_variable_assembly_snapshot() {
+    int rank = -1;
+    int size = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &size) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank/size query failed");
+    }
+    require_collective(
+        size == 2,
+        "complete assembly snapshot test requires exactly two ranks");
+
+    auto partition =
+        make_partition(rank);
+    auto schedule =
+        make_schedule(rank);
+
+    LocalInputs component_inputs{rank};
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+    auto component_snapshot =
+        build(
+            rank,
+            partition,
+            schedule,
+            component_inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            component_snapshot.has_value(),
+        "component snapshot for complete assembly failed");
+
+    EnergyLocalInputs energy_inputs{rank};
+    auto energy_snapshot =
+        build_energy(
+            partition,
+            schedule,
+            energy_inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            energy_snapshot.has_value(),
+        "energy snapshot for complete assembly failed");
+
+    const std::size_t q =
+        identity(UINT64_C(10))
+            .layout.unknown_count();
+    constexpr std::size_t n = 3U;
+    auto layout =
+        make_natural_variable_dof_layout(
+            rank,
+            q);
+    auto numbering =
+        make_reversed_mesh_dof_numbering(
+            rank,
+            layout,
+            partition);
+    auto cell_bridge =
+        make_cell_row_bridge(
+            rank);
+    auto cell_pattern =
+        make_cell_column_pattern(
+            rank);
+
+    std::optional<
+        fdp::ComponentConservationGlobalAssemblyEntries3D>
+        component_mapping;
+    error =
+        fdp::
+            make_component_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *component_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &component_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            component_mapping.has_value(),
+        "component mapping for complete assembly failed");
+
+    std::optional<
+        fdp::EnergyConservationGlobalAssemblyEntries3D>
+        energy_mapping;
+    error =
+        fdp::
+            make_energy_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *energy_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &energy_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            energy_mapping.has_value(),
+        "energy mapping for complete assembly failed");
+
+    const std::uint64_t stable_cell =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+    auto fugacity =
+        make_fugacity_linearization(
+            stable_cell);
+    const std::array<
+        fdp::OwnedCellFugacityEquilibriumLinearizationBinding3D,
+        1>
+        fugacity_bindings{{
+            {
+                mesh::LocalIndex{0U},
+                mesh::GlobalEntityId{
+                    stable_cell},
+                &fugacity}
+        }};
+    std::optional<
+        fdp::FugacityEquilibriumGlobalAssemblyEntries3D>
+        fugacity_mapping;
+    error =
+        fdp::
+            make_fugacity_equilibrium_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *component_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                fugacity_bindings,
+                &fugacity_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            fugacity_mapping.has_value(),
+        "fugacity mapping for complete assembly failed");
+
+    std::optional<
+        fdp::CompleteNaturalVariableAssemblySnapshot3D>
+        complete;
+    error =
+        fdp::
+            make_complete_natural_variable_assembly_snapshot_3d(
+                PETSC_COMM_WORLD,
+                *component_mapping,
+                *energy_mapping,
+                *fugacity_mapping,
+                partition,
+                cell_bridge,
+                cell_pattern,
+                &complete);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            complete.has_value(),
+        "complete natural-variable assembly snapshot failed");
+
+    const PetscInt expected_start =
+        static_cast<PetscInt>(rank) *
+        static_cast<PetscInt>(q);
+    const PetscInt expected_end =
+        expected_start +
+        static_cast<PetscInt>(q);
+    const PetscInt global_count =
+        2 *
+        static_cast<PetscInt>(q);
+
+    require_collective(
+        complete->petsc_scalar_row_start() ==
+                expected_start &&
+            complete->petsc_scalar_row_end() ==
+                expected_end &&
+            complete->petsc_scalar_row_count() ==
+                global_count &&
+            complete->component_count() == n &&
+            complete->natural_variable_count() ==
+                q &&
+            complete->residual_entries().size() ==
+                q &&
+            complete->jacobian_entries().size() ==
+                14U * q,
+        "complete assembly cardinality/metadata mismatch");
+
+    std::size_t component_rows = 0U;
+    std::size_t energy_rows = 0U;
+    std::size_t fugacity_rows = 0U;
+    for (std::size_t slot = 0U;
+         slot < q;
+         ++slot) {
+        const auto& residual =
+            complete->residual_entries()[slot];
+        require_collective(
+            residual.petsc_global_row ==
+                    expected_start +
+                        static_cast<PetscInt>(
+                            slot) &&
+                residual.equation_slot ==
+                    slot &&
+                residual.row_cell_global ==
+                    mesh::GlobalEntityId{
+                        stable_cell},
+            "complete residual row coverage/stable identity mismatch");
+
+        if (slot < n) {
+            require_collective(
+                residual.equation_kind ==
+                    fdp::NaturalVariableEquationKind3D::
+                        component_conservation,
+                "component equation kind mismatch in complete snapshot");
+            ++component_rows;
+        } else if (slot == n) {
+            require_collective(
+                residual.equation_kind ==
+                    fdp::NaturalVariableEquationKind3D::
+                        energy_conservation,
+                "energy equation kind mismatch in complete snapshot");
+            ++energy_rows;
+        } else {
+            require_collective(
+                residual.equation_kind ==
+                    fdp::NaturalVariableEquationKind3D::
+                        fugacity_equilibrium,
+                "fugacity equation kind mismatch in complete snapshot");
+            ++fugacity_rows;
+        }
+    }
+    require_collective(
+        component_rows == n &&
+            energy_rows == 1U &&
+            fugacity_rows == 2U * n,
+        "complete residual equation-family counts changed");
+
+    std::size_t jacobian_index = 0U;
+    std::uint64_t local_zero_count = 0U;
+    for (const auto& residual :
+         complete->residual_entries()) {
+        const std::size_t expected_columns =
+            residual.equation_kind ==
+                    fdp::NaturalVariableEquationKind3D::
+                        fugacity_equilibrium
+                ? q
+                : 2U * q;
+        std::size_t actual_columns = 0U;
+        PetscInt previous_column = -1;
+        while (jacobian_index <
+                   complete->jacobian_entries().size() &&
+               complete->jacobian_entries()[
+                       jacobian_index]
+                       .petsc_global_row ==
+                   residual.petsc_global_row) {
+            const auto& entry =
+                complete->jacobian_entries()[
+                    jacobian_index];
+            require_collective(
+                entry.petsc_global_column >=
+                        0 &&
+                    entry.petsc_global_column <
+                        global_count &&
+                    entry.petsc_global_column >
+                        previous_column &&
+                    entry.equation_slot ==
+                        residual.equation_slot &&
+                    entry.equation_kind ==
+                        residual.equation_kind &&
+                    entry.row_cell_global ==
+                        residual.row_cell_global,
+                "complete Jacobian ordering/provenance mismatch");
+            if (entry.value == 0.0) {
+                ++local_zero_count;
+            }
+            previous_column =
+                entry.petsc_global_column;
+            ++actual_columns;
+            ++jacobian_index;
+        }
+        require_collective(
+            actual_columns ==
+                expected_columns,
+            "complete Jacobian per-row structural cardinality mismatch");
+    }
+    require_collective(
+        jacobian_index ==
+            complete->jacobian_entries().size(),
+        "complete Jacobian contained orphan entries");
+
+    std::uint64_t global_zero_count = 0U;
+    if (MPI_Allreduce(
+            &local_zero_count,
+            &global_zero_count,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) !=
+        MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI_Allreduce failed for complete assembly zero-entry audit");
+    }
+    require_collective(
+        global_zero_count >= 24U,
+        "complete assembly dropped exact-zero structural Jacobian entries");
+
+    // Mapping metadata mismatch must reject collectively.
+    {
+        std::vector<
+            fdp::AssemblyReadyEnergyResidualEntry3D>
+            residuals{
+                energy_mapping
+                    ->residual_entries()
+                    .begin(),
+                energy_mapping
+                    ->residual_entries()
+                    .end()};
+        std::vector<
+            fdp::AssemblyReadyEnergyJacobianEntry3D>
+            jacobians{
+                energy_mapping
+                    ->jacobian_entries()
+                    .begin(),
+                energy_mapping
+                    ->jacobian_entries()
+                    .end()};
+        fdp::EnergyConservationGlobalAssemblyEntries3D
+            bad_energy{
+                energy_mapping->local_rank(),
+                energy_mapping->rank_count(),
+                "different_state",
+                energy_mapping->component_count(),
+                energy_mapping
+                    ->natural_variable_count(),
+                energy_mapping
+                    ->petsc_scalar_row_start(),
+                energy_mapping
+                    ->petsc_scalar_row_end(),
+                energy_mapping
+                    ->petsc_scalar_row_count(),
+                std::move(residuals),
+                std::move(jacobians)};
+
+        std::optional<
+            fdp::CompleteNaturalVariableAssemblySnapshot3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_complete_natural_variable_assembly_snapshot_3d(
+                    PETSC_COMM_WORLD,
+                    *component_mapping,
+                    bad_energy,
+                    *fugacity_mapping,
+                    partition,
+                    cell_bridge,
+                    cell_pattern,
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "complete assembly metadata mismatch was not rejected collectively");
+    }
+
+    // A syntactically valid energy mapping that collides with component row 0
+    // must be rejected by the complete-row coverage gate.
+    {
+        std::vector<
+            fdp::AssemblyReadyEnergyResidualEntry3D>
+            residuals{
+                energy_mapping
+                    ->residual_entries()
+                    .begin(),
+                energy_mapping
+                    ->residual_entries()
+                    .end()};
+        std::vector<
+            fdp::AssemblyReadyEnergyJacobianEntry3D>
+            jacobians{
+                energy_mapping
+                    ->jacobian_entries()
+                    .begin(),
+                energy_mapping
+                    ->jacobian_entries()
+                    .end()};
+        residuals.front().petsc_global_row =
+            expected_start;
+        for (auto& entry : jacobians) {
+            entry.petsc_global_row =
+                expected_start;
+        }
+        fdp::EnergyConservationGlobalAssemblyEntries3D
+            colliding_energy{
+                energy_mapping->local_rank(),
+                energy_mapping->rank_count(),
+                std::string{
+                    energy_mapping
+                        ->natural_variable_id()},
+                energy_mapping->component_count(),
+                energy_mapping
+                    ->natural_variable_count(),
+                energy_mapping
+                    ->petsc_scalar_row_start(),
+                energy_mapping
+                    ->petsc_scalar_row_end(),
+                energy_mapping
+                    ->petsc_scalar_row_count(),
+                std::move(residuals),
+                std::move(jacobians)};
+
+        std::optional<
+            fdp::CompleteNaturalVariableAssemblySnapshot3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_complete_natural_variable_assembly_snapshot_3d(
+                    PETSC_COMM_WORLD,
+                    *component_mapping,
+                    colliding_energy,
+                    *fugacity_mapping,
+                    partition,
+                    cell_bridge,
+                    cell_pattern,
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "complete assembly row collision was not rejected collectively");
+    }
+
+    // Exact cell pattern is an input to the complete snapshot too; dropping
+    // the remote neighbour block must be rejected.
+    {
+        auto bad_pattern =
+            make_incomplete_cell_column_pattern(
+                rank);
+        std::optional<
+            fdp::CompleteNaturalVariableAssemblySnapshot3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_complete_natural_variable_assembly_snapshot_3d(
+                    PETSC_COMM_WORLD,
+                    *component_mapping,
+                    *energy_mapping,
+                    *fugacity_mapping,
+                    partition,
+                    cell_bridge,
+                    bad_pattern,
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "complete assembly symbolic mismatch was not rejected collectively");
+    }
+}
+
 void invalid_collective_energy_inputs() {
     int rank = -1;
     if (MPI_Comm_rank(
@@ -2736,6 +3200,9 @@ void headers() {
         energy_global_assembly_mapping_header(),
         "energy global assembly mapping header probe failed");
     require_collective(
+        complete_natural_variable_assembly_snapshot_header(),
+        "complete natural-variable assembly snapshot header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -2770,6 +3237,7 @@ int main(int argc, char** argv) {
         distributed_exchange();
         distributed_energy_exchange();
         energy_global_assembly_mapping();
+        complete_natural_variable_assembly_snapshot();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();
@@ -2782,7 +3250,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] complete distributed natural-variable assembly contracts\n";
+                << "[PASS] complete natural-variable assembly snapshot\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;
