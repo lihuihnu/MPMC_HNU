@@ -25,7 +25,8 @@ target_link_libraries(
 add_executable(
     mpmc_flow_fugacity_tests
     fugacity_equilibrium_residual_test.cpp
-    fugacity_equilibrium_residual_header.cpp)
+    fugacity_equilibrium_residual_header.cpp
+    thermodynamics_fugacity_adapters_header.cpp)
 target_link_libraries(
     mpmc_flow_fugacity_tests
     PRIVATE mpmc::flow mpmc::ad)

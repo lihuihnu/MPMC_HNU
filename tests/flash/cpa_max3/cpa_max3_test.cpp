@@ -1,6 +1,7 @@
 #include <mpmc/flash/cpa_pt_flash_backend.hpp>
 
 #include "test_support.hpp"
+#include <fugacity_adapter_regression.hpp>
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,8 @@
 
 namespace {
 namespace fl = mpmc::flash;
+namespace fo = mpmc::flow;
+namespace fa = mpmc::test::flow_adapter;
 namespace th = mpmc::thermodynamics;
 using Vec = std::vector<double>;
 
@@ -113,6 +116,55 @@ void two_to_three_baseline() {
     require(phases != nullptr && phases->phases.size() == 3U &&
                 published.solution.capability.maximum_phase_count == 3U,
             "CPA max3 publication lost accepted three-phase state");
+}
+
+
+void flow_fugacity_adapter_on_accepted_three_phase() {
+    constexpr std::array<double, 3> beta{
+        1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
+    const auto result = solve_three_phase_fraction(beta);
+    require(result.status == fl::CpaPtMax3Status::three_phase &&
+                result.three_phase_candidate() != nullptr &&
+                result.selected_attempt.has_value(),
+            "CPA flow adapter fixture lost accepted three-phase topology");
+    const auto& attempt = result.attempts[*result.selected_attempt];
+    require(attempt.accepted_three_phase &&
+                attempt.final_stability &&
+                attempt.final_stability->status ==
+                    fl::StabilityStatus::no_instability_found,
+            "CPA flow adapter fixture lost accepted/stable three-phase evidence");
+
+    const auto& state = *result.three_phase_candidate();
+    const auto parameters = cpa_max3_test::parameters();
+    const auto model = th::CpaPtPhase::from_parameters(parameters);
+
+    std::array<
+        fo::CpaSelectedPhaseFugacityEvaluator3P::Selection,
+        3>
+        selections{};
+    std::array<double, 3> fractions{};
+    std::array<Vec, 3> compositions;
+    for (std::size_t phase = 0U; phase < 3U; ++phase) {
+        selections[phase].root_index =
+            state.phases[phase].activity.branch;
+        selections[phase].options =
+            cpa_max3_test::fast_pt_options();
+        fractions[phase] =
+            state.phases[phase].mole_phase_fraction;
+        compositions[phase] =
+            state.phases[phase].composition;
+    }
+
+    fo::CpaSelectedPhaseFugacityEvaluator3P adapter{
+        model, selections};
+    fa::verify_accepted_state_and_jacobian(
+        cpa_max3_test::pressure_pa,
+        cpa_max3_test::temperature_k,
+        fractions,
+        compositions,
+        adapter,
+        5.0e-8,
+        {2.0e-9, 5.0e-5, 2.0e-4, 5.0e-3});
 }
 
 void three_to_two_fresh_neighbor() {
@@ -291,6 +343,7 @@ using Test = std::pair<std::string_view, void (*)()>;
 constexpr Test tests[]{
     {"fixed_three_phase", fixed_three_phase_candidate},
     {"two_to_three", two_to_three_baseline},
+    {"flow_fugacity_adapter", flow_fugacity_adapter_on_accepted_three_phase},
     {"three_to_two", three_to_two_fresh_neighbor},
     {"component_permutation", component_permutation},
     {"backend_equivalence", backend_equivalence},

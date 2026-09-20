@@ -2,13 +2,18 @@ cmake_minimum_required(VERSION 3.21)
 project(mpmc_cpa_max3_tests LANGUAGES CXX)
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash" flash-library)
+if(NOT TARGET mpmc::flow)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow" flow-library)
+endif()
 enable_testing()
 
 option(MPMC_CPA_MAX3_ENABLE_SANITIZERS
        "Enable ASan/UBSan for CPA max3 tests" OFF)
 
 add_executable(mpmc_cpa_max3_tests cpa_max3_test.cpp)
-target_link_libraries(mpmc_cpa_max3_tests PRIVATE mpmc::flash)
+target_link_libraries(mpmc_cpa_max3_tests PRIVATE mpmc::flash mpmc::flow)
+target_include_directories(mpmc_cpa_max3_tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/flow")
 set_target_properties(mpmc_cpa_max3_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_cpa_max3_headers cpa_max3_headers.cpp)
@@ -42,6 +47,7 @@ endif()
 foreach(case IN ITEMS
         fixed_three_phase
         two_to_three
+        flow_fugacity_adapter
         three_to_two
         component_permutation
         backend_equivalence

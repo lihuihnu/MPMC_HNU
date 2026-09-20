@@ -595,3 +595,54 @@ The contract intentionally does not handle phase disappearance, zero-support log
 The flow core CI listens to the AD public headers because the differentiability compatibility test is an owned downstream consumer. It still has no mesh, discretization, MPI or PETSc dependency.
 
 This slice still does **not** evaluate a concrete PR76/SW92/CPA adapter in production, assemble component/energy conservation, create Darcy flux, construct a global Newton system, insert PETSc values, switch phase sets or create wells.
+
+## 20. Concrete thermodynamics fugacity adapters
+
+The first concrete flow-to-EoS bridge is now owned by
+`mpmc/flow/thermodynamics_fugacity_adapters.hpp`.
+
+It exposes three fixed-branch evaluators:
+
+- `Pr76SelectedPhaseFugacityEvaluator3P`;
+- `Sw92SelectedPhaseFugacityEvaluator3P`;
+- `CpaSelectedPhaseFugacityEvaluator3P`.
+
+Each evaluator stores only a model reference and the three caller-supplied selected-phase records. A phase-slot evaluation forwards the exact supplied `p,T,x` to the thermodynamics-owned selected-phase fugacity façade. The adapters do not perform root searches, family selection, Gibbs ranking, density/Z sorting or phase-identity inference.
+
+This is the first intentional production dependency from `mpmc::flow` to
+`mpmc::thermodynamics`. The direction is one-way; thermodynamics and flash remain independent of flow.
+
+### Accepted-state integration evidence
+
+The adapter boundary is validated inside the existing owners of the accepted three-phase fixtures rather than by copying fixture data into flow tests:
+
+- **PR76:** Li–Firoozabadi 2012 sour-gas literature benchmark after accepted three-phase max3 closure and final stability review;
+- **SW92:** authoritative Profile-C Sample-6 three-phase publication, preserving AQ/NA family metadata and the selected root branch carried by each published phase;
+- **CPA:** the repository's accepted max3 symmetric structural fixture. It remains explicitly synthetic and is used only for equation/software validation, not physical validation.
+
+For each state, the integration regression transfers `activity.branch` directly into the adapter selection. SW92 additionally transfers the published thermodynamic family and configured NaCl molality. No root is reconstructed from density, Z or slot ordering.
+
+### Residual and Jacobian regression
+
+The shared test helper builds the full non-isothermal natural-variable coordinate layout:
+
+```text
+p_ref, T, S0, S1, 3*(Nc-1) phase-composition coordinates
+```
+
+and evaluates the complete `2*Nc` fugacity-equilibrium residual with runtime forward AD. Therefore the checked Jacobian has shape
+
+```text
+(2*Nc) x (3*Nc + 1).
+```
+
+The regressions require:
+
+- the accepted-state residual to remain within its declared equilibrium tolerance;
+- every Jacobian entry to remain finite;
+- the two saturation columns to be exactly zero while `pc=none`;
+- pressure, temperature, one phase-1 composition column and one phase-2 composition column to agree with fixed-branch fresh central perturbations.
+
+Finite differences are test-only cross-checks. Production residual/Jacobian evaluation remains AD/analytic through the selected EoS branch.
+
+This slice still does not construct component or energy conservation rows, Darcy face fluxes, time-discretization terms, a global Newton system, PETSc matrix values, phase switching or wells.

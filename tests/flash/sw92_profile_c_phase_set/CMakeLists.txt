@@ -2,12 +2,17 @@ cmake_minimum_required(VERSION 3.21)
 project(mpmc_sw92_profile_c_phase_set_tests LANGUAGES CXX)
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash" flash-library)
+if(NOT TARGET mpmc::flow)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow" flow-library)
+endif()
 enable_testing()
 
 add_executable(mpmc_sw92_profile_c_phase_set_tests
     sw92_profile_c_phase_set_test.cpp
     sw92_profile_c_phase_set_header.cpp)
-target_link_libraries(mpmc_sw92_profile_c_phase_set_tests PRIVATE mpmc::flash)
+target_link_libraries(mpmc_sw92_profile_c_phase_set_tests PRIVATE mpmc::flash mpmc::flow)
+target_include_directories(mpmc_sw92_profile_c_phase_set_tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/flow")
 target_include_directories(mpmc_sw92_profile_c_phase_set_tests PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(mpmc_sw92_profile_c_phase_set_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -55,6 +60,7 @@ set(cases
     publish_one_phase
     publish_two_phase
     publish_sample6_three_phase
+    flow_fugacity_adapter
     fresh_disappearance_neighbors
     provenance_guard
     component_permutation

@@ -11,6 +11,11 @@ on:
       - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
       - 'modules/flash/include/mpmc/flash/pt_*.hpp'
       - 'modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp'
+      - 'modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp'
+      - 'modules/flow/CMakeLists.txt'
+      - 'modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp'
+      - 'modules/flow/include/mpmc/flow/thermodynamics_fugacity_adapters.hpp'
+      - 'tests/support/flow/fugacity_adapter_regression.hpp'
       - 'tests/flash/pr76_three_phase/**'
       - '.github/workflows/pr76_three_phase.yml'
   workflow_dispatch:

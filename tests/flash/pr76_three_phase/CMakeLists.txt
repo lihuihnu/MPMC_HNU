@@ -5,6 +5,9 @@ if(NOT TARGET mpmc::ad)
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad" ad-library)
 endif()
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flash" flash-library)
+if(NOT TARGET mpmc::flow)
+    add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow" flow-library)
+endif()
 enable_testing()
 
 option(MPMC_PR76_THREE_PHASE_ENABLE_SANITIZERS
@@ -33,7 +36,9 @@ set_target_properties(mpmc_pr76_three_phase_reference_test PROPERTIES CXX_EXTENS
 
 add_executable(mpmc_pr76_sour_gas_three_phase_tests
     pr76_sour_gas_three_phase_test.cpp)
-target_link_libraries(mpmc_pr76_sour_gas_three_phase_tests PRIVATE mpmc::flash)
+target_link_libraries(mpmc_pr76_sour_gas_three_phase_tests PRIVATE mpmc::flash mpmc::flow)
+target_include_directories(mpmc_pr76_sour_gas_three_phase_tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../support/flow")
 set_target_properties(mpmc_pr76_sour_gas_three_phase_tests PROPERTIES CXX_EXTENSIONS OFF)
 
 add_executable(mpmc_pr76_heringer_2026_fixture_test
@@ -210,7 +215,8 @@ foreach(case IN ITEMS
         seeded_max3
         interior_reweighted
         component_permutation
-        backend_publication)
+        backend_publication
+        flow_fugacity_adapter)
     add_test(NAME flash.pr76_three_phase.sour_gas_${case}
              COMMAND mpmc_pr76_sour_gas_three_phase_tests ${case})
     set_tests_properties(flash.pr76_three_phase.sour_gas_${case} PROPERTIES

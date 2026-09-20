@@ -17,6 +17,7 @@
 #include <vector>
 
 bool fugacity_equilibrium_residual_header();
+bool thermodynamics_fugacity_adapters_header();
 
 namespace {
 
@@ -657,6 +658,9 @@ void headers() {
     require(
         fugacity_equilibrium_residual_header(),
         "fugacity equilibrium public-header probe failed");
+    require(
+        thermodynamics_fugacity_adapters_header(),
+        "thermodynamics fugacity adapter public-header probe failed");
 }
 
 using Test =
