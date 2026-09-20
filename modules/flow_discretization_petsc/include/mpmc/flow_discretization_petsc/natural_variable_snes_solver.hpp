@@ -760,6 +760,7 @@ form_jacobian(
 /// Project defaults:
 ///   SNESNEWTONLS + backtracking line search
 ///   KSPGMRES + PCASM(overlap=1, restricted)
+///   ASM local solve: KSPPREONLY + PCLU
 ///
 /// This first production contract deliberately does not call
 /// SNESSetFromOptions(): unrestricted PETSc options could replace the audited
@@ -1030,6 +1031,34 @@ solve_natural_variable_snes_3d(
                 pc,
                 asm_overlap);
     }
+
+    // Natural-variable equation ordering does not guarantee a nonzero scalar
+    // diagonal even when J is nonsingular. PETSc ASM defaults to PREONLY+ILU(0)
+    // on each local block, so a valid coupled Jacobian can fail during ILU
+    // setup before GMRES performs an iteration. Keep the audited top-level
+    // GMRES+ASM contract, but use an exact PETSc LU solve inside each ASM block
+    // for this correctness baseline. The private prefix prevents these internal
+    // sub-solver options from replacing the top-level KSP/PC or analytic J.
+    constexpr const char* asm_options_prefix =
+        "mpmc_natural_variable_";
+    constexpr const char* asm_sub_pc_option =
+        "-mpmc_natural_variable_sub_pc_type";
+    bool asm_sub_pc_option_installed = false;
+    if (error == PETSC_SUCCESS) {
+        error =
+            PCSetOptionsPrefix(
+                pc,
+                asm_options_prefix);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            PetscOptionsSetValue(
+                nullptr,
+                asm_sub_pc_option,
+                "lu");
+        asm_sub_pc_option_installed =
+            error == PETSC_SUCCESS;
+    }
     if (error == PETSC_SUCCESS) {
         error =
             KSPSetTolerances(
@@ -1062,6 +1091,11 @@ solve_natural_variable_snes_3d(
                 PETSC_TRUE);
     }
     if (error != PETSC_SUCCESS) {
+        if (asm_sub_pc_option_installed) {
+            (void)PetscOptionsClearValue(
+                nullptr,
+                asm_sub_pc_option);
+        }
         (void)cleanup();
         return error;
     }
@@ -1071,6 +1105,23 @@ solve_natural_variable_snes_3d(
             snes,
             nullptr,
             solved_state);
+
+    PetscErrorCode options_clear_error =
+        PETSC_SUCCESS;
+    if (asm_sub_pc_option_installed) {
+        options_clear_error =
+            PetscOptionsClearValue(
+                nullptr,
+                asm_sub_pc_option);
+        asm_sub_pc_option_installed =
+            false;
+    }
+    if (error == PETSC_SUCCESS &&
+        options_clear_error !=
+            PETSC_SUCCESS) {
+        error =
+            options_clear_error;
+    }
     if (error != PETSC_SUCCESS) {
         (void)cleanup();
         return error;
