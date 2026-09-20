@@ -2112,3 +2112,111 @@ numeric endpoint payloads. It does not create a PETSc matrix/vector and does not
 This slice still does **not** add boundary/source/well terms, energy/fugacity rows,
 global scalar numbering, PETSc value insertion, Newton iteration or phase switching.
 
+## 34. Global component-row / natural-variable scalar mapping bridge
+
+The complete distributed owned component rows can now be converted into deterministic
+scalar assembly entries without creating or modifying PETSc vectors or matrices.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
+```
+
+### Two numbering spaces remain explicit
+
+The repository already has two valid but different global numbering concepts:
+
+1. `DofNumberingSnapshot`: mesh-global scalar DoF identity ordered by global entity
+   ordinals;
+2. `PetscMpiAijSymbolicPreallocation3D`: PETSc rank-contiguous owned **cell** rows.
+
+They are not assumed to be numerically equal.
+
+For the fixed-three-phase natural-variable formulation, every cell has one fixed-width
+block
+
+```text
+q = 3*Nc + 1
+```
+
+and the PETSc scalar system is expanded from the existing PETSc cell-row bridge:
+
+```text
+petsc_scalar(cell, slot)
+    = petsc_cell_global_row(cell) * q + slot.
+```
+
+Because every rank owns an integer number of complete cell blocks with the same `q`,
+multiplying the existing PETSc cell ownership range by `q` preserves a contiguous
+rank-local scalar row range. A transient `PetscLayout` verifies this property.
+
+### Row and column semantics
+
+The selected `DofLayout` variable must:
+
+- live on `EntityKind::cell`;
+- have exactly `q` components;
+- occupy the complete cell scalar block.
+
+For a component conservation row:
+
+```text
+row slot =
+    NaturalVariableLayout3P::component_conservation_equation_index(i)
+```
+
+and for a Jacobian column:
+
+```text
+column slot =
+    frozen local/neighbor natural-variable unknown index.
+```
+
+Thus different dependent-component pivots remain local chart semantics; they do not
+change the fixed scalar block width or silently reorder canonical component rows.
+
+The current bridge emits only the first `Nc` equation rows. The later energy and
+fugacity rows will occupy the remaining slots in the same square per-cell equation block.
+
+### Assembly-ready output
+
+The bridge publishes:
+
+```text
+residual:
+    (PETSc global row, value)
+
+Jacobian:
+    (PETSc global row, PETSc global column, value)
+```
+
+with stable row/column cell identities, component-row identity, natural-variable column
+index and diagonal/off-diagonal cell-block classification.
+
+Numerically zero Jacobian values are deliberately retained. Structural sparsity comes
+from the existing cell-pair pattern, not from testing whether a current coefficient is
+zero.
+
+Every output entry also keeps the independent `DofNumberingSnapshot` mesh-global DoF
+index as provenance. The test deliberately reverses mesh-global cell ordinals relative
+to PETSc row ownership and requires the two numbering values to differ, preventing an
+accidental conflation.
+
+### Structural and PetscSection gates
+
+The bridge consumes the existing
+`OwnedCellStructuralColumnPatternSnapshot3D` and requires the component Jacobian's
+coalesced cell-pair blocks to match it exactly:
+
+- self and same-rank neighbours -> diagonal cell columns;
+- ghost/remote-owned neighbours -> off-diagonal cell columns;
+- no missing or extra structural neighbour is accepted.
+
+It also calls the existing `mesh_petsc::create_section_mapping()` to verify that the
+selected local natural-variable scalar ordering and `DofNumberingSnapshot` mapping
+agree with the PETSc Section representation.
+
+No `Mat`, `Vec`, `MatSetValues`, `VecSetValues`, Newton iteration, energy/fugacity
+rows, boundary/source/well terms or phase switching are introduced in this slice.
+

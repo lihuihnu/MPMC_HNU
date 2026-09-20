@@ -9,7 +9,8 @@ enable_testing()
 add_executable(
     mpmc_flow_discretization_petsc_tests
     distributed_component_conservation_test.cpp
-    distributed_component_conservation_header.cpp)
+    distributed_component_conservation_header.cpp
+    global_component_assembly_mapping_header.cpp)
 target_link_libraries(
     mpmc_flow_discretization_petsc_tests
     PRIVATE mpmc::flow_discretization_petsc)

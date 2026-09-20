@@ -1,4 +1,5 @@
 #include <mpmc/flow_discretization_petsc/distributed_component_conservation.hpp>
+#include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
 
 #include <petscsys.h>
 
@@ -16,6 +17,7 @@
 #include <vector>
 
 bool distributed_component_conservation_header();
+bool global_component_assembly_mapping_header();
 
 namespace {
 
@@ -299,8 +301,8 @@ normalized_face() {
             {2.0, 5.0});
 }
 
-mesh::PartitionSnapshot
-make_partition(int rank) {
+mesh::Topology
+make_topology(int rank) {
     mesh::Topology::EntityIds ids;
     ids.faces = {
         mesh::GlobalEntityId{100U}};
@@ -312,10 +314,15 @@ make_partition(int rank) {
             : std::vector<mesh::GlobalEntityId>{
                   mesh::GlobalEntityId{20U},
                   mesh::GlobalEntityId{10U}};
-
-    mesh::Topology topology{
+    return mesh::Topology{
         std::move(ids),
         {}};
+}
+
+mesh::PartitionSnapshot
+make_partition(int rank) {
+    const auto topology =
+        make_topology(rank);
 
     mesh::EntityOwnerRanks owners;
     owners.faces = {
@@ -740,6 +747,521 @@ void distributed_exchange() {
         inputs);
 }
 
+mesh::DofLayout
+make_natural_variable_dof_layout(
+    int rank,
+    std::size_t q) {
+    const auto topology =
+        make_topology(rank);
+    return mesh::DofLayout::create(
+        topology,
+        {
+            mesh::DofVariable{
+                "natural_state",
+                mesh::EntityKind::cell,
+                q}
+        });
+}
+
+mesh::DofNumberingSnapshot
+make_reversed_mesh_dof_numbering(
+    int rank,
+    const mesh::DofLayout& layout,
+    const mesh::PartitionSnapshot& partition) {
+    mesh::GlobalEntityNumberingInput numbering;
+    numbering.global_cell_count = 2U;
+    numbering.global_face_count = 1U;
+    numbering.faces = {
+        {
+            mesh::GlobalEntityId{100U},
+            mesh::GlobalEntityOrdinal{0U}}
+    };
+    numbering.cells =
+        rank == 0
+            ? std::vector<
+                  mesh::GlobalEntityOrdinalRecord>{
+                  {
+                      mesh::GlobalEntityId{10U},
+                      mesh::GlobalEntityOrdinal{1U}},
+                  {
+                      mesh::GlobalEntityId{20U},
+                      mesh::GlobalEntityOrdinal{0U}}
+              }
+            : std::vector<
+                  mesh::GlobalEntityOrdinalRecord>{
+                  {
+                      mesh::GlobalEntityId{20U},
+                      mesh::GlobalEntityOrdinal{0U}},
+                  {
+                      mesh::GlobalEntityId{10U},
+                      mesh::GlobalEntityOrdinal{1U}}
+              };
+
+    return mesh::DofNumberingSnapshot::
+        create_local(
+            layout,
+            partition,
+            std::move(numbering));
+}
+
+dp::PetscMpiAijSymbolicPreallocation3D
+make_cell_row_bridge(int rank) {
+    const PetscInt row =
+        static_cast<PetscInt>(rank);
+    return {
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    rank)},
+        2U,
+        row,
+        row + 1,
+        2,
+        {mesh::LocalIndex{0U}},
+        {
+            mesh::GlobalEntityId{
+                rank == 0
+                    ? UINT64_C(10)
+                    : UINT64_C(20)}
+        },
+        {row},
+        {1},
+        {1},
+        rank == 0
+            ? std::vector<PetscInt>{0, 1}
+            : std::vector<PetscInt>{1, 0}};
+}
+
+dp::OwnedCellStructuralColumnPatternSnapshot3D
+make_cell_column_pattern(int rank) {
+    const PetscInt row =
+        static_cast<PetscInt>(rank);
+    return {
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    rank)},
+        2U,
+        2U,
+        row,
+        row + 1,
+        2,
+        {
+            dp::OwnedCellStructuralColumnPatternRow3D{
+                mesh::LocalIndex{0U},
+                mesh::GlobalEntityId{
+                    rank == 0
+                        ? UINT64_C(10)
+                        : UINT64_C(20)},
+                row,
+                0U,
+                1U,
+                0U,
+                1U}
+        },
+        {row},
+        {
+            static_cast<PetscInt>(
+                rank == 0 ? 1 : 0)}
+    };
+}
+
+dp::OwnedCellStructuralColumnPatternSnapshot3D
+make_incomplete_cell_column_pattern(
+    int rank) {
+    const PetscInt row =
+        static_cast<PetscInt>(rank);
+    return {
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    rank)},
+        2U,
+        2U,
+        row,
+        row + 1,
+        2,
+        {
+            dp::OwnedCellStructuralColumnPatternRow3D{
+                mesh::LocalIndex{0U},
+                mesh::GlobalEntityId{
+                    rank == 0
+                        ? UINT64_C(10)
+                        : UINT64_C(20)},
+                row,
+                0U,
+                1U,
+                0U,
+                0U}
+        },
+        {row},
+        {}
+    };
+}
+
+void global_component_assembly_mapping() {
+    int rank = -1;
+    int size = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &size) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank/size query failed");
+    }
+    require_collective(
+        size == 2,
+        "global mapping test requires exactly two ranks");
+
+    auto partition =
+        make_partition(rank);
+    auto schedule =
+        make_schedule(rank);
+    LocalInputs inputs{rank};
+
+    // Force one exact-zero diagonal Jacobian scalar on rank 0. The mapping
+    // bridge must retain it because numerical zero is not structural zero.
+    if (rank == 0) {
+        const double face_derivative =
+            inputs.face
+                .d_owner_contribution_wrt_owner(
+                    0U,
+                    0U);
+        const double old =
+            inputs.accumulation10
+                .component_jacobian[0U];
+        inputs.accumulation10
+            .component_jacobian[0U] =
+            -face_derivative;
+        inputs.accumulation10
+            .total_residual_gradient[0U] +=
+            -face_derivative -
+            old;
+    }
+
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+    auto conservation =
+        build(
+            rank,
+            partition,
+            schedule,
+            inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            conservation.has_value(),
+        "distributed snapshot for global mapping failed");
+
+    const std::size_t q =
+        identity(10U)
+            .layout.unknown_count();
+    auto layout =
+        make_natural_variable_dof_layout(
+            rank,
+            q);
+    auto numbering =
+        make_reversed_mesh_dof_numbering(
+            rank,
+            layout,
+            partition);
+    auto cell_bridge =
+        make_cell_row_bridge(
+            rank);
+    auto cell_pattern =
+        make_cell_column_pattern(
+            rank);
+
+    std::optional<
+        fdp::ComponentConservationGlobalAssemblyEntries3D>
+        mapping;
+    error =
+        fdp::
+            make_component_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *conservation,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &mapping);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            mapping.has_value(),
+        "global component assembly mapping failed");
+
+    const auto& result =
+        *mapping;
+    const PetscInt expected_start =
+        static_cast<PetscInt>(
+            rank) *
+        static_cast<PetscInt>(q);
+    const PetscInt expected_end =
+        expected_start +
+        static_cast<PetscInt>(q);
+    const PetscInt expected_count =
+        2 *
+        static_cast<PetscInt>(q);
+
+    require_collective(
+        result.petsc_scalar_row_start() ==
+                expected_start &&
+            result.petsc_scalar_row_end() ==
+                expected_end &&
+            result.petsc_scalar_row_count() ==
+                expected_count &&
+            result.component_count() == 3U &&
+            result.natural_variable_count() ==
+                q &&
+            result.residual_entries().size() ==
+                3U &&
+            result.jacobian_entries().size() ==
+                3U * q * 2U,
+        "global mapping scalar range/cardinality mismatch");
+
+    const auto& owned_row =
+        conservation->owned_rows().front();
+    const auto* off_block =
+        find_block(
+            owned_row,
+            rank == 0
+                ? UINT64_C(20)
+                : UINT64_C(10));
+    require_collective(
+        off_block != nullptr,
+        "global mapping fixture missing off-diagonal block");
+
+    const std::uint64_t row_cell_global =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+    const std::uint64_t other_cell_global =
+        rank == 0
+            ? UINT64_C(20)
+            : UINT64_C(10);
+
+    for (std::size_t component = 0U;
+         component < 3U;
+         ++component) {
+        const auto& residual =
+            result.residual_entries()[
+                component];
+        const PetscInt expected_row =
+            expected_start +
+            static_cast<PetscInt>(
+                component);
+        const std::uint64_t
+            expected_mesh_row =
+                (rank == 0
+                     ? static_cast<std::uint64_t>(q)
+                     : UINT64_C(0)) +
+                static_cast<std::uint64_t>(
+                    component);
+
+        require_collective(
+            residual.petsc_global_row ==
+                    expected_row &&
+                residual.mesh_global_row_dof ==
+                    mesh::GlobalDofIndex{
+                        expected_mesh_row} &&
+                residual.row_cell_global ==
+                    mesh::GlobalEntityId{
+                        row_cell_global} &&
+                residual.component_row ==
+                    component,
+            "residual scalar mapping/provenance mismatch");
+        near_collective(
+            residual.value_mol_per_bulk_m3_s,
+            owned_row.local_residual
+                .residual(component));
+
+        // Deliberately reversed mesh-global entity ordinals prove that the
+        // mesh-global DoF provenance is not being used as PETSc row ownership.
+        require_collective(
+            static_cast<std::uint64_t>(
+                residual.petsc_global_row) !=
+                residual
+                    .mesh_global_row_dof
+                    .value(),
+            "mesh-global DoF was incorrectly conflated with PETSc scalar row");
+
+        for (PetscInt global_column = 0;
+             global_column <
+             expected_count;
+             ++global_column) {
+            const std::size_t entry_index =
+                component *
+                    static_cast<std::size_t>(
+                        expected_count) +
+                static_cast<std::size_t>(
+                    global_column);
+            const auto& entry =
+                result.jacobian_entries()[
+                    entry_index];
+
+            const bool diagonal =
+                (rank == 0 &&
+                 global_column <
+                     static_cast<PetscInt>(
+                         q)) ||
+                (rank == 1 &&
+                 global_column >=
+                     static_cast<PetscInt>(
+                         q));
+            const std::size_t column =
+                static_cast<std::size_t>(
+                    global_column %
+                    static_cast<PetscInt>(
+                        q));
+            const std::uint64_t
+                column_cell_global =
+                    diagonal
+                        ? row_cell_global
+                        : other_cell_global;
+            const double expected_value =
+                diagonal
+                    ? owned_row.local_residual
+                          .d_local(
+                              component,
+                              column)
+                    : off_block->d_component(
+                          component,
+                          column);
+
+            const std::uint64_t
+                expected_mesh_column =
+                    column_cell_global ==
+                            UINT64_C(10)
+                        ? static_cast<std::uint64_t>(
+                              q) +
+                              static_cast<std::uint64_t>(
+                                  column)
+                        : static_cast<std::uint64_t>(
+                              column);
+
+            require_collective(
+                entry.petsc_global_row ==
+                        expected_row &&
+                    entry.petsc_global_column ==
+                        global_column &&
+                    entry.mesh_global_row_dof ==
+                        residual
+                            .mesh_global_row_dof &&
+                    entry.mesh_global_column_dof ==
+                        mesh::GlobalDofIndex{
+                            expected_mesh_column} &&
+                    entry.row_cell_global ==
+                        mesh::GlobalEntityId{
+                            row_cell_global} &&
+                    entry.column_cell_global ==
+                        mesh::GlobalEntityId{
+                            column_cell_global} &&
+                    entry.component_row ==
+                        component &&
+                    entry.natural_variable_column ==
+                        column &&
+                    entry.block_kind ==
+                        (diagonal
+                             ? fdp::
+                                   ComponentJacobianCellBlockKind3D::
+                                       diagonal_cell
+                             : fdp::
+                                   ComponentJacobianCellBlockKind3D::
+                                       off_diagonal_cell),
+                "Jacobian scalar row/column mapping mismatch");
+            near_collective(
+                entry.value,
+                expected_value);
+        }
+    }
+
+    std::uint64_t local_zero_count = 0U;
+    for (const auto& entry :
+         result.jacobian_entries()) {
+        if (entry.value == 0.0) {
+            ++local_zero_count;
+        }
+    }
+    std::uint64_t global_zero_count = 0U;
+    if (MPI_Allreduce(
+            &local_zero_count,
+            &global_zero_count,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) !=
+        MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI_Allreduce failed for zero-entry audit");
+    }
+    require_collective(
+        global_zero_count > 0U,
+        "zero Jacobian scalar was dropped from assembly-ready entries");
+
+    {
+        const auto bad_layout =
+            make_natural_variable_dof_layout(
+                rank,
+                q - 1U);
+        const auto bad_numbering =
+            make_reversed_mesh_dof_numbering(
+                rank,
+                bad_layout,
+                partition);
+        std::optional<
+            fdp::ComponentConservationGlobalAssemblyEntries3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_component_conservation_global_assembly_entries_3d(
+                    PETSC_COMM_WORLD,
+                    *conservation,
+                    partition,
+                    bad_layout,
+                    bad_numbering,
+                    cell_bridge,
+                    cell_pattern,
+                    "natural_state",
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "wrong natural-variable DoF width was not rejected collectively");
+    }
+
+    {
+        auto bad_pattern =
+            make_incomplete_cell_column_pattern(
+                rank);
+        std::optional<
+            fdp::ComponentConservationGlobalAssemblyEntries3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_component_conservation_global_assembly_entries_3d(
+                    PETSC_COMM_WORLD,
+                    *conservation,
+                    partition,
+                    layout,
+                    numbering,
+                    cell_bridge,
+                    bad_pattern,
+                    "natural_state",
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "incomplete cell structural pattern was not rejected collectively");
+    }
+}
+
 void invalid_collective_inputs() {
     int rank = -1;
     if (MPI_Comm_rank(
@@ -837,6 +1359,9 @@ void headers() {
     require_collective(
         distributed_component_conservation_header(),
         "distributed component conservation header probe failed");
+    require_collective(
+        global_component_assembly_mapping_header(),
+        "global component assembly mapping header probe failed");
 }
 
 } // namespace
@@ -864,6 +1389,7 @@ int main(int argc, char** argv) {
         }
 
         distributed_exchange();
+        global_component_assembly_mapping();
         invalid_collective_inputs();
         headers();
 
@@ -873,7 +1399,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] distributed owner-targeted component conservation\n";
+                << "[PASS] distributed component conservation and global assembly mapping\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;
