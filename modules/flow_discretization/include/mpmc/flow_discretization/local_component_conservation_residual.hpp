@@ -234,13 +234,17 @@ inline void validate_state_identity(
     }
 
     double saturation_sum = 0.0;
-    for (double value : identity.saturation) {
+    for (std::size_t phase = 0U;
+         phase < identity.layout.phase_count();
+         ++phase) {
+        const double value =
+            identity.saturation[phase];
         if (!std::isfinite(value) ||
             !(value > 0.0)) {
             throw std::invalid_argument(
                 std::string{"mpmc::flow_discretization: "} +
                 name +
-                " saturation identity must have positive finite support");
+                " active saturation identity must have positive finite support");
         }
         saturation_sum += value;
     }
