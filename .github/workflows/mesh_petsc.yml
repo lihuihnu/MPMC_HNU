@@ -8,6 +8,7 @@ on:
       - 'modules/mesh_petsc/**'
       - 'modules/discretization/**'
       - 'modules/discretization_petsc/**'
+      - 'modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp'
       - 'tests/mesh/petsc/**'
       - '.github/workflows/mesh_petsc.yml'
   workflow_dispatch:

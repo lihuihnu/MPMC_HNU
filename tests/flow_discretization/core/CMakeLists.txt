@@ -51,12 +51,21 @@ target_link_libraries(
     mpmc_flow_discretization_local_conservation_tests
     PRIVATE mpmc::flow_discretization)
 
+add_executable(
+    mpmc_flow_discretization_multi_cell_conservation_tests
+    owned_multi_cell_component_conservation_test.cpp
+    owned_multi_cell_component_conservation_header.cpp)
+target_link_libraries(
+    mpmc_flow_discretization_multi_cell_conservation_tests
+    PRIVATE mpmc::flow_discretization)
+
 foreach(target IN ITEMS
         mpmc_flow_discretization_tests
         mpmc_flow_discretization_component_flux_tests
         mpmc_flow_discretization_scatter_tests
         mpmc_flow_discretization_normalized_spatial_tests
-        mpmc_flow_discretization_local_conservation_tests)
+        mpmc_flow_discretization_local_conservation_tests
+        mpmc_flow_discretization_multi_cell_conservation_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -67,7 +76,8 @@ foreach(target IN ITEMS
         mpmc_flow_discretization_component_flux_tests
         mpmc_flow_discretization_scatter_tests
         mpmc_flow_discretization_normalized_spatial_tests
-        mpmc_flow_discretization_local_conservation_tests)
+        mpmc_flow_discretization_local_conservation_tests
+        mpmc_flow_discretization_multi_cell_conservation_tests)
     if(MSVC)
         target_compile_options(
             ${target}
@@ -101,7 +111,8 @@ if(MPMC_FLOW_DISCRETIZATION_ENABLE_SANITIZERS)
             mpmc_flow_discretization_component_flux_tests
             mpmc_flow_discretization_scatter_tests
             mpmc_flow_discretization_normalized_spatial_tests
-            mpmc_flow_discretization_local_conservation_tests)
+            mpmc_flow_discretization_local_conservation_tests
+            mpmc_flow_discretization_multi_cell_conservation_tests)
         target_compile_options(
             ${target}
             PRIVATE
@@ -206,5 +217,22 @@ foreach(case IN LISTS local_conservation_cases)
         flow_discretization.local_conservation.${case}
         PROPERTIES
             LABELS "flow_discretization;component_conservation;local_residual;multi_face"
+            TIMEOUT 30)
+endforeach()
+
+set(multi_cell_conservation_cases
+    serial_patch_rows_and_conservation
+    jacobian_mapping
+    invalid_inputs
+    headers)
+
+foreach(case IN LISTS multi_cell_conservation_cases)
+    add_test(
+        NAME flow_discretization.multi_cell_conservation.${case}
+        COMMAND mpmc_flow_discretization_multi_cell_conservation_tests ${case})
+    set_tests_properties(
+        flow_discretization.multi_cell_conservation.${case}
+        PROPERTIES
+            LABELS "flow_discretization;component_conservation;multi_cell;closed_patch"
             TIMEOUT 30)
 endforeach()

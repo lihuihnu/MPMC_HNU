@@ -6,15 +6,22 @@ add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/mesh_petsc" mesh-pe
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/../../../modules/discretization_petsc"
     discretization-petsc)
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow_discretization"
+    flow-discretization-library)
 enable_testing()
 
 add_executable(mpmc_mesh_discretization_petsc_tests
     petsc_adapter_test.cpp
     adapter_header_self_contained.cpp
-    discretization_adapter_header_self_contained.cpp)
+    discretization_adapter_header_self_contained.cpp
+    flow_discretization_schedule_bridge_header.cpp)
 target_link_libraries(
     mpmc_mesh_discretization_petsc_tests
-    PRIVATE mpmc::mesh_petsc mpmc::discretization_petsc)
+    PRIVATE
+        mpmc::mesh_petsc
+        mpmc::discretization_petsc
+        mpmc::flow_discretization)
 set_target_properties(
     mpmc_mesh_discretization_petsc_tests
     PROPERTIES CXX_EXTENSIONS OFF)

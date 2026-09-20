@@ -1908,3 +1908,96 @@ This slice still does **not** add boundary fluxes, source/well terms, energy res
 fugacity-row global assembly, global row/column numbering, PETSc Mat/Vec insertion,
 Newton/time-step orchestration or phase switching.
 
+## 32. Serial closed-owned multi-cell component conservation snapshot
+
+The first multi-cell conservation layer now consumes the authoritative connection
+schedule semantics without importing PETSc into the flow/discretization public API.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp>
+```
+
+The schedule adapter reads only:
+
+```text
+schedule.assembly_rows()
+```
+
+and copies each authoritative face/local+stable cell identity into a PETSc-free view.
+`schedule.ghost_rows()` are not consumed.
+
+### Strict serial v1 boundary
+
+This v1 builder intentionally requires a one-rank `PartitionSnapshot`.
+
+That restriction is scientific/assembly correctness, not a portability limitation:
+under MPI the rank that owns an authoritative face may differ from the owner rank of one
+or both endpoint cells. A face-owner rank can therefore compute both conservative
+spatial sides, but it cannot claim that a remote owned cell row is complete until those
+residual/Jacobian contributions have been routed to the endpoint cell owner.
+
+The serial baseline avoids pretending that this owner-targeted exchange already exists.
+Distributed residual/Jacobian exchange is a later explicit contract.
+
+### Complete closed-patch rows
+
+For every serial cell the snapshot publishes:
+
+- local and stable cell identity;
+- the complete existing local component residual;
+- its accumulation + multi-face diagonal natural-variable Jacobian;
+- off-diagonal blocks coalesced by **stable neighbour cell identity**;
+- every stable face contributing to each coalesced cell-pair block.
+
+Every authoritative internal face is matched exactly once to one normalized face
+contribution and is scattered to both geometric endpoints.
+
+The final spatial invariant is checked after restoring bulk volume:
+
+```text
+sum_c V_b,c * R_i,c^spatial = 0
+```
+
+for every component and for the total molar diagnostic.
+
+The differentiated invariant is also checked for every source cell and every column of
+that cell's frozen natural-variable chart:
+
+```text
+sum_target V_b,target
+    * dR_target^spatial / dq_source = 0.
+```
+
+Thus unequal cell volumes, different dependent-component pivots and two-sided face
+Jacobians are all retained without inventing global scalar numbering.
+
+### Schedule compatibility gate
+
+The core header is PETSc-free. The existing PETSc integration test separately compiles
+the adapter against the real
+`discretization_petsc::ParallelOwnedConnectionSchedule3D`, proving that its
+`assembly_rows()` payload satisfies the production schedule interface.
+
+No PETSc matrix/vector value insertion occurs in this slice.
+
+### Validation ownership
+
+The dedicated `flow_discretization.multi_cell_conservation.*` tests cover a
+three-cell/two-authoritative-face closed patch with unequal cell bulk volumes and
+different composition pivots:
+
+- stable/local row identity;
+- owner/neighbour two-sided scatter;
+- middle-cell multi-face residual accumulation;
+- diagonal and stable cell-pair off-diagonal Jacobian mapping;
+- volume-weighted component/total spatial conservation;
+- per-source-cell spatial Jacobian conservation;
+- duplicate/missing authoritative face, stable-ID, volume and non-serial rejection;
+- public-header self containment.
+
+This slice still does **not** implement distributed owner-targeted residual/Jacobian
+exchange, boundary/source/well terms, energy/fugacity rows, global scalar numbering,
+PETSc Mat/Vec insertion, Newton iteration or phase switching.
+

@@ -17,6 +17,8 @@ on:
       - 'modules/discretization/include/mpmc/discretization/transmissibility_admissibility_3d.hpp'
       - 'modules/discretization/CMakeLists.txt'
       - 'modules/mesh/include/mpmc/mesh/entity.hpp'
+      - 'modules/mesh/include/mpmc/mesh/partition_snapshot.hpp'
+      - 'modules/mesh/include/mpmc/mesh/topology.hpp'
       - 'tests/flow_discretization/core/**'
       - '.github/workflows/flow_discretization.yml'
   workflow_dispatch:
@@ -76,7 +78,7 @@ jobs:
       - name: Build flow-discretization contract
         run: |
           cmake --build build/flow-discretization \
-            --target mpmc_flow_discretization_tests mpmc_flow_discretization_component_flux_tests mpmc_flow_discretization_scatter_tests mpmc_flow_discretization_normalized_spatial_tests mpmc_flow_discretization_local_conservation_tests \
+            --target mpmc_flow_discretization_tests mpmc_flow_discretization_component_flux_tests mpmc_flow_discretization_scatter_tests mpmc_flow_discretization_normalized_spatial_tests mpmc_flow_discretization_local_conservation_tests mpmc_flow_discretization_multi_cell_conservation_tests \
             --config ${{ matrix.config }} \
             --parallel 2
 
@@ -84,6 +86,6 @@ jobs:
         run: |
           ctest --test-dir build/flow-discretization \
             -C ${{ matrix.config }} \
-            -R '^flow_discretization[.](tpfa_phase_flux|component_flux|scatter|normalized_spatial|local_conservation)[.]' \
+            -R '^flow_discretization[.](tpfa_phase_flux|component_flux|scatter|normalized_spatial|local_conservation|multi_cell_conservation)[.]' \
             --verbose \
             --no-tests=error
