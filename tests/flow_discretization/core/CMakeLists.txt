@@ -34,10 +34,19 @@ add_executable(
 target_link_libraries(
     mpmc_flow_discretization_scatter_tests
     PRIVATE mpmc::flow_discretization)
+
+add_executable(
+    mpmc_flow_discretization_normalized_spatial_tests
+    normalized_component_face_contribution_test.cpp
+    normalized_component_face_contribution_header.cpp)
+target_link_libraries(
+    mpmc_flow_discretization_normalized_spatial_tests
+    PRIVATE mpmc::flow_discretization)
 foreach(target IN ITEMS
         mpmc_flow_discretization_tests
         mpmc_flow_discretization_component_flux_tests
-        mpmc_flow_discretization_scatter_tests)
+        mpmc_flow_discretization_scatter_tests
+        mpmc_flow_discretization_normalized_spatial_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -46,7 +55,8 @@ endforeach()
 foreach(target IN ITEMS
         mpmc_flow_discretization_tests
         mpmc_flow_discretization_component_flux_tests
-        mpmc_flow_discretization_scatter_tests)
+        mpmc_flow_discretization_scatter_tests
+        mpmc_flow_discretization_normalized_spatial_tests)
     if(MSVC)
         target_compile_options(
             ${target}
@@ -78,7 +88,8 @@ if(MPMC_FLOW_DISCRETIZATION_ENABLE_SANITIZERS)
     foreach(target IN ITEMS
             mpmc_flow_discretization_tests
             mpmc_flow_discretization_component_flux_tests
-            mpmc_flow_discretization_scatter_tests)
+            mpmc_flow_discretization_scatter_tests
+            mpmc_flow_discretization_normalized_spatial_tests)
         target_compile_options(
             ${target}
             PRIVATE
@@ -146,5 +157,24 @@ foreach(case IN LISTS scatter_cases)
         flow_discretization.scatter.${case}
         PROPERTIES
             LABELS "flow_discretization;component_flux;conservation;scatter"
+            TIMEOUT 30)
+endforeach()
+
+set(normalized_spatial_cases
+    normalized_values_and_weighted_conservation
+    normalized_jacobian
+    jacobian_fresh_source_perturbation
+    zero_primal_nonzero_jacobian
+    invalid_inputs
+    headers)
+
+foreach(case IN LISTS normalized_spatial_cases)
+    add_test(
+        NAME flow_discretization.normalized_spatial.${case}
+        COMMAND mpmc_flow_discretization_normalized_spatial_tests ${case})
+    set_tests_properties(
+        flow_discretization.normalized_spatial.${case}
+        PROPERTIES
+            LABELS "flow_discretization;component_flux;bulk_volume;normalized_spatial"
             TIMEOUT 30)
 endforeach()

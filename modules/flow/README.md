@@ -1713,3 +1713,105 @@ This slice still does **not** introduce cell bulk volume, divide spatial face ra
 cell volume, combine face-rate and accumulation units, assemble multi-face cell
 residuals, add source/well terms, assign global matrix rows/columns, or insert PETSc
 values.
+
+## 30. Rigid cell bulk-volume normalized spatial contribution contract
+
+The conservative component face-rate scatter can now be normalized by explicit owner
+and neighbour **cell bulk volumes**:
+
+```text
+V_b,o [m^3]
+V_b,n [m^3]
+```
+
+The authoritative volume remains mesh geometry. Existing 3D mesh contracts already
+publish cell volumes in cubic metres, for example
+`CornerPointGeometry3D::cell_volume_m3()` and the linear/cartesian
+`cell_volumes_m3` snapshots. The flow-discretization contract consumes explicit
+positive finite values and does not recompute geometry.
+
+### Rigid-grid derivative contract
+
+The current v1 geometry is rigid:
+
+```text
+d V_b,o = 0
+d V_b,n = 0
+```
+
+This is exposed in
+`NormalizedComponentFaceContributionLinearization3D::bulk_volume_derivative_is_zero`.
+
+A future poromechanics/deforming-grid model must introduce an explicit volume
+linearization rather than silently reusing this contract.
+
+### Normalized spatial contribution
+
+For each canonical component:
+
+```text
+R_i,o^(face,V) = R_i,o^face / V_b,o
+R_i,n^(face,V) = R_i,n^face / V_b,n
+```
+
+with units:
+
+```text
+mol / (bulk-m^3 s)
+```
+
+which now match the existing backward-Euler accumulation residual units.
+
+Because `dV_b=0`, the four Jacobian blocks are simply:
+
+```text
+d R_i,o^(face,V) / dq = (1/V_b,o) d R_i,o^face / dq
+d R_i,n^(face,V) / dq = (1/V_b,n) d R_i,n^face / dq.
+```
+
+Owner and neighbour retain their own frozen natural-variable charts/pivots.
+
+### Weighted conservation after normalization
+
+If cell volumes differ, the normalized spatial values are generally **not** direct
+negatives. The correct invariant is volume weighted:
+
+```text
+V_b,o R_i,o^(face,V)
+  + V_b,n R_i,n^(face,V)
+  = 0.
+```
+
+For every owner/neighbour natural-variable column:
+
+```text
+V_b,o dR_i,o^(face,V)
+  + V_b,n dR_i,n^(face,V)
+  = 0.
+```
+
+The same invariant is checked for the total molar diagnostic.
+
+The input conservative scatter is also revalidated for canonical identity, exact
+owner/neighbour sign conservation, component-to-total closure and differentiated
+closure before normalization.
+
+### Validation ownership
+
+The dedicated `flow_discretization.normalized_spatial.*` suite covers:
+
+- unequal positive owner/neighbour bulk volumes;
+- `mol/s -> mol/(bulk-m^3 s)` scaling;
+- the fact that unequal volumes destroy direct normalized antisymmetry while preserving
+  volume-weighted conservation;
+- all four owner/neighbour Jacobian blocks under frozen `dV_b=0`;
+- volume-weighted Jacobian conservation;
+- fresh perturbation of the source face-rate contribution against normalized
+  Jacobians;
+- zero primal face rate with nonzero normalized Jacobian preservation;
+- zero/non-finite volume and malformed source-scatter rejection;
+- public-header self containment and the explicit rigid-volume derivative flag.
+
+This slice still does **not** sum multiple faces into a cell, combine normalized spatial
+contributions with the backward-Euler accumulation residual, add source/well terms,
+assign global rows/columns, or insert PETSc matrix/vector values.
