@@ -19,7 +19,9 @@ option(
 add_executable(
     mpmc_flow_core_tests
     natural_variable_cell_state_test.cpp
-    natural_variable_cell_state_header.cpp)
+    natural_variable_cell_state_header.cpp
+    single_phase_natural_variable_test.cpp
+    single_phase_natural_variable_header.cpp)
 target_link_libraries(
     mpmc_flow_core_tests
     PRIVATE mpmc::flow)
@@ -155,6 +157,7 @@ set(core_cases
     composition_pivot
     valid_state
     invalid_state
+    single_phase_reduction
     headers)
 foreach(case IN LISTS core_cases)
     add_test(

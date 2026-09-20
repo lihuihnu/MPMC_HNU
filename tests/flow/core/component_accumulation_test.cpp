@@ -479,7 +479,9 @@ void jacobian() {
             linearization.input_count ==
                 state.layout().unknown_count() &&
             linearization.layout.composition_pivot().dependent_components() ==
-                state.layout().composition_pivot().dependent_components(),
+                std::vector<std::size_t>{
+                    state.layout().composition_pivot().dependent_components().begin(),
+                    state.layout().composition_pivot().dependent_components().end()},
         "accumulation Jacobian lost chart/component identity");
 
     const auto inputs =

@@ -10,6 +10,7 @@ add_executable(
     mpmc_flow_discretization_petsc_tests
     distributed_component_conservation_test.cpp
     fixed_three_phase_snes_assembly_test.cpp
+    single_phase_snes_assembly_test.cpp
     distributed_component_conservation_header.cpp
     distributed_energy_conservation_header.cpp
     energy_global_assembly_mapping_header.cpp
@@ -18,6 +19,7 @@ add_executable(
     natural_variable_newton_linear_system_header.cpp
     natural_variable_snes_solver_header.cpp
     fixed_three_phase_snes_assembly_header.cpp
+    single_phase_snes_assembly_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(

@@ -525,11 +525,6 @@ make_component_conservation_global_assembly_entries_3d(
                 "global mapping requires at least two components");
         }
 
-        q =
-            mpmc::flow::NaturalVariableLayout3P{
-                component_count}
-                .unknown_count();
-
         if (!dof_layout.contains(
                 natural_variable_id)) {
             throw std::invalid_argument(
@@ -541,9 +536,18 @@ make_component_conservation_global_assembly_entries_3d(
         const auto& variable =
             dof_layout.variable(
                 variable_index);
+        q = variable.component_count;
+        const std::size_t phase_count =
+            q > 1U
+                ? (q - 1U) / component_count
+                : 0U;
         if (variable.location !=
                 mpmc::mesh::EntityKind::cell ||
-            variable.component_count != q ||
+            q <= 1U ||
+            (q - 1U) % component_count != 0U ||
+            phase_count == 0U ||
+            phase_count >
+                mpmc::flow::fixed_three_phase_count ||
             dof_layout.dofs_per_entity(
                 mpmc::mesh::EntityKind::cell) !=
                 q) {
@@ -767,6 +771,14 @@ make_component_conservation_global_assembly_entries_3d(
                         .cell_state_identity.layout
                         .unknown_count() !=
                     q ||
+                row.local_residual
+                        .cell_state_identity.layout
+                        .phase_count() !=
+                    phase_count ||
+                row.local_residual
+                        .cell_state_identity.layout
+                        .component_count() !=
+                    component_count ||
                 !cell_pattern.contains_owned_cell(
                     row.cell)) {
                 throw std::invalid_argument(

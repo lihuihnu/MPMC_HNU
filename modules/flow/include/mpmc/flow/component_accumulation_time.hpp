@@ -26,13 +26,16 @@ inline constexpr std::string_view
 ///   mol / (bulk-m^3 s)
 ///
 /// The Jacobian differentiates only with respect to the current
-/// NaturalVariableLayout3P coordinates. The previous accumulation snapshot and
+/// phase-cardinality-specific natural-variable coordinates. The previous accumulation snapshot and
 /// dt are frozen history/discretization inputs, not nonlinear unknowns.
 struct BackwardEulerComponentAccumulationResidual3P {
     static constexpr std::string_view convention =
         backward_euler_component_accumulation_convention;
 
-    NaturalVariableLayout3P current_layout;
+    NaturalVariableLayoutDescriptor current_layout{
+        std::size_t{2U},
+        std::size_t{1U},
+        std::vector<std::size_t>{1U}};
     double porosity{};
     double time_step_seconds{};
     std::vector<std::string> component_ids;

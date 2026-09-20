@@ -151,14 +151,23 @@ public:
 
 private:
     void validate() const {
+        const std::size_t phase_count =
+            natural_variable_count_ > 1U &&
+                    component_count_ > 0U
+                ? (natural_variable_count_ - 1U) /
+                      component_count_
+                : 0U;
         if (rank_count_ == 0U ||
             local_rank_.value() >= rank_count_ ||
             natural_variable_id_.empty() ||
             component_count_ < 2U ||
-            natural_variable_count_ !=
-                mpmc::flow::fixed_three_phase_count *
-                    component_count_ +
-                    1U ||
+            natural_variable_count_ <= 1U ||
+            (natural_variable_count_ - 1U) %
+                    component_count_ !=
+                0U ||
+            phase_count == 0U ||
+            phase_count >
+                mpmc::flow::fixed_three_phase_count ||
             petsc_scalar_row_start_ < 0 ||
             petsc_scalar_row_end_ < petsc_scalar_row_start_ ||
             petsc_scalar_row_count_ < petsc_scalar_row_end_) {
@@ -508,10 +517,18 @@ make_complete_natural_variable_assembly_snapshot_3d(
             component.natural_variable_count();
         const std::size_t n =
             component.component_count();
-        if (q !=
-                mpmc::flow::fixed_three_phase_count *
-                    n +
-                    1U ||
+        const std::size_t phase_count =
+            q > 1U && n > 0U
+                ? (q - 1U) / n
+                : 0U;
+        if (q <= 1U ||
+            (q - 1U) % n != 0U ||
+            (phase_count != 1U &&
+             phase_count !=
+                 mpmc::flow::fixed_three_phase_count) ||
+            (phase_count == 1U &&
+             (!fugacity.residual_entries().empty() ||
+              !fugacity.jacobian_entries().empty())) ||
             component.local_rank() !=
                 partition.local_rank() ||
             component.local_rank() !=

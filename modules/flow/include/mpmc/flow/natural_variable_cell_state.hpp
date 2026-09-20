@@ -18,6 +18,127 @@ namespace mpmc::flow {
 
 inline constexpr std::size_t fixed_three_phase_count = 3U;
 
+
+class NaturalVariableLayout3P;
+
+class NaturalVariableCompositionPivotDescriptor {
+public:
+    NaturalVariableCompositionPivotDescriptor() = default;
+
+    explicit NaturalVariableCompositionPivotDescriptor(
+        std::vector<std::size_t> dependent_components)
+        : dependent_components_(
+              std::move(dependent_components)) {}
+
+    [[nodiscard]] const std::vector<std::size_t>&
+    dependent_components() const noexcept {
+        return dependent_components_;
+    }
+
+private:
+    std::vector<std::size_t> dependent_components_;
+};
+
+/// Phase-cardinality-neutral local natural-variable layout descriptor.
+///
+/// This is metadata only. It preserves block width/equation positions across
+/// 1/2/3-phase reduced systems without exposing phase-specific coordinates.
+class NaturalVariableLayoutDescriptor {
+public:
+    NaturalVariableLayoutDescriptor(
+        std::size_t component_count,
+        std::size_t phase_count,
+        std::vector<std::size_t> dependent_components)
+        : component_count_(component_count),
+          phase_count_(phase_count),
+          composition_pivot_(
+              std::move(dependent_components)) {
+        if (component_count_ < 2U ||
+            phase_count_ == 0U ||
+            phase_count_ > fixed_three_phase_count ||
+            composition_pivot_.dependent_components().size() !=
+                phase_count_) {
+            throw std::invalid_argument(
+                "mpmc::flow::NaturalVariableLayoutDescriptor: invalid component/phase cardinality");
+        }
+        for (const auto dependent :
+             composition_pivot_.dependent_components()) {
+            if (dependent >= component_count_) {
+                throw std::invalid_argument(
+                    "mpmc::flow::NaturalVariableLayoutDescriptor: dependent component out of range");
+            }
+        }
+        if (component_count_ >
+            (std::numeric_limits<std::size_t>::max() - 1U) /
+                phase_count_) {
+            throw std::length_error(
+                "mpmc::flow::NaturalVariableLayoutDescriptor: layout size overflow");
+        }
+    }
+
+    NaturalVariableLayoutDescriptor(
+        const NaturalVariableLayout3P& layout);
+
+    [[nodiscard]] std::size_t
+    component_count() const noexcept {
+        return component_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    phase_count() const noexcept {
+        return phase_count_;
+    }
+
+    [[nodiscard]] std::size_t
+    unknown_count() const noexcept {
+        return phase_count_ *
+                   component_count_ +
+               1U;
+    }
+
+    [[nodiscard]] std::size_t
+    equation_count() const noexcept {
+        return unknown_count();
+    }
+
+    [[nodiscard]] static constexpr std::size_t
+    pressure_unknown_index() noexcept {
+        return 0U;
+    }
+
+    [[nodiscard]] static constexpr std::size_t
+    temperature_unknown_index() noexcept {
+        return 1U;
+    }
+
+    [[nodiscard]] std::size_t
+    component_conservation_equation_index(
+        std::size_t component) const {
+        if (component >= component_count_) {
+            throw std::out_of_range(
+                "mpmc::flow::NaturalVariableLayoutDescriptor: component equation out of range");
+        }
+        return component;
+    }
+
+    [[nodiscard]] std::size_t
+    energy_equation_index() const noexcept {
+        return component_count_;
+    }
+
+    [[nodiscard]] const NaturalVariableCompositionPivotDescriptor&
+    composition_pivot() const noexcept {
+        return composition_pivot_;
+    }
+
+private:
+    std::size_t component_count_{};
+    std::size_t phase_count_{};
+    NaturalVariableCompositionPivotDescriptor
+        composition_pivot_;
+};
+
+
 /// Generic numerical phase slots for the fixed-three-phase interior contract.
 ///
 /// These slots intentionally carry no oil/gas/water or liquid/vapor identity.
@@ -601,6 +722,21 @@ private:
     NaturalVariableCompositionPivot3P
         composition_pivot_;
 };
+
+
+inline NaturalVariableLayoutDescriptor::
+NaturalVariableLayoutDescriptor(
+    const NaturalVariableLayout3P& layout)
+    : NaturalVariableLayoutDescriptor(
+          layout.component_count(),
+          NaturalVariableLayout3P::phase_count(),
+          std::vector<std::size_t>{
+              layout.composition_pivot()
+                  .dependent_components()
+                  .begin(),
+              layout.composition_pivot()
+                  .dependent_components()
+                  .end()}) {}
 
 struct NaturalVariableCellStateInput3P {
     std::vector<std::string> component_ids;

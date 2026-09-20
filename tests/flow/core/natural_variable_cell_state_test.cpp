@@ -15,6 +15,8 @@
 #include <vector>
 
 bool natural_variable_cell_state_header();
+bool single_phase_natural_variable_header();
+void single_phase_natural_variable_contract();
 
 namespace {
 
@@ -640,10 +642,17 @@ void invalid_state() {
     }
 }
 
+void single_phase_reduction() {
+    single_phase_natural_variable_contract();
+}
+
 void headers() {
     require(
         natural_variable_cell_state_header(),
         "flow public-header probe failed");
+    require(
+        single_phase_natural_variable_header(),
+        "single-phase public-header probe failed");
 }
 
 using Test =
@@ -654,6 +663,7 @@ constexpr Test tests[]{
     {"composition_pivot", composition_pivot},
     {"valid_state", valid_state},
     {"invalid_state", invalid_state},
+    {"single_phase_reduction", single_phase_reduction},
     {"headers", headers}};
 
 } // namespace

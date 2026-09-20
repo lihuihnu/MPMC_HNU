@@ -179,10 +179,12 @@ namespace local_component_conservation_detail {
 }
 
 [[nodiscard]] inline bool same_layout(
-    const mpmc::flow::NaturalVariableLayout3P& first,
-    const mpmc::flow::NaturalVariableLayout3P& second) {
+    const mpmc::flow::NaturalVariableLayoutDescriptor& first,
+    const mpmc::flow::NaturalVariableLayoutDescriptor& second) {
     return first.component_count() ==
                second.component_count() &&
+        first.phase_count() ==
+            second.phase_count() &&
         first.unknown_count() ==
             second.unknown_count() &&
         first.composition_pivot()
@@ -231,6 +233,16 @@ inline void validate_state_identity(
         }
     }
 
+    if (identity.saturation.size() !=
+            identity.layout.phase_count() ||
+        identity.phase_composition.size() !=
+            identity.layout.phase_count()) {
+        throw std::invalid_argument(
+            std::string{"mpmc::flow_discretization: invalid "} +
+            name +
+            " phase-cardinality metadata");
+    }
+
     double saturation_sum = 0.0;
     for (double value : identity.saturation) {
         if (!std::isfinite(value) ||
@@ -253,7 +265,7 @@ inline void validate_state_identity(
     }
 
     for (std::size_t phase = 0U;
-         phase < mpmc::flow::fixed_three_phase_count;
+         phase < identity.layout.phase_count();
          ++phase) {
         const auto& composition =
             identity.phase_composition[phase];
@@ -298,8 +310,19 @@ inline void validate_state_identity(
         return false;
     }
 
+    if (first.saturation.size() !=
+            first.layout.phase_count() ||
+        second.saturation.size() !=
+            second.layout.phase_count() ||
+        first.phase_composition.size() !=
+            first.layout.phase_count() ||
+        second.phase_composition.size() !=
+            second.layout.phase_count()) {
+        return false;
+    }
+
     for (std::size_t phase = 0U;
-         phase < mpmc::flow::fixed_three_phase_count;
+         phase < first.layout.phase_count();
          ++phase) {
         if (!near_roundoff(
                 first.saturation[phase],

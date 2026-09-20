@@ -128,12 +128,22 @@ namespace energy_accumulation_detail {
     if (first.component_ids != second.component_ids ||
         first.layout.component_count() !=
             second.layout.component_count() ||
+        first.layout.phase_count() !=
+            second.layout.phase_count() ||
         first.layout.unknown_count() !=
             second.layout.unknown_count() ||
         first.layout.composition_pivot()
                 .dependent_components() !=
             second.layout.composition_pivot()
                 .dependent_components() ||
+        first.saturation.size() !=
+            first.layout.phase_count() ||
+        second.saturation.size() !=
+            second.layout.phase_count() ||
+        first.phase_composition.size() !=
+            first.layout.phase_count() ||
+        second.phase_composition.size() !=
+            second.layout.phase_count() ||
         !phase_transport_detail::near_roundoff(
             first.reference_pressure_pa,
             second.reference_pressure_pa) ||
@@ -144,7 +154,7 @@ namespace energy_accumulation_detail {
     }
 
     for (std::size_t phase = 0U;
-         phase < fixed_three_phase_count;
+         phase < first.layout.phase_count();
          ++phase) {
         if (!phase_transport_detail::near_roundoff(
                 first.saturation[phase],

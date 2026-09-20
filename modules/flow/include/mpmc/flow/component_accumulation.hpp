@@ -74,7 +74,10 @@ struct PoreVolumeComponentAccumulationLinearization3P {
     static constexpr std::string_view convention =
         pore_volume_component_accumulation_convention;
 
-    NaturalVariableLayout3P layout;
+    NaturalVariableLayoutDescriptor layout{
+        std::size_t{2U},
+        std::size_t{1U},
+        std::vector<std::size_t>{1U}};
     double porosity{};
     std::vector<std::string> component_ids;
     std::size_t input_count{};

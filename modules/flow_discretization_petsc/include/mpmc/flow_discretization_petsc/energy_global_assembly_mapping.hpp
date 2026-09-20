@@ -297,6 +297,56 @@ make_energy_conservation_global_assembly_entries_3d(
 
     std::size_t q = 0U;
     std::size_t component_count = 0U;
+    std::uint64_t local_component_count = 0U;
+    for (const auto& row : conservation.owned_rows()) {
+        const std::uint64_t row_count =
+            static_cast<std::uint64_t>(
+                row.local_residual
+                    .cell_state_identity
+                    .component_ids.size());
+        if (local_component_count == 0U) {
+            local_component_count = row_count;
+        } else if (local_component_count != row_count) {
+            local_error = PETSC_ERR_ARG_INCOMP;
+        }
+    }
+    std::uint64_t global_component_count = 0U;
+    std::uint64_t local_min_component_count =
+        local_component_count == 0U
+            ? std::numeric_limits<std::uint64_t>::max()
+            : local_component_count;
+    std::uint64_t global_min_component_count =
+        std::numeric_limits<std::uint64_t>::max();
+    if (MPI_Allreduce(
+            &local_component_count,
+            &global_component_count,
+            1,
+            MPI_UINT64_T,
+            MPI_MAX,
+            comm) != MPI_SUCCESS ||
+        MPI_Allreduce(
+            &local_min_component_count,
+            &global_min_component_count,
+            1,
+            MPI_UINT64_T,
+            MPI_MIN,
+            comm) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+    if (local_error != PETSC_SUCCESS ||
+        global_component_count < 2U ||
+        (global_min_component_count !=
+             std::numeric_limits<std::uint64_t>::max() &&
+         global_min_component_count !=
+             global_component_count) ||
+        global_component_count >
+            static_cast<std::uint64_t>(
+                std::numeric_limits<std::size_t>::max())) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    component_count =
+        static_cast<std::size_t>(
+            global_component_count);
     std::size_t variable_index = 0U;
     PetscInt scalar_row_start = -1;
     PetscInt scalar_row_end = -1;
@@ -347,28 +397,22 @@ make_energy_conservation_global_assembly_entries_3d(
             dof_layout.variable_index(natural_variable_id);
         const auto& variable =
             dof_layout.variable(variable_index);
+        q = variable.component_count;
+        const std::size_t phase_count =
+            q > 1U
+                ? (q - 1U) / component_count
+                : 0U;
         if (variable.location != mpmc::mesh::EntityKind::cell ||
-            variable.component_count < 7U ||
+            q <= 1U ||
+            (q - 1U) % component_count != 0U ||
+            phase_count == 0U ||
+            phase_count >
+                mpmc::flow::fixed_three_phase_count ||
             dof_layout.dofs_per_entity(
                 mpmc::mesh::EntityKind::cell) !=
-                variable.component_count) {
+                q) {
             throw std::invalid_argument(
-                "energy mapping natural-variable DoF must occupy the complete cell scalar block");
-        }
-
-        q = variable.component_count;
-        if ((q - 1U) %
-                mpmc::flow::fixed_three_phase_count !=
-            0U) {
-            throw std::invalid_argument(
-                "energy mapping natural-variable block width is not 3*Nc+1");
-        }
-        component_count =
-            (q - 1U) /
-            mpmc::flow::fixed_three_phase_count;
-        if (component_count < 2U) {
-            throw std::invalid_argument(
-                "energy mapping requires at least two components");
+                "energy mapping natural-variable DoF must occupy a P*Nc+1 cell block for P in [1,3]");
         }
 
         for (std::size_t local = 0U;
@@ -528,6 +572,8 @@ make_energy_conservation_global_assembly_entries_3d(
                     component_count ||
                 identity.component_ids.size() !=
                     component_count ||
+                identity.layout.phase_count() !=
+                    phase_count ||
                 identity.layout.unknown_count() != q ||
                 row.local_residual.local_gradient.size() != q ||
                 !cell_pattern.contains_owned_cell(row.cell)) {
@@ -636,6 +682,8 @@ make_energy_conservation_global_assembly_entries_3d(
                         identity.component_ids ||
                     block.column_state_identity.layout
                             .component_count() != component_count ||
+                    block.column_state_identity.layout
+                            .phase_count() != phase_count ||
                     block.column_state_identity.layout
                             .unknown_count() != q ||
                     block.gradient.size() != q ||
