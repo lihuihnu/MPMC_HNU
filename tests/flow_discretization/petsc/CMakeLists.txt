@@ -14,6 +14,7 @@ add_executable(
     energy_global_assembly_mapping_header.cpp
     complete_natural_variable_assembly_snapshot_header.cpp
     complete_natural_variable_petsc_materialization_header.cpp
+    natural_variable_newton_linear_system_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(
@@ -46,6 +47,6 @@ add_test(
 set_tests_properties(
     flow_discretization.petsc.distributed_owner_targeted_conservation
     PROPERTIES
-        LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;owner_targeted"
+        LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;newton_linear_system;owner_targeted"
         TIMEOUT 60
         ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1")

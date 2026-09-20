@@ -3,6 +3,7 @@
 #include <mpmc/flow_discretization_petsc/energy_global_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_assembly_snapshot.hpp>
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
+#include <mpmc/flow_discretization_petsc/natural_variable_newton_linear_system.hpp>
 #include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
 
@@ -26,6 +27,7 @@ bool distributed_energy_conservation_header();
 bool energy_global_assembly_mapping_header();
 bool complete_natural_variable_assembly_snapshot_header();
 bool complete_natural_variable_petsc_materialization_header();
+bool natural_variable_newton_linear_system_header();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -3529,6 +3531,652 @@ void complete_natural_variable_petsc_materialization() {
         "PETSc materialized system destroy failed");
 }
 
+
+double manufactured_reference_delta(
+    PetscInt global_scalar) {
+    if (global_scalar < 0) {
+        throw std::invalid_argument(
+            "negative manufactured scalar index");
+    }
+    const double magnitude =
+        0.01 *
+        static_cast<double>(
+            global_scalar + 1);
+    return global_scalar % 2 == 0
+        ? magnitude
+        : -magnitude;
+}
+
+fdp::CompleteNaturalVariableAssemblySnapshot3D
+make_manufactured_solvable_snapshot(
+    const fdp::
+        CompleteNaturalVariableAssemblySnapshot3D&
+            source) {
+    std::vector<
+        fdp::CompleteNaturalVariableResidualEntry3D>
+        residuals{
+            source.residual_entries().begin(),
+            source.residual_entries().end()};
+    std::vector<
+        fdp::CompleteNaturalVariableJacobianEntry3D>
+        jacobian{
+            source.jacobian_entries().begin(),
+            source.jacobian_entries().end()};
+
+    for (auto& entry : jacobian) {
+        if (entry.petsc_global_row ==
+            entry.petsc_global_column) {
+            entry.value =
+                10.0 +
+                0.1 *
+                    static_cast<double>(
+                        entry.petsc_global_row +
+                        1);
+        } else {
+            const PetscInt pattern =
+                (entry.petsc_global_row +
+                 entry.petsc_global_column) %
+                7;
+            entry.value =
+                0.001 *
+                static_cast<double>(
+                    pattern + 1);
+        }
+    }
+
+    for (auto& residual : residuals) {
+        double action = 0.0;
+        for (const auto& entry : jacobian) {
+            if (entry.petsc_global_row !=
+                residual.petsc_global_row) {
+                continue;
+            }
+            action +=
+                entry.value *
+                manufactured_reference_delta(
+                    entry.petsc_global_column);
+        }
+        residual.native_value =
+            -action;
+    }
+
+    return {
+        source.local_rank(),
+        source.rank_count(),
+        std::string{
+            source.natural_variable_id()},
+        source.component_count(),
+        source.natural_variable_count(),
+        source.petsc_scalar_row_start(),
+        source.petsc_scalar_row_end(),
+        source.petsc_scalar_row_count(),
+        std::move(residuals),
+        std::move(jacobian)};
+}
+
+void natural_variable_newton_linear_system() {
+    int rank = -1;
+    int size = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &size) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank/size query failed");
+    }
+    require_collective(
+        size == 2,
+        "frozen Newton linear-system test requires exactly two ranks");
+
+    auto partition =
+        make_partition(rank);
+    auto schedule =
+        make_schedule(rank);
+
+    LocalInputs component_inputs{rank};
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+    auto component_snapshot =
+        build(
+            rank,
+            partition,
+            schedule,
+            component_inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            component_snapshot.has_value(),
+        "component snapshot for frozen Newton test failed");
+
+    EnergyLocalInputs energy_inputs{rank};
+    auto energy_snapshot =
+        build_energy(
+            partition,
+            schedule,
+            energy_inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            energy_snapshot.has_value(),
+        "energy snapshot for frozen Newton test failed");
+
+    const std::size_t q =
+        identity(UINT64_C(10))
+            .layout.unknown_count();
+    auto layout =
+        make_natural_variable_dof_layout(
+            rank,
+            q);
+    auto numbering =
+        make_reversed_mesh_dof_numbering(
+            rank,
+            layout,
+            partition);
+    auto cell_bridge =
+        make_cell_row_bridge(
+            rank);
+    auto cell_pattern =
+        make_cell_column_pattern(
+            rank);
+
+    std::optional<
+        fdp::ComponentConservationGlobalAssemblyEntries3D>
+        component_mapping;
+    error =
+        fdp::
+            make_component_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *component_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &component_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            component_mapping.has_value(),
+        "component mapping for frozen Newton test failed");
+
+    std::optional<
+        fdp::EnergyConservationGlobalAssemblyEntries3D>
+        energy_mapping;
+    error =
+        fdp::
+            make_energy_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *energy_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &energy_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            energy_mapping.has_value(),
+        "energy mapping for frozen Newton test failed");
+
+    const std::uint64_t stable_cell =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+    auto fugacity =
+        make_fugacity_linearization(
+            stable_cell);
+    const std::array<
+        fdp::OwnedCellFugacityEquilibriumLinearizationBinding3D,
+        1>
+        fugacity_bindings{{
+            {
+                mesh::LocalIndex{0U},
+                mesh::GlobalEntityId{
+                    stable_cell},
+                &fugacity}
+        }};
+    std::optional<
+        fdp::FugacityEquilibriumGlobalAssemblyEntries3D>
+        fugacity_mapping;
+    error =
+        fdp::
+            make_fugacity_equilibrium_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *component_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                fugacity_bindings,
+                &fugacity_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            fugacity_mapping.has_value(),
+        "fugacity mapping for frozen Newton test failed");
+
+    std::optional<
+        fdp::CompleteNaturalVariableAssemblySnapshot3D>
+        complete;
+    error =
+        fdp::
+            make_complete_natural_variable_assembly_snapshot_3d(
+                PETSC_COMM_WORLD,
+                *component_mapping,
+                *energy_mapping,
+                *fugacity_mapping,
+                partition,
+                cell_bridge,
+                cell_pattern,
+                &complete);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            complete.has_value(),
+        "complete snapshot for frozen Newton test failed");
+
+    auto manufactured =
+        make_manufactured_solvable_snapshot(
+            *complete);
+
+    Vec residual = nullptr;
+    Mat jacobian = nullptr;
+    error =
+        fdp::
+            materialize_complete_natural_variable_petsc_system_3d(
+                PETSC_COMM_WORLD,
+                manufactured,
+                cell_bridge,
+                &residual,
+                &jacobian);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            residual != nullptr &&
+            jacobian != nullptr,
+        "manufactured PETSc system materialization failed");
+
+    Vec reference_delta = nullptr;
+    Vec manufactured_balance = nullptr;
+    const PetscErrorCode reference_duplicate_error =
+        VecDuplicate(
+            residual,
+            &reference_delta);
+    const PetscErrorCode balance_duplicate_error =
+        VecDuplicate(
+            residual,
+            &manufactured_balance);
+    require_collective(
+        reference_duplicate_error ==
+                PETSC_SUCCESS &&
+            balance_duplicate_error ==
+                PETSC_SUCCESS,
+        "manufactured Newton reference vector allocation failed");
+
+    for (const auto& entry :
+         manufactured.residual_entries()) {
+        const PetscInt index =
+            entry.petsc_global_row;
+        const PetscScalar value =
+            static_cast<PetscScalar>(
+                manufactured_reference_delta(
+                    index));
+        require_collective(
+            VecSetValues(
+                reference_delta,
+                1,
+                &index,
+                &value,
+                INSERT_VALUES) ==
+                PETSC_SUCCESS,
+            "manufactured Newton reference correction insertion failed");
+    }
+    const PetscErrorCode reference_begin =
+        VecAssemblyBegin(
+            reference_delta);
+    const PetscErrorCode reference_end =
+        VecAssemblyEnd(
+            reference_delta);
+    require_collective(
+        reference_begin ==
+                PETSC_SUCCESS &&
+            reference_end ==
+                PETSC_SUCCESS,
+        "manufactured Newton reference correction assembly failed");
+
+    const PetscErrorCode manufactured_matmult_error =
+        MatMult(
+            jacobian,
+            reference_delta,
+            manufactured_balance);
+    const PetscErrorCode manufactured_axpy_error =
+        VecAXPY(
+            manufactured_balance,
+            PetscScalar{1.0},
+            residual);
+    require_collective(
+        manufactured_matmult_error ==
+                PETSC_SUCCESS &&
+            manufactured_axpy_error ==
+                PETSC_SUCCESS,
+        "manufactured Newton exact-balance evaluation failed");
+
+    PetscReal manufactured_balance_norm = 0.0;
+    require_collective(
+        VecNorm(
+            manufactured_balance,
+            NORM_2,
+            &manufactured_balance_norm) ==
+                PETSC_SUCCESS,
+        "manufactured Newton exact-balance norm failed");
+    require_collective(
+        static_cast<double>(
+            manufactured_balance_norm) <=
+            5.0e-12,
+        "manufactured Newton fixture does not satisfy J*delta_ref + R = 0");
+
+    Vec residual_before = nullptr;
+    const PetscErrorCode residual_before_duplicate_error =
+        VecDuplicate(
+            residual,
+            &residual_before);
+    const PetscErrorCode residual_before_copy_error =
+        VecCopy(
+            residual,
+            residual_before);
+    require_collective(
+        residual_before_duplicate_error ==
+                PETSC_SUCCESS &&
+            residual_before_copy_error ==
+                PETSC_SUCCESS,
+        "frozen Newton residual preservation copy failed");
+
+    Vec correction = nullptr;
+    std::optional<
+        fdp::FrozenNaturalVariableNewtonLinearCorrection3D>
+        report;
+    error =
+        fdp::
+            solve_frozen_natural_variable_newton_linear_system_3d(
+                PETSC_COMM_WORLD,
+                manufactured,
+                jacobian,
+                residual,
+                &correction,
+                &report);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            correction != nullptr &&
+            report.has_value(),
+        "frozen Newton linear-system contract failed");
+
+    require_collective(
+        report->ksp_type() ==
+                std::string_view{
+                    KSPGMRES} &&
+            report->pc_type() ==
+                std::string_view{
+                    PCNONE} &&
+            static_cast<int>(
+                report->converged_reason()) >
+                0 &&
+            report->iteration_count() > 0 &&
+            report->iteration_count() <=
+                manufactured
+                    .petsc_scalar_row_count(),
+        "frozen Newton baseline KSP configuration/convergence mismatch");
+
+    near_collective(
+        report->residual_l2_norm(),
+        report->rhs_l2_norm(),
+        2.0e-13,
+        2.0e-13);
+    require_collective(
+        report->linear_residual_l2_norm() <=
+            5.0e-10 *
+                std::max(
+                    1.0,
+                    report->rhs_l2_norm()),
+        "frozen Newton reported linear residual is too large");
+
+    const PetscInt expected_start =
+        manufactured
+            .petsc_scalar_row_start();
+    const auto& cell_layout =
+        identity(stable_cell).layout;
+    require_collective(
+        report->locally_owned_correction().size() ==
+                q &&
+            cell_layout.unknown_count() ==
+                q,
+        "frozen Newton local correction/layout cardinality mismatch");
+
+    for (std::size_t slot = 0U;
+         slot < q;
+         ++slot) {
+        const auto& entry =
+            report
+                ->locally_owned_correction()[
+                    slot];
+        const PetscInt global_scalar =
+            expected_start +
+            static_cast<PetscInt>(
+                slot);
+        const std::uint64_t expected_mesh_global =
+            stable_cell == UINT64_C(10)
+                ? static_cast<std::uint64_t>(
+                      q + slot)
+                : static_cast<std::uint64_t>(
+                      slot);
+
+        require_collective(
+            entry.petsc_global_scalar ==
+                    global_scalar &&
+                entry.mesh_global_dof ==
+                    mesh::GlobalDofIndex{
+                        expected_mesh_global} &&
+                entry.cell_global ==
+                    mesh::GlobalEntityId{
+                        stable_cell} &&
+                entry.natural_variable_slot ==
+                    slot,
+            "frozen Newton correction global/local numbering mismatch");
+
+        const bool composition_slot =
+            slot >= 4U;
+        require_collective(
+            cell_layout
+                    .composition_unknown_identity(
+                        slot)
+                    .has_value() ==
+                composition_slot,
+            "frozen Newton correction slot does not match natural-variable layout semantics");
+
+        const double expected_value =
+            manufactured_reference_delta(
+                global_scalar);
+        near_collective(
+            entry.value,
+            expected_value,
+            2.0e-10,
+            2.0e-12);
+
+        PetscScalar vector_value{};
+        require_collective(
+            VecGetValues(
+                correction,
+                1,
+                &global_scalar,
+                &vector_value) ==
+                PETSC_SUCCESS,
+            "frozen Newton correction Vec readback failed");
+        near_collective(
+            static_cast<double>(
+                PetscRealPart(
+                    vector_value)),
+            expected_value,
+            2.0e-10,
+            2.0e-12);
+    }
+
+    Vec independent_linear_residual = nullptr;
+    const PetscErrorCode independent_duplicate_error =
+        VecDuplicate(
+            residual,
+            &independent_linear_residual);
+    const PetscErrorCode independent_matmult_error =
+        MatMult(
+            jacobian,
+            correction,
+            independent_linear_residual);
+    const PetscErrorCode independent_axpy_error =
+        VecAXPY(
+            independent_linear_residual,
+            PetscScalar{1.0},
+            residual);
+    require_collective(
+        independent_duplicate_error ==
+                PETSC_SUCCESS &&
+            independent_matmult_error ==
+                PETSC_SUCCESS &&
+            independent_axpy_error ==
+                PETSC_SUCCESS,
+        "independent frozen Newton linear residual construction failed");
+
+    PetscReal independent_linear_norm = 0.0;
+    require_collective(
+        VecNorm(
+            independent_linear_residual,
+            NORM_2,
+            &independent_linear_norm) ==
+                PETSC_SUCCESS,
+        "independent frozen Newton linear residual norm failed");
+    near_collective(
+        static_cast<double>(
+            independent_linear_norm),
+        report->linear_residual_l2_norm(),
+        5.0e-10,
+        5.0e-12);
+
+    Vec residual_difference = nullptr;
+    const PetscErrorCode residual_difference_duplicate_error =
+        VecDuplicate(
+            residual,
+            &residual_difference);
+    const PetscErrorCode residual_difference_copy_error =
+        VecCopy(
+            residual_before,
+            residual_difference);
+    const PetscErrorCode residual_difference_axpy_error =
+        VecAXPY(
+            residual_difference,
+            PetscScalar{-1.0},
+            residual);
+    require_collective(
+        residual_difference_duplicate_error ==
+                PETSC_SUCCESS &&
+            residual_difference_copy_error ==
+                PETSC_SUCCESS &&
+            residual_difference_axpy_error ==
+                PETSC_SUCCESS,
+        "frozen Newton residual preservation audit failed");
+
+    PetscReal residual_difference_norm = 0.0;
+    require_collective(
+        VecNorm(
+            residual_difference,
+            NORM_INFINITY,
+            &residual_difference_norm) ==
+                PETSC_SUCCESS &&
+            residual_difference_norm ==
+                PetscReal{0.0},
+        "frozen Newton solve modified the input residual Vec");
+
+    // Wrong residual ownership/size must be rejected collectively before a
+    // correction Vec is returned.
+    Vec wrong_residual = nullptr;
+    require_collective(
+        VecCreateMPI(
+            PETSC_COMM_WORLD,
+            static_cast<PetscInt>(
+                q + 1U),
+            PETSC_DECIDE,
+            &wrong_residual) ==
+                PETSC_SUCCESS,
+        "wrong-size residual fixture allocation failed");
+    Vec wrong_correction = nullptr;
+    std::optional<
+        fdp::FrozenNaturalVariableNewtonLinearCorrection3D>
+        wrong_report;
+    const PetscErrorCode wrong_error =
+        fdp::
+            solve_frozen_natural_variable_newton_linear_system_3d(
+                PETSC_COMM_WORLD,
+                manufactured,
+                jacobian,
+                wrong_residual,
+                &wrong_correction,
+                &wrong_report);
+    require_collective(
+        wrong_error ==
+                PETSC_ERR_ARG_INCOMP &&
+            wrong_correction ==
+                nullptr &&
+            !wrong_report.has_value(),
+        "wrong residual size/ownership was not rejected collectively");
+
+    const PetscErrorCode wrong_destroy =
+        VecDestroy(
+            &wrong_residual);
+    const PetscErrorCode residual_difference_destroy =
+        VecDestroy(
+            &residual_difference);
+    const PetscErrorCode independent_destroy =
+        VecDestroy(
+            &independent_linear_residual);
+    const PetscErrorCode correction_destroy =
+        VecDestroy(
+            &correction);
+    const PetscErrorCode residual_before_destroy =
+        VecDestroy(
+            &residual_before);
+    const PetscErrorCode manufactured_balance_destroy =
+        VecDestroy(
+            &manufactured_balance);
+    const PetscErrorCode reference_destroy =
+        VecDestroy(
+            &reference_delta);
+    const PetscErrorCode residual_destroy =
+        VecDestroy(
+            &residual);
+    const PetscErrorCode jacobian_destroy =
+        MatDestroy(
+            &jacobian);
+
+    require_collective(
+        wrong_destroy ==
+                PETSC_SUCCESS &&
+            residual_difference_destroy ==
+                PETSC_SUCCESS &&
+            independent_destroy ==
+                PETSC_SUCCESS &&
+            correction_destroy ==
+                PETSC_SUCCESS &&
+            residual_before_destroy ==
+                PETSC_SUCCESS &&
+            manufactured_balance_destroy ==
+                PETSC_SUCCESS &&
+            reference_destroy ==
+                PETSC_SUCCESS &&
+            residual_destroy ==
+                PETSC_SUCCESS &&
+            jacobian_destroy ==
+                PETSC_SUCCESS,
+        "frozen Newton PETSc fixture cleanup failed");
+}
+
 void invalid_collective_energy_inputs() {
     int rank = -1;
     if (MPI_Comm_rank(
@@ -3755,6 +4403,9 @@ void headers() {
         complete_natural_variable_petsc_materialization_header(),
         "complete natural-variable PETSc materialization header probe failed");
     require_collective(
+        natural_variable_newton_linear_system_header(),
+        "natural-variable Newton linear-system header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -3791,6 +4442,7 @@ int main(int argc, char** argv) {
         energy_global_assembly_mapping();
         complete_natural_variable_assembly_snapshot();
         complete_natural_variable_petsc_materialization();
+        natural_variable_newton_linear_system();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();
@@ -3803,7 +4455,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] complete natural-variable PETSc materialization\n";
+                << "[PASS] frozen natural-variable Newton linear system\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;

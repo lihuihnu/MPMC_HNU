@@ -3028,3 +3028,146 @@ It additionally requires:
 No KSP/SNES/Newton solve, equation scaling, line search, phase switching,
 boundary/source/well term or new physical model is added in this slice.
 
+## 41. Frozen natural-variable Newton linear-system contract
+
+The assembled natural-variable PETSc system now supports one algebraic Newton correction
+without updating the physical state.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/natural_variable_newton_linear_system.hpp>
+```
+
+The contract solves exactly one frozen linearization:
+
+```text
+J(q^k) * delta_q = -R(q^k)
+```
+
+and then stops.
+
+### Input boundary
+
+The solver consumes only:
+
+- the already assembled PETSc Jacobian `Mat`;
+- the already assembled residual `Vec`;
+- the frozen complete-assembly numbering/provenance snapshot.
+
+The API does not accept an EOS, flash backend, phase-property evaluator, flux operator,
+accumulation evaluator or state-update callback. Therefore this layer cannot re-evaluate
+thermodynamics or flow physics while solving the linear system.
+
+### RHS ownership
+
+The input residual is treated as read-only.
+
+Internally:
+
+```text
+rhs = copy(R)
+rhs = -rhs
+```
+
+using `VecDuplicate`, `VecCopy` and `VecScale(-1)`.
+
+The original residual `Vec` is not modified.
+
+### Small-system algebraic baseline
+
+This gate intentionally uses a package-independent PETSc baseline:
+
+```text
+KSP = GMRES
+PC  = NONE
+restart = global scalar row count
+rtol = 1e-12
+atol = 1e-14
+```
+
+and rejects systems larger than 200 scalar rows.
+
+For the current 2-cell / `Nc=3` regression, the global system has 20 scalar rows, so
+GMRES retains the complete Krylov space. This is an algebraic-correctness baseline, not a
+production reservoir solver or preconditioner policy.
+
+Distributed direct LU is deliberately not frozen here because it would require selecting
+an external package such as MUMPS or SuperLU_DIST, which is a separate solver-backend
+decision.
+
+### Correction provenance
+
+The returned caller-owned `delta_q Vec` uses exactly the same PETSc scalar ownership as
+the residual/Jacobian.
+
+The solve report records every locally owned correction with:
+
+- PETSc global scalar index;
+- independent mesh-global `GlobalDofIndex`;
+- stable cell identity;
+- natural-variable slot;
+- correction value.
+
+Thus composition-slot interpretation remains tied to the already frozen per-cell
+`NaturalVariableLayout3P` / pivot rather than being inferred from PETSc numbering.
+
+### Linear residual audit
+
+After `KSPSolve`, the contract independently forms:
+
+```text
+r_linear = J * delta_q + R
+```
+
+and computes:
+
+```text
+||r_linear||_2
+```
+
+The returned report includes the original residual norm, RHS norm, KSP convergence reason,
+iteration count and the independently recomputed linear residual norm.
+
+Because component, energy and fugacity equations retain different native physical units,
+this combined Euclidean norm is an **unscaled algebraic verification norm only**. It is
+not a physical Newton convergence criterion.
+
+### Nonsingular manufactured regression
+
+The earlier assembly tests intentionally use simple affine derivative fixtures whose
+20-by-20 Jacobian is rank-deficient; those fixtures remain unchanged because they test
+structure, ownership and numbering rather than solvability.
+
+The linear-solve regression therefore keeps exactly the same:
+
+- 2-rank ownership;
+- `q=3*Nc+1=10` block width;
+- PETSc scalar numbering;
+- mesh-global provenance;
+- actual Jacobian row/column locations;
+
+but replaces only test numerical values with a strictly diagonally dominant manufactured
+matrix.
+
+A known correction `delta_q*` is chosen and the test residual is constructed as:
+
+```text
+R = -J * delta_q*
+```
+
+The regression first verifies the manufactured identity itself, then solves the assembled
+PETSc system and checks:
+
+- recovered `delta_q` against `delta_q*`;
+- global/local scalar numbering;
+- stable-cell and mesh-global DoF provenance;
+- per-cell natural-variable slot semantics;
+- unchanged input residual after the solve;
+- positive PETSc convergence reason;
+- independently recomputed `||J*delta_q + R||_2`;
+- collective rejection of a residual Vec with incompatible size/ownership.
+
+No state update, damping, line search, phase switching, SNES/Newton iteration, equation
+scaling, well term or boundary/source term is introduced in this slice.
+
