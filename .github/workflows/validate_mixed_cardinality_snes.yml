@@ -1,0 +1,41 @@
+name: Validate mixed-cardinality SNES slice
+
+on:
+  push:
+    branches:
+      - work/mixed-cardinality-snes-20260920
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-mixed-cardinality-snes
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: PETSc 3.19.6 mixed-cardinality 2-rank
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify pinned toolchain
+        run: |
+          set -euxo pipefail
+          test "$(g++ -dumpfullversion -dumpversion)" = "13.3.0"
+          test "$(pkg-config --modversion PETSc)" = "3.19.6"
+          mpiexec --version | head -2
+      - name: Configure
+        run: |
+          cmake -S tests/flow_discretization/petsc             -B build/flow-discretization-petsc             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_CXX_COMPILER=g++
+      - name: Build
+        run: |
+          cmake --build build/flow-discretization-petsc             --target mpmc_flow_discretization_petsc_tests             --parallel 2
+      - name: Run 2-rank regression
+        env:
+          OMPI_MCA_rmaps_base_oversubscribe: "1"
+          OMPI_MCA_btl_vader_single_copy_mechanism: "none"
+        run: |
+          ctest --test-dir build/flow-discretization-petsc             -R '^flow_discretization[.]petsc[.]distributed_owner_targeted_conservation$'             --verbose --no-tests=error
