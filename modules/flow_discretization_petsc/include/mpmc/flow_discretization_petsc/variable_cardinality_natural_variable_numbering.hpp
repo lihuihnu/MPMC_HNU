@@ -224,6 +224,11 @@ private:
                 record.phase_count >
                     mpmc::flow::
                         fixed_three_phase_count ||
+                component_count_ >
+                    (std::numeric_limits<
+                         std::size_t>::max() -
+                     1U) /
+                        record.phase_count ||
                 record.scalar_count !=
                     record.phase_count *
                         component_count_ +
@@ -238,6 +243,9 @@ private:
                     static_cast<std::size_t>(
                         std::numeric_limits<PetscInt>::
                             max()) ||
+                record.scalar_count >
+                    static_cast<std::size_t>(
+                        petsc_global_scalar_count_) ||
                 record.petsc_global_scalar_start >
                     petsc_global_scalar_count_ -
                         static_cast<PetscInt>(
@@ -279,9 +287,18 @@ private:
                     throw std::invalid_argument(
                         "mpmc::flow_discretization_petsc: owned variable-cardinality cell escapes PETSc ownership range");
                 }
-                counted_owned +=
+                const PetscInt record_width =
                     static_cast<PetscInt>(
                         record.scalar_count);
+                if (counted_owned >
+                    std::numeric_limits<PetscInt>::
+                            max() -
+                        record_width) {
+                    throw std::length_error(
+                        "mpmc::flow_discretization_petsc: owned scalar count overflow");
+                }
+                counted_owned +=
+                    record_width;
             } else {
                 const PetscInt cell_end =
                     record.petsc_global_scalar_start +
@@ -509,18 +526,27 @@ make_variable_cardinality_natural_variable_numbering_3d(
         return error;
     }
 
-    PetscInt global_scalar_count = 0;
+    const std::uint64_t local_owned_scalar_count_u64 =
+        static_cast<std::uint64_t>(
+            local_owned_scalar_count);
+    std::uint64_t global_scalar_count_u64 = 0U;
     if (MPI_Allreduce(
-            &local_owned_scalar_count,
-            &global_scalar_count,
+            &local_owned_scalar_count_u64,
+            &global_scalar_count_u64,
             1,
-            MPIU_INT,
+            MPI_UINT64_T,
             MPI_SUM,
-            comm) != MPI_SUCCESS ||
-        global_scalar_count <
-            local_owned_scalar_count) {
+            comm) != MPI_SUCCESS) {
         return PETSC_ERR_MPI;
     }
+    if (global_scalar_count_u64 >
+        static_cast<std::uint64_t>(
+            std::numeric_limits<PetscInt>::max())) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    const PetscInt global_scalar_count =
+        static_cast<PetscInt>(
+            global_scalar_count_u64);
 
     PetscLayout layout = nullptr;
     error =
@@ -800,6 +826,10 @@ make_variable_cardinality_natural_variable_numbering_3d(
                     global_scalar_count) ||
             gathered[index]
                 .scalar_count == 0U ||
+            gathered[index]
+                .scalar_count >
+                static_cast<std::uint64_t>(
+                    global_scalar_count) ||
             gathered[index]
                 .global_scalar_start >
                 static_cast<std::uint64_t>(
