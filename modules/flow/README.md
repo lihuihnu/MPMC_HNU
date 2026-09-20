@@ -721,3 +721,128 @@ The regressions continue to require the same `2*Nc` residual closure, finite AD
 Jacobian, zero saturation columns under `pc=none`, and fixed-branch central-perturbation
 agreement. This pivot slice still does not add conservation, Darcy flux, time stepping,
 global Newton/PETSc assembly, phase switching or wells.
+
+## 22. Pore-volume component accumulation contract
+
+The first local conservation-law quantity is now defined without introducing a
+face flux or time-discrete residual.
+
+For canonical component `i`:
+
+```text
+N_i = phi * sum_alpha(S_alpha * c_alpha * x_alpha,i)
+```
+
+where:
+
+- `phi` is the dimensionless pore-volume fraction of bulk porous-medium volume;
+- `S_alpha` is phase saturation, i.e. phase volume / pore volume;
+- `c_alpha` is phase molar density in `mol / phase-fluid m^3`;
+- `x_alpha,i` is the phase mole fraction;
+- `N_i` is component accumulation in **`mol / bulk-m^3`**.
+
+This is intentionally distinct from `physics::PtComponentInventory`, which reports
+component moles per **total fluid volume** and contains no porosity or saturation.
+
+### Current and previous snapshots
+
+`build_pore_volume_component_accumulation()` consumes one validated
+`NaturalVariableCellState3P` plus explicit porosity and returns an owned
+`PoreVolumeComponentAccumulationSnapshot3P` in canonical component order.
+
+`make_pore_volume_component_accumulation_pair()` owns the current and previous
+snapshots needed by a later time-discrete balance. The pair does **not** contain a time
+step, divide by `dt`, or create a residual.
+
+Because the current PR assumes rigid porous-medium geometry, current and previous
+porosity must agree to roundoff. A future pressure-dependent/poroelastic porosity model
+must be introduced as an explicit constitutive extension rather than hidden in this
+pair.
+
+Current and previous component IDs/order must match exactly.
+
+### Conservation identity
+
+Every snapshot independently enforces
+
+```text
+sum_i N_i
+  = phi * sum_alpha(S_alpha * c_alpha)
+  [mol / bulk-m^3]
+```
+
+using the exact normalized phase compositions already owned by the cell state.
+
+No mole-phase fraction is used here. `S_alpha` is the pore-volume saturation natural
+variable; this is therefore not the existing total-fluid-volume inventory formula.
+
+### Current-state Jacobian
+
+The current accumulation Jacobian is defined on the exact frozen
+`NaturalVariableLayout3P` chart:
+
+```text
+q = p_ref, T, S0, S1, pivoted phase-composition coordinates
+```
+
+with shape
+
+```text
+Nc x (3*Nc + 1).
+```
+
+For fixed porosity:
+
+```text
+dN_i/dq =
+    phi * sum_alpha [
+        (dS_alpha/dq) * c_alpha * x_alpha,i
+      + S_alpha * (dc_alpha/dq) * x_alpha,i
+      + S_alpha * c_alpha * (dx_alpha,i/dq)
+    ].
+```
+
+The saturation and composition derivatives are exact chart identities:
+
+- `S2 = 1 - S0 - S1`;
+- each phase's frozen dependent composition has derivative `-1` with respect to
+  every independent composition coordinate in that phase;
+- canonical independent composition identity and Jacobian column mapping come directly
+  from `NaturalVariableLayout3P`.
+
+Molar density is **not** treated as constant. The caller must supply a
+`PhaseMolarDensityNaturalVariableLinearization3P` containing the exact current
+phase-density primal and `dc_alpha/dq` for every natural-variable column. The
+accumulation layer rejects a different pivot chart, mismatched density primal, malformed
+gradient shape or non-finite derivative. It never inserts zero density derivatives as a
+fallback.
+
+The Jacobian separately checks the differentiated conservation identity
+
+```text
+sum_i dN_i/dq
+  = d/dq [phi * sum_alpha(S_alpha c_alpha)].
+```
+
+### Validation ownership
+
+The dedicated `flow.accumulation.*` regression covers:
+
+- direct `mol / bulk-m^3` evaluation from porosity, saturation, molar density and
+  canonical phase composition;
+- current/previous ordered component identity and rigid-medium porosity consistency;
+- primal component-to-total conservation;
+- a pivoted three-phase current chart;
+- analytic Jacobian assembly including `dS`, `dc` and dependent-component `dx`;
+- every Jacobian column against fresh perturbation of an independent synthetic density
+  law;
+- differentiated component-to-total conservation;
+- invalid porosity, chart mismatch and non-finite density derivative rejection;
+- public-header self containment.
+
+The synthetic density law is only a structural derivative oracle. It is not physical
+validation and supplies no scientific property data.
+
+This slice still does **not** add `dt`, accumulation residual assembly, face fluxes,
+Darcy velocity, mobility, gravity, capillary pressure, wells, global Newton or PETSc
+value insertion.

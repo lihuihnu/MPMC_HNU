@@ -35,9 +35,18 @@ target_link_libraries(
         mpmc::flow_thermodynamics
         mpmc::ad)
 
+add_executable(
+    mpmc_flow_accumulation_tests
+    component_accumulation_test.cpp
+    component_accumulation_header.cpp)
+target_link_libraries(
+    mpmc_flow_accumulation_tests
+    PRIVATE mpmc::flow)
+
 foreach(target IN ITEMS
         mpmc_flow_core_tests
-        mpmc_flow_fugacity_tests)
+        mpmc_flow_fugacity_tests
+        mpmc_flow_accumulation_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -114,5 +123,21 @@ foreach(case IN LISTS fugacity_cases)
         flow.fugacity.${case}
         PROPERTIES
             LABELS "flow;natural_variables;fugacity;thermodynamics_boundary"
+            TIMEOUT 30)
+endforeach()
+
+set(accumulation_cases
+    snapshot_pair
+    jacobian
+    invalid_inputs
+    headers)
+foreach(case IN LISTS accumulation_cases)
+    add_test(
+        NAME flow.accumulation.${case}
+        COMMAND mpmc_flow_accumulation_tests ${case})
+    set_tests_properties(
+        flow.accumulation.${case}
+        PROPERTIES
+            LABELS "flow;natural_variables;accumulation;conservation"
             TIMEOUT 30)
 endforeach()
