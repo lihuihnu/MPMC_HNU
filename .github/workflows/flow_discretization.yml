@@ -74,7 +74,7 @@ jobs:
       - name: Build flow-discretization contract
         run: |
           cmake --build build/flow-discretization \
-            --target mpmc_flow_discretization_tests \
+            --target mpmc_flow_discretization_tests mpmc_flow_discretization_component_flux_tests \
             --config ${{ matrix.config }} \
             --parallel 2
 
@@ -82,6 +82,6 @@ jobs:
         run: |
           ctest --test-dir build/flow-discretization \
             -C ${{ matrix.config }} \
-            -R '^flow_discretization[.]tpfa_phase_flux[.]' \
+            -R '^flow_discretization[.](tpfa_phase_flux|component_flux)[.]' \
             --verbose \
             --no-tests=error

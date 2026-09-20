@@ -1496,3 +1496,125 @@ The dedicated `flow_discretization.tpfa_phase_flux.*` suite checks:
 This slice still does **not** multiply by `c_alpha x_alpha,i`, construct component
 molar face flux, assemble owner/neighbour conservation residual rows, add source/well
 terms, or insert PETSc matrix/vector values.
+
+## 28. Upwind phase molar-content and component molar face-flux contract
+
+The component-transport layer now consumes the already-materialized phase volumetric
+flux and applies the **same per-phase upstream cell** to phase molar density and phase
+composition:
+
+```text
+m_alpha,i,up = c_alpha,up * x_alpha,i,up   [mol/m^3]
+
+n_dot_i^f =
+    sum_alpha(
+        m_alpha,i,up * F_alpha
+    )                                      [mol/s]
+```
+
+No second, independent component upwind decision is made.
+
+### Upwind coupling
+
+For each phase:
+
+- `owner_negative_phase_potential` -> owner `c_alpha, x_alpha,i`;
+- `neighbour_positive_phase_potential` -> neighbour `c_alpha, x_alpha,i`;
+- `owner_exact_zero_tie` -> the same deterministic owner branch already frozen by the
+  phase-potential/phase-flux contract.
+
+Thus mobility, molar density and composition all come from one consistent phase-upstream
+state.
+
+### Molar-content Jacobian
+
+The existing `PhaseMolarDensityNaturalVariableLinearization3P` supplies
+`c_alpha` and `dc_alpha/dq` on each cell's frozen natural-variable chart. Composition
+derivatives come directly from that cell's dependent-component pivot:
+
+```text
+d(c_alpha x_alpha,i)
+  = x_alpha,i dc_alpha
+  + c_alpha dx_alpha,i.
+```
+
+For an independent phase-composition coordinate, its own component has `dx=+1` and
+the frozen dependent component has `dx=-1`; all other local coordinates have the chart
+derivative implied by `NaturalVariableLayout3P`.
+
+The molar-content Jacobian exists only in the selected upstream cell block. The opposite
+cell block is exactly zero.
+
+### Component molar face-flux Jacobian
+
+For either owner or neighbour current-state block:
+
+```text
+d n_dot_i^f =
+  sum_alpha [
+      (c_alpha,up x_alpha,i,up) dF_alpha
+    + F_alpha d(c_alpha,up x_alpha,i,up)
+  ].
+```
+
+Owner/neighbour Jacobian blocks remain separate because the cells may use different
+dependent-component pivots.
+
+At an exact-zero phase-potential tie, `F_alpha=0`, so that phase contributes
+
+```text
+d n_dot_i^f =
+    (c_alpha,o x_alpha,i,o) dF_alpha
+```
+
+under the already-declared frozen owner branch.
+
+### Component/total molar closure
+
+Every upwind phase payload verifies
+
+```text
+sum_i c_alpha,up x_alpha,i,up
+  = c_alpha,up
+```
+
+and, column by column,
+
+```text
+sum_i d(c_alpha,up x_alpha,i,up)
+  = dc_alpha,up.
+```
+
+The final face result also verifies
+
+```text
+sum_i n_dot_i^f
+  = sum_alpha(c_alpha,up F_alpha)
+```
+
+and the corresponding owner/neighbour differentiated closure.
+
+The resulting canonical component rows therefore retain the same ordered component
+identity as the owner/neighbour cell states.
+
+### Validation ownership
+
+The dedicated `flow_discretization.component_flux.*` suite covers:
+
+- owner-, neighbour- and exact-zero-owner phase upstream selections;
+- upwind `c_alpha x_alpha,i` values and selected-side-only Jacobians;
+- dependent-component pivot derivatives;
+- component molar flux values and component-to-total molar closure;
+- owner and neighbour full-chart Jacobians against fresh reconstructed cell/density/
+  phase-flux perturbations;
+- exact-zero tie reusing owner molar density/composition;
+- mismatched exact-state identity, molar-density primal/shape, inconsistent phase-flux
+  primal and invalid upwind selection rejection;
+- public-header self containment.
+
+The density law and face-driving law in these tests are explicitly synthetic structural
+fixtures; they are not physical property validation.
+
+This slice still does **not** scatter flux into owner/neighbour conservation residual
+rows, add accumulation and spatial terms together, introduce source/well terms, or
+insert PETSc matrix/vector values.
