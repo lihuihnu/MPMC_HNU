@@ -2674,3 +2674,117 @@ energy terms.
 No PETSc scalar energy-row mapping, `MatSetValues`, `VecSetValues`, matrix/vector
 creation, Newton iteration or phase switching is introduced here.
 
+## 38. Energy global scalar assembly mapping
+
+The complete distributed owned energy rows now map into the same fixed-width
+natural-variable scalar block as component conservation and fugacity equilibrium.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/energy_global_assembly_mapping.hpp>
+```
+
+### Energy equation slot
+
+The mapping uses the existing authoritative natural-variable equation contract:
+
+```text
+component rows : 0 ... Nc-1
+energy row     : Nc
+fugacity rows  : Nc+1 ... 3*Nc
+```
+
+so the energy equation is always:
+
+```text
+NaturalVariableLayout3P::energy_equation_index() == Nc.
+```
+
+For `Nc=3`, energy therefore occupies scalar slot `3` inside each `q=10`
+cell block.
+
+### Same two numbering spaces
+
+As with component and fugacity mappings, two different numbering spaces remain explicit:
+
+1. PETSc rank-contiguous scalar row/column indices expanded from
+   `PetscMpiAijSymbolicPreallocation3D`;
+2. mesh-global `GlobalDofIndex` provenance from `DofNumberingSnapshot`.
+
+The bridge uses:
+
+```text
+petsc_scalar(cell, slot)
+    = petsc_cell_global_row(cell) * q + slot
+```
+
+and retains the independent mesh-global row/column identity for every emitted scalar.
+The two values are cross-checked but never assumed numerically equal.
+
+### Energy residual and Jacobian entries
+
+For every owned energy row the bridge emits:
+
+```text
+Residual:
+    (PETSc global energy row, value)
+
+Jacobian:
+    (PETSc global energy row,
+     PETSc global natural-variable column,
+     value)
+```
+
+The diagonal block contains all `q` columns of the owned cell. Every coalesced
+neighbour energy block contributes another dense `q` columns using that neighbour's
+frozen natural-variable chart.
+
+Zero-valued Jacobian scalars are retained. Structural sparsity is defined by the
+existing exact cell-pair structural column pattern, not by current coefficient values.
+
+### Structural gates
+
+The mapping consumes the same:
+
+- `DofLayout`;
+- `DofNumberingSnapshot`;
+- `PetscMpiAijSymbolicPreallocation3D`;
+- `OwnedCellStructuralColumnPatternSnapshot3D`;
+- `mesh_petsc::create_section_mapping()`;
+
+used by the existing component/fugacity assembly bridges.
+
+The energy row's self and neighbour cell blocks must match the exact structural
+cell-column pattern. Missing or extra neighbours are rejected collectively.
+
+### Complete equation-block closure
+
+The two-rank regression combines all three residual mappings for each owned cell and
+requires the sorted PETSc-local equation slots to be exactly:
+
+```text
+0, 1, ..., 3*Nc
+```
+
+once each.
+
+For `Nc=3`:
+
+```text
+component : 0,1,2
+energy    : 3
+fugacity  : 4,5,6,7,8,9
+```
+
+so the complete `3*Nc+1` natural-variable equation block now has no global row gap
+and no row collision.
+
+The regression continues to reverse local cell order and mesh-global entity ordinals
+relative to PETSc ownership, verifies owned/ghost Jacobian columns, retains an
+exact-zero energy Jacobian scalar, and collectively rejects wrong DoF block width or an
+incomplete structural pattern.
+
+No PETSc `Mat` or `Vec` is created or modified and no `MatSetValues` /
+`VecSetValues` call is introduced in this slice.
+

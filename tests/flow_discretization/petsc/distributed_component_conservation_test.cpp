@@ -1,5 +1,6 @@
 #include <mpmc/flow_discretization_petsc/distributed_component_conservation.hpp>
 #include <mpmc/flow_discretization_petsc/distributed_energy_conservation.hpp>
+#include <mpmc/flow_discretization_petsc/energy_global_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
 
@@ -20,6 +21,7 @@
 
 bool distributed_component_conservation_header();
 bool distributed_energy_conservation_header();
+bool energy_global_assembly_mapping_header();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -2094,6 +2096,426 @@ void distributed_energy_exchange() {
         inputs);
 }
 
+void energy_global_assembly_mapping() {
+    int rank = -1;
+    int size = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &size) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank/size query failed");
+    }
+    require_collective(
+        size == 2,
+        "energy global mapping test requires exactly two ranks");
+
+    auto partition =
+        make_partition(rank);
+    auto schedule =
+        make_schedule(rank);
+    EnergyLocalInputs energy_inputs{rank};
+
+    // Force one exact-zero final diagonal scalar on rank 0. The mapping must
+    // retain it because matrix structure is defined by the cell pattern.
+    if (rank == 0) {
+        energy_inputs.accumulation10
+            .gradient[0U] =
+            -energy_inputs.face
+                 .owner_row_owner_column_gradient[
+                     0U];
+    }
+
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+    auto energy_snapshot =
+        build_energy(
+            partition,
+            schedule,
+            energy_inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            energy_snapshot.has_value(),
+        "distributed energy snapshot for global mapping failed");
+
+    const std::size_t q =
+        identity(UINT64_C(10))
+            .layout.unknown_count();
+    auto layout =
+        make_natural_variable_dof_layout(
+            rank,
+            q);
+    auto numbering =
+        make_reversed_mesh_dof_numbering(
+            rank,
+            layout,
+            partition);
+    auto cell_bridge =
+        make_cell_row_bridge(
+            rank);
+    auto cell_pattern =
+        make_cell_column_pattern(
+            rank);
+
+    std::optional<
+        fdp::EnergyConservationGlobalAssemblyEntries3D>
+        mapping;
+    error =
+        fdp::
+            make_energy_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *energy_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &mapping);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            mapping.has_value(),
+        "energy global assembly mapping failed");
+
+    const auto& result =
+        *mapping;
+    const PetscInt expected_start =
+        static_cast<PetscInt>(rank) *
+        static_cast<PetscInt>(q);
+    const PetscInt expected_end =
+        expected_start +
+        static_cast<PetscInt>(q);
+    const PetscInt expected_count =
+        2 *
+        static_cast<PetscInt>(q);
+    constexpr std::size_t component_count = 3U;
+    const std::size_t energy_slot =
+        component_count;
+
+    require_collective(
+        result.petsc_scalar_row_start() ==
+                expected_start &&
+            result.petsc_scalar_row_end() ==
+                expected_end &&
+            result.petsc_scalar_row_count() ==
+                expected_count &&
+            result.component_count() ==
+                component_count &&
+            result.natural_variable_count() ==
+                q &&
+            result.residual_entries().size() ==
+                1U &&
+            result.jacobian_entries().size() ==
+                2U * q,
+        "energy global mapping range/cardinality mismatch");
+
+    const auto& owned_row =
+        energy_snapshot->owned_rows().front();
+    const auto* off_block =
+        find_energy_block(
+            owned_row,
+            rank == 0
+                ? UINT64_C(20)
+                : UINT64_C(10));
+    require_collective(
+        off_block != nullptr,
+        "energy global mapping fixture missing off-diagonal block");
+
+    const std::uint64_t row_cell_global =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+    const auto& residual =
+        result.residual_entries().front();
+    const PetscInt expected_row =
+        expected_start +
+        static_cast<PetscInt>(
+            energy_slot);
+    const std::uint64_t expected_mesh_row =
+        (row_cell_global == UINT64_C(10)
+             ? static_cast<std::uint64_t>(q)
+             : UINT64_C(0)) +
+        static_cast<std::uint64_t>(
+            energy_slot);
+
+    require_collective(
+        residual.petsc_global_row ==
+                expected_row &&
+            residual.mesh_global_row_dof ==
+                mesh::GlobalDofIndex{
+                    expected_mesh_row} &&
+            residual.row_cell_global ==
+                mesh::GlobalEntityId{
+                    row_cell_global},
+        "energy residual row/provenance mapping mismatch");
+    near_collective(
+        residual.value_w_per_bulk_m3,
+        owned_row.local_residual
+            .residual_w_per_bulk_m3);
+
+    require_collective(
+        static_cast<std::uint64_t>(
+            residual.petsc_global_row) !=
+            residual.mesh_global_row_dof.value(),
+        "energy mesh-global DoF was conflated with PETSc row");
+
+    for (PetscInt global_column = 0;
+         global_column < expected_count;
+         ++global_column) {
+        const auto& entry =
+            result.jacobian_entries()[
+                static_cast<std::size_t>(
+                    global_column)];
+        const std::size_t column =
+            static_cast<std::size_t>(
+                global_column %
+                static_cast<PetscInt>(q));
+        const std::uint64_t column_cell_global =
+            global_column <
+                    static_cast<PetscInt>(q)
+                ? UINT64_C(10)
+                : UINT64_C(20);
+        const bool diagonal =
+            column_cell_global ==
+            row_cell_global;
+        const double expected_value =
+            diagonal
+                ? owned_row.local_residual
+                      .d_local(column)
+                : off_block->d_residual(
+                      column);
+        const std::uint64_t expected_mesh_column =
+            (column_cell_global ==
+                     UINT64_C(10)
+                 ? static_cast<std::uint64_t>(
+                       q)
+                 : UINT64_C(0)) +
+            static_cast<std::uint64_t>(
+                column);
+
+        require_collective(
+            entry.petsc_global_row ==
+                    expected_row &&
+                entry.petsc_global_column ==
+                    global_column &&
+                entry.mesh_global_row_dof ==
+                    residual.mesh_global_row_dof &&
+                entry.mesh_global_column_dof ==
+                    mesh::GlobalDofIndex{
+                        expected_mesh_column} &&
+                entry.row_cell_global ==
+                    mesh::GlobalEntityId{
+                        row_cell_global} &&
+                entry.column_cell_global ==
+                    mesh::GlobalEntityId{
+                        column_cell_global} &&
+                entry.natural_variable_column ==
+                    column &&
+                entry.block_kind ==
+                    (diagonal
+                         ? fdp::
+                               EnergyJacobianCellBlockKind3D::
+                                   diagonal_cell
+                         : fdp::
+                               EnergyJacobianCellBlockKind3D::
+                                   off_diagonal_cell),
+            "energy Jacobian scalar mapping mismatch");
+        near_collective(
+            entry.value,
+            expected_value);
+    }
+
+    std::uint64_t local_zero_count = 0U;
+    for (const auto& entry :
+         result.jacobian_entries()) {
+        if (entry.value == 0.0) {
+            ++local_zero_count;
+        }
+    }
+    std::uint64_t global_zero_count = 0U;
+    if (MPI_Allreduce(
+            &local_zero_count,
+            &global_zero_count,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) !=
+        MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI_Allreduce failed for energy zero-entry audit");
+    }
+    require_collective(
+        global_zero_count > 0U,
+        "zero energy Jacobian scalar was dropped");
+
+    {
+        const auto bad_layout =
+            make_natural_variable_dof_layout(
+                rank,
+                q - 1U);
+        const auto bad_numbering =
+            make_reversed_mesh_dof_numbering(
+                rank,
+                bad_layout,
+                partition);
+        std::optional<
+            fdp::EnergyConservationGlobalAssemblyEntries3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_energy_conservation_global_assembly_entries_3d(
+                    PETSC_COMM_WORLD,
+                    *energy_snapshot,
+                    partition,
+                    bad_layout,
+                    bad_numbering,
+                    cell_bridge,
+                    cell_pattern,
+                    "natural_state",
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "wrong energy natural-variable DoF width was not rejected collectively");
+    }
+
+    {
+        auto bad_pattern =
+            make_incomplete_cell_column_pattern(
+                rank);
+        std::optional<
+            fdp::EnergyConservationGlobalAssemblyEntries3D>
+            bad_output;
+        const PetscErrorCode bad_error =
+            fdp::
+                make_energy_conservation_global_assembly_entries_3d(
+                    PETSC_COMM_WORLD,
+                    *energy_snapshot,
+                    partition,
+                    layout,
+                    numbering,
+                    cell_bridge,
+                    bad_pattern,
+                    "natural_state",
+                    &bad_output);
+        require_collective(
+            bad_error ==
+                    PETSC_ERR_ARG_INCOMP &&
+                !bad_output.has_value(),
+            "incomplete energy structural pattern was not rejected collectively");
+    }
+
+    // Final row-coverage gate: component + energy + fugacity residual rows must
+    // occupy every scalar equation slot exactly once for the owned cell.
+    LocalInputs component_inputs{rank};
+    auto component_snapshot =
+        build(
+            rank,
+            partition,
+            schedule,
+            component_inputs,
+            &error);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            component_snapshot.has_value(),
+        "component snapshot for full-row coverage failed");
+
+    std::optional<
+        fdp::ComponentConservationGlobalAssemblyEntries3D>
+        component_mapping;
+    error =
+        fdp::
+            make_component_conservation_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *component_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                &component_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            component_mapping.has_value(),
+        "component mapping for full-row coverage failed");
+
+    auto fugacity =
+        make_fugacity_linearization(
+            row_cell_global);
+    const std::array<
+        fdp::OwnedCellFugacityEquilibriumLinearizationBinding3D,
+        1>
+        fugacity_bindings{{
+            {
+                mesh::LocalIndex{0U},
+                mesh::GlobalEntityId{
+                    row_cell_global},
+                &fugacity}
+        }};
+    std::optional<
+        fdp::FugacityEquilibriumGlobalAssemblyEntries3D>
+        fugacity_mapping;
+    error =
+        fdp::
+            make_fugacity_equilibrium_global_assembly_entries_3d(
+                PETSC_COMM_WORLD,
+                *component_snapshot,
+                partition,
+                layout,
+                numbering,
+                cell_bridge,
+                cell_pattern,
+                "natural_state",
+                fugacity_bindings,
+                &fugacity_mapping);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            fugacity_mapping.has_value(),
+        "fugacity mapping for full-row coverage failed");
+
+    std::vector<PetscInt> row_slots;
+    row_slots.reserve(q);
+    for (const auto& entry :
+         component_mapping->residual_entries()) {
+        row_slots.push_back(
+            entry.petsc_global_row -
+            expected_start);
+    }
+    for (const auto& entry :
+         result.residual_entries()) {
+        row_slots.push_back(
+            entry.petsc_global_row -
+            expected_start);
+    }
+    for (const auto& entry :
+         fugacity_mapping->residual_entries()) {
+        row_slots.push_back(
+            entry.petsc_global_row -
+            expected_start);
+    }
+    std::sort(
+        row_slots.begin(),
+        row_slots.end());
+
+    require_collective(
+        row_slots.size() == q,
+        "complete equation block row count mismatch");
+    for (std::size_t slot = 0U;
+         slot < q;
+         ++slot) {
+        require_collective(
+            row_slots[slot] ==
+                static_cast<PetscInt>(slot),
+            "component+energy+fugacity rows do not cover the full natural-variable block exactly once");
+    }
+}
+
 void invalid_collective_energy_inputs() {
     int rank = -1;
     if (MPI_Comm_rank(
@@ -2311,6 +2733,9 @@ void headers() {
         distributed_energy_conservation_header(),
         "distributed energy conservation header probe failed");
     require_collective(
+        energy_global_assembly_mapping_header(),
+        "energy global assembly mapping header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -2344,6 +2769,7 @@ int main(int argc, char** argv) {
 
         distributed_exchange();
         distributed_energy_exchange();
+        energy_global_assembly_mapping();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();
@@ -2356,7 +2782,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] distributed component/energy/fugacity assembly contracts\n";
+                << "[PASS] complete distributed natural-variable assembly contracts\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;

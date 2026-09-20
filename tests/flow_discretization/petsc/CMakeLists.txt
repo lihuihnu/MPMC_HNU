@@ -11,6 +11,7 @@ add_executable(
     distributed_component_conservation_test.cpp
     distributed_component_conservation_header.cpp
     distributed_energy_conservation_header.cpp
+    energy_global_assembly_mapping_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(
@@ -43,6 +44,6 @@ add_test(
 set_tests_properties(
     flow_discretization.petsc.distributed_owner_targeted_conservation
     PROPERTIES
-        LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;owner_targeted"
+        LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;owner_targeted"
         TIMEOUT 60
         ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1")
