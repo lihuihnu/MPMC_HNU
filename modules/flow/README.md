@@ -2549,3 +2549,128 @@ This slice still does **not** implement energy global/PETSc row mapping, conduct
 tensor -> thermal face conductance discretization, boundary/source/well terms,
 `MatSetValues`, `VecSetValues`, Newton iteration or phase switching.
 
+## 37. Distributed owner-targeted energy conservation exchange
+
+The local non-isothermal energy equation now has the same owner-targeted MPI exchange
+semantics as component conservation.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow_discretization_petsc/distributed_energy_conservation.hpp>
+```
+
+### Authoritative evaluation
+
+Only:
+
+```text
+ParallelOwnedConnectionSchedule3D::assembly_rows()
+```
+
+produce physical energy-face contributions.
+
+For every authoritative internal face, the face-owning rank starts from the already
+validated normalized energy face payload and emits exactly two endpoint-row payloads:
+
+```text
+owner endpoint:
+    + Q_E^f / V_b,o
+    + owner-row Jacobian blocks
+
+neighbour endpoint:
+    - Q_E^f / V_b,n
+    + neighbour-row Jacobian blocks
+```
+
+The target rank is always:
+
+```text
+PartitionSnapshot::owner_rank(endpoint cell)
+```
+
+and is not assumed to be the face-owner rank.
+
+Ghost schedule rows are used only to validate the received stable face/cell orientation.
+They never re-evaluate or duplicate the energy physics.
+
+### Stable-ID communication
+
+No process-local `LocalIndex` crosses MPI.
+
+Each endpoint payload carries:
+
+- stable target cell ID;
+- stable opposite/column cell ID;
+- stable face ID;
+- target and column frozen-state/chart fingerprints;
+- target cell bulk volume;
+- normalized spatial energy residual contribution;
+- target-cell diagonal face Jacobian;
+- opposite-cell off-diagonal face Jacobian.
+
+The receiver resolves stable IDs into its own local/ghost indices and revalidates:
+
+- endpoint ownership;
+- schedule owner/neighbour orientation;
+- frozen component order/pivot/state fingerprint;
+- local cell bulk volume;
+- finite residual/Jacobian values.
+
+### Complete owned energy rows
+
+Every owned endpoint starts from its local
+`BackwardEulerEnergyAccumulationResidual3P` and receives all incident authoritative
+internal-face contributions.
+
+The result publishes:
+
+- complete owned energy residual [W/bulk-m^3];
+- complete owned-cell diagonal natural-variable Jacobian;
+- per-face neighbour Jacobian blocks;
+- off-diagonal blocks coalesced by stable neighbour cell;
+- contributing stable face IDs for each cell-pair block.
+
+This is still a residual/Jacobian ownership contract. It does **not** assign the energy
+equation to a PETSc scalar row yet.
+
+### Distributed conservation gate
+
+After exchange, only final owned rows contribute to the global spatial audit:
+
+```text
+sum_owned_cells
+    V_b,c * R_E,c^spatial
+= 0
+```
+
+in watts.
+
+The dedicated two-rank regression additionally checks, for each source cell and every
+column of its frozen natural-variable chart:
+
+```text
+sum_owned_target_cells
+    V_b,target
+  * d R_E,target^spatial / d q_source
+= 0.
+```
+
+The two ranks deliberately use opposite local cell ordering, so passing the test requires
+stable-ID routing rather than accidental LocalIndex agreement.
+
+### Current scope
+
+This slice reuses the already-established local energy physics:
+
+- fluid + stationary-rock accumulation;
+- upwind advective phase enthalpy;
+- fixed face thermal conductance;
+- rigid `dV_b=0`.
+
+It does not derive `G_f` from conductivity tensors and does not add boundary/source/well
+energy terms.
+
+No PETSc scalar energy-row mapping, `MatSetValues`, `VecSetValues`, matrix/vector
+creation, Newton iteration or phase switching is introduced here.
+

@@ -1,4 +1,5 @@
 #include <mpmc/flow_discretization_petsc/distributed_component_conservation.hpp>
+#include <mpmc/flow_discretization_petsc/distributed_energy_conservation.hpp>
 #include <mpmc/flow_discretization_petsc/global_component_assembly_mapping.hpp>
 #include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
 
@@ -18,6 +19,7 @@
 #include <vector>
 
 bool distributed_component_conservation_header();
+bool distributed_energy_conservation_header();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -1684,6 +1686,530 @@ void fugacity_global_assembly_mapping() {
     }
 }
 
+flow::BackwardEulerEnergyAccumulationResidual3P
+energy_accumulation(
+    std::uint64_t stable_cell) {
+    const auto state =
+        identity(stable_cell);
+    const std::size_t q =
+        state.layout.unknown_count();
+    std::vector<double> gradient(
+        q,
+        0.0);
+    const double scale =
+        stable_cell == UINT64_C(10)
+            ? 10.0
+            : 20.0;
+    for (std::size_t column = 0U;
+         column < q;
+         ++column) {
+        gradient[column] =
+            scale *
+            static_cast<double>(
+                column + 1U);
+    }
+    return {
+        state,
+        0.25,
+        10.0,
+        stable_cell == UINT64_C(10)
+            ? 100.0
+            : 200.0,
+        q,
+        std::move(gradient)};
+}
+
+fd::NormalizedEnergyFaceContributionLinearization3D
+normalized_energy_face() {
+    const auto owner =
+        identity(UINT64_C(10));
+    const auto neighbour =
+        identity(UINT64_C(20));
+    const std::size_t owner_q =
+        owner.layout.unknown_count();
+    const std::size_t neighbour_q =
+        neighbour.layout.unknown_count();
+
+    std::vector<double> owner_source_gradient(
+        owner_q,
+        0.0);
+    std::vector<double> neighbour_source_gradient(
+        neighbour_q,
+        0.0);
+    for (std::size_t column = 0U;
+         column < owner_q;
+         ++column) {
+        owner_source_gradient[column] =
+            3.0 *
+            static_cast<double>(
+                column + 1U);
+    }
+    for (std::size_t column = 0U;
+         column < neighbour_q;
+         ++column) {
+        neighbour_source_gradient[column] =
+            -4.0 *
+            static_cast<double>(
+                column + 1U);
+    }
+
+    std::vector<double> owner_owner(
+        owner_q,
+        0.0);
+    std::vector<double> neighbour_owner(
+        owner_q,
+        0.0);
+    std::vector<double> owner_neighbour(
+        neighbour_q,
+        0.0);
+    std::vector<double> neighbour_neighbour(
+        neighbour_q,
+        0.0);
+
+    for (std::size_t column = 0U;
+         column < owner_q;
+         ++column) {
+        owner_owner[column] =
+            owner_source_gradient[column] /
+            2.0;
+        neighbour_owner[column] =
+            -owner_source_gradient[column] /
+            5.0;
+    }
+    for (std::size_t column = 0U;
+         column < neighbour_q;
+         ++column) {
+        owner_neighbour[column] =
+            neighbour_source_gradient[column] /
+            2.0;
+        neighbour_neighbour[column] =
+            -neighbour_source_gradient[column] /
+            5.0;
+    }
+
+    return {
+        mesh::LocalIndex{0U},
+        {2.0, 5.0},
+        owner,
+        neighbour,
+        300.0,
+        -120.0,
+        std::move(owner_owner),
+        std::move(owner_neighbour),
+        std::move(neighbour_owner),
+        std::move(neighbour_neighbour)};
+}
+
+struct EnergyLocalInputs {
+    flow::BackwardEulerEnergyAccumulationResidual3P
+        accumulation10;
+    flow::BackwardEulerEnergyAccumulationResidual3P
+        accumulation20;
+    std::vector<
+        fdp::DistributedEnergyCellStateBinding3D>
+        cells;
+    fd::NormalizedEnergyFaceContributionLinearization3D
+        face;
+    std::vector<
+        fdp::AuthoritativeNormalizedEnergyFaceBinding3D>
+        faces;
+
+    explicit EnergyLocalInputs(int rank)
+        : accumulation10(
+              energy_accumulation(
+                  UINT64_C(10))),
+          accumulation20(
+              energy_accumulation(
+                  UINT64_C(20))),
+          face(
+              normalized_energy_face()) {
+        if (rank == 0) {
+            cells = {
+                {
+                    mesh::LocalIndex{0U},
+                    mesh::GlobalEntityId{10U},
+                    2.0,
+                    identity(UINT64_C(10)),
+                    &accumulation10},
+                {
+                    mesh::LocalIndex{1U},
+                    mesh::GlobalEntityId{20U},
+                    5.0,
+                    identity(UINT64_C(20)),
+                    nullptr}
+            };
+            faces = {
+                {
+                    mesh::LocalIndex{0U},
+                    mesh::GlobalEntityId{100U},
+                    &face}
+            };
+        } else {
+            cells = {
+                {
+                    mesh::LocalIndex{0U},
+                    mesh::GlobalEntityId{20U},
+                    5.0,
+                    identity(UINT64_C(20)),
+                    &accumulation20},
+                {
+                    mesh::LocalIndex{1U},
+                    mesh::GlobalEntityId{10U},
+                    2.0,
+                    identity(UINT64_C(10)),
+                    nullptr}
+            };
+        }
+    }
+};
+
+std::optional<
+    fdp::DistributedOwnedMultiCellEnergyConservationSnapshot3D>
+build_energy(
+    mesh::PartitionSnapshot& partition,
+    dp::ParallelOwnedConnectionSchedule3D& schedule,
+    EnergyLocalInputs& inputs,
+    PetscErrorCode* error_out) {
+    std::optional<
+        fdp::DistributedOwnedMultiCellEnergyConservationSnapshot3D>
+        output;
+    const PetscErrorCode error =
+        fdp::
+            make_distributed_owned_energy_conservation_snapshot_3d(
+                PETSC_COMM_WORLD,
+                schedule,
+                partition,
+                inputs.cells,
+                inputs.faces,
+                &output);
+    if (error_out != nullptr) {
+        *error_out = error;
+    }
+    return output;
+}
+
+const fdp::OwnedCellPairEnergyJacobianBlock3D*
+find_energy_block(
+    const fdp::OwnedCellEnergyConservationRow3D& row,
+    std::uint64_t column_global) {
+    const auto found =
+        std::find_if(
+            row.off_diagonal_cell_pair_blocks.begin(),
+            row.off_diagonal_cell_pair_blocks.end(),
+            [column_global](const auto& block) {
+                return block.column_cell_global ==
+                    mesh::GlobalEntityId{
+                        column_global};
+            });
+    return found ==
+               row.off_diagonal_cell_pair_blocks.end()
+        ? nullptr
+        : &*found;
+}
+
+void audit_cross_rank_energy_jacobian(
+    const fdp::
+        DistributedOwnedMultiCellEnergyConservationSnapshot3D&
+            snapshot,
+    const EnergyLocalInputs& inputs) {
+    const auto& row =
+        snapshot.owned_rows().front();
+    const auto& owned_binding =
+        inputs.cells.front();
+    const auto* owned_accumulation =
+        owned_binding.owned_accumulation;
+    require_collective(
+        owned_accumulation != nullptr,
+        "owned energy accumulation missing");
+
+    for (const std::uint64_t source_global :
+         {UINT64_C(10), UINT64_C(20)}) {
+        const std::size_t q =
+            identity(source_global)
+                .layout.unknown_count();
+
+        for (std::size_t column = 0U;
+             column < q;
+             ++column) {
+            const bool source_row =
+                row.cell_global ==
+                mesh::GlobalEntityId{
+                    source_global};
+            const auto* block =
+                source_row
+                    ? nullptr
+                    : find_energy_block(
+                          row,
+                          source_global);
+
+            require_collective(
+                source_row ||
+                    block != nullptr,
+                "missing cross-rank energy off-diagonal block");
+
+            double local = 0.0;
+            if (source_row) {
+                local =
+                    owned_binding.bulk_volume_m3 *
+                    (row.local_residual
+                         .d_local(column) -
+                     owned_accumulation
+                         ->d_residual(column));
+            } else {
+                local =
+                    owned_binding.bulk_volume_m3 *
+                    block->d_residual(
+                        column);
+            }
+
+            double global = 0.0;
+            if (MPI_Allreduce(
+                    &local,
+                    &global,
+                    1,
+                    MPI_DOUBLE,
+                    MPI_SUM,
+                    PETSC_COMM_WORLD) !=
+                MPI_SUCCESS) {
+                throw std::runtime_error(
+                    "MPI_Allreduce failed in energy Jacobian audit");
+            }
+            near_collective(
+                global,
+                0.0,
+                0.0,
+                2.0e-13);
+        }
+    }
+}
+
+void distributed_energy_exchange() {
+    int rank = -1;
+    int size = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS ||
+        MPI_Comm_size(
+            PETSC_COMM_WORLD,
+            &size) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank/size query failed");
+    }
+    require_collective(
+        size == 2,
+        "distributed energy exchange test requires exactly two ranks");
+
+    auto partition =
+        make_partition(rank);
+    auto schedule =
+        make_schedule(rank);
+    EnergyLocalInputs inputs{rank};
+
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+    auto output =
+        build_energy(
+            partition,
+            schedule,
+            inputs,
+            &error);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            output.has_value(),
+        "distributed owner-targeted energy exchange failed");
+
+    const auto& snapshot =
+        *output;
+    require_collective(
+        snapshot.owned_rows().size() == 1U &&
+            snapshot.received_face_side_count() == 1U &&
+            snapshot.local_authoritative_face_count() ==
+                (rank == 0 ? 1U : 0U),
+        "distributed energy snapshot cardinality mismatch");
+
+    const auto& row =
+        snapshot.owned_rows().front();
+    const std::uint64_t expected_cell =
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20);
+    const std::uint64_t expected_column =
+        rank == 0
+            ? UINT64_C(20)
+            : UINT64_C(10);
+
+    require_collective(
+        row.cell ==
+                mesh::LocalIndex{0U} &&
+            row.cell_global ==
+                mesh::GlobalEntityId{
+                    expected_cell} &&
+            row.local_residual
+                    .neighbour_blocks.size() ==
+                1U &&
+            row.off_diagonal_cell_pair_blocks.size() ==
+                1U,
+        "owned energy row identity/local reordering mismatch");
+
+    const auto& block =
+        row.off_diagonal_cell_pair_blocks.front();
+    require_collective(
+        block.column_cell ==
+                mesh::LocalIndex{1U} &&
+            block.column_cell_global ==
+                mesh::GlobalEntityId{
+                    expected_column} &&
+            block.contributing_face_global_ids ==
+                std::vector<mesh::GlobalEntityId>{
+                    mesh::GlobalEntityId{100U}},
+        "stable-ID energy off-diagonal block mapping mismatch");
+
+    const auto& accumulation_ref =
+        rank == 0
+            ? inputs.accumulation10
+            : inputs.accumulation20;
+    const double spatial =
+        rank == 0
+            ? inputs.face
+                  .owner_contribution_w_per_bulk_m3
+            : inputs.face
+                  .neighbour_contribution_w_per_bulk_m3;
+
+    near_collective(
+        row.local_residual
+            .residual_w_per_bulk_m3,
+        accumulation_ref
+                .residual_w_per_bulk_m3 +
+            spatial);
+    near_collective(
+        snapshot
+            .global_volume_weighted_spatial_balance_w(),
+        0.0,
+        0.0,
+        2.0e-13);
+
+    audit_cross_rank_energy_jacobian(
+        snapshot,
+        inputs);
+}
+
+void invalid_collective_energy_inputs() {
+    int rank = -1;
+    if (MPI_Comm_rank(
+            PETSC_COMM_WORLD,
+            &rank) != MPI_SUCCESS) {
+        throw std::runtime_error(
+            "MPI rank query failed");
+    }
+
+    {
+        auto partition =
+            make_partition(rank);
+        auto schedule =
+            make_schedule(rank);
+        EnergyLocalInputs inputs{rank};
+
+        if (rank == 1) {
+            inputs.cells[1]
+                .state_identity
+                .temperature_k +=
+                0.25;
+        }
+
+        PetscErrorCode error =
+            PETSC_SUCCESS;
+        auto output =
+            build_energy(
+                partition,
+                schedule,
+                inputs,
+                &error);
+        require_collective(
+            error == PETSC_ERR_ARG_INCOMP &&
+                !output.has_value(),
+            "stale ghost energy state was not rejected collectively");
+    }
+
+    {
+        auto partition =
+            make_partition(rank);
+        auto schedule =
+            make_schedule(rank);
+        EnergyLocalInputs inputs{rank};
+
+        if (rank == 1) {
+            inputs.cells[0]
+                .bulk_volume_m3 =
+                6.0;
+        }
+
+        PetscErrorCode error =
+            PETSC_SUCCESS;
+        auto output =
+            build_energy(
+                partition,
+                schedule,
+                inputs,
+                &error);
+        require_collective(
+            error == PETSC_ERR_ARG_INCOMP &&
+                !output.has_value(),
+            "energy endpoint volume mismatch was not rejected collectively");
+    }
+
+    {
+        auto partition =
+            make_partition(rank);
+        auto schedule =
+            make_schedule(rank);
+        EnergyLocalInputs inputs{rank};
+
+        if (rank == 0) {
+            inputs.faces.clear();
+        }
+
+        PetscErrorCode error =
+            PETSC_SUCCESS;
+        auto output =
+            build_energy(
+                partition,
+                schedule,
+                inputs,
+                &error);
+        require_collective(
+            error == PETSC_ERR_ARG_INCOMP &&
+                !output.has_value(),
+            "missing authoritative energy face binding was not rejected collectively");
+    }
+
+    {
+        auto partition =
+            make_partition(rank);
+        auto schedule =
+            make_schedule(rank);
+        EnergyLocalInputs inputs{rank};
+
+        if (rank == 0) {
+            inputs.accumulation10.porosity =
+                1.25;
+        }
+
+        PetscErrorCode error =
+            PETSC_SUCCESS;
+        auto output =
+            build_energy(
+                partition,
+                schedule,
+                inputs,
+                &error);
+        require_collective(
+            error == PETSC_ERR_ARG_INCOMP &&
+                !output.has_value(),
+            "invalid owned energy accumulation was not rejected collectively");
+    }
+}
+
 void invalid_collective_inputs() {
     int rank = -1;
     if (MPI_Comm_rank(
@@ -1782,6 +2308,9 @@ void headers() {
         distributed_component_conservation_header(),
         "distributed component conservation header probe failed");
     require_collective(
+        distributed_energy_conservation_header(),
+        "distributed energy conservation header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -1814,9 +2343,11 @@ int main(int argc, char** argv) {
         }
 
         distributed_exchange();
+        distributed_energy_exchange();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();
+        invalid_collective_energy_inputs();
         headers();
 
         int rank = -1;
@@ -1825,7 +2356,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] distributed component/fugacity global assembly mapping\n";
+                << "[PASS] distributed component/energy/fugacity assembly contracts\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;

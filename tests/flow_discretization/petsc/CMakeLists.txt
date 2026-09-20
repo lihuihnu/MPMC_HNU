@@ -10,6 +10,7 @@ add_executable(
     mpmc_flow_discretization_petsc_tests
     distributed_component_conservation_test.cpp
     distributed_component_conservation_header.cpp
+    distributed_energy_conservation_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(
