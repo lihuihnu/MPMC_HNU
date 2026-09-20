@@ -810,6 +810,134 @@ cpa_pressure_directional_derivative(
 } // namespace cpa_detail
 
 template <std::size_t K>
+[[nodiscard]] inline
+mpmc::ad::Dual<double, K>
+evaluate_cpa_selected_pt_molar_density_first_order(
+    const CpaPtPhase& model,
+    const mpmc::ad::Dual<double, K>& pressure_pa,
+    const mpmc::ad::Dual<double, K>& temperature_k,
+    std::span<const mpmc::ad::Dual<double, K>> composition,
+    std::size_t root_index,
+    CpaPtOptions options = {}) {
+    using D = mpmc::ad::Dual<double, K>;
+
+    std::vector<double> primal_composition;
+    primal_composition.reserve(composition.size());
+    for (const auto& value : composition) {
+        primal_composition.push_back(value.value());
+    }
+    (void)cpa_detail::validate_cpa_composition(
+        primal_composition, model.size());
+
+    for (std::size_t lane = 0U; lane < K; ++lane) {
+        double sum = 0.0;
+        double scale = 0.0;
+        for (const auto& value : composition) {
+            const double derivative = value.derivative(lane);
+            sum += derivative;
+            scale += std::abs(derivative);
+        }
+        const double tolerance =
+            4096.0 * std::numeric_limits<double>::epsilon() *
+            std::max(1.0, scale);
+        if (!std::isfinite(sum) || std::abs(sum) > tolerance) {
+            throw std::invalid_argument(
+                "CPA selected density derivative: composition direction must remain tangent to the mole-fraction simplex");
+        }
+    }
+
+    const double p = pressure_pa.value();
+    const double t = temperature_k.value();
+    const auto roots =
+        model.roots(p, t, primal_composition, options);
+    if (roots.status != CpaPtRootStatus::success) {
+        if (roots.status == CpaPtRootStatus::near_multiple) {
+            throw std::domain_error(
+                "CPA selected density derivative: near-multiple/tangent PT root is not differentiable");
+        }
+        throw std::runtime_error(
+            "CPA selected density derivative: PT root set unavailable: " +
+            roots.diagnostic);
+    }
+    if (root_index >= roots.roots.size()) {
+        throw std::out_of_range(
+            "CPA selected density derivative: selected root index out of range");
+    }
+
+    const double rho =
+        roots.roots[root_index].molar_density_mol_per_m3;
+    const double volume = 1.0 / rho;
+    const auto phase_state =
+        evaluate_cpa_phase_at_density(
+            t, rho, primal_composition,
+            model.parameters(), options.phase);
+
+    const auto mole_span =
+        std::span<const double>{primal_composition};
+    cpa_detail::CpaAssociationSensitivitySystem association_system{
+        t, volume, mole_span, model.parameters(),
+        phase_state.association};
+
+    cpa_detail::CpaStateDirection volume_direction;
+    volume_direction.volume = 1.0;
+    volume_direction.mole_numbers.assign(
+        primal_composition.size(), 0.0);
+    const auto x_volume =
+        association_system.solve_direction(volume_direction);
+
+    const double pressure_volume =
+        cpa_detail::cpa_pressure_directional_derivative(
+            t, volume, mole_span, model.parameters(),
+            phase_state, association_system,
+            volume_direction, x_volume, x_volume);
+    const double pressure_scale =
+        std::max(1.0, std::abs(p / volume));
+    const double pressure_guard =
+        4096.0 * std::numeric_limits<double>::epsilon() *
+        pressure_scale;
+    if (!std::isfinite(pressure_volume) ||
+        std::abs(pressure_volume) <= pressure_guard) {
+        throw std::runtime_error(
+            "CPA selected density derivative: ill-conditioned density root");
+    }
+
+    typename D::Gradient gradient{};
+    for (std::size_t lane = 0U; lane < K; ++lane) {
+        cpa_detail::CpaStateDirection no_volume;
+        no_volume.temperature =
+            temperature_k.derivative(lane);
+        no_volume.mole_numbers.resize(
+            primal_composition.size());
+        for (std::size_t component = 0U;
+             component < primal_composition.size();
+             ++component) {
+            no_volume.mole_numbers[component] =
+                composition[component].derivative(lane);
+        }
+        const auto x_no_volume =
+            association_system.solve_direction(no_volume);
+        const double pressure_no_volume =
+            cpa_detail::cpa_pressure_directional_derivative(
+                t, volume, mole_span, model.parameters(),
+                phase_state, association_system,
+                no_volume, x_volume, x_no_volume);
+        const double d_volume =
+            (pressure_pa.derivative(lane) -
+             pressure_no_volume) /
+            pressure_volume;
+        const double d_rho =
+            -rho * rho * d_volume;
+        if (!std::isfinite(d_rho)) {
+            throw std::range_error(
+                "CPA selected density derivative: non-finite molar-density derivative");
+        }
+        gradient[lane] = d_rho;
+    }
+
+    return D{rho, gradient};
+}
+
+template <std::size_t K>
 [[nodiscard]] inline std::vector<
     mpmc::ad::Dual<double, K>>
 evaluate_cpa_selected_pt_ln_phi_first_order(

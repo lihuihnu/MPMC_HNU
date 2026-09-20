@@ -1,5 +1,6 @@
 #include <mpmc/thermodynamics/cpa_pt_phase.hpp>
 #include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
+#include <mpmc/thermodynamics/selected_phase_density.hpp>
 
 #include "test_support.hpp"
 
@@ -264,6 +265,92 @@ void selected_phase_fugacity_contract() {
 }
 
 
+void selected_phase_density_contract() {
+    const auto parameters = cpa_pt_test::associating_binary(false);
+    const auto phase = th::CpaPtPhase::from_parameters(parameters);
+    constexpr double temperature = 330.0;
+    constexpr double density = 5000.0;
+    constexpr double x0 = 0.7;
+    const Vec composition{x0, 1.0 - x0};
+    const double pressure = reference_pressure(
+        temperature, density, composition, parameters);
+    const auto roots = phase.roots(
+        pressure, temperature, composition);
+    require(
+        roots.status == th::CpaPtRootStatus::success,
+        "CPA selected density fixture has no root");
+    const auto found = std::min_element(
+        roots.roots.begin(),
+        roots.roots.end(),
+        [](const auto& first, const auto& second) {
+            return std::abs(
+                       first.molar_density_mol_per_m3 -
+                       5000.0) <
+                   std::abs(
+                       second.molar_density_mol_per_m3 -
+                       5000.0);
+        });
+    const std::size_t root_index =
+        static_cast<std::size_t>(
+            std::distance(
+                roots.roots.begin(),
+                found));
+
+    const auto primal =
+        th::evaluate_selected_phase_molar_density(
+            phase,
+            pressure,
+            temperature,
+            std::span<const double>{composition},
+            th::CpaSelectedPhase{
+                root_index, {}});
+    require(
+        std::abs(
+            primal.molar_density_mol_per_m3 -
+            roots.roots[root_index]
+                .molar_density_mol_per_m3) <
+            1.0e-12 *
+                roots.roots[root_index]
+                    .molar_density_mol_per_m3,
+        "CPA selected density changed selected root primal");
+
+    using D = mpmc::ad::Dual<double, 3U>;
+    const std::array<D, 2> composition_ad{
+        D::variable(x0, 2U),
+        D{
+            1.0 - x0,
+            D::Gradient{
+                0.0, 0.0, -1.0}}};
+    const auto differentiated =
+        th::evaluate_selected_phase_molar_density(
+            phase,
+            D::variable(pressure, 0U),
+            D::variable(temperature, 1U),
+            std::span<const D>{
+                composition_ad},
+            th::CpaSelectedPhase{
+                root_index, {}});
+    require(
+        std::abs(
+            differentiated
+                .molar_density_mol_per_m3
+                .value() -
+            primal.molar_density_mol_per_m3) <
+            1.0e-12 *
+                primal.molar_density_mol_per_m3,
+        "CPA selected density derivative changed primal");
+    for (std::size_t lane = 0U;
+         lane < 3U;
+         ++lane) {
+        require(
+            std::isfinite(
+                differentiated
+                    .molar_density_mol_per_m3
+                    .derivative(lane)),
+            "CPA selected density IFT derivative is non-finite");
+    }
+}
+
 std::size_t nearest_root_index(
     const th::CpaPtRootSet& roots,
     double density) {
@@ -388,6 +475,7 @@ constexpr Test tests[]{
     {"associating_helmholtz", associating_helmholtz_chemical_potential},
     {"component_permutation", associating_component_permutation},
     {"selected_phase_fugacity", selected_phase_fugacity_contract},
+    {"selected_phase_density", selected_phase_density_contract},
     {"selected_phase_derivatives", associating_selected_phase_derivatives},
     {"evaluation_budget", evaluation_budget_is_explicit}};
 

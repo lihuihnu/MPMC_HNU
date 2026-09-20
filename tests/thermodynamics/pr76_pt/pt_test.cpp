@@ -1,5 +1,6 @@
 #include "test_support.hpp"
 #include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
+#include <mpmc/thermodynamics/selected_phase_density.hpp>
 #include <mpmc/ad/runtime_differentiate.hpp>
 #include <iostream>
 #include <numeric>
@@ -489,6 +490,98 @@ void selected_phase_fugacity_contract() {
         th::SelectedPhaseFugacityDerivativeSupport::scalar_generic_first_order);
 }
 
+template <typename T>
+void selected_phase_density_contract() {
+    auto model = kernel<T>();
+    th::Pr76PhaseWorkspace<T> plain_workspace;
+    const std::vector<T> composition{
+        T{0.25}, T{0.50}, T{0.25}};
+    const T pressure = T{1.0e6};
+    const T temperature = T{450.0};
+    const auto roots = model.roots_full(
+        pressure, temperature, composition,
+        plain_workspace);
+    require(
+        roots.status == th::Pr76RootStatus::success &&
+            roots.count > 0U,
+        "PR76 selected-phase density fixture has no root");
+    const std::size_t root_index =
+        roots.count - 1U;
+    const auto direct = model.evaluate_full(
+        pressure,
+        temperature,
+        composition,
+        root_index,
+        plain_workspace);
+    th::Pr76PhaseWorkspace<T> density_workspace;
+    const auto wrapped =
+        th::evaluate_selected_phase_molar_density(
+            model,
+            pressure,
+            temperature,
+            std::span<const T>{composition},
+            th::Pr76SelectedPhase{
+                root_index, {}},
+            density_workspace);
+    const long double expected =
+        static_cast<long double>(pressure) /
+        (static_cast<long double>(direct.z) *
+         8.31446261815324L *
+         static_cast<long double>(temperature));
+    near(
+        wrapped.molar_density_mol_per_m3,
+        expected);
+
+    using D = ad::Dual<T, 2>;
+    std::vector<D> x;
+    x.reserve(composition.size());
+    for (const T value : composition) {
+        x.emplace_back(value);
+    }
+    th::Pr76PhaseWorkspace<D> derivative_workspace;
+    const auto derivative =
+        th::evaluate_selected_phase_molar_density(
+            model,
+            D::variable(pressure, 0U),
+            D::variable(temperature, 1U),
+            std::span<const D>{x},
+            th::Pr76SelectedPhase{
+                root_index, {}},
+            derivative_workspace);
+    th::Pr76PhaseWorkspace<D> phase_workspace;
+    const auto phase =
+        model.evaluate_full(
+            D::variable(pressure, 0U),
+            D::variable(temperature, 1U),
+            std::span<const D>{x},
+            root_index,
+            phase_workspace);
+    const T rho =
+        derivative
+            .molar_density_mol_per_m3
+            .value();
+    for (std::size_t lane = 0U;
+         lane < 2U;
+         ++lane) {
+        const T dp =
+            lane == 0U ? T{1} : T{0};
+        const T dt =
+            lane == 1U ? T{1} : T{0};
+        const T expected_derivative =
+            rho *
+            (dp / pressure -
+             phase.z.derivative(lane) /
+                 phase.z.value() -
+             dt / temperature);
+        near(
+            derivative
+                .molar_density_mol_per_m3
+                .derivative(lane),
+            static_cast<long double>(
+                expected_derivative));
+    }
+}
+
 void headers() {
     auto model=kernel<double>();
     require(std::isfinite(pt_plain_header(model)),"plain PT header translation unit");
@@ -513,6 +606,7 @@ void run_typed(std::string_view name) {
     else if(name=="ownership_recovery") {ownership_recovery<T>();}
     else if(name=="attraction_cancellation") {attraction_cancellation<T>();}
     else if(name=="selected_phase_fugacity") {selected_phase_fugacity_contract<T>();}
+    else if(name=="selected_phase_density") {selected_phase_density_contract<T>();}
     else {throw std::invalid_argument("unknown case");}
 }
 } // namespace

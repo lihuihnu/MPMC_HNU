@@ -57,6 +57,20 @@ target_link_libraries(
         mpmc::ad)
 
 add_executable(
+    mpmc_flow_absent_phase_thermodynamics_tests
+    thermodynamics_absent_phase_extension_test.cpp
+    thermodynamics_absent_phase_extension_header.cpp)
+target_link_libraries(
+    mpmc_flow_absent_phase_thermodynamics_tests
+    PRIVATE
+        mpmc::flow_thermodynamics
+        mpmc::ad)
+target_include_directories(
+    mpmc_flow_absent_phase_thermodynamics_tests
+    PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
+
+add_executable(
     mpmc_flow_fugacity_linearization_tests
     fugacity_equilibrium_linearization_test.cpp
     fugacity_equilibrium_linearization_header.cpp)
@@ -120,6 +134,7 @@ foreach(target IN ITEMS
         mpmc_flow_core_tests
         mpmc_flow_phase_transition_tests
         mpmc_flow_fugacity_tests
+        mpmc_flow_absent_phase_thermodynamics_tests
         mpmc_flow_fugacity_linearization_tests
         mpmc_flow_accumulation_tests
         mpmc_flow_accumulation_time_tests
@@ -217,6 +232,15 @@ foreach(case IN LISTS fugacity_cases)
             LABELS "flow;natural_variables;fugacity;thermodynamics_boundary"
             TIMEOUT 30)
 endforeach()
+
+add_test(
+    NAME flow.absent_phase_thermodynamics.providers
+    COMMAND mpmc_flow_absent_phase_thermodynamics_tests)
+set_tests_properties(
+    flow.absent_phase_thermodynamics.providers
+    PROPERTIES
+        LABELS "flow;thermodynamics;phase_identity;absent_phase;density;continuation"
+        TIMEOUT 180)
 
 set(fugacity_linearization_cases
     carrier

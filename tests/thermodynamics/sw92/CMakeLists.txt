@@ -27,7 +27,7 @@ endif()
 
 set(sw92_cases contract water_alpha bip_correlations mixing_reference phase_three_roots
     phase_aqueous_reference permutations background_pairs runtime_snapshots
-    applicability_bounds input_domains selected_phase_fugacity headers)
+    applicability_bounds input_domains selected_phase_fugacity selected_phase_density headers)
 foreach(case IN LISTS sw92_cases)
     add_test(NAME thermo.sw92.${case} COMMAND mpmc_thermodynamics_sw92_tests ${case})
     set_tests_properties(thermo.sw92.${case} PROPERTIES

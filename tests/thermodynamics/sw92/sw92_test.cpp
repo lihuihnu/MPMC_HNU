@@ -1,5 +1,6 @@
 #include <test_support.hpp>
 #include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
+#include <mpmc/thermodynamics/selected_phase_density.hpp>
 #include <iostream>
 #include <limits>
 #include <string_view>
@@ -144,7 +145,25 @@ void selected_phase_fugacity_contract(){
                th::SelectedPhaseFugacityDerivativeSupport::scalar_generic_first_order);
 }
 
+void selected_phase_density_contract(){
+ auto ps=st::binary_parameters(st::co2);
+ auto phase=th::Sw92Phase<double>::from_parameters(ps);
+ th::Sw92PhaseWorkspace<double> direct_workspace,density_workspace;
+ const st::Vec x{.7,.3};
+ constexpr double pressure=3.0e6,temperature=340.0,molality=0.0;
+ const auto roots=phase.roots(pressure,temperature,x,molality,th::SwPhaseFamily::nonaqueous,direct_workspace);
+ st::require(roots.status==th::Sw92RootStatus::success&&roots.count==3,"SW92 selected density root fixture");
+ constexpr std::size_t root_index=2U;
+ const auto direct=phase.evaluate(pressure,temperature,x,molality,th::SwPhaseFamily::nonaqueous,root_index,direct_workspace);
+ const auto wrapped=th::evaluate_selected_phase_molar_density(
+     phase,pressure,temperature,std::span<const double>{x},
+     th::Sw92SelectedPhase<double>{molality,th::SwPhaseFamily::nonaqueous,root_index,{}},
+     density_workspace);
+ const double expected=pressure/(direct.z*th::Sw92Pure<double>::gas_constant()*temperature);
+ st::near(wrapped.molar_density_mol_per_m3,expected,1e-13L);
+}
+
 void headers(){st::require(sw92_headers(),"self-contained headers");}
-using Test=std::pair<std::string_view,void(*)()>;constexpr Test tests[]={{"contract",contract},{"water_alpha",water_alpha},{"bip_correlations",bip_correlations},{"mixing_reference",mixing_reference},{"phase_three_roots",phase_three_roots},{"phase_aqueous_reference",phase_aqueous_reference},{"permutations",permutations},{"background_pairs",background_pairs},{"runtime_snapshots",runtime_snapshots},{"applicability_bounds",applicability_bounds},{"input_domains",input_domains},{"selected_phase_fugacity",selected_phase_fugacity_contract},{"headers",headers}};
+using Test=std::pair<std::string_view,void(*)()>;constexpr Test tests[]={{"contract",contract},{"water_alpha",water_alpha},{"bip_correlations",bip_correlations},{"mixing_reference",mixing_reference},{"phase_three_roots",phase_three_roots},{"phase_aqueous_reference",phase_aqueous_reference},{"permutations",permutations},{"background_pairs",background_pairs},{"runtime_snapshots",runtime_snapshots},{"applicability_bounds",applicability_bounds},{"input_domains",input_domains},{"selected_phase_fugacity",selected_phase_fugacity_contract},{"selected_phase_density",selected_phase_density_contract},{"headers",headers}};
 }
 int main(int argc,char**argv){try{if(argc!=2)throw std::invalid_argument("one test name required");for(auto [n,f]:tests)if(n==argv[1]){f();std::cout<<"[PASS] "<<n<<'\n';return 0;}throw std::invalid_argument("unknown test");}catch(const std::exception&e){std::cerr<<"[FAIL] "<<e.what()<<'\n';return 1;}}
