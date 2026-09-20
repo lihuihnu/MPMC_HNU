@@ -1078,3 +1078,142 @@ provide no reservoir parameters or validation data.
 This slice still does **not** divide by viscosity, construct phase mobility, evaluate
 gravity, create a Darcy face flux, apply transmissibility, assemble a spatial residual,
 add source/well terms or insert PETSc values.
+
+## 25. Phase transport-property linearization and local mobility contract
+
+The local Darcy prerequisites now include exact-state phase mass density, viscosity and
+mobility without constructing any face flux.
+
+Public entry:
+
+```cpp
+#include <mpmc/flow/phase_transport.hpp>
+```
+
+### Exact-state transport-property linearization
+
+`PhaseTransportPropertyNaturalVariableLinearization3P` binds one exact
+`NaturalVariableCellState3P` to:
+
+```text
+rho_alpha [kg / m^3]
+mu_alpha  [Pa s]
+d rho_alpha / dq
+d mu_alpha  / dq
+```
+
+for every current natural-variable column
+
+```text
+q = p_ref, T, S0, S1, pivoted phase-composition coordinates.
+```
+
+The primal values are not re-invented by this layer. They must exactly reproduce the
+validated `mass_density_kg_per_m3` and `dynamic_viscosity_pa_s` already stored in the
+current phase-property payload.
+
+The transport linearization owns an exact-state identity containing the frozen layout,
+ordered component IDs, p/T, three saturations and all three canonical phase
+compositions. A derivative payload from another state/chart is rejected.
+
+Mass density and viscosity each also carry explicit nonempty
+`model / dataset_id / revision` provenance. A missing property/derivative is not
+replaced by a constant or zero fallback.
+
+### Saturation constitutive promotion to the full chart
+
+The relative-permeability/capillary layer remains natively defined on
+
+```text
+(S0, S1).
+```
+
+`ThreePhaseSaturationCoordinateDerivatives3P` supplies the already analytic/AD-backed
+two-column derivatives of `kr` and capillary offsets. The flow transport layer promotes
+them to the full natural-variable chart:
+
+```text
+d kr_alpha / dq
+d p_alpha  / dq
+```
+
+with
+
+```text
+d p_alpha / d p_ref = 1
+```
+
+for every phase, saturation derivatives inherited from `pc_alpha(S0,S1)`, and zero
+T/composition columns under this v1 saturation-only constitutive contract.
+
+The promoted payload verifies
+
+```text
+p_alpha = p_ref + pc_alpha
+```
+
+for every phase and preserves `pc_0 = 0` exactly.
+
+### Local phase mobility
+
+`LocalPhaseMobilityLinearization3P` combines the two validated local payloads:
+
+```text
+lambda_alpha = kr_alpha / mu_alpha
+```
+
+with
+
+```text
+lambda_alpha [1 / (Pa s)].
+```
+
+Its analytic derivative is
+
+```text
+d lambda_alpha / dq =
+    [ mu_alpha * dkr_alpha/dq
+      - kr_alpha * dmu_alpha/dq ]
+    / mu_alpha^2.
+```
+
+The published local package contains, for each phase:
+
+- actual phase pressure `p_alpha [Pa]`;
+- mass density `rho_alpha [kg/m^3]`;
+- dynamic viscosity `mu_alpha [Pa s]`;
+- relative permeability `kr_alpha`;
+- mobility `lambda_alpha [1/(Pa s)]`;
+- the full natural-variable gradient of every one of those quantities;
+- density/viscosity provenance;
+- the exact current state identity/chart.
+
+Mass density is carried now because the later gravity term requires it, but gravity is
+not evaluated in this slice.
+
+### Validation ownership
+
+The dedicated `flow.transport.*` regression uses an explicitly synthetic
+state-dependent density/viscosity law and the existing synthetic saturation constitutive
+law. It checks:
+
+- exact-state p/T/saturation/composition/pivot identity;
+- required density/viscosity provenance;
+- exact primal `rho` and `mu` agreement with the current cell-state payload;
+- full-chart `d rho/dq` and `d mu/dq`;
+- promotion of `dkr/d(S0,S1)` and `dpc/d(S0,S1)` into the complete current chart;
+- `dp_alpha/dp_ref = 1`;
+- exact no-capillary zero saturation derivative of phase pressure;
+- `lambda=kr/mu`;
+- every column of `dp`, `d rho`, `d mu`, `dkr` and `d lambda` against fresh
+  central perturbations of the same synthetic model;
+- state/chart/primal/provenance/non-finite derivative mismatch rejection;
+- public-header self containment.
+
+The synthetic transport law is only a structural derivative oracle. It supplies no
+physical viscosity/density data and is not a reservoir-property validation.
+
+This slice still does **not** multiply by absolute permeability or transmissibility,
+evaluate `rho*g`, construct a pressure potential difference, upwind mobility, create
+a Darcy face flux, assemble a spatial residual, add source/well terms or insert PETSc
+values.
