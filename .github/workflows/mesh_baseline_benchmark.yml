@@ -1,82 +1,58 @@
 name: Mesh baseline benchmark
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/mesh/benchmark/**'
-      - 'modules/mesh/include/mpmc/mesh/cartesian_3d.hpp'
-      - 'modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp'
-      - 'modules/mesh/include/mpmc/mesh/topology.hpp'
-      - 'modules/mesh/include/mpmc/mesh/csr_adjacency.hpp'
-      - 'modules/mesh/include/mpmc/mesh/dense_field.hpp'
-      - 'modules/mesh/include/mpmc/mesh/entity.hpp'
-      - 'modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp'
-      - 'modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp'
-      - 'modules/mesh/include/mpmc/mesh/face_boundary.hpp'
-      - '.github/workflows/mesh_baseline_benchmark.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: mesh-baseline-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   incremental-path-gate:
     name: Incremental path gate
     uses: ./.github/workflows/_incremental_path_gate.yml
     with:
-      paths_json: >-
-        ["tests/mesh/benchmark/**","modules/mesh/include/mpmc/mesh/cartesian_3d.hpp","modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp","modules/mesh/include/mpmc/mesh/topology.hpp","modules/mesh/include/mpmc/mesh/csr_adjacency.hpp","modules/mesh/include/mpmc/mesh/dense_field.hpp","modules/mesh/include/mpmc/mesh/entity.hpp","modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp","modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp","modules/mesh/include/mpmc/mesh/face_boundary.hpp",".github/workflows/mesh_baseline_benchmark.yml"]
-
+      paths_json: '["tests/mesh/benchmark/**","modules/mesh/include/mpmc/mesh/cartesian_3d.hpp","modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp","modules/mesh/include/mpmc/mesh/topology.hpp","modules/mesh/include/mpmc/mesh/csr_adjacency.hpp","modules/mesh/include/mpmc/mesh/dense_field.hpp","modules/mesh/include/mpmc/mesh/entity.hpp","modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp","modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp","modules/mesh/include/mpmc/mesh/face_boundary.hpp",".github/workflows/mesh_baseline_benchmark.yml"]'
   baseline:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Private Linux x64 GCC Release fixed workload
-    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    runs-on:
+    - self-hosted
+    - linux
+    - x64
+    - mpmc_hnu
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Record benchmark environment
+      run: 'echo "runner_image=ubuntu-24.04"
 
-      - name: Record benchmark environment
-        run: |
-          echo "runner_image=ubuntu-24.04"
-          uname -a
-          g++ --version
-          lscpu | grep -E '^(Architecture|CPU\(s\)|Model name|Thread|Core|Socket):' || true
+        uname -a
 
-      - name: Configure fixed mesh benchmark
-        run: |
-          cmake -S tests/mesh/benchmark -B build/mesh-benchmark \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=g++
+        g++ --version
 
-      - name: Build fixed mesh benchmark
-        run: |
-          cmake --build build/mesh-benchmark \
-            --target mpmc_mesh_baseline_benchmark \
-            --parallel 2
+        lscpu | grep -E ''^(Architecture|CPU\(s\)|Model name|Thread|Core|Socket):'' || true
 
-      - name: Run fixed mesh benchmark
-        run: |
-          build/mesh-benchmark/mpmc_mesh_baseline_benchmark | tee mesh-baseline.txt
-          grep -q '^benchmark_schema=mpmc.mesh.baseline.v1$' mesh-baseline.txt
-          grep -q '^logical_total_bytes=' mesh-baseline.txt
-          grep -q '^peak_rss_kib=' mesh-baseline.txt
-          grep -q '^topology_median_gib_s=' mesh-baseline.txt
-          grep -q '^field_median_gib_s=' mesh-baseline.txt
+        '
+    - name: Configure fixed mesh benchmark
+      run: "cmake -S tests/mesh/benchmark -B build/mesh-benchmark \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DCMAKE_CXX_COMPILER=g++\n"
+    - name: Build fixed mesh benchmark
+      run: "cmake --build build/mesh-benchmark \\\n  --target mpmc_mesh_baseline_benchmark \\\n  --parallel 2\n"
+    - name: Run fixed mesh benchmark
+      run: 'build/mesh-benchmark/mpmc_mesh_baseline_benchmark | tee mesh-baseline.txt
 
-      - name: Publish benchmark summary
-        run: |
-          {
-            echo '## Mesh fixed-workload baseline'
-            echo
-            echo '```text'
-            cat mesh-baseline.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        grep -q ''^benchmark_schema=mpmc.mesh.baseline.v1$'' mesh-baseline.txt
+
+        grep -q ''^logical_total_bytes='' mesh-baseline.txt
+
+        grep -q ''^peak_rss_kib='' mesh-baseline.txt
+
+        grep -q ''^topology_median_gib_s='' mesh-baseline.txt
+
+        grep -q ''^field_median_gib_s='' mesh-baseline.txt
+
+        '
+    - name: Publish benchmark summary
+      run: "{\n  echo '## Mesh fixed-workload baseline'\n  echo\n  echo '```text'\n  cat mesh-baseline.txt\n  echo '```'\n} >> \"$GITHUB_STEP_SUMMARY\"\n"
+'on':
+  workflow_dispatch: null

@@ -1,163 +1,87 @@
 name: PT Android JNI emulator
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/ad/**'
-      - 'modules/thermodynamics/**'
-      - 'modules/flash/**'
-      - 'modules/runtime/**'
-      - 'modules/model_configuration/**'
-      - 'modules/pt_process/src/configured_backends.cpp'
-      - 'modules/pt_process/src/parameter_snapshot_supplier.cpp'
-      - 'modules/pt_process/include/mpmc/pt_process/configured_backends.hpp'
-      - 'modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp'
-      - 'products/pt_android/**'
-      - '.github/workflows/pt_android_jni_emulator.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'modules/ad/**'
-      - 'modules/thermodynamics/**'
-      - 'modules/flash/**'
-      - 'modules/runtime/**'
-      - 'modules/model_configuration/**'
-      - 'modules/pt_process/src/configured_backends.cpp'
-      - 'modules/pt_process/src/parameter_snapshot_supplier.cpp'
-      - 'modules/pt_process/include/mpmc/pt_process/configured_backends.hpp'
-      - 'modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp'
-      - 'products/pt_android/**'
-      - '.github/workflows/pt_android_jni_emulator.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: pt-android-jni-emulator-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   incremental-path-gate:
     name: Incremental path gate
     uses: ./.github/workflows/_incremental_path_gate.yml
     with:
-      paths_json: >-
-        ["modules/ad/**","modules/thermodynamics/**","modules/flash/**","modules/runtime/**","modules/model_configuration/**","modules/pt_process/src/configured_backends.cpp","modules/pt_process/src/parameter_snapshot_supplier.cpp","modules/pt_process/include/mpmc/pt_process/configured_backends.hpp","modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp","products/pt_android/**",".github/workflows/pt_android_jni_emulator.yml"]
-
+      paths_json: '["modules/ad/**","modules/thermodynamics/**","modules/flash/**","modules/runtime/**","modules/model_configuration/**","modules/pt_process/src/configured_backends.cpp","modules/pt_process/src/parameter_snapshot_supplier.cpp","modules/pt_process/include/mpmc/pt_process/configured_backends.hpp","modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp","products/pt_android/**",".github/workflows/pt_android_jni_emulator.yml"]'
   boundary:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Android JNI isolation contract
-    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    runs-on:
+    - self-hosted
+    - linux
+    - x64
+    - mpmc_hnu
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Validate Android JNI and emulator boundary
-        run: >-
-          python -m unittest discover
-          -s products/pt_android/tests
-          -p 'test_*.py' -v
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Validate Android JNI and emulator boundary
+      run: python -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
   emulator:
     name: Android x86_64 JNI PtService discovery/solve
     needs: boundary
-    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    runs-on:
+    - self-hosted
+    - linux
+    - x64
+    - mpmc_hnu
     timeout-minutes: 40
     env:
       NDK_VERSION: 30.0.16248370
       MPMC_ANDROID_MIN_API: 26
       MPMC_ANDROID_EMULATOR_API: 35
       MPMC_ANDROID_BUILD_TOOLS_VERSION: 35.0.0
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Ensure exact NDK, Android platform, build tools, and emulator image
+      shell: bash
+      run: "set -euo pipefail\nsdk_root=\"${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}\"\nif [[ -z \"$sdk_root\" ]]; then\n  echo 'Android SDK root is unavailable on the\
+        \ hosted runner.' >&2\n  exit 1\nfi\nsdkmanager=\"$sdk_root/cmdline-tools/latest/bin/sdkmanager\"\ntest -x \"$sdkmanager\"\nyes | \"$sdkmanager\" --licenses\
+        \ >/dev/null || true\n\"$sdkmanager\" --install \\\n  \"ndk;$NDK_VERSION\" \\\n  \"platforms;android-$MPMC_ANDROID_EMULATOR_API\" \\\n  \"build-tools;$MPMC_ANDROID_BUILD_TOOLS_VERSION\"\
+        \ \\\n  'platform-tools' \\\n  'emulator' \\\n  \"system-images;android-$MPMC_ANDROID_EMULATOR_API;google_apis;x86_64\"\nndk_home=\"$sdk_root/ndk/$NDK_VERSION\"\
+        \ntest -f \"$ndk_home/build/cmake/android.toolchain.cmake\"\ntest -f \"$sdk_root/platforms/android-$MPMC_ANDROID_EMULATOR_API/android.jar\"\necho \"MPMC_ANDROID_NDK_HOME=$ndk_home\"\
+        \ >> \"$GITHUB_ENV\"\njavac -version\nkeytool -help >/dev/null\n"
+    - name: Configure x86_64 Android JNI runtime
+      shell: bash
+      run: "set -euo pipefail\ncmake \\\n  -S products/pt_android \\\n  -B build/pt-android-emulator \\\n  -DCMAKE_TOOLCHAIN_FILE=\"$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake\"\
+        \ \\\n  -DANDROID_ABI=x86_64 \\\n  -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \\\n  -DANDROID_STL=c++_static \\\n  -DCMAKE_BUILD_TYPE=Release\n"
+    - name: Build JNI runtime from canonical PT snapshots
+      shell: bash
+      run: "set -euo pipefail\ncmake --build build/pt-android-emulator --config Release --parallel 2\nmapfile -t libraries < <(\n  find build/pt-android-emulator\
+        \ -type f -name 'libmpmc_pt_android_core.so' -print\n)\nif [[ ${#libraries[@]} -ne 1 ]]; then\n  echo \"Expected one Android JNI library, found ${#libraries[@]}\"\
+        \ >&2\n  exit 1\nfi\ncore=\"$(realpath \"${libraries[0]}\")\"\ntoolchain=\"$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin\"\n\"$toolchain/llvm-readelf\"\
+        \ -h \"$core\" | grep -F 'Advanced Micro Devices X86-64'\n\"$toolchain/llvm-nm\" -D --defined-only \"$core\" |\n  grep -F 'Java_org_mpmc_ptandroid_NativeBridge_runSmoke'\n\
+        echo \"MPMC_ANDROID_CORE_LIBRARY=$core\" >> \"$GITHUB_ENV\"\n"
+    - name: Build minimal signed emulator APK without Gradle product coupling
+      shell: bash
+      run: bash products/pt_android/emulator/build_smoke_apk.sh --core-library "$MPMC_ANDROID_CORE_LIBRARY" --out build/pt-android-smoke-apk
+    - name: Boot emulator, load JNI library, discover capabilities, and solve three backends
+      shell: bash
+      run: bash products/pt_android/emulator/run_emulator_smoke.sh --apk build/pt-android-smoke-apk/mpmc-pt-android-emulator-smoke.apk --out build/pt-android-emulator-evidence
+    - name: Upload Android emulator evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-android-jni-emulator-v1
+        path: 'build/pt-android-smoke-apk/mpmc-pt-android-emulator-smoke.apk
 
-      - name: Ensure exact NDK, Android platform, build tools, and emulator image
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-          if [[ -z "$sdk_root" ]]; then
-            echo 'Android SDK root is unavailable on the hosted runner.' >&2
-            exit 1
-          fi
-          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$sdkmanager"
-          yes | "$sdkmanager" --licenses >/dev/null || true
-          "$sdkmanager" --install \
-            "ndk;$NDK_VERSION" \
-            "platforms;android-$MPMC_ANDROID_EMULATOR_API" \
-            "build-tools;$MPMC_ANDROID_BUILD_TOOLS_VERSION" \
-            'platform-tools' \
-            'emulator' \
-            "system-images;android-$MPMC_ANDROID_EMULATOR_API;google_apis;x86_64"
-          ndk_home="$sdk_root/ndk/$NDK_VERSION"
-          test -f "$ndk_home/build/cmake/android.toolchain.cmake"
-          test -f "$sdk_root/platforms/android-$MPMC_ANDROID_EMULATOR_API/android.jar"
-          echo "MPMC_ANDROID_NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
-          javac -version
-          keytool -help >/dev/null
+          build/pt-android-emulator-evidence/emulator.txt
 
-      - name: Configure x86_64 Android JNI runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake \
-            -S products/pt_android \
-            -B build/pt-android-emulator \
-            -DCMAKE_TOOLCHAIN_FILE="$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=x86_64 \
-            -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \
-            -DANDROID_STL=c++_static \
-            -DCMAKE_BUILD_TYPE=Release
+          build/pt-android-emulator-evidence/logcat.txt
 
-      - name: Build JNI runtime from canonical PT snapshots
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build build/pt-android-emulator --config Release --parallel 2
-          mapfile -t libraries < <(
-            find build/pt-android-emulator -type f -name 'libmpmc_pt_android_core.so' -print
-          )
-          if [[ ${#libraries[@]} -ne 1 ]]; then
-            echo "Expected one Android JNI library, found ${#libraries[@]}" >&2
-            exit 1
-          fi
-          core="$(realpath "${libraries[0]}")"
-          toolchain="$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          "$toolchain/llvm-readelf" -h "$core" | grep -F 'Advanced Micro Devices X86-64'
-          "$toolchain/llvm-nm" -D --defined-only "$core" |
-            grep -F 'Java_org_mpmc_ptandroid_NativeBridge_runSmoke'
-          echo "MPMC_ANDROID_CORE_LIBRARY=$core" >> "$GITHUB_ENV"
-
-      - name: Build minimal signed emulator APK without Gradle product coupling
-        shell: bash
-        run: >-
-          bash products/pt_android/emulator/build_smoke_apk.sh
-          --core-library "$MPMC_ANDROID_CORE_LIBRARY"
-          --out build/pt-android-smoke-apk
-
-      - name: Boot emulator, load JNI library, discover capabilities, and solve three backends
-        shell: bash
-        run: >-
-          bash products/pt_android/emulator/run_emulator_smoke.sh
-          --apk build/pt-android-smoke-apk/mpmc-pt-android-emulator-smoke.apk
-          --out build/pt-android-emulator-evidence
-
-      - name: Upload Android emulator evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: mpmc-pt-android-jni-emulator-v1
-          path: |
-            build/pt-android-smoke-apk/mpmc-pt-android-emulator-smoke.apk
-            build/pt-android-emulator-evidence/emulator.txt
-            build/pt-android-emulator-evidence/logcat.txt
-          if-no-files-found: warn
-          retention-days: 7
+          '
+        if-no-files-found: warn
+        retention-days: 7
+'on':
+  workflow_dispatch: null

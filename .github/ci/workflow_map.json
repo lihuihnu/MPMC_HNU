@@ -1,0 +1,5223 @@
+{
+  "schema": "single-entry-v2",
+  "migration_base": "bcf2ce8dfaa8fd6f63749db1fac1db6dfb571a6f",
+  "workflows": {
+    ".github/workflows/_cpp_ctest.yml": {
+      "name": "Shared C++ CTest matrix",
+      "original_events": {
+        "workflow_call": {
+          "inputs": {
+            "source_dir": {
+              "required": true,
+              "type": "string"
+            },
+            "build_dir": {
+              "required": true,
+              "type": "string"
+            },
+            "targets": {
+              "required": true,
+              "type": "string"
+            },
+            "test_regex": {
+              "required": true,
+              "type": "string"
+            },
+            "sanitizer_option": {
+              "required": true,
+              "type": "string"
+            },
+            "timeout_minutes": {
+              "required": true,
+              "type": "number"
+            }
+          }
+        }
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {},
+      "jobs": {
+        "ctest": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": "${{ inputs.timeout_minutes }}"
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "601b9013b14f087bd420222aec10a449e7978e9f7650d905779b46a1ab52c879"
+    },
+    ".github/workflows/_incremental_path_gate.yml": {
+      "name": "Incremental PR path gate",
+      "original_events": {
+        "workflow_call": {
+          "inputs": {
+            "paths_json": {
+              "required": true,
+              "type": "string"
+            }
+          },
+          "outputs": {
+            "affected": {
+              "description": "Whether the current PR head update touches this caller's audited paths.",
+              "value": "${{ jobs.detect.outputs.affected }}"
+            }
+          }
+        }
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {},
+      "jobs": {
+        "detect": {
+          "runner": "ubuntu-24.04",
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 5
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "4cecb37a62b96202e3a6078799f7d0ff20f97ee0d2e10a4db7ac777e41d264a0"
+    },
+    ".github/workflows/_sw92_phase_assigned_topology.yml": {
+      "name": "SW92 phase-assigned topology dependency closure",
+      "original_events": {
+        "workflow_call": {
+          "inputs": {
+            "run_three_phase": {
+              "description": "Run the C2b1 three-phase terminal gate and its dependencies.",
+              "required": false,
+              "type": "boolean",
+              "default": false
+            },
+            "run_three_phase_closure": {
+              "description": "Run the C2b2 topology-closure terminal gate and its dependencies.",
+              "required": false,
+              "type": "boolean",
+              "default": false
+            },
+            "run_boundary": {
+              "description": "Run the three-phase boundary terminal gate and its dependencies.",
+              "required": false,
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {},
+      "jobs": {
+        "topology": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "${{ inputs.run_three_phase || inputs.run_three_phase_closure || inputs.run_boundary }}",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 50
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "63d36624efaac81bdc37c911c8a09ec0426c9c85047d0b4e5b83b99b34cf53c7"
+    },
+    ".github/workflows/ad.yml": {
+      "name": "AD correctness",
+      "original_events": {
+        "workflow_call": {
+          "inputs": {
+            "matrix_json": {
+              "description": "Audited AD matrix selected by the PR impact router.",
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "workflow_dispatch": {
+          "inputs": {
+            "suite": {
+              "description": "Audited test scope; all is the default for manual validation",
+              "type": "choice",
+              "options": [
+                "all",
+                "arithmetic",
+                "math",
+                "jacobian",
+                "runtime"
+              ],
+              "default": "all"
+            }
+          }
+        }
+      },
+      "manual_inputs": {
+        "suite": {
+          "description": "Audited test scope; all is the default for manual validation",
+          "type": "choice",
+          "options": [
+            "all",
+            "arithmetic",
+            "math",
+            "jacobian",
+            "runtime"
+          ],
+          "default": "all"
+        }
+      },
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "ad-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "manual-select": {
+          "runner": "ubuntu-24.04",
+          "strategy": null,
+          "condition": "${{ inputs.matrix_json == '' }}",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 5
+        },
+        "ad": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": "${{ fromJSON(inputs.matrix_json != '' && inputs.matrix_json || needs.manual-select.outputs.matrix) }}"
+          },
+          "condition": "${{ always() && (inputs.matrix_json != '' || needs.manual-select.result == 'success') }}",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "b6f192401b2bea7cc9da6d76f3491ac2035e55d0142f2d1f5be4d5d31f0ac9a4"
+    },
+    ".github/workflows/cpa_baseline.yml": {
+      "name": "CPA parameter-association baseline",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-baseline-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "baseline": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "626d4d433355bb982746100d2d35b9bea4548e71400d4456e9c326b4055d278f"
+    },
+    ".github/workflows/cpa_clapeyron_oracle.yml": {
+      "name": "CPA Clapeyron external oracle",
+      "original_events": {
+        "pull_request": {
+          "paths": [
+            ".github/workflows/cpa_clapeyron_oracle.yml",
+            "tests/flash/cpa_clapeyron_oracle/**",
+            "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json"
+          ]
+        }
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-clapeyron-oracle-${{ github.event.pull_request.number || github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "pinned-clapeyron-oracle": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 60
+        }
+      },
+      "route_key": "legacy_cpa_clapeyron_oracle",
+      "selector": {
+        "paths": [
+          ".github/workflows/cpa_clapeyron_oracle.yml",
+          "tests/flash/cpa_clapeyron_oracle/**",
+          "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json"
+        ]
+      },
+      "entry_repair": "Former PR-only gate: add parameter-free manual entry; automatic body remains in central router.",
+      "retained_hash": "e8982a0e225da2666d7fec974f7f0e99c57564b203c4b5c1d38dcfd8c87cf44c",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "pinned-clapeyron-oracle": "legacy_cpa_clapeyron_oracle__pinned-clapeyron-oracle"
+      },
+      "central_hashes": {
+        "legacy_cpa_clapeyron_oracle__pinned-clapeyron-oracle": "6c56a00b0d19ee20c780059310a9912fc19a19be98f09c559a4833b45a57e04a"
+      }
+    },
+    ".github/workflows/cpa_max3.yml": {
+      "name": "CPA PT max-three-phase baseline",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-max3-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "max3": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "e7efe4601c77d076994a54985659e1b49dbf3d6df9a03b0867cf8052e06748d1"
+    },
+    ".github/workflows/cpa_performance_audit.yml": {
+      "name": "CPA flash performance audit",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
+            "modules/flash/include/mpmc/flash/cpa_*.hpp",
+            "modules/flash/include/mpmc/flash/pt_*.hpp",
+            "tests/flash/cpa_physical_validation/test_support.hpp",
+            "tests/flash/cpa_performance_baseline/**",
+            ".github/workflows/cpa_performance_audit.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-performance-audit-${{ github.ref }}",
+        "cancel-in-progress": false
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "paired-baseline": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "route_key": "legacy_cpa_performance_audit",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
+          "modules/flash/include/mpmc/flash/cpa_*.hpp",
+          "modules/flash/include/mpmc/flash/pt_*.hpp",
+          "tests/flash/cpa_physical_validation/test_support.hpp",
+          "tests/flash/cpa_performance_baseline/**",
+          ".github/workflows/cpa_performance_audit.yml"
+        ]
+      },
+      "retained_hash": "7668ead8734082e9b5ac84c06f92c3f0751e34b667151bce0ba1cd4f0fafb5aa",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "paired-baseline": "legacy_cpa_performance_audit__paired-baseline"
+      },
+      "central_hashes": {
+        "legacy_cpa_performance_audit__paired-baseline": "4b273d2830eb52255d979309f6d6831243630f5a025062dae741a8174561f3ce"
+      }
+    },
+    ".github/workflows/cpa_physical_validation.yml": {
+      "name": "CPA associating physical validation",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-physical-validation-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "full-physical-regression": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        },
+        "sanitizer-safety-regression": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "ee346baa1c6c7084b422e088741523253f1e3e551ab094f4e7841c80415b9b95"
+    },
+    ".github/workflows/cpa_pt_phase.yml": {
+      "name": "CPA PT density-root and fugacity kernel",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-pt-phase-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "cpa-pt-phase": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "2b6c88b49bfdf6342fe7ae3d7b4a2a1edc2ab9b4e7a02cb1db7f3e9216e2326a"
+    },
+    ".github/workflows/cpa_split.yml": {
+      "name": "CPA PT vapor-liquid split baseline",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-split-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "split": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "ccb401859bbe4c73ac670bfbdfb600c6dd16a1cf13f5ea34b665cd120f3d5c25"
+    },
+    ".github/workflows/cpa_stability.yml": {
+      "name": "CPA PT stability",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-stability-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "cpa-stability": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "452e4347c3a3e4026cb9e94ca0be86ab7db3d8ba7f1ed373f251d0e7b88c7c81"
+    },
+    ".github/workflows/cpa_thermopack_oracle.yml": {
+      "name": "CPA ThermoPack external oracle",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            ".github/workflows/cpa_thermopack_oracle.yml",
+            "tests/flash/cpa_thermopack_oracle/**",
+            "modules/flash/cpa_thermopack_mapping.md",
+            "modules/flash/cpa_flash.md"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "cpa-thermopack-oracle-${{ github.event.pull_request.number || github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "pinned-thermopack-oracle": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "route_key": "legacy_cpa_thermopack_oracle",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          ".github/workflows/cpa_thermopack_oracle.yml",
+          "tests/flash/cpa_thermopack_oracle/**",
+          "modules/flash/cpa_thermopack_mapping.md",
+          "modules/flash/cpa_flash.md"
+        ]
+      },
+      "retained_hash": "c3855a57ffa70b1ede458715ac123ea2682cbd01127aabe11537442f4c56bc56",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "pinned-thermopack-oracle": "legacy_cpa_thermopack_oracle__pinned-thermopack-oracle"
+      },
+      "central_hashes": {
+        "legacy_cpa_thermopack_oracle__pinned-thermopack-oracle": "166ac8a2306e32020f855b9f4912e36375ae69651798d4e3e2fc4908b9748ec0"
+      }
+    },
+    ".github/workflows/discretization_core.yml": {
+      "name": "Discretization core correctness",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/mesh/include/**",
+            "modules/mesh/CMakeLists.txt",
+            "modules/discretization/**",
+            "tests/discretization/core/**",
+            ".github/workflows/discretization_core.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "discretization-core-${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "core": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "build_type": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "build_type": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "build_type": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "route_key": "legacy_discretization_core",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/mesh/include/**",
+          "modules/mesh/CMakeLists.txt",
+          "modules/discretization/**",
+          "tests/discretization/core/**",
+          ".github/workflows/discretization_core.yml"
+        ]
+      },
+      "retained_hash": "2a3e288bdf9fe93f9be7e86e3e19651d3bac0621283751d29eedf020482cb73d",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "core": "legacy_discretization_core__core"
+      },
+      "central_hashes": {
+        "legacy_discretization_core__core": "9956c4a50c943768dcc0507d489d8f603f7a5d90040116b537a4b8b8b64846a7"
+      }
+    },
+    ".github/workflows/flow_core.yml": {
+      "name": "Flow natural-variable core contract",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "flow-core-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "core": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "e9deaebd7d6e3f35b14cb1f863fba8828142137e3c39eb1042aa5d78fc9eb01b"
+    },
+    ".github/workflows/flow_discretization.yml": {
+      "name": "Flow-discretization TPFA phase flux",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "flow-discretization-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "core": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "23bdbcefbf813a6b8ff8538d1b8e0335b9f9d8597c560ae9ac7334c355d11471"
+    },
+    ".github/workflows/flow_discretization_petsc.yml": {
+      "name": "Flow-discretization PETSc/MPI owner exchange",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "flow-discretization-petsc-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "distributed": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "cf8e137642d4f01858ae2c80c4a0910af5570ef92c9919a62f1bff19e8507048"
+    },
+    ".github/workflows/frontend.yml": {
+      "name": "Frontend",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "api/**",
+            "frontend/**",
+            "modules/model_configuration_grpc/proto/**",
+            "buf.model.yaml",
+            ".github/workflows/frontend.yml",
+            ".gitignore"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "frontend-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "verify": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "route_key": "legacy_frontend",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "api/**",
+          "frontend/**",
+          "modules/model_configuration_grpc/proto/**",
+          "buf.model.yaml",
+          ".github/workflows/frontend.yml",
+          ".gitignore"
+        ]
+      },
+      "retained_hash": "9991302b4776abb6561835376d85de8458513855aecda69f6f018e40065ff24c",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "verify": "legacy_frontend__verify"
+      },
+      "central_hashes": {
+        "legacy_frontend__verify": "efc9ffc9dfecfdda939e8765dfc140f733ca44572ff3f24c3e4a56f3d85eb9dc"
+      }
+    },
+    ".github/workflows/hosted_web_model_product.yml": {
+      "name": "Hosted Web model product",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "api/**",
+            "deploy/pt-grpc-web/**",
+            "modules/pt_process/**",
+            "modules/model_configuration/**",
+            "modules/model_configuration_grpc/**",
+            "frontend/package.json",
+            "frontend/package-lock.json",
+            "frontend/src/**",
+            ".github/workflows/hosted_web_model_product.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "hosted-web-model-product-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "hosted-web-model": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "route_key": "legacy_hosted_web_model_product",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "api/**",
+          "deploy/pt-grpc-web/**",
+          "modules/pt_process/**",
+          "modules/model_configuration/**",
+          "modules/model_configuration_grpc/**",
+          "frontend/package.json",
+          "frontend/package-lock.json",
+          "frontend/src/**",
+          ".github/workflows/hosted_web_model_product.yml"
+        ]
+      },
+      "retained_hash": "b7e09370ae3bf38ac043b28d100e645aedc2373d2cad499e2decef26e9746a2b",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "hosted-web-model": "legacy_hosted_web_model_product__hosted-web-model"
+      },
+      "central_hashes": {
+        "legacy_hosted_web_model_product__hosted-web-model": "443211fa868a5c9f091d816c4f4c92d81b4225c93feec26e54f6af0a04aab726"
+      }
+    },
+    ".github/workflows/mesh_baseline_benchmark.yml": {
+      "name": "Mesh baseline benchmark",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "tests/mesh/benchmark/**",
+            "modules/mesh/include/mpmc/mesh/cartesian_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/topology.hpp",
+            "modules/mesh/include/mpmc/mesh/csr_adjacency.hpp",
+            "modules/mesh/include/mpmc/mesh/dense_field.hpp",
+            "modules/mesh/include/mpmc/mesh/entity.hpp",
+            "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/face_boundary.hpp",
+            ".github/workflows/mesh_baseline_benchmark.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "mesh-baseline-${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "baseline": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "route_key": "legacy_mesh_baseline_benchmark",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "tests/mesh/benchmark/**",
+          "modules/mesh/include/mpmc/mesh/cartesian_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/topology.hpp",
+          "modules/mesh/include/mpmc/mesh/csr_adjacency.hpp",
+          "modules/mesh/include/mpmc/mesh/dense_field.hpp",
+          "modules/mesh/include/mpmc/mesh/entity.hpp",
+          "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/face_boundary.hpp",
+          ".github/workflows/mesh_baseline_benchmark.yml"
+        ]
+      },
+      "retained_hash": "1f336cfdcd8884d6dd80fbb2be369de7ed818fadbe6db3d41b73aeb50da6c87a",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "baseline": "legacy_mesh_baseline_benchmark__baseline"
+      },
+      "central_hashes": {
+        "legacy_mesh_baseline_benchmark__baseline": "1d6c260d097310d84e4c5aa180599993cae2b963e1a7dfc681f4be0b2d78b272"
+      }
+    },
+    ".github/workflows/mesh_core.yml": {
+      "name": "Mesh core correctness",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/mesh/include/**",
+            "modules/mesh/CMakeLists.txt",
+            "tests/mesh/core/**",
+            ".github/workflows/mesh_core.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "mesh-core-${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "core": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "build_type": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "build_type": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "build_type": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "route_key": "legacy_mesh_core",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/mesh/include/**",
+          "modules/mesh/CMakeLists.txt",
+          "tests/mesh/core/**",
+          ".github/workflows/mesh_core.yml"
+        ]
+      },
+      "retained_hash": "5727ae255bce0e9aa322a365de522f462dc4d424a1c4645ccde4f43a6de210ed",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "core": "legacy_mesh_core__core"
+      },
+      "central_hashes": {
+        "legacy_mesh_core__core": "7913223e0275da9d3aed3a19d07e5b485ad03bcccc6db6b95fd0e431e9120136"
+      }
+    },
+    ".github/workflows/mesh_external_compatibility.yml": {
+      "name": "Mesh external format compatibility",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/mesh/include/mpmc/mesh/gmsh_4_1.hpp",
+            "modules/mesh/include/mpmc/mesh/gmsh_4_1_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/vtu.hpp",
+            "modules/mesh/include/mpmc/mesh/vtu_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/grdecl.hpp",
+            "modules/mesh/include/mpmc/mesh/grdecl_reconstruction.hpp",
+            "modules/mesh/include/mpmc/mesh/mesh_exchange.hpp",
+            "modules/mesh/include/mpmc/mesh/mesh_exchange_io.hpp",
+            "modules/mesh/include/mpmc/mesh/active_corner_point.hpp",
+            "modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/csr_adjacency.hpp",
+            "modules/mesh/include/mpmc/mesh/dense_field.hpp",
+            "modules/mesh/include/mpmc/mesh/dense_field_registry.hpp",
+            "modules/mesh/include/mpmc/mesh/entity.hpp",
+            "modules/mesh/include/mpmc/mesh/face_boundary.hpp",
+            "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/geometry_2d.hpp",
+            "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
+            "modules/mesh/include/mpmc/mesh/topology.hpp",
+            "tests/mesh/external_compatibility/**",
+            ".github/workflows/mesh_external_compatibility.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "mesh-external-compat-${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "compatibility": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "route_key": "legacy_mesh_external_compatibility",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/mesh/include/mpmc/mesh/gmsh_4_1.hpp",
+          "modules/mesh/include/mpmc/mesh/gmsh_4_1_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/vtu.hpp",
+          "modules/mesh/include/mpmc/mesh/vtu_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/grdecl.hpp",
+          "modules/mesh/include/mpmc/mesh/grdecl_reconstruction.hpp",
+          "modules/mesh/include/mpmc/mesh/mesh_exchange.hpp",
+          "modules/mesh/include/mpmc/mesh/mesh_exchange_io.hpp",
+          "modules/mesh/include/mpmc/mesh/active_corner_point.hpp",
+          "modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/csr_adjacency.hpp",
+          "modules/mesh/include/mpmc/mesh/dense_field.hpp",
+          "modules/mesh/include/mpmc/mesh/dense_field_registry.hpp",
+          "modules/mesh/include/mpmc/mesh/entity.hpp",
+          "modules/mesh/include/mpmc/mesh/face_boundary.hpp",
+          "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/geometry_2d.hpp",
+          "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/topology.hpp",
+          "tests/mesh/external_compatibility/**",
+          ".github/workflows/mesh_external_compatibility.yml"
+        ]
+      },
+      "retained_hash": "3e95b77b92da3ac0691f2b8ee4407c80cb0d95f74bdd1c6c69f6920ec6b8c0d1",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "compatibility": "legacy_mesh_external_compatibility__compatibility"
+      },
+      "central_hashes": {
+        "legacy_mesh_external_compatibility__compatibility": "f6cf6002d03439c32e65c7914dbca088cce645e0387ba3edc4f8ab65577d9e4a"
+      }
+    },
+    ".github/workflows/mesh_petsc.yml": {
+      "name": "Mesh/discretization PETSc adapter correctness",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/mesh/include/**",
+            "modules/mesh_petsc/**",
+            "modules/discretization/**",
+            "modules/discretization_petsc/**",
+            "modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp",
+            "tests/mesh/petsc/**",
+            ".github/workflows/mesh_petsc.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "mesh-discretization-petsc-${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "petsc": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "route_key": "legacy_mesh_petsc",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/mesh/include/**",
+          "modules/mesh_petsc/**",
+          "modules/discretization/**",
+          "modules/discretization_petsc/**",
+          "modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp",
+          "tests/mesh/petsc/**",
+          ".github/workflows/mesh_petsc.yml"
+        ]
+      },
+      "retained_hash": "1bd3a96d4bf0f22da1905fa0bbcf942357ac264b6d5d383da2a145f0512059a6",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "petsc": "legacy_mesh_petsc__petsc"
+      },
+      "central_hashes": {
+        "legacy_mesh_petsc__petsc": "d80d430eede357c1c1660719e59b7709ed48c70595b9bd25fc93f086392368f2"
+      }
+    },
+    ".github/workflows/model_configuration.yml": {
+      "name": "Public thermodynamic model configuration",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "model-configuration-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "parameters": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "config": "Debug",
+                  "sanitizers": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "config": "Release",
+                  "sanitizers": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "compiler": "",
+                  "config": "Release",
+                  "sanitizers": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "d70a177769b9a2b50d1c3b85944470654d20b8ce69731511415e043a88a5daee"
+    },
+    ".github/workflows/model_configuration_grpc.yml": {
+      "name": "Versioned model configuration service",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/model_configuration_grpc/**",
+            "modules/model_configuration/**",
+            "modules/runtime/**",
+            "modules/runtime_grpc/**",
+            "modules/pt_process/**",
+            "api/proto/mpmc/runtime/v1/pt_service.proto",
+            "modules/thermodynamics/include/mpmc/thermodynamics/components.hpp",
+            "modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp",
+            "modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp",
+            "modules/thermodynamics/CMakeLists.txt",
+            "modules/flash/CMakeLists.txt",
+            "modules/flash/include/mpmc/flash/pr76_*.hpp",
+            "modules/flash/include/mpmc/flash/pt_*.hpp",
+            "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+            "tests/model_configuration/**",
+            "frontend/src/api/modelSessionClient*",
+            "frontend/src/api/modelDesktopContract.ts",
+            "frontend/src/api/rendererModel*",
+            "frontend/src/api/modelValidationDetail*",
+            "frontend/desktop/**",
+            "frontend/package.json",
+            "frontend/package-lock.json",
+            "frontend/tsconfig*.json",
+            "frontend/buf.model.gen.yaml",
+            "buf.model.yaml",
+            "tests/runtime/pt_grpc_adapter/**",
+            "tests/flash/pr76_three_phase/synthetic_fixture.hpp",
+            "products/pt/conanfile.txt",
+            "products/pt/conan.lock",
+            "products/pt/conan/profiles/*",
+            ".github/workflows/model_configuration_grpc.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "model-configuration-grpc-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "linux": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "Model RPC GCC + ASan/UBSan",
+                  "compiler": "g++",
+                  "config": "Debug",
+                  "sanitizers": "ON"
+                },
+                {
+                  "name": "Model RPC Clang Release",
+                  "compiler": "clang++",
+                  "config": "Release",
+                  "sanitizers": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        },
+        "windows": {
+          "runner": "windows-2022",
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 20
+        },
+        "macos": {
+          "runner": "macos-15",
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 20
+        }
+      },
+      "route_key": "legacy_model_configuration_grpc",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/model_configuration_grpc/**",
+          "modules/model_configuration/**",
+          "modules/runtime/**",
+          "modules/runtime_grpc/**",
+          "modules/pt_process/**",
+          "api/proto/mpmc/runtime/v1/pt_service.proto",
+          "modules/thermodynamics/include/mpmc/thermodynamics/components.hpp",
+          "modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp",
+          "modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp",
+          "modules/thermodynamics/CMakeLists.txt",
+          "modules/flash/CMakeLists.txt",
+          "modules/flash/include/mpmc/flash/pr76_*.hpp",
+          "modules/flash/include/mpmc/flash/pt_*.hpp",
+          "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+          "tests/model_configuration/**",
+          "frontend/src/api/modelSessionClient*",
+          "frontend/src/api/modelDesktopContract.ts",
+          "frontend/src/api/rendererModel*",
+          "frontend/src/api/modelValidationDetail*",
+          "frontend/desktop/**",
+          "frontend/package.json",
+          "frontend/package-lock.json",
+          "frontend/tsconfig*.json",
+          "frontend/buf.model.gen.yaml",
+          "buf.model.yaml",
+          "tests/runtime/pt_grpc_adapter/**",
+          "tests/flash/pr76_three_phase/synthetic_fixture.hpp",
+          "products/pt/conanfile.txt",
+          "products/pt/conan.lock",
+          "products/pt/conan/profiles/*",
+          ".github/workflows/model_configuration_grpc.yml"
+        ]
+      },
+      "retained_hash": "02f0b8450cd5296d04b062cd45522ed9a20f4e9c4be36392f59c21833e738270",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "linux": "legacy_model_configuration_grpc__linux",
+        "windows": "legacy_model_configuration_grpc__windows",
+        "macos": "legacy_model_configuration_grpc__macos"
+      },
+      "central_hashes": {
+        "legacy_model_configuration_grpc__linux": "34c3c77e13c5e40b91a52c1011f2ef41d1898a876dd7bf656134e06fd11afc40",
+        "legacy_model_configuration_grpc__windows": "bef30f4fbac475f765589745420be18de23268668095ea77f5fc88d5ee9d6baf",
+        "legacy_model_configuration_grpc__macos": "8d61dd90db75cdcb4948ad50527a5af28133093ad70dd856be8f79e58ae85564"
+      }
+    },
+    ".github/workflows/physics_closure.yml": {
+      "name": "Physics thermodynamic closure",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "physics-thermodynamic-closure-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "closure": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "e67286fef88f490e0e589c2bda6f1ad8bf4326e183e9b0d12b53c3e2936668de"
+    },
+    ".github/workflows/physics_component_inventory.yml": {
+      "name": "Physics PT component inventory",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/physics/**",
+            "modules/flash/include/mpmc/flash/pr76_*.hpp",
+            "modules/flash/include/mpmc/flash/pt_*.hpp",
+            "modules/flash/include/mpmc/flash/sw92_*.hpp",
+            "modules/flash/include/mpmc/flash/detail/**",
+            "modules/thermodynamics/include/mpmc/thermodynamics/**",
+            "modules/ad/include/mpmc/ad/**",
+            "tests/physics/component_inventory/**",
+            "tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp",
+            "tests/support/sw92/test_support.hpp",
+            ".github/workflows/physics_component_inventory.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "physics-component-inventory-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "inventory": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "route_key": "legacy_physics_component_inventory",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/physics/**",
+          "modules/flash/include/mpmc/flash/pr76_*.hpp",
+          "modules/flash/include/mpmc/flash/pt_*.hpp",
+          "modules/flash/include/mpmc/flash/sw92_*.hpp",
+          "modules/flash/include/mpmc/flash/detail/**",
+          "modules/thermodynamics/include/mpmc/thermodynamics/**",
+          "modules/ad/include/mpmc/ad/**",
+          "tests/physics/component_inventory/**",
+          "tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp",
+          "tests/support/sw92/test_support.hpp",
+          ".github/workflows/physics_component_inventory.yml"
+        ]
+      },
+      "retained_hash": "e02d636145e0a5c1b9814195c825cfe4a4b49a8a510c5a84e41ba6b0d3b2c2b2",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "inventory": "legacy_physics_component_inventory__inventory"
+      },
+      "central_hashes": {
+        "legacy_physics_component_inventory__inventory": "61f9c31474b0dc76e903507d1511881b5f3f0cdc301ec10c49c78165cbbff221"
+      }
+    },
+    ".github/workflows/physics_sw92_closure.yml": {
+      "name": "SW92 physics thermodynamic closure",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "physics-sw92-closure-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "closure": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "878f49d36bef61b717bbaade1be2ee3ef26e016d9fe19b0d71cf8eeadb9eed4b"
+    },
+    ".github/workflows/pr76_pt_continuation.yml": {
+      "name": "PR76 PT continuation scan",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pr76-pt-continuation-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "continuation": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "c023887094ab3b3d0cca8c36ac28f3db2cd8e6da3fcaf86ec4d3833fec08a716"
+    },
+    ".github/workflows/pr76_three_phase.yml": {
+      "name": "PR76 PT max-three-phase baseline",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pr76-three-phase-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "max3": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "6c0bfefda37ef338cb0e8a92ea7e2ca81c7a78503cc081586de6d179f4313fe9"
+    },
+    ".github/workflows/pr_incremental_ci.yml": {
+      "name": "PR incremental CI router",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pr-incremental-ci-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "impact": {
+          "runner": "ubuntu-24.04",
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 5
+        },
+        "flow-core": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.flow_core == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "flow-discretization": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.flow_discretization == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "flow-discretization-petsc": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.flow_discretization_petsc == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "pt-flash-backend": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.pt_flash_backend == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "pt-stability": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.pt_stability == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "pt-split": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.pt_split == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "pr76-pt-continuation": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.pr76_pt_continuation == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "pr76-max3": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.pr76_max3 == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "cpa-stability": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.cpa_stability == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "cpa-split": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.cpa_split == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "cpa-max3": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.cpa_max3 == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "cpa-baseline": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.cpa_baseline == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "cpa-pt-phase": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.cpa_pt_phase == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "cpa-physical-validation": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.cpa_physical_validation == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "thermodynamics": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.thermo_has_work == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "physics-closure": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.physics_closure == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "model-configuration": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.model_configuration == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-thermodynamics": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_thermodynamics == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-family-vle": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_family_vle == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-profile-c-pt": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_profile_c_pt == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-profile-c-phase-set": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_profile_c_phase_set == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-profile-c-sensitivity": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_profile_c_sensitivity == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-physics-closure": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_physics_closure == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-phase-assigned-joint": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_phase_assigned_joint == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-phase-assigned-h-side-witness": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_phase_assigned_h_side_witness == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-phase-assigned-no-w": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_phase_assigned_no_w == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "sw92-phase-assigned-three-phase-topology": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' || needs.impact.outputs.sw92_phase_assigned_boundary == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "ad": {
+          "runner": null,
+          "strategy": null,
+          "condition": "needs.impact.outputs.ad_has_work == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        }
+      }
+    },
+    ".github/workflows/pt_android_jni_emulator.yml": {
+      "name": "PT Android JNI emulator",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/ad/**",
+            "modules/thermodynamics/**",
+            "modules/flash/**",
+            "modules/runtime/**",
+            "modules/model_configuration/**",
+            "modules/pt_process/src/configured_backends.cpp",
+            "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+            "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+            "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+            "products/pt_android/**",
+            ".github/workflows/pt_android_jni_emulator.yml"
+          ]
+        },
+        "push": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/ad/**",
+            "modules/thermodynamics/**",
+            "modules/flash/**",
+            "modules/runtime/**",
+            "modules/model_configuration/**",
+            "modules/pt_process/src/configured_backends.cpp",
+            "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+            "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+            "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+            "products/pt_android/**",
+            ".github/workflows/pt_android_jni_emulator.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-android-jni-emulator-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "boundary": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 5
+        },
+        "emulator": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 40
+        }
+      },
+      "route_key": "legacy_pt_android_jni_emulator",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/ad/**",
+          "modules/thermodynamics/**",
+          "modules/flash/**",
+          "modules/runtime/**",
+          "modules/model_configuration/**",
+          "modules/pt_process/src/configured_backends.cpp",
+          "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+          "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+          "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+          "products/pt_android/**",
+          ".github/workflows/pt_android_jni_emulator.yml"
+        ]
+      },
+      "retained_hash": "dd2746a8ee79fe21661f3c12582233d59f417a656d5e13dc67bbd5d9c0c07057",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "boundary": "legacy_pt_android_jni_emulator__boundary",
+        "emulator": "legacy_pt_android_jni_emulator__emulator"
+      },
+      "central_hashes": {
+        "legacy_pt_android_jni_emulator__boundary": "29cf7746181bfe8f5b24145138ae373191bfa82fe1591be56e8566270e6a4f20",
+        "legacy_pt_android_jni_emulator__emulator": "3062496a8acda71cf47736118453837c94e05f95b30beecc6c24f139c7ab000c"
+      }
+    },
+    ".github/workflows/pt_android_ndk_portability.yml": {
+      "name": "PT Android NDK portability",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/ad/**",
+            "modules/thermodynamics/**",
+            "modules/flash/**",
+            "modules/runtime/**",
+            "modules/model_configuration/**",
+            "modules/pt_process/src/configured_backends.cpp",
+            "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+            "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+            "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+            "products/pt_android/**",
+            ".github/workflows/pt_android_ndk_portability.yml"
+          ]
+        },
+        "push": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/ad/**",
+            "modules/thermodynamics/**",
+            "modules/flash/**",
+            "modules/runtime/**",
+            "modules/model_configuration/**",
+            "modules/pt_process/src/configured_backends.cpp",
+            "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+            "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+            "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+            "products/pt_android/**",
+            ".github/workflows/pt_android_ndk_portability.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-android-ndk-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "boundary": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 5
+        },
+        "build": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "abi": "arm64-v8a",
+                  "machine": "AArch64"
+                },
+                {
+                  "abi": "x86_64",
+                  "machine": "Advanced Micro Devices X86-64"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 20
+        }
+      },
+      "route_key": "legacy_pt_android_ndk_portability",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/ad/**",
+          "modules/thermodynamics/**",
+          "modules/flash/**",
+          "modules/runtime/**",
+          "modules/model_configuration/**",
+          "modules/pt_process/src/configured_backends.cpp",
+          "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+          "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+          "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+          "products/pt_android/**",
+          ".github/workflows/pt_android_ndk_portability.yml"
+        ]
+      },
+      "retained_hash": "4aa24c2e07b4982f8fd367783ea09b262ed8229895c3cd5eb2e168c976a136fe",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "boundary": "legacy_pt_android_ndk_portability__boundary",
+        "build": "legacy_pt_android_ndk_portability__build"
+      },
+      "central_hashes": {
+        "legacy_pt_android_ndk_portability__boundary": "959ef4c338c16c3badaa98536d2eb817700998a80ad22bddedaab3a980afd4fc",
+        "legacy_pt_android_ndk_portability__build": "130418c9387fbed1c2449c6ef6b47d9182bbfbcdb73ac349163e99ebef886f52"
+      }
+    },
+    ".github/workflows/pt_android_product_shell.yml": {
+      "name": "PT Android Product Shell",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/ad/**",
+            "modules/thermodynamics/**",
+            "modules/flash/**",
+            "modules/runtime/**",
+            "modules/model_configuration/**",
+            "modules/pt_process/src/configured_backends.cpp",
+            "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+            "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+            "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+            "frontend/**",
+            "products/pt_android/**",
+            ".github/workflows/pt_android_product_shell.yml"
+          ]
+        },
+        "push": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/ad/**",
+            "modules/thermodynamics/**",
+            "modules/flash/**",
+            "modules/runtime/**",
+            "modules/model_configuration/**",
+            "modules/pt_process/src/configured_backends.cpp",
+            "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+            "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+            "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+            "frontend/**",
+            "products/pt_android/**",
+            ".github/workflows/pt_android_product_shell.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-android-product-shell-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "product-shell": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 45
+        }
+      },
+      "route_key": "legacy_pt_android_product_shell",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/ad/**",
+          "modules/thermodynamics/**",
+          "modules/flash/**",
+          "modules/runtime/**",
+          "modules/model_configuration/**",
+          "modules/pt_process/src/configured_backends.cpp",
+          "modules/pt_process/src/parameter_snapshot_supplier.cpp",
+          "modules/pt_process/include/mpmc/pt_process/configured_backends.hpp",
+          "modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp",
+          "frontend/**",
+          "products/pt_android/**",
+          ".github/workflows/pt_android_product_shell.yml"
+        ]
+      },
+      "retained_hash": "b563dd4124fccb7ea87e24fea3eb16e6f61d8468db53b13054a82a1205e14b27",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "product-shell": "legacy_pt_android_product_shell__product-shell"
+      },
+      "central_hashes": {
+        "legacy_pt_android_product_shell__product-shell": "48cef98179a22e6622c60ec752f66315e94994818b05dded1641f83b0c03fffb"
+      }
+    },
+    ".github/workflows/pt_flash_backend.yml": {
+      "name": "PT flash backend conformance",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-flash-backend-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "backend": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "8ba20a53ee3f4390a53a03b255605539d19abf00ccac8955f7b31f9bb9117b6a"
+    },
+    ".github/workflows/pt_process_adapter.yml": {
+      "name": "PT gRPC process adapter",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "tests/support/sw92/test_support.hpp",
+            "api/**",
+            "deploy/pt-grpc-web/**",
+            "modules/runtime/**",
+            "modules/runtime_grpc/**",
+            "modules/pt_process/**",
+            "modules/model_configuration/**",
+            "modules/model_configuration_grpc/**",
+            "modules/flash/include/mpmc/flash/pt_flash_backend.hpp",
+            "modules/flash/include/mpmc/flash/pt_phase_set.hpp",
+            "modules/flash/include/mpmc/flash/pt_phase_transition.hpp",
+            "tests/runtime/pt_grpc_adapter/**",
+            "tests/runtime/pt_process_host/**",
+            "frontend/buf.gen.yaml",
+            "frontend/package.json",
+            "frontend/package-lock.json",
+            "frontend/src/api/**",
+            "frontend/src/domain/flash.ts",
+            "frontend/src/gen/**",
+            ".github/workflows/pt_process_adapter.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-process-adapter-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "adapter": {
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan + TS golden",
+                  "compiler": "g++",
+                  "config": "Debug",
+                  "sanitizers": "ON",
+                  "cross_language": true
+                },
+                {
+                  "name": "Clang Release",
+                  "compiler": "clang++",
+                  "config": "Release",
+                  "sanitizers": "OFF",
+                  "cross_language": false
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "route_key": "legacy_pt_process_adapter",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "tests/support/sw92/test_support.hpp",
+          "api/**",
+          "deploy/pt-grpc-web/**",
+          "modules/runtime/**",
+          "modules/runtime_grpc/**",
+          "modules/pt_process/**",
+          "modules/model_configuration/**",
+          "modules/model_configuration_grpc/**",
+          "modules/flash/include/mpmc/flash/pt_flash_backend.hpp",
+          "modules/flash/include/mpmc/flash/pt_phase_set.hpp",
+          "modules/flash/include/mpmc/flash/pt_phase_transition.hpp",
+          "tests/runtime/pt_grpc_adapter/**",
+          "tests/runtime/pt_process_host/**",
+          "frontend/buf.gen.yaml",
+          "frontend/package.json",
+          "frontend/package-lock.json",
+          "frontend/src/api/**",
+          "frontend/src/domain/flash.ts",
+          "frontend/src/gen/**",
+          ".github/workflows/pt_process_adapter.yml"
+        ]
+      },
+      "retained_hash": "2eb756eb2bbf5b7768e9b82f7544121ce82e0ade7405f1117746f8f607a0f990",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "adapter": "legacy_pt_process_adapter__adapter"
+      },
+      "central_hashes": {
+        "legacy_pt_process_adapter__adapter": "02693fdaf40f34c9c92be63125a809add649bbf3bab037a21b5f19954f4804ca"
+      }
+    },
+    ".github/workflows/pt_product_staging.yml": {
+      "name": "PT cross-platform product staging",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "api/**",
+            "modules/ad/**",
+            "modules/thermodynamics/**",
+            "modules/flash/**",
+            "modules/runtime/**",
+            "modules/runtime_grpc/**",
+            "modules/pt_process/**",
+            "modules/model_configuration/**",
+            "modules/model_configuration_grpc/**",
+            "tests/runtime/pt_grpc_adapter/**",
+            "products/pt/**",
+            "frontend/desktop/**",
+            "frontend/src/api/desktopBridge.ts",
+            "frontend/src/api/desktopBridgeContract.ts",
+            "frontend/src/api/flashClient.ts",
+            "frontend/src/api/modelSessionClient*",
+            "frontend/src/api/modelDesktopContract.ts",
+            "frontend/src/api/rendererModel*",
+            "frontend/src/api/modelValidationDetail*",
+            "frontend/buf.model.gen.yaml",
+            "buf.model.yaml",
+            "frontend/src/api/ptWire.ts",
+            "frontend/src/domain/flash.ts",
+            "frontend/src/gen/**",
+            "frontend/src/main.tsx",
+            "frontend/index.html",
+            "frontend/vite.config.ts",
+            "frontend/tsconfig.desktop.json",
+            "frontend/package.json",
+            "frontend/package-lock.json",
+            ".github/workflows/pt_product_staging.yml"
+          ]
+        },
+        "push": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "products/pt/conanfile.txt",
+            "products/pt/conan.lock",
+            "products/pt/conan/profiles/**",
+            ".github/workflows/pt_product_staging.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-product-staging-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "seed": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "Linux x64 Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "profile": "linux-x86_64-release"
+                },
+                {
+                  "name": "Windows x64 Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "profile": "windows-x86_64-release"
+                },
+                {
+                  "name": "macOS arm64 Release",
+                  "os": "macos-15",
+                  "runner": "macos-15",
+                  "profile": "macos-armv8-release"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        },
+        "stage": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "Linux x64 Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "profile": "linux-x86_64-release"
+                },
+                {
+                  "name": "Windows x64 Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "profile": "windows-x86_64-release"
+                },
+                {
+                  "name": "macOS arm64 Release",
+                  "os": "macos-15",
+                  "runner": "macos-15",
+                  "profile": "macos-armv8-release"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        },
+        "desktop": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "Linux x64",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "profile": "linux-x86_64-release",
+                  "electron_platform": "linux",
+                  "electron_arch": "x64",
+                  "host_executable": "mpmc_pt_service_host"
+                },
+                {
+                  "name": "Windows x64",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "profile": "windows-x86_64-release",
+                  "electron_platform": "win32",
+                  "electron_arch": "x64",
+                  "host_executable": "mpmc_pt_service_host.exe"
+                },
+                {
+                  "name": "macOS arm64",
+                  "os": "macos-15",
+                  "runner": "macos-15",
+                  "profile": "macos-armv8-release",
+                  "electron_platform": "darwin",
+                  "electron_arch": "arm64",
+                  "host_executable": "mpmc_pt_service_host"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 20
+        }
+      },
+      "route_key": "legacy_pt_product_staging",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "api/**",
+          "modules/ad/**",
+          "modules/thermodynamics/**",
+          "modules/flash/**",
+          "modules/runtime/**",
+          "modules/runtime_grpc/**",
+          "modules/pt_process/**",
+          "modules/model_configuration/**",
+          "modules/model_configuration_grpc/**",
+          "tests/runtime/pt_grpc_adapter/**",
+          "products/pt/**",
+          "frontend/desktop/**",
+          "frontend/src/api/desktopBridge.ts",
+          "frontend/src/api/desktopBridgeContract.ts",
+          "frontend/src/api/flashClient.ts",
+          "frontend/src/api/modelSessionClient*",
+          "frontend/src/api/modelDesktopContract.ts",
+          "frontend/src/api/rendererModel*",
+          "frontend/src/api/modelValidationDetail*",
+          "frontend/buf.model.gen.yaml",
+          "buf.model.yaml",
+          "frontend/src/api/ptWire.ts",
+          "frontend/src/domain/flash.ts",
+          "frontend/src/gen/**",
+          "frontend/src/main.tsx",
+          "frontend/index.html",
+          "frontend/vite.config.ts",
+          "frontend/tsconfig.desktop.json",
+          "frontend/package.json",
+          "frontend/package-lock.json",
+          ".github/workflows/pt_product_staging.yml"
+        ]
+      },
+      "retained_hash": "e818fa6bce4428035a9e7365e7744efb52754c2e9ed6ba4e96d29a43975f463e",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "seed": "legacy_pt_product_staging__seed",
+        "stage": "legacy_pt_product_staging__stage",
+        "desktop": "legacy_pt_product_staging__desktop"
+      },
+      "central_hashes": {
+        "legacy_pt_product_staging__seed": "262c344d09669e5303afbc47f5aa27f235e41a376ef413c75782fd722cb7ccdf",
+        "legacy_pt_product_staging__stage": "805c712564d352e8d011db811b03d25ec9decf0d2569481663c2fbee7829f026",
+        "legacy_pt_product_staging__desktop": "1594c4186a18b637d2fe9e6c76ce9804dff62efa71915c3d56076c5f917bdfcb"
+      }
+    },
+    ".github/workflows/pt_service.yml": {
+      "name": "Model-neutral PT service boundary",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/runtime/**",
+            "modules/flash/include/mpmc/flash/pt_flash_backend.hpp",
+            "modules/flash/include/mpmc/flash/pt_phase_set.hpp",
+            "modules/flash/include/mpmc/flash/pt_phase_transition.hpp",
+            "modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp",
+            "modules/flash/include/mpmc/flash/sw92_profile_c_pt_flash_backend.hpp",
+            "modules/flash/include/mpmc/flash/cpa_pt_flash_backend.hpp",
+            "tests/runtime/pt_service/**",
+            "tests/flash/pr76_three_phase/synthetic_fixture.hpp",
+            "tests/flash/cpa_max3/test_support.hpp",
+            "tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp",
+            "tests/support/sw92/test_support.hpp",
+            ".github/workflows/pt_service.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-service-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "service": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "route_key": "legacy_pt_service",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/runtime/**",
+          "modules/flash/include/mpmc/flash/pt_flash_backend.hpp",
+          "modules/flash/include/mpmc/flash/pt_phase_set.hpp",
+          "modules/flash/include/mpmc/flash/pt_phase_transition.hpp",
+          "modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp",
+          "modules/flash/include/mpmc/flash/sw92_profile_c_pt_flash_backend.hpp",
+          "modules/flash/include/mpmc/flash/cpa_pt_flash_backend.hpp",
+          "tests/runtime/pt_service/**",
+          "tests/flash/pr76_three_phase/synthetic_fixture.hpp",
+          "tests/flash/cpa_max3/test_support.hpp",
+          "tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp",
+          "tests/support/sw92/test_support.hpp",
+          ".github/workflows/pt_service.yml"
+        ]
+      },
+      "retained_hash": "13d0f2af9e2bd6f91d610bdba0f4d4c282da25e45195098a24192e0750e5cad1",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "service": "legacy_pt_service__service"
+      },
+      "central_hashes": {
+        "legacy_pt_service__service": "2b2c3e0cbf65bb76a5771e45440bb1959d2b3db908f6247c714d4f358c8947ec"
+      }
+    },
+    ".github/workflows/pt_signed_installer_gate.yml": {
+      "name": "PT signed installer gate",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "products/pt/CMakeLists.txt",
+            "products/pt/product-staging-manifest.json.in",
+            "products/pt/installer/**",
+            "products/pt/tests/test_product_boundary.py",
+            ".github/workflows/pt_signed_installer_gate.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-signed-installer-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "candidate": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "Linux x64 DEB",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "profile": "linux-x86_64-release",
+                  "target": "linux-x86_64",
+                  "extension": "deb"
+                },
+                {
+                  "name": "Windows x64 MSI",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "profile": "windows-x86_64-release",
+                  "target": "windows-x86_64",
+                  "extension": "msi"
+                },
+                {
+                  "name": "macOS arm64 PKG",
+                  "os": "macos-15",
+                  "runner": "macos-15",
+                  "profile": "macos-armv8-release",
+                  "target": "macos-arm64",
+                  "extension": "pkg"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "route_key": "legacy_pt_signed_installer_gate",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "products/pt/CMakeLists.txt",
+          "products/pt/product-staging-manifest.json.in",
+          "products/pt/installer/**",
+          "products/pt/tests/test_product_boundary.py",
+          ".github/workflows/pt_signed_installer_gate.yml"
+        ]
+      },
+      "retained_hash": "4b15bc9b4d6c09c9de333d6c36d529c76e42d2c3661e280d833a48daf07541e7",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "candidate": "legacy_pt_signed_installer_gate__candidate"
+      },
+      "central_hashes": {
+        "legacy_pt_signed_installer_gate__candidate": "bacfe5c5053ef5d1b3cb7627f9881fdbec8c47848cb0b661c9bf249d02b55488"
+      }
+    },
+    ".github/workflows/pt_split.yml": {
+      "name": "PT phase split",
+      "original_events": {
+        "workflow_call": {
+          "inputs": {
+            "routed": {
+              "required": false,
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "pull_request": {
+          "branches": [
+            "feat/pt-stability-tpd",
+            "feat/pt-vle-split",
+            "test/pt-boundary-regression",
+            "fix/tpd-flat-descent",
+            "test/pt-dew-limit-audit"
+          ],
+          "paths": [
+            "modules/flash/include/mpmc/flash/pt_stability.hpp",
+            "modules/flash/include/mpmc/flash/pr76_stability.hpp",
+            "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+            "modules/flash/include/mpmc/flash/pt_split.hpp",
+            "modules/flash/include/mpmc/flash/pr76_split.hpp",
+            "modules/flash/include/mpmc/flash/pt_phase_set.hpp",
+            "modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp",
+            "modules/flash/include/mpmc/flash/pr76_phase_set.hpp",
+            "modules/flash/include/mpmc/flash/pt_sensitivity.hpp",
+            "modules/flash/include/mpmc/flash/pr76_sensitivity.hpp",
+            "modules/flash/include/mpmc/flash/detail/**",
+            "modules/flash/CMakeLists.txt",
+            "modules/flash/sensitivity/CMakeLists.txt",
+            "modules/thermodynamics/**/*.hpp",
+            "modules/thermodynamics/**/CMakeLists.txt",
+            "modules/ad/**/*.hpp",
+            "modules/ad/**/CMakeLists.txt",
+            "tests/flash/pt_split/**",
+            ".github/workflows/pt_split.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-phase-split-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": "inputs.routed != true",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "split": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "${{ always() && (inputs.routed == true || needs.incremental-path-gate.outputs.affected == 'true') }}",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "route_key": "legacy_pt_split",
+      "selector": {
+        "branches": [
+          "feat/pt-stability-tpd",
+          "feat/pt-vle-split",
+          "test/pt-boundary-regression",
+          "fix/tpd-flat-descent",
+          "test/pt-dew-limit-audit"
+        ],
+        "paths": [
+          "modules/flash/include/mpmc/flash/pt_stability.hpp",
+          "modules/flash/include/mpmc/flash/pr76_stability.hpp",
+          "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+          "modules/flash/include/mpmc/flash/pt_split.hpp",
+          "modules/flash/include/mpmc/flash/pr76_split.hpp",
+          "modules/flash/include/mpmc/flash/pt_phase_set.hpp",
+          "modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp",
+          "modules/flash/include/mpmc/flash/pr76_phase_set.hpp",
+          "modules/flash/include/mpmc/flash/pt_sensitivity.hpp",
+          "modules/flash/include/mpmc/flash/pr76_sensitivity.hpp",
+          "modules/flash/include/mpmc/flash/detail/**",
+          "modules/flash/CMakeLists.txt",
+          "modules/flash/sensitivity/CMakeLists.txt",
+          "modules/thermodynamics/**/*.hpp",
+          "modules/thermodynamics/**/CMakeLists.txt",
+          "modules/ad/**/*.hpp",
+          "modules/ad/**/CMakeLists.txt",
+          "tests/flash/pt_split/**",
+          ".github/workflows/pt_split.yml"
+        ]
+      },
+      "retained_hash": "954b39affef6106075f650f99a4ddcd796132e85e4ea4c45619cfcc34fb00e16",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "split": "legacy_pt_split__split"
+      },
+      "central_hashes": {
+        "legacy_pt_split__split": "2185c8e202817d7d21960dd718832aa0fbf48322fb673fcf72b16237cb247df5"
+      }
+    },
+    ".github/workflows/pt_windows_desktop_installer.yml": {
+      "name": "PT Windows desktop installer",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "api/**",
+            "modules/runtime/**",
+            "modules/runtime_grpc/**",
+            "modules/pt_process/**",
+            "modules/model_configuration/**",
+            "modules/model_configuration_grpc/**",
+            "tests/runtime/pt_grpc_adapter/**",
+            "products/pt/**",
+            "frontend/desktop/**",
+            "frontend/src/api/desktopBridge.ts",
+            "frontend/src/api/desktopBridgeContract.ts",
+            "frontend/src/api/flashClient.ts",
+            "frontend/src/api/modelSessionClient*",
+            "frontend/src/api/modelDesktopContract.ts",
+            "frontend/src/api/rendererModel*",
+            "frontend/src/api/modelValidationDetail*",
+            "frontend/buf.model.gen.yaml",
+            "buf.model.yaml",
+            "frontend/src/api/ptWire.ts",
+            "frontend/src/domain/flash.ts",
+            "frontend/src/gen/**",
+            "frontend/src/main.tsx",
+            "frontend/index.html",
+            "frontend/vite.config.ts",
+            "frontend/tsconfig.desktop.json",
+            "frontend/package.json",
+            "frontend/package-lock.json",
+            ".github/workflows/pt_windows_desktop_installer.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-windows-desktop-installer-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "candidate": {
+          "runner": "windows-2022",
+          "strategy": null,
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "route_key": "legacy_pt_windows_desktop_installer",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "api/**",
+          "modules/runtime/**",
+          "modules/runtime_grpc/**",
+          "modules/pt_process/**",
+          "modules/model_configuration/**",
+          "modules/model_configuration_grpc/**",
+          "tests/runtime/pt_grpc_adapter/**",
+          "products/pt/**",
+          "frontend/desktop/**",
+          "frontend/src/api/desktopBridge.ts",
+          "frontend/src/api/desktopBridgeContract.ts",
+          "frontend/src/api/flashClient.ts",
+          "frontend/src/api/modelSessionClient*",
+          "frontend/src/api/modelDesktopContract.ts",
+          "frontend/src/api/rendererModel*",
+          "frontend/src/api/modelValidationDetail*",
+          "frontend/buf.model.gen.yaml",
+          "buf.model.yaml",
+          "frontend/src/api/ptWire.ts",
+          "frontend/src/domain/flash.ts",
+          "frontend/src/gen/**",
+          "frontend/src/main.tsx",
+          "frontend/index.html",
+          "frontend/vite.config.ts",
+          "frontend/tsconfig.desktop.json",
+          "frontend/package.json",
+          "frontend/package-lock.json",
+          ".github/workflows/pt_windows_desktop_installer.yml"
+        ]
+      },
+      "retained_hash": "53373b17051481c44f22c3fb77e6db1fb4b784c057178f16a5ed8d7cb5262087",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "candidate": "legacy_pt_windows_desktop_installer__candidate"
+      },
+      "central_hashes": {
+        "legacy_pt_windows_desktop_installer__candidate": "01bc5d1d444c5719d7c3a0b2a4d5af41aa17120d4554c73fcf9aaee1d1e6b190"
+      }
+    },
+    ".github/workflows/pt_windows_desktop_release_candidate.yml": {
+      "name": "PT Windows desktop release candidate",
+      "original_events": {
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-windows-desktop-release-candidate",
+        "cancel-in-progress": false
+      },
+      "jobs": {
+        "release-candidate": {
+          "runner": "windows-2022",
+          "strategy": null,
+          "condition": null,
+          "environment": "windows-desktop-release",
+          "permissions": null,
+          "timeout_minutes": 30
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "ef359afa77bb73c2e410e2396904e2b91927ff926c21f2d2dc1a2e5f4f10124c"
+    },
+    ".github/workflows/stability.yml": {
+      "name": "PT stability",
+      "original_events": {
+        "workflow_call": {
+          "inputs": {
+            "routed": {
+              "required": false,
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "pull_request": {
+          "branches": [
+            "feat/pt-stability-tpd",
+            "test/pt-boundary-regression"
+          ],
+          "paths": [
+            "modules/flash/include/mpmc/flash/pt_stability.hpp",
+            "modules/flash/include/mpmc/flash/pr76_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+            "modules/flash/**/CMakeLists.txt",
+            "tests/flash/stability/**",
+            "modules/thermodynamics/**/*.hpp",
+            "modules/thermodynamics/**/CMakeLists.txt",
+            "modules/ad/include/mpmc/ad/**",
+            "modules/ad/CMakeLists.txt",
+            ".github/workflows/stability.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "pt-stability-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": "inputs.routed != true",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "stability": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "${{ always() && (inputs.routed == true || needs.incremental-path-gate.outputs.affected == 'true') }}",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "route_key": "legacy_stability",
+      "selector": {
+        "branches": [
+          "feat/pt-stability-tpd",
+          "test/pt-boundary-regression"
+        ],
+        "paths": [
+          "modules/flash/include/mpmc/flash/pt_stability.hpp",
+          "modules/flash/include/mpmc/flash/pr76_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+          "modules/flash/**/CMakeLists.txt",
+          "tests/flash/stability/**",
+          "modules/thermodynamics/**/*.hpp",
+          "modules/thermodynamics/**/CMakeLists.txt",
+          "modules/ad/include/mpmc/ad/**",
+          "modules/ad/CMakeLists.txt",
+          ".github/workflows/stability.yml"
+        ]
+      },
+      "retained_hash": "7be63213a02b9619d01134b755abcbaaaad56df7b1dc305057d995de987c4dd5",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "stability": "legacy_stability__stability"
+      },
+      "central_hashes": {
+        "legacy_stability__stability": "b8fba3954ae6fc93f098f2ba1a8275840645044d94761539af796de33485e1da"
+      }
+    },
+    ".github/workflows/sw92.yml": {
+      "name": "SW92 thermodynamics",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-thermodynamics-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "sw92": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "43be216a08046a8116f1b70203c9f231b030bafff5d65d8931e91e926c4d44d6"
+    },
+    ".github/workflows/sw92_asymmetric_fixed_pair.yml": {
+      "name": "SW92 asymmetric fixed pair",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "tests/support/sw92/test_support.hpp",
+            "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+            "modules/flash/include/mpmc/flash/pt_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+            "modules/flash/include/mpmc/flash/sw92_split.hpp",
+            "modules/flash/CMakeLists.txt",
+            "modules/thermodynamics/**/*.hpp",
+            "modules/thermodynamics/**/CMakeLists.txt",
+            "tests/flash/stability/**",
+            "tests/flash/sw92_family_vle/**",
+            "tests/flash/sw92_asymmetric_stability/**",
+            "tests/flash/sw92_asymmetric_fixed_pair/**",
+            ".github/workflows/sw92_asymmetric_fixed_pair.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-asymmetric-fixed-pair-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "fixed-pair": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "route_key": "legacy_sw92_asymmetric_fixed_pair",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "tests/support/sw92/test_support.hpp",
+          "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+          "modules/flash/include/mpmc/flash/pt_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+          "modules/flash/include/mpmc/flash/sw92_split.hpp",
+          "modules/flash/CMakeLists.txt",
+          "modules/thermodynamics/**/*.hpp",
+          "modules/thermodynamics/**/CMakeLists.txt",
+          "tests/flash/stability/**",
+          "tests/flash/sw92_family_vle/**",
+          "tests/flash/sw92_asymmetric_stability/**",
+          "tests/flash/sw92_asymmetric_fixed_pair/**",
+          ".github/workflows/sw92_asymmetric_fixed_pair.yml"
+        ]
+      },
+      "retained_hash": "a55499cf16ae72805e03c0a92afc8e99637d9990181fa7d00d5e12c9e38e6238",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "fixed-pair": "legacy_sw92_asymmetric_fixed_pair__fixed-pair"
+      },
+      "central_hashes": {
+        "legacy_sw92_asymmetric_fixed_pair__fixed-pair": "2f3bc8e8da2f06f5ca8bb159692cb503b102b0e7ba1d2551ba5c6cc1dbcc8298"
+      }
+    },
+    ".github/workflows/sw92_asymmetric_max2.yml": {
+      "name": "SW92 asymmetric max2",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "tests/support/sw92/test_support.hpp",
+            "modules/flash/include/mpmc/flash/pt_stability.hpp",
+            "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+            "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp",
+            "modules/flash/CMakeLists.txt",
+            "modules/thermodynamics/**/*.hpp",
+            "modules/thermodynamics/**/CMakeLists.txt",
+            "tests/flash/sw92_asymmetric_stability/**",
+            "tests/flash/sw92_asymmetric_fixed_pair/**",
+            "tests/flash/sw92_asymmetric_orchestration/**",
+            "tests/flash/sw92_asymmetric_max2/**",
+            ".github/workflows/sw92_asymmetric_max2.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-asymmetric-max2-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "max2": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 20
+        }
+      },
+      "route_key": "legacy_sw92_asymmetric_max2",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "tests/support/sw92/test_support.hpp",
+          "modules/flash/include/mpmc/flash/pt_stability.hpp",
+          "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+          "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp",
+          "modules/flash/CMakeLists.txt",
+          "modules/thermodynamics/**/*.hpp",
+          "modules/thermodynamics/**/CMakeLists.txt",
+          "tests/flash/sw92_asymmetric_stability/**",
+          "tests/flash/sw92_asymmetric_fixed_pair/**",
+          "tests/flash/sw92_asymmetric_orchestration/**",
+          "tests/flash/sw92_asymmetric_max2/**",
+          ".github/workflows/sw92_asymmetric_max2.yml"
+        ]
+      },
+      "retained_hash": "24ce0bc3338d062a90dbd08975fe45acc0dccdb18821d77a90467eab2cb51d50",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "max2": "legacy_sw92_asymmetric_max2__max2"
+      },
+      "central_hashes": {
+        "legacy_sw92_asymmetric_max2__max2": "629f618658e648b438157b00bf0412951bd7449fd98e0e7d303acd36a5d8c3f5"
+      }
+    },
+    ".github/workflows/sw92_asymmetric_max2_physical_ternary.yml": {
+      "name": "SW92 asymmetric max2 physical ternary",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp",
+            "modules/flash/sw92_asymmetric_max2_physical_ternary.md",
+            "modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp",
+            "tests/support/sw92/test_support.hpp",
+            "tests/flash/sw92_asymmetric_max2/**",
+            "tests/flash/sw92_asymmetric_max2_physical_ternary/**",
+            ".github/workflows/sw92_asymmetric_max2_physical_ternary.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-asymmetric-max2-physical-ternary-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "ternary": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 20
+        }
+      },
+      "route_key": "legacy_sw92_asymmetric_max2_physical_ternary",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp",
+          "modules/flash/sw92_asymmetric_max2_physical_ternary.md",
+          "modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp",
+          "tests/support/sw92/test_support.hpp",
+          "tests/flash/sw92_asymmetric_max2/**",
+          "tests/flash/sw92_asymmetric_max2_physical_ternary/**",
+          ".github/workflows/sw92_asymmetric_max2_physical_ternary.yml"
+        ]
+      },
+      "retained_hash": "124e008513158b2e826354ea5779dbcb9dd24ff261b212a57eb732d12c532d90",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "ternary": "legacy_sw92_asymmetric_max2_physical_ternary__ternary"
+      },
+      "central_hashes": {
+        "legacy_sw92_asymmetric_max2_physical_ternary__ternary": "3473ac3f7dce35ccc7ebf71f03747cf44ed483891d194a248e86bd01f56c2dfd"
+      }
+    },
+    ".github/workflows/sw92_asymmetric_max2_validation.yml": {
+      "name": "SW92 asymmetric max2 validation",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp",
+            "modules/flash/sw92_asymmetric_max2_validation.md",
+            "modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp",
+            "tests/flash/sw92_asymmetric_max2/**",
+            "tests/flash/sw92_asymmetric_max2_validation/**",
+            "tests/support/sw92/test_support.hpp",
+            ".github/workflows/sw92_asymmetric_max2_validation.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-asymmetric-max2-validation-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "validation": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 20
+        }
+      },
+      "route_key": "legacy_sw92_asymmetric_max2_validation",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_max2.hpp",
+          "modules/flash/sw92_asymmetric_max2_validation.md",
+          "modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp",
+          "tests/flash/sw92_asymmetric_max2/**",
+          "tests/flash/sw92_asymmetric_max2_validation/**",
+          "tests/support/sw92/test_support.hpp",
+          ".github/workflows/sw92_asymmetric_max2_validation.yml"
+        ]
+      },
+      "retained_hash": "ec3445561756b4d142351c8a7cfe9aaa0006ae94ac3b4fb5662781a2e829eeaf",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "validation": "legacy_sw92_asymmetric_max2_validation__validation"
+      },
+      "central_hashes": {
+        "legacy_sw92_asymmetric_max2_validation__validation": "e520d16d9adaf47a2094de9d18f8647100b0ef7ad2470336338ab8bd516915c1"
+      }
+    },
+    ".github/workflows/sw92_asymmetric_orchestration.yml": {
+      "name": "SW92 asymmetric orchestration",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "tests/support/sw92/test_support.hpp",
+            "modules/flash/include/mpmc/flash/pt_stability.hpp",
+            "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+            "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp",
+            "modules/flash/CMakeLists.txt",
+            "modules/thermodynamics/**/*.hpp",
+            "modules/thermodynamics/**/CMakeLists.txt",
+            "tests/flash/sw92_asymmetric_stability/**",
+            "tests/flash/sw92_asymmetric_fixed_pair/**",
+            "tests/flash/sw92_asymmetric_orchestration/**",
+            ".github/workflows/sw92_asymmetric_orchestration.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-asymmetric-orchestration-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "orchestration": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "route_key": "legacy_sw92_asymmetric_orchestration",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "tests/support/sw92/test_support.hpp",
+          "modules/flash/include/mpmc/flash/pt_stability.hpp",
+          "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+          "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp",
+          "modules/flash/CMakeLists.txt",
+          "modules/thermodynamics/**/*.hpp",
+          "modules/thermodynamics/**/CMakeLists.txt",
+          "tests/flash/sw92_asymmetric_stability/**",
+          "tests/flash/sw92_asymmetric_fixed_pair/**",
+          "tests/flash/sw92_asymmetric_orchestration/**",
+          ".github/workflows/sw92_asymmetric_orchestration.yml"
+        ]
+      },
+      "retained_hash": "e2396925be368c9d352bd3dbe24e2c9151dd6fce5f3b9d550490589cb96c94a3",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "orchestration": "legacy_sw92_asymmetric_orchestration__orchestration"
+      },
+      "central_hashes": {
+        "legacy_sw92_asymmetric_orchestration__orchestration": "afbfa8416a247e3f924089335ecda57e8f790cd59dc4e72102950c3faaa8360f"
+      }
+    },
+    ".github/workflows/sw92_asymmetric_stability.yml": {
+      "name": "SW92 asymmetric stability",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/flash/include/mpmc/flash/pt_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+            "modules/flash/CMakeLists.txt",
+            "modules/thermodynamics/**/*.hpp",
+            "modules/thermodynamics/**/CMakeLists.txt",
+            "tests/flash/sw92_asymmetric_stability/**",
+            ".github/workflows/sw92_asymmetric_stability.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-asymmetric-stability-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "asymmetric-stability": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "route_key": "legacy_sw92_asymmetric_stability",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/flash/include/mpmc/flash/pt_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp",
+          "modules/flash/CMakeLists.txt",
+          "modules/thermodynamics/**/*.hpp",
+          "modules/thermodynamics/**/CMakeLists.txt",
+          "tests/flash/sw92_asymmetric_stability/**",
+          ".github/workflows/sw92_asymmetric_stability.yml"
+        ]
+      },
+      "retained_hash": "482b5ca65c51e855e972afbbdd6bab9208549ddec72ae52a3cd434f8f1b972a9",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "asymmetric-stability": "legacy_sw92_asymmetric_stability__asymmetric-stability"
+      },
+      "central_hashes": {
+        "legacy_sw92_asymmetric_stability__asymmetric-stability": "113ac91345fd59088cf5325a8aad552e3be138179325848484da723d9c06f036"
+      }
+    },
+    ".github/workflows/sw92_dual_model.yml": {
+      "name": "SW92 Whitson dual-model",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "modules/flash/include/mpmc/flash/pt_stability.hpp",
+            "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+            "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+            "modules/flash/include/mpmc/flash/pt_split.hpp",
+            "modules/flash/include/mpmc/flash/sw92_split.hpp",
+            "modules/flash/include/mpmc/flash/sw92_dual_model.hpp",
+            "modules/flash/CMakeLists.txt",
+            "modules/thermodynamics/**/*.hpp",
+            "modules/thermodynamics/**/CMakeLists.txt",
+            "tests/flash/sw92_dual_model/**",
+            ".github/workflows/sw92_dual_model.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-dual-model-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "dual-model": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "route_key": "legacy_sw92_dual_model",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "modules/flash/include/mpmc/flash/pt_stability.hpp",
+          "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+          "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+          "modules/flash/include/mpmc/flash/pt_split.hpp",
+          "modules/flash/include/mpmc/flash/sw92_split.hpp",
+          "modules/flash/include/mpmc/flash/sw92_dual_model.hpp",
+          "modules/flash/CMakeLists.txt",
+          "modules/thermodynamics/**/*.hpp",
+          "modules/thermodynamics/**/CMakeLists.txt",
+          "tests/flash/sw92_dual_model/**",
+          ".github/workflows/sw92_dual_model.yml"
+        ]
+      },
+      "retained_hash": "eca8dd573527bc2c64084648e9bcf1312548f7765ff17fa27e7033a2dcf08e17",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "dual-model": "legacy_sw92_dual_model__dual-model"
+      },
+      "central_hashes": {
+        "legacy_sw92_dual_model__dual-model": "60c8284509f6bf061ff18b1934c9c619e2d4d9aa850671eb287dca256f988fcb"
+      }
+    },
+    ".github/workflows/sw92_family_vle.yml": {
+      "name": "SW92 one-family VLE",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-family-vle-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "family-vle": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "0755c0cf9bd5e7b48689cebfb64d66c0227749777f3aa9ff6b978b94f30831f2"
+    },
+    ".github/workflows/sw92_phase_assigned_boundary.yml": {
+      "name": "SW92 three-phase boundary re-solve",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-three-phase-boundary-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "boundary": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "7551c15665e70a96ae19dc97975be73313be9df4bf44a28733ffa91e48218302"
+    },
+    ".github/workflows/sw92_phase_assigned_h_side_witness.yml": {
+      "name": "SW92 phase-assigned H-side NA witness",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-phase-assigned-h-side-witness-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "c2a1": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 20
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "23df666c66da1ac158c393e6835dc80ad637f19ea77337c338b417ba6b504c2b"
+    },
+    ".github/workflows/sw92_phase_assigned_joint.yml": {
+      "name": "SW92 phase-assigned AQ/NA joint",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-phase-assigned-joint-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "c1": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 15
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "d4cd6b52c2f7f85ed259d2e5b3536d1041374d81f8736ad7f37f5e5529bcec6b"
+    },
+    ".github/workflows/sw92_phase_assigned_no_w.yml": {
+      "name": "SW92 phase-assigned no-W topology",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-phase-assigned-no-w-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "no-w": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 25
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "71aac96a200e53042e4674eb8fd4b9424f74e663eb4175fa63f0836e467e808c"
+    },
+    ".github/workflows/sw92_phase_assigned_pt.yml": {
+      "name": "SW92 Profile-C top-level PT",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-profile-c-top-level-pt-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "pt": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 40
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "a6bcde710bb57e3946b1600ca2f4d987e8af695c5fed17a9bd7ece73d93e9ad0"
+    },
+    ".github/workflows/sw92_phase_assigned_three_phase.yml": {
+      "name": "SW92 phase-assigned C2b1 three-phase",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-phase-assigned-c2b1-three-phase-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "c2b1": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "c02b556c44d45a2094d49698264dec12d8ada91309d3a2ca51c5505081b0ee84"
+    },
+    ".github/workflows/sw92_phase_assigned_three_phase_closure.yml": {
+      "name": "SW92 phase-assigned C2b2 topology closure",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-phase-assigned-c2b2-closure-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "c2b2": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "bfb7d48829882bc92a9360493b01a380a6ec0655762486be9f4fab9f43a1363e"
+    },
+    ".github/workflows/sw92_profile_c_phase_set.yml": {
+      "name": "SW92 Profile-C authoritative phase set",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-profile-c-phase-set-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "publication": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 55
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "ba44aca368ff103d61eaab4c4050af422eebf8d9987ba56e6b011b5ca0c34101"
+    },
+    ".github/workflows/sw92_profile_c_sensitivity.yml": {
+      "name": "SW92 Profile-C implicit sensitivity",
+      "original_events": {
+        "workflow_call": null,
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-profile-c-sensitivity-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "sensitivity": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 45
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "9f0a739770c056664e0cad3dda9d791e22d101507a340447d6d7237d308036ac"
+    },
+    ".github/workflows/sw92_three_phase_experimental_line.yml": {
+      "name": "SW92 experimental three-phase line",
+      "original_events": {
+        "pull_request": {
+          "branches": [
+            "main"
+          ],
+          "paths": [
+            "tests/flash/sw92_three_phase_experimental_line/**",
+            "tests/support/sw92/test_support.hpp",
+            "modules/flash/sw92_three_phase_experimental_validation.md",
+            ".github/workflows/sw92_three_phase_experimental_line.yml"
+          ]
+        },
+        "workflow_dispatch": null
+      },
+      "manual_inputs": {},
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "sw92-three-phase-experimental-line-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "incremental-path-gate": {
+          "runner": null,
+          "strategy": null,
+          "condition": null,
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": null
+        },
+        "experimental-line": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": {
+              "include": [
+                {
+                  "name": "GCC Debug + ASan/UBSan",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Debug",
+                  "compiler": "-DCMAKE_CXX_COMPILER=g++",
+                  "sanitizer": "ON"
+                },
+                {
+                  "name": "Clang Release",
+                  "os": "ubuntu-24.04",
+                  "runner": "mpmc_hnu",
+                  "config": "Release",
+                  "compiler": "-DCMAKE_CXX_COMPILER=clang++",
+                  "sanitizer": "OFF"
+                },
+                {
+                  "name": "MSVC Release",
+                  "os": "windows-2022",
+                  "runner": "windows-2022",
+                  "config": "Release",
+                  "compiler": "",
+                  "sanitizer": "OFF"
+                }
+              ]
+            }
+          },
+          "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 12
+        }
+      },
+      "route_key": "legacy_sw92_three_phase_experimental_line",
+      "selector": {
+        "branches": [
+          "main"
+        ],
+        "paths": [
+          "tests/flash/sw92_three_phase_experimental_line/**",
+          "tests/support/sw92/test_support.hpp",
+          "modules/flash/sw92_three_phase_experimental_validation.md",
+          ".github/workflows/sw92_three_phase_experimental_line.yml"
+        ]
+      },
+      "retained_hash": "6bac39ef5b0c62461ee51b61b7bbe8ddf4e98950204ada08441277a02908668e",
+      "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
+      "central_jobs": {
+        "experimental-line": "legacy_sw92_three_phase_experimental_line__experimental-line"
+      },
+      "central_hashes": {
+        "legacy_sw92_three_phase_experimental_line__experimental-line": "52206cb3058798df5a1d4b4240d3d57e8da863cec1655fd15fce0308ae331db0"
+      }
+    },
+    ".github/workflows/thermodynamics.yml": {
+      "name": "Thermodynamics contracts",
+      "original_events": {
+        "workflow_call": {
+          "inputs": {
+            "matrix_json": {
+              "description": "Audited thermodynamics matrix selected by the PR impact router.",
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "workflow_dispatch": {
+          "inputs": {
+            "suite": {
+              "description": "Audited scope; shared environment changes require all affected suites",
+              "type": "choice",
+              "options": [
+                "all",
+                "contracts",
+                "pr76",
+                "pr76_mixture",
+                "pr76_pt"
+              ],
+              "default": "all"
+            }
+          }
+        }
+      },
+      "manual_inputs": {
+        "suite": {
+          "description": "Audited scope; shared environment changes require all affected suites",
+          "type": "choice",
+          "options": [
+            "all",
+            "contracts",
+            "pr76",
+            "pr76_mixture",
+            "pr76_pt"
+          ],
+          "default": "all"
+        }
+      },
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {},
+      "defaults": {},
+      "concurrency": {
+        "group": "thermo-contracts-${{ github.ref }}",
+        "cancel-in-progress": true
+      },
+      "jobs": {
+        "manual-select": {
+          "runner": "ubuntu-24.04",
+          "strategy": null,
+          "condition": "${{ inputs.matrix_json == '' }}",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 5
+        },
+        "contracts": {
+          "runner": "${{ matrix.runner }}",
+          "strategy": {
+            "fail-fast": false,
+            "matrix": "${{ fromJSON(inputs.matrix_json != '' && inputs.matrix_json || needs.manual-select.outputs.matrix) }}"
+          },
+          "condition": "${{ always() && (inputs.matrix_json != '' || needs.manual-select.result == 'success') }}",
+          "environment": null,
+          "permissions": null,
+          "timeout_minutes": 10
+        }
+      },
+      "execution": "existing reusable/manual entry",
+      "retained_hash": "959010d4bf94a8439b003fd2c381b986a1d003e654849cf9549b4ac848e31ccd"
+    }
+  }
+}

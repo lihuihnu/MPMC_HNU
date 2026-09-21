@@ -1,0 +1,66 @@
+"""Executable entry/mapping guard. Update the map only with an audited CI change."""
+import hashlib
+import json
+from pathlib import Path
+import runpy
+import yaml
+
+def load(path):
+    obj = yaml.safe_load(Path(path).read_text(encoding='utf-8'))
+    if True in obj:
+        obj['on'] = obj.pop(True)
+    return obj
+
+def digest(obj):
+    return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+def main():
+    catalog = json.loads(Path('.github/ci/workflow_map.json').read_text(encoding='utf-8'))
+    router_path = '.github/workflows/pr_incremental_ci.yml'
+    paths = {str(p) for p in Path('.github/workflows').glob('*.yml')}
+    assert paths == set(catalog['workflows']), 'workflow added or removed without an entry mapping'
+    root = load(router_path)
+    auto = []
+    for path, spec in catalog['workflows'].items():
+        wf = load(path)
+        events = wf.get('on') or {}
+        if set(events) - {'workflow_call', 'workflow_dispatch'}:
+            auto.append(path)
+        if path != router_path:
+            assert events, ('lost only entry', path)
+            assert digest(wf) == spec['retained_hash'], ('workflow semantics differ from audited map', path)
+            if 'workflow_dispatch' in spec['original_events']:
+                assert events['workflow_dispatch'] == spec['original_events']['workflow_dispatch'], path
+        for job, expected in spec.get('central_hashes', {}).items():
+            assert digest(root['jobs'][job]) == expected, ('central job semantic drift', job)
+    assert auto == [router_path], ('multiple automatic workflow entries', auto)
+    assert 'result' in root['jobs'] and root['jobs']['result']['if'] == '${{ always() }}'
+    # Existing selector regression vectors are run when importing the planner.
+    planner = runpy.run_path('.github/ci/plan.py')
+    select = planner['select']
+    results, ad, thermo = select(['.github/AGENTS.md', 'tests/AGENTS.md'])
+    assert not any(results.values()) and not ad and not thermo
+    results, _, _ = select(['tests/flash/cpa_clapeyron_oracle/changed.json'])
+    assert results['legacy_cpa_clapeyron_oracle']
+    results, _, _ = select(['frontend/src/example.ts'])
+    assert results['legacy_frontend']
+    results, _, _ = select(['tests/flow_discretization/petsc/changed.cpp'])
+    assert results['flow_discretization_petsc'] and not results['legacy_frontend']
+    # Deleted/renamed files are represented by both paths (--no-renames).
+    left, _, _ = select(['tests/flow_discretization/petsc/old.cpp'])
+    right, _, _ = select(['frontend/src/new.ts'])
+    union, _, _ = select(['tests/flow_discretization/petsc/old.cpp', 'frontend/src/new.ts'])
+    assert all(not (left[k] or right[k]) or union[k] for k in union)
+    # Transitive local workflow limit, not merely direct calls (GitHub maximum 50).
+    seen = set()
+    def visit(path):
+        for job in load(path).get('jobs', {}).values():
+            used = job.get('uses', '')
+            if used.startswith('./.github/workflows/') and used[2:] not in seen:
+                seen.add(used[2:]); visit(used[2:])
+    visit(router_path)
+    assert len(seen) <= 50, ('too many unique reusable workflows', len(seen))
+    print('WORKFLOW_MAP_OK', len(paths), 'entries; single automatic entry; reusable closure:', len(seen))
+    print('ENTRY_INPUT_MATRIX_PERMISSIONS_AND_STEP_PARITY_OK')
+if __name__ == '__main__':
+    main()

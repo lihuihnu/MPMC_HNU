@@ -1,203 +1,113 @@
 name: CPA ThermoPack external oracle
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/cpa_thermopack_oracle.yml'
-      - 'tests/flash/cpa_thermopack_oracle/**'
-      - 'modules/flash/cpa_thermopack_mapping.md'
-      - 'modules/flash/cpa_flash.md'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: cpa-thermopack-oracle-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 jobs:
   incremental-path-gate:
     name: Incremental path gate
     uses: ./.github/workflows/_incremental_path_gate.yml
     with:
-      paths_json: >-
-        [".github/workflows/cpa_thermopack_oracle.yml","tests/flash/cpa_thermopack_oracle/**","modules/flash/cpa_thermopack_mapping.md","modules/flash/cpa_flash.md"]
-
+      paths_json: '[".github/workflows/cpa_thermopack_oracle.yml","tests/flash/cpa_thermopack_oracle/**","modules/flash/cpa_thermopack_mapping.md","modules/flash/cpa_flash.md"]'
   pinned-thermopack-oracle:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Pinned ThermoPack SRK-CPA oracle
-    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    runs-on:
+    - self-hosted
+    - linux
+    - x64
+    - mpmc_hnu
     timeout-minutes: 30
-
     steps:
-      - name: Checkout MPMC_HNU
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - name: Checkout MPMC_HNU
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Prepare hosted ThermoPack build prerequisites
+      shell: bash
+      run: 'set -euo pipefail
 
-      - name: Prepare hosted ThermoPack build prerequisites
-        shell: bash
-        run: |
-          set -euo pipefail
-          gfortran --version | head -n 1
-          cmake --version | head -n 1
-          python3 --version
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends liblapack-dev libblas-dev
+        gfortran --version | head -n 1
 
-      - name: Fetch pinned ThermoPack source
-        shell: bash
-        run: |
-          set -euo pipefail
-          revision=d68c794c7342bfc6938eb424a1fbb88b7780b738
-          rm -rf build/thermopack
-          git init build/thermopack
-          git -C build/thermopack remote add origin https://github.com/thermotools/thermopack.git
-          for attempt in 1 2 3; do
-            if git -C build/thermopack \
-                -c http.version=HTTP/1.1 \
-                fetch --no-tags --depth=1 origin "$revision"; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "Pinned ThermoPack fetch failed after 3 attempts" >&2
-              exit 1
-            fi
-            rm -rf build/thermopack/.git/objects/pack/*
-            sleep $((attempt * 5))
-          done
-          git -C build/thermopack checkout --detach FETCH_HEAD
-          test "$(git -C build/thermopack rev-parse HEAD)" = "$revision"
+        cmake --version | head -n 1
 
-      - name: Build pinned ThermoPack
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake -S build/thermopack -B build/thermopack-build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/thermopack-build --parallel 2
-          cmake --install build/thermopack-build
+        python3 --version
 
-      - name: Configure ThermoPack Python wrapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --disable-pip-version-check --user numpy
-          python3 build/thermopack/addon/pycThermopack/map_platform_specifics.py --diffs=v3
-          python3 -m pip install --disable-pip-version-check --user --no-deps build/thermopack/addon/pycThermopack/
+        sudo apt-get update
 
-      - name: Generate formulation-matched CPA oracle
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tests/flash/cpa_thermopack_oracle/generate_oracle.py \
-            --out build/cpa-thermopack-oracle.json
-          test -s build/cpa-thermopack-oracle.json
+        sudo apt-get install -y --no-install-recommends liblapack-dev libblas-dev
 
-      - name: Verify frozen external oracle reproducibility
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import math
-          from pathlib import Path
+        '
+    - name: Fetch pinned ThermoPack source
+      shell: bash
+      run: "set -euo pipefail\nrevision=d68c794c7342bfc6938eb424a1fbb88b7780b738\nrm -rf build/thermopack\ngit init build/thermopack\ngit -C build/thermopack remote\
+        \ add origin https://github.com/thermotools/thermopack.git\nfor attempt in 1 2 3; do\n  if git -C build/thermopack \\\n      -c http.version=HTTP/1.1 \\\n\
+        \      fetch --no-tags --depth=1 origin \"$revision\"; then\n    break\n  fi\n  if [ \"$attempt\" -eq 3 ]; then\n    echo \"Pinned ThermoPack fetch failed\
+        \ after 3 attempts\" >&2\n    exit 1\n  fi\n  rm -rf build/thermopack/.git/objects/pack/*\n  sleep $((attempt * 5))\ndone\ngit -C build/thermopack checkout\
+        \ --detach FETCH_HEAD\ntest \"$(git -C build/thermopack rev-parse HEAD)\" = \"$revision\"\n"
+    - name: Build pinned ThermoPack
+      shell: bash
+      run: 'set -euo pipefail
 
-          actual = json.loads(Path("build/cpa-thermopack-oracle.json").read_text())
-          frozen = json.loads(Path(
-              "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json"
-          ).read_text())
+        cmake -S build/thermopack -B build/thermopack-build -DCMAKE_BUILD_TYPE=Release
 
-          for key in ("schema", "generator", "model"):
-              if actual[key] != frozen[key]:
-                  raise SystemExit(f"frozen ThermoPack oracle metadata drifted at {key}")
-          if len(actual["states"]) != len(frozen["states"]):
-              raise SystemExit("frozen ThermoPack oracle state count drifted")
+        cmake --build build/thermopack-build --parallel 2
 
-          exact_keys = ("phase_code", "pressure_pa", "temperature_k")
-          scalar_keys = ("beta_liquid", "beta_vapor", "extraction_material_balance_max_abs")
-          maps = ("feed", "liquid", "vapor")
-          for index, (got, ref) in enumerate(zip(actual["states"], frozen["states"])):
-              for key in exact_keys:
-                  if got[key] != ref[key]:
-                      raise SystemExit(f"oracle state {index} exact field drifted: {key}")
-              for key in scalar_keys:
-                  if not math.isclose(got[key], ref[key], rel_tol=2e-12, abs_tol=2e-12):
-                      raise SystemExit(f"oracle state {index} scalar drifted: {key}")
-              for group in maps:
-                  if got[group].keys() != ref[group].keys():
-                      raise SystemExit(f"oracle state {index} component keys drifted: {group}")
-                  for component in got[group]:
-                      if not math.isclose(got[group][component], ref[group][component],
-                                          rel_tol=2e-12, abs_tol=2e-12):
-                          raise SystemExit(f"oracle state {index} {group}/{component} drifted")
-          print("THERMOPACK_CPA_FROZEN_ORACLE_OK states=5 tolerance=2e-12")
-          PY
+        cmake --install build/thermopack-build
 
-      - name: Generate phase-kernel decomposition audit
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tests/flash/cpa_thermopack_oracle/generate_phase_kernel_audit.py \
-            --thermopack-source build/thermopack \
-            --out build/cpa-thermopack-phase-kernel-audit.json
-          test -s build/cpa-thermopack-phase-kernel-audit.json
+        '
+    - name: Configure ThermoPack Python wrapper
+      shell: bash
+      run: 'set -euo pipefail
 
-      - name: Verify frozen phase-kernel reference
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import math
-          from pathlib import Path
+        python3 -m pip install --disable-pip-version-check --user numpy
 
-          actual = json.loads(Path("build/cpa-thermopack-phase-kernel-audit.json").read_text())
-          frozen = json.loads(Path(
-              "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json"
-          ).read_text())
+        python3 build/thermopack/addon/pycThermopack/map_platform_specifics.py --diffs=v3
 
-          if frozen["schema"] != "MPMC_HNU/CPA/ThermoPack-phase-kernel-reference/v2":
-              raise SystemExit("unexpected frozen phase-kernel reference schema")
-          if actual["schema"] != frozen["source"]["generated_schema"]:
-              raise SystemExit("phase-kernel generated schema drifted")
-          if actual["generator"]["commit"] != frozen["source"]["commit"]:
-              raise SystemExit("phase-kernel ThermoPack revision drifted")
-          if actual["generator"]["software"] != frozen["source"]["software"]:
-              raise SystemExit("phase-kernel software identity drifted")
-          if len(actual["states"]) != len(frozen["states"]):
-              raise SystemExit("phase-kernel state count drifted")
+        python3 -m pip install --disable-pip-version-check --user --no-deps build/thermopack/addon/pycThermopack/
 
-          def close(got, ref, where):
-              if not math.isclose(float(got), float(ref), rel_tol=2e-12, abs_tol=2e-12):
-                  raise SystemExit(f"phase-kernel frozen reference drifted at {where}: {got} vs {ref}")
-
-          close(actual["gas_constant_j_per_mol_k"], frozen["gas_constant_j_per_mol_k"], "R")
-          for component in ("MEOH", "H2O"):
-              got_tc = actual["alpha_critical_temperature_source"][component]
-              ref_tc = frozen["alpha_critical_temperature_source"][component]
-              close(got_tc["temperature_k"], ref_tc["temperature_k"], f"Tc/{component}")
-              if got_tc["ref"] != ref_tc["ref"] or got_tc["source_file"] != ref_tc["source_file"]:
-                  raise SystemExit(f"phase-kernel Tc provenance drifted for {component}")
-
-          scalar_fields = (
-              "molar_density_mol_per_m3", "compressibility_factor",
-              "pressure_physical_pa", "pressure_association_pa",
-          )
-          maps = ("composition", "ln_phi", "mu_cubic_over_rt", "mu_association_over_rt")
-          for index, (got_state, ref_state) in enumerate(zip(actual["states"], frozen["states"])):
-              close(got_state["temperature_k"], ref_state["temperature_k"], f"{index}/T")
-              close(got_state["pressure_pa"], ref_state["pressure_pa"], f"{index}/P")
-              for phase in ("liquid", "vapor"):
-                  got = got_state[phase]
-                  ref = ref_state[phase]
-                  for key in scalar_fields:
-                      close(got[key], ref[key], f"{index}/{phase}/{key}")
-                  for group in maps:
-                      for component in ("MEOH", "H2O"):
-                          close(got[group][component], ref[group][component],
-                                f"{index}/{phase}/{group}/{component}")
-          print("THERMOPACK_CPA_PHASE_KERNEL_REFERENCE_OK states=5 phase_states=10 tolerance=2e-12")
-          PY
+        '
+    - name: Generate formulation-matched CPA oracle
+      shell: bash
+      run: "set -euo pipefail\npython3 tests/flash/cpa_thermopack_oracle/generate_oracle.py \\\n  --out build/cpa-thermopack-oracle.json\ntest -s build/cpa-thermopack-oracle.json\n"
+    - name: Verify frozen external oracle reproducibility
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nimport json\nimport math\nfrom pathlib import Path\n\nactual = json.loads(Path(\"build/cpa-thermopack-oracle.json\"\
+        ).read_text())\nfrozen = json.loads(Path(\n    \"tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json\"\n).read_text())\n\nfor key in\
+        \ (\"schema\", \"generator\", \"model\"):\n    if actual[key] != frozen[key]:\n        raise SystemExit(f\"frozen ThermoPack oracle metadata drifted at {key}\"\
+        )\nif len(actual[\"states\"]) != len(frozen[\"states\"]):\n    raise SystemExit(\"frozen ThermoPack oracle state count drifted\")\n\nexact_keys = (\"phase_code\"\
+        , \"pressure_pa\", \"temperature_k\")\nscalar_keys = (\"beta_liquid\", \"beta_vapor\", \"extraction_material_balance_max_abs\")\nmaps = (\"feed\", \"liquid\"\
+        , \"vapor\")\nfor index, (got, ref) in enumerate(zip(actual[\"states\"], frozen[\"states\"])):\n    for key in exact_keys:\n        if got[key] != ref[key]:\n\
+        \            raise SystemExit(f\"oracle state {index} exact field drifted: {key}\")\n    for key in scalar_keys:\n        if not math.isclose(got[key], ref[key],\
+        \ rel_tol=2e-12, abs_tol=2e-12):\n            raise SystemExit(f\"oracle state {index} scalar drifted: {key}\")\n    for group in maps:\n        if got[group].keys()\
+        \ != ref[group].keys():\n            raise SystemExit(f\"oracle state {index} component keys drifted: {group}\")\n        for component in got[group]:\n \
+        \           if not math.isclose(got[group][component], ref[group][component],\n                                rel_tol=2e-12, abs_tol=2e-12):\n          \
+        \      raise SystemExit(f\"oracle state {index} {group}/{component} drifted\")\nprint(\"THERMOPACK_CPA_FROZEN_ORACLE_OK states=5 tolerance=2e-12\")\nPY\n"
+    - name: Generate phase-kernel decomposition audit
+      shell: bash
+      run: "set -euo pipefail\npython3 tests/flash/cpa_thermopack_oracle/generate_phase_kernel_audit.py \\\n  --thermopack-source build/thermopack \\\n  --out build/cpa-thermopack-phase-kernel-audit.json\n\
+        test -s build/cpa-thermopack-phase-kernel-audit.json\n"
+    - name: Verify frozen phase-kernel reference
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nimport json\nimport math\nfrom pathlib import Path\n\nactual = json.loads(Path(\"build/cpa-thermopack-phase-kernel-audit.json\"\
+        ).read_text())\nfrozen = json.loads(Path(\n    \"tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json\"\n).read_text())\n\
+        \nif frozen[\"schema\"] != \"MPMC_HNU/CPA/ThermoPack-phase-kernel-reference/v2\":\n    raise SystemExit(\"unexpected frozen phase-kernel reference schema\"\
+        )\nif actual[\"schema\"] != frozen[\"source\"][\"generated_schema\"]:\n    raise SystemExit(\"phase-kernel generated schema drifted\")\nif actual[\"generator\"\
+        ][\"commit\"] != frozen[\"source\"][\"commit\"]:\n    raise SystemExit(\"phase-kernel ThermoPack revision drifted\")\nif actual[\"generator\"][\"software\"\
+        ] != frozen[\"source\"][\"software\"]:\n    raise SystemExit(\"phase-kernel software identity drifted\")\nif len(actual[\"states\"]) != len(frozen[\"states\"\
+        ]):\n    raise SystemExit(\"phase-kernel state count drifted\")\n\ndef close(got, ref, where):\n    if not math.isclose(float(got), float(ref), rel_tol=2e-12,\
+        \ abs_tol=2e-12):\n        raise SystemExit(f\"phase-kernel frozen reference drifted at {where}: {got} vs {ref}\")\n\nclose(actual[\"gas_constant_j_per_mol_k\"\
+        ], frozen[\"gas_constant_j_per_mol_k\"], \"R\")\nfor component in (\"MEOH\", \"H2O\"):\n    got_tc = actual[\"alpha_critical_temperature_source\"][component]\n\
+        \    ref_tc = frozen[\"alpha_critical_temperature_source\"][component]\n    close(got_tc[\"temperature_k\"], ref_tc[\"temperature_k\"], f\"Tc/{component}\"\
+        )\n    if got_tc[\"ref\"] != ref_tc[\"ref\"] or got_tc[\"source_file\"] != ref_tc[\"source_file\"]:\n        raise SystemExit(f\"phase-kernel Tc provenance\
+        \ drifted for {component}\")\n\nscalar_fields = (\n    \"molar_density_mol_per_m3\", \"compressibility_factor\",\n    \"pressure_physical_pa\", \"pressure_association_pa\"\
+        ,\n)\nmaps = (\"composition\", \"ln_phi\", \"mu_cubic_over_rt\", \"mu_association_over_rt\")\nfor index, (got_state, ref_state) in enumerate(zip(actual[\"\
+        states\"], frozen[\"states\"])):\n    close(got_state[\"temperature_k\"], ref_state[\"temperature_k\"], f\"{index}/T\")\n    close(got_state[\"pressure_pa\"\
+        ], ref_state[\"pressure_pa\"], f\"{index}/P\")\n    for phase in (\"liquid\", \"vapor\"):\n        got = got_state[phase]\n        ref = ref_state[phase]\n\
+        \        for key in scalar_fields:\n            close(got[key], ref[key], f\"{index}/{phase}/{key}\")\n        for group in maps:\n            for component\
+        \ in (\"MEOH\", \"H2O\"):\n                close(got[group][component], ref[group][component],\n                      f\"{index}/{phase}/{group}/{component}\"\
+        )\nprint(\"THERMOPACK_CPA_PHASE_KERNEL_REFERENCE_OK states=5 phase_states=10 tolerance=2e-12\")\nPY\n"
+'on':
+  workflow_dispatch: null

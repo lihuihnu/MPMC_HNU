@@ -1,31 +1,15 @@
 name: Discretization core correctness
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/mesh/include/**'
-      - 'modules/mesh/CMakeLists.txt'
-      - 'modules/discretization/**'
-      - 'tests/discretization/core/**'
-      - '.github/workflows/discretization_core.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: discretization-core-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   incremental-path-gate:
     name: Incremental path gate
     uses: ./.github/workflows/_incremental_path_gate.yml
     with:
-      paths_json: >-
-        ["modules/mesh/include/**","modules/mesh/CMakeLists.txt","modules/discretization/**","tests/discretization/core/**",".github/workflows/discretization_core.yml"]
-
+      paths_json: '["modules/mesh/include/**","modules/mesh/CMakeLists.txt","modules/discretization/**","tests/discretization/core/**",".github/workflows/discretization_core.yml"]'
   core:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
@@ -36,50 +20,37 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            runner: mpmc_hnu
-            build_type: Debug
-            compiler: -DCMAKE_CXX_COMPILER=g++
-            sanitizer: 'ON'
-          - name: Clang Release
-            os: ubuntu-24.04
-            runner: mpmc_hnu
-            build_type: Release
-            compiler: -DCMAKE_CXX_COMPILER=clang++
-            sanitizer: 'OFF'
-          - name: MSVC Release
-            os: windows-2022
-            runner: windows-2022
-            build_type: Release
-            compiler: ''
-            sanitizer: 'OFF'
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: mpmc_hnu
+          build_type: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: mpmc_hnu
+          build_type: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          build_type: Release
+          compiler: ''
+          sanitizer: 'OFF'
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Configure discretization core tests
-        run: |
-          cmake -S tests/discretization/core -B build/discretization-core \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            ${{ matrix.compiler }} \
-            -DMPMC_DISCRETIZATION_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-
-      - name: Build discretization core tests
-        run: |
-          cmake --build build/discretization-core \
-            --target mpmc_discretization_core_all \
-            --config ${{ matrix.build_type }} \
-            --parallel 2
-
-      - name: Run discretization core tests
-        run: |
-          ctest --test-dir build/discretization-core \
-            -C ${{ matrix.build_type }} \
-            -R '^discretization[.]core[.]' \
-            --verbose \
-            --no-tests=error
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure discretization core tests
+      run: "cmake -S tests/discretization/core -B build/discretization-core \\\n  -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \\\n  ${{ matrix.compiler }} \\\n  -DMPMC_DISCRETIZATION_ENABLE_SANITIZERS=${{\
+        \ matrix.sanitizer }}\n"
+    - name: Build discretization core tests
+      run: "cmake --build build/discretization-core \\\n  --target mpmc_discretization_core_all \\\n  --config ${{ matrix.build_type }} \\\n  --parallel 2\n"
+    - name: Run discretization core tests
+      run: "ctest --test-dir build/discretization-core \\\n  -C ${{ matrix.build_type }} \\\n  -R '^discretization[.]core[.]' \\\n  --verbose \\\n  --no-tests=error\n"
+'on':
+  workflow_dispatch: null
