@@ -1,42 +1,18 @@
 name: SW92 three-phase boundary re-solve
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_boundary.hpp'
-      - 'modules/flash/sw92_phase_assigned_boundary.md'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_pt.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase_closure.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'tests/flash/sw92_phase_assigned_boundary/**'
-      - 'tests/flash/sw92_phase_assigned_pt/**'
-      - 'tests/flash/sw92_phase_assigned_three_phase_closure/**'
-      - 'tests/flash/sw92_phase_assigned_no_w/**'
-      - 'tests/flash/sw92_phase_assigned_joint/**'
-      - 'tests/flash/sw92_phase_assigned_h_side_witness/**'
-      - '.github/workflows/sw92_phase_assigned_boundary.yml'
+  workflow_call:
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
   group: sw92-three-phase-boundary-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["tests/support/sw92/test_support.hpp","modules/flash/include/mpmc/flash/sw92_phase_assigned_boundary.hpp","modules/flash/sw92_phase_assigned_boundary.md","modules/flash/include/mpmc/flash/sw92_phase_assigned_pt.hpp","modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase.hpp","modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase_closure.hpp","modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp","modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp","modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp","modules/thermodynamics/**/*.hpp","tests/flash/sw92_phase_assigned_boundary/**","tests/flash/sw92_phase_assigned_pt/**","tests/flash/sw92_phase_assigned_three_phase_closure/**","tests/flash/sw92_phase_assigned_no_w/**","tests/flash/sw92_phase_assigned_joint/**","tests/flash/sw92_phase_assigned_h_side_witness/**",".github/workflows/sw92_phase_assigned_boundary.yml"]
-
   boundary:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -70,8 +46,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Select Python interpreter
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Regenerate physical three-phase oracle
-        run: python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
 
       - name: Configure boundary re-solve
         run: |
