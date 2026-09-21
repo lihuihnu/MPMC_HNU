@@ -25,13 +25,13 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
-            runner: mpmc_hnu
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
-            runner: mpmc_hnu
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
