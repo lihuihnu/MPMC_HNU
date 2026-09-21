@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import runpy
+import subprocess
 import yaml
 
 def load(path):
@@ -28,7 +29,11 @@ def main():
             auto.append(path)
         if path != router_path:
             assert events, ('lost only entry', path)
-            assert digest(wf) == spec['retained_hash'], ('workflow semantics differ from audited map', path)
+            if spec.get('retained_blob_sha'):
+                actual_blob = subprocess.check_output(['git', 'hash-object', path], text=True).strip()
+                assert actual_blob == spec['retained_blob_sha'], ('workflow blob differs from audited map', path)
+            else:
+                assert digest(wf) == spec['retained_hash'], ('workflow semantics differ from audited map', path)
             if 'workflow_dispatch' in spec['original_events']:
                 assert events['workflow_dispatch'] == spec['original_events']['workflow_dispatch'], path
         for job in spec.get('central_hashes', {}):
