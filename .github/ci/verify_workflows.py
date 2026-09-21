@@ -87,7 +87,29 @@ def main():
     # Result gate must compare selected outputs, not merely accept skipped jobs.
     result_text = json.dumps(root['jobs']['result'], ensure_ascii=False)
     assert 'IMPACT_JSON' in result_text
-    assert 'selected-but-not-successful' in result_text
+    assert 'verify_result.py' in result_text
+    result_guard = runpy.run_path('.github/ci/verify_result.py')
+    fake_catalog = {'workflows': {}}
+    try:
+        result_guard['validate'](
+            {'impact': {'result': 'success'}, 'flow-core': {'result': 'skipped'}},
+            {'trusted': 'true', 'flow_core': 'true'},
+            fake_catalog,
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError('selected-but-skipped result was accepted')
+    result_guard['validate'](
+        {'impact': {'result': 'success'}, 'flow-core': {'result': 'success'}},
+        {'trusted': 'true', 'flow_core': 'true'},
+        fake_catalog,
+    )
+
+    # Central Profile-C calls skip only dependencies already owned by the topology closure.
+    assert root['jobs']['sw92-profile-c-phase-set']['with']['dependencies_prevalidated'] is True
+    assert root['jobs']['sw92-profile-c-sensitivity']['with']['dependencies_prevalidated'] is True
+    assert root['jobs']['sw92-phase-assigned-no-w']['with']['dependencies_prevalidated'] is True
 
     print('WORKFLOW_MAP_OK', len(paths), 'entries; single automatic entry; reusable closure:', len(seen))
     print('ENTRY_INPUT_MATRIX_PERMISSIONS_AND_STEP_PARITY_OK')
