@@ -80,6 +80,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Select Python interpreter
+        shell: bash
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Configure only phase split integration
         run: |
           config_arg=()
@@ -94,18 +107,18 @@ jobs:
       - name: Run phase split increment
         run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
       - name: Independently regenerate binary equilibrium references
-        run: python tests/flash/pt_split/reference_split_decimal.py
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_split_decimal.py
       - name: Independently regenerate ternary equilibrium references
-        run: python tests/flash/pt_split/reference_ternary_decimal.py
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_ternary_decimal.py
       - name: Independently regenerate converged-solution sensitivity references
-        run: python tests/flash/pt_split/reference_sensitivity_decimal.py
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_sensitivity_decimal.py
       - name: Independently check saturation and continuous boundary references
-        run: python tests/flash/pt_split/reference_boundary_decimal.py
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py
       - name: Cross-check boundary reference precision on the sanitizer configuration
         if: matrix.sanitizer == 'ON'
-        run: python tests/flash/pt_split/reference_boundary_decimal.py --precision 96
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py --precision 96
       - name: Independently audit near-dew input resolution and phase gate
-        run: python tests/flash/pt_split/reference_dew_limit_decimal.py
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py
       - name: Cross-check near-dew reference precision
         if: matrix.sanitizer == 'ON'
-        run: python tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96

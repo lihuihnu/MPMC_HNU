@@ -71,6 +71,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Existing audited repository pin.
         with:
           persist-credentials: false
+      - name: Select Python interpreter
+        shell: bash
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Configure only stability integration
         run: |
           config_arg=()
@@ -85,6 +98,6 @@ jobs:
       - name: Run necessary stability increment
         run: ctest --test-dir build/flash-stability -C ${{ matrix.config }} -R '^flash[.]stability[.]' --verbose --no-tests=error
       - name: Regenerate independent fixed-state PR76 references
-        run: python tests/flash/stability/reference_decimal.py
+        run: "$MPMC_PYTHON" tests/flash/stability/reference_decimal.py
       - name: Regenerate independent fixed-state SW92 references
-        run: python tests/flash/stability/reference_sw92_decimal.py
+        run: "$MPMC_PYTHON" tests/flash/stability/reference_sw92_decimal.py

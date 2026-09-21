@@ -48,6 +48,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Select Python interpreter
+        shell: bash
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Configure PT flash backend conformance
         run: |
           config_arg=()
@@ -66,8 +79,8 @@ jobs:
         run: ctest --test-dir build/pt-flash-backend -C ${{ matrix.config }} -R '^flash[.]pt_flash_backend[.]' --verbose --no-tests=error
 
       - name: Independently verify frozen PR76 near-dew references
-        run: python tests/flash/pt_split/reference_dew_limit_decimal.py
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py
 
       - name: Cross-check PR76 near-dew reference precision
         if: matrix.sanitizer == 'ON'
-        run: python tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
+        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
