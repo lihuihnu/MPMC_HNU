@@ -34,10 +34,13 @@ def select(paths, branch='main', action='synchronize'):
         types = selector.get('types', ['opened', 'reopened', 'synchronize'])
         eligible = eligible and (action in types or action == 'ready_for_review')
         result[key] = eligible and any(matches(p, selector.get('paths', ['**'])) and not matches(p, selector.get('paths-ignore', [])) for p in paths)
-    if any(p in ('.github/ci/impact_rules.py', '.github/ci/plan.py', '.github/ci/workflow_map.json') for p in paths):
-        result = {k: True for k in result}
-        ad = list(RULES['all_ad_suites'])
-        thermo = list(RULES['all_thermo_suites'])
+    if any(p.startswith('.github/ci/') for p in paths):
+        print('CI governance changed: rely on governance regressions and path-specific selectors; do not fan out all science gates.')
+    if result.get('sw92_profile_c_sensitivity'):
+        result['sw92_thermodynamics'] = True
+        result['sw92_profile_c_phase_set'] = True
+    if result.get('sw92_phase_assigned_no_w'):
+        result['sw92_family_vle'] = True
     return result, ad, thermo
 
 def cmd(*args):
