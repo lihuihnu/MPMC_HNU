@@ -13,8 +13,8 @@ jobs:
   paired-baseline:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
-    name: main vs PR head / GitHub-hosted Linux x64
-    runs-on: ubuntu-24.04
+    name: main vs PR head / private Linux x64
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 30
     defaults:
       run:
@@ -71,5 +71,14 @@ jobs:
         \ build/cpa-perf-results/coverage-main.json \\\n  --head-coverage build/cpa-perf-results/coverage-head.json \\\n  --main-sha \"${CPA_PERF_MAIN_SHA}\" \\\n\
         \  --head-sha \"${CPA_PERF_HEAD_SHA}\" \\\n  --markdown build/cpa-perf-results/report.md \\\n  --json build/cpa-perf-results/report.json \\\n  | tee build/cpa-perf-results/summary.log\n\
         cat build/cpa-perf-results/report.md >> \"${GITHUB_STEP_SUMMARY}\"\n"
+    - name: Cleanup main comparison worktree
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${CPA_PERF_MAIN_ROOT:-}" ]; then
+          git worktree remove --force "${CPA_PERF_MAIN_ROOT}" 2>/dev/null || rm -rf "${CPA_PERF_MAIN_ROOT}"
+        fi
+        git worktree prune
 'on':
   workflow_dispatch: null
