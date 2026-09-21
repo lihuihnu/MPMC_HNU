@@ -173,43 +173,46 @@ jobs:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_family_vle == 'true')
     uses: ./.github/workflows/sw92_family_vle.yml
-  sw92-profile-c-pt:
-    needs: impact
-    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_pt == 'true')
-    uses: ./.github/workflows/sw92_phase_assigned_pt.yml
   sw92-profile-c-phase-set:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_phase_set == 'true')
     uses: ./.github/workflows/sw92_profile_c_phase_set.yml
+    with:
+      dependencies_prevalidated: true
   sw92-profile-c-sensitivity:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_sensitivity == 'true')
     uses: ./.github/workflows/sw92_profile_c_sensitivity.yml
+    with:
+      dependencies_prevalidated: true
   sw92-physics-closure:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_physics_closure == 'true')
     uses: ./.github/workflows/physics_sw92_closure.yml
   sw92-phase-assigned-joint:
     needs: impact
-    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_joint == 'true')
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_joint == 'true' && needs.impact.outputs.sw92_phase_assigned_h_side_witness != 'true' && needs.impact.outputs.sw92_profile_c_pt != 'true' && needs.impact.outputs.sw92_phase_assigned_three_phase != 'true' && needs.impact.outputs.sw92_phase_assigned_three_phase_closure != 'true' && needs.impact.outputs.sw92_phase_assigned_boundary != 'true')
     uses: ./.github/workflows/sw92_phase_assigned_joint.yml
   sw92-phase-assigned-h-side-witness:
     needs: impact
-    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_h_side_witness == 'true')
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_h_side_witness == 'true' && needs.impact.outputs.sw92_profile_c_pt != 'true' && needs.impact.outputs.sw92_phase_assigned_three_phase != 'true' && needs.impact.outputs.sw92_phase_assigned_three_phase_closure != 'true' && needs.impact.outputs.sw92_phase_assigned_boundary != 'true')
     uses: ./.github/workflows/sw92_phase_assigned_h_side_witness.yml
   sw92-phase-assigned-no-w:
     needs: impact
-    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_no_w == 'true')
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_no_w == 'true' && needs.impact.outputs.sw92_profile_c_pt != 'true' && needs.impact.outputs.sw92_phase_assigned_boundary != 'true')
     uses: ./.github/workflows/sw92_phase_assigned_no_w.yml
+    with:
+      dependencies_prevalidated: true
   sw92-phase-assigned-three-phase-topology:
     needs: impact
-    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase_closure
-      == 'true' || needs.impact.outputs.sw92_phase_assigned_boundary == 'true')
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_pt == 'true' || needs.impact.outputs.sw92_profile_c_phase_set == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' || needs.impact.outputs.sw92_phase_assigned_boundary == 'true')
     uses: ./.github/workflows/_sw92_phase_assigned_topology.yml
     with:
       run_three_phase: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' }}
       run_three_phase_closure: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' }}
       run_boundary: ${{ needs.impact.outputs.sw92_phase_assigned_boundary == 'true' }}
+      run_pt: ${{ needs.impact.outputs.sw92_profile_c_pt == 'true' }}
+      run_phase_set_dependencies: ${{ needs.impact.outputs.sw92_profile_c_phase_set == 'true' }}
   ad:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.ad_has_work == 'true')
@@ -369,9 +372,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: cpa-clapeyron-oracle-${{ github.event.pull_request.number || github.ref }}-legacy_cpa_clapeyron_oracle__pinned-clapeyron-oracle
-      cancel-in-progress: true
   legacy_cpa_performance_audit__paired-baseline:
     needs:
     - impact
@@ -394,7 +394,7 @@ jobs:
         persist-credentials: false
     - name: Record compared revisions and create main worktree
       run: "set -euo pipefail\ngit fetch origin main:refs/remotes/origin/main\nhead_sha=\"$(git rev-parse HEAD)\"\nmain_sha=\"$(git rev-parse origin/main)\"\nmain_root=\"\
-        ${RUNNER_TEMP}/mpmc-main\"\ngit worktree add --detach \"${main_root}\" \"${main_sha}\"\n{\n  echo \"CPA_PERF_HEAD_SHA=${head_sha}\"\n  echo \"CPA_PERF_MAIN_SHA=${main_sha}\"\
+        ${RUNNER_TEMP}/mpmc-main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"\nrm -rf \"${main_root}\"\ngit worktree prune\ngit worktree add --detach \"${main_root}\" \"${main_sha}\"\n{\n  echo \"CPA_PERF_HEAD_SHA=${head_sha}\"\n  echo \"CPA_PERF_MAIN_SHA=${main_sha}\"\
         \n  echo \"CPA_PERF_MAIN_ROOT=${main_root}\"\n} >> \"${GITHUB_ENV}\"\necho \"head=${head_sha}\"\necho \"main=${main_sha}\"\nclang++ --version | head -n 1\n\
         g++ --version | head -n 1\ncmake --version | head -n 1\n"
     - name: Configure paired Clang Release binaries
@@ -437,13 +437,19 @@ jobs:
         \ build/cpa-perf-results/coverage-main.json \\\n  --head-coverage build/cpa-perf-results/coverage-head.json \\\n  --main-sha \"${CPA_PERF_MAIN_SHA}\" \\\n\
         \  --head-sha \"${CPA_PERF_HEAD_SHA}\" \\\n  --markdown build/cpa-perf-results/report.md \\\n  --json build/cpa-perf-results/report.json \\\n  | tee build/cpa-perf-results/summary.log\n\
         cat build/cpa-perf-results/report.md >> \"${GITHUB_STEP_SUMMARY}\"\n"
+    - name: Cleanup main comparison worktree
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${CPA_PERF_MAIN_ROOT:-}" ]; then
+          git worktree remove --force "${CPA_PERF_MAIN_ROOT}" 2>/dev/null || rm -rf "${CPA_PERF_MAIN_ROOT}"
+        fi
+        git worktree prune
     if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_cpa_performance_audit
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: cpa-performance-audit-${{ github.ref }}-legacy_cpa_performance_audit__paired-baseline
-      cancel-in-progress: false
   legacy_cpa_thermopack_oracle__pinned-thermopack-oracle:
     needs:
     - impact
@@ -547,9 +553,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: cpa-thermopack-oracle-${{ github.event.pull_request.number || github.ref }}-legacy_cpa_thermopack_oracle__pinned-thermopack-oracle
-      cancel-in-progress: true
   legacy_discretization_core__core:
     needs:
     - impact
@@ -596,9 +599,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: discretization-core-${{ 'Discretization core correctness' }}-${{ github.ref }}-legacy_discretization_core__core
-      cancel-in-progress: true
   legacy_frontend__verify:
     needs:
     - impact
@@ -645,9 +645,6 @@ jobs:
       'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: frontend-${{ github.ref }}-legacy_frontend__verify
-      cancel-in-progress: true
   legacy_hosted_web_model_product__hosted-web-model:
     needs:
     - impact
@@ -731,9 +728,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: hosted-web-model-product-${{ github.ref }}-legacy_hosted_web_model_product__hosted-web-model
-      cancel-in-progress: true
   legacy_mesh_baseline_benchmark__baseline:
     needs:
     - impact
@@ -782,9 +776,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: mesh-baseline-${{ 'Mesh baseline benchmark' }}-${{ github.ref }}-legacy_mesh_baseline_benchmark__baseline
-      cancel-in-progress: true
   legacy_mesh_core__core:
     needs:
     - impact
@@ -831,9 +822,6 @@ jobs:
       'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: mesh-core-${{ 'Mesh core correctness' }}-${{ github.ref }}-legacy_mesh_core__core
-      cancel-in-progress: true
   legacy_mesh_external_compatibility__compatibility:
     needs:
     - impact
@@ -926,9 +914,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: mesh-external-compat-${{ 'Mesh external format compatibility' }}-${{ github.ref }}-legacy_mesh_external_compatibility__compatibility
-      cancel-in-progress: true
   legacy_mesh_petsc__petsc:
     needs:
     - impact
@@ -956,9 +941,6 @@ jobs:
       'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: mesh-discretization-petsc-${{ 'Mesh/discretization PETSc adapter correctness' }}-${{ github.ref }}-legacy_mesh_petsc__petsc
-      cancel-in-progress: true
   legacy_model_configuration_grpc__linux:
     needs:
     - impact
@@ -1050,9 +1032,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: model-configuration-grpc-${{ github.ref }}-legacy_model_configuration_grpc__linux
-      cancel-in-progress: true
   legacy_model_configuration_grpc__windows:
     needs:
     - impact
@@ -1124,9 +1103,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: model-configuration-grpc-${{ github.ref }}-legacy_model_configuration_grpc__windows
-      cancel-in-progress: true
   legacy_model_configuration_grpc__macos:
     needs:
     - impact
@@ -1205,9 +1181,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: model-configuration-grpc-${{ github.ref }}-legacy_model_configuration_grpc__macos
-      cancel-in-progress: true
   legacy_physics_component_inventory__inventory:
     needs:
     - impact
@@ -1255,9 +1228,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: physics-component-inventory-${{ github.ref }}-legacy_physics_component_inventory__inventory
-      cancel-in-progress: true
   legacy_pt_android_jni_emulator__boundary:
     needs:
     - impact
@@ -1278,9 +1248,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: pt-android-jni-emulator-${{ github.ref }}-legacy_pt_android_jni_emulator__boundary
-      cancel-in-progress: true
   legacy_pt_android_jni_emulator__emulator:
     name: PT Android JNI emulator / Android x86_64 JNI PtService discovery/solve
     needs:
@@ -1344,9 +1311,6 @@ jobs:
       == 'true' && (true)
     permissions:
       contents: read
-    concurrency:
-      group: pt-android-jni-emulator-${{ github.ref }}-legacy_pt_android_jni_emulator__emulator
-      cancel-in-progress: true
   legacy_pt_android_ndk_portability__boundary:
     needs:
     - impact
@@ -1367,9 +1331,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: pt-android-ndk-${{ github.ref }}-legacy_pt_android_ndk_portability__boundary
-      cancel-in-progress: true
   legacy_pt_android_ndk_portability__build:
     name: PT Android NDK portability / Android ${{ matrix.abi }} native runtime
     needs:
@@ -1437,9 +1398,6 @@ jobs:
       == 'true' && (true)
     permissions:
       contents: read
-    concurrency:
-      group: pt-android-ndk-${{ github.ref }}-legacy_pt_android_ndk_portability__build
-      cancel-in-progress: true
   legacy_pt_android_product_shell__product-shell:
     needs:
     - impact
@@ -1544,9 +1502,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: pt-android-product-shell-${{ github.ref }}-legacy_pt_android_product_shell__product-shell
-      cancel-in-progress: true
   legacy_pt_process_adapter__adapter:
     needs:
     - impact
@@ -1679,9 +1634,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: pt-process-adapter-${{ github.ref }}-legacy_pt_process_adapter__adapter
-      cancel-in-progress: true
   legacy_pt_product_staging__seed:
     needs:
     - impact
@@ -1733,9 +1685,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: pt-product-staging-${{ github.ref }}-legacy_pt_product_staging__seed
-      cancel-in-progress: true
   legacy_pt_product_staging__stage:
     name: PT cross-platform product staging / ${{ matrix.name }}
     needs:
@@ -1806,9 +1755,6 @@ jobs:
       == 'true' && (true)
     permissions:
       contents: read
-    concurrency:
-      group: pt-product-staging-${{ github.ref }}-legacy_pt_product_staging__stage
-      cancel-in-progress: true
   legacy_pt_product_staging__desktop:
     name: PT cross-platform product staging / ${{ matrix.name }} Electron vertical slice
     needs:
@@ -1908,9 +1854,6 @@ jobs:
       == 'true' && (true)
     permissions:
       contents: read
-    concurrency:
-      group: pt-product-staging-${{ github.ref }}-legacy_pt_product_staging__desktop
-      cancel-in-progress: true
   legacy_pt_service__service:
     needs:
     - impact
@@ -1957,9 +1900,6 @@ jobs:
       'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: pt-service-${{ github.ref }}-legacy_pt_service__service
-      cancel-in-progress: true
   legacy_pt_signed_installer_gate__candidate:
     needs:
     - impact
@@ -2085,9 +2025,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: pt-signed-installer-${{ github.ref }}-legacy_pt_signed_installer_gate__candidate
-      cancel-in-progress: true
   legacy_pt_split__split:
     needs:
     - impact
@@ -2169,9 +2106,6 @@ jobs:
       'true' && (always() && ('' == true || 'true' == 'true'))
     permissions:
       contents: read
-    concurrency:
-      group: pt-phase-split-${{ github.ref }}-legacy_pt_split__split
-      cancel-in-progress: true
   legacy_pt_windows_desktop_installer__candidate:
     needs:
     - impact
@@ -2283,9 +2217,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: pt-windows-desktop-installer-${{ github.ref }}-legacy_pt_windows_desktop_installer__candidate
-      cancel-in-progress: true
   legacy_stability__stability:
     needs:
     - impact
@@ -2344,9 +2275,6 @@ jobs:
       'true' && (always() && ('' == true || 'true' == 'true'))
     permissions:
       contents: read
-    concurrency:
-      group: pt-stability-${{ github.ref }}-legacy_stability__stability
-      cancel-in-progress: true
   legacy_sw92_asymmetric_fixed_pair__fixed-pair:
     needs:
     - impact
@@ -2426,9 +2354,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: sw92-asymmetric-fixed-pair-${{ github.ref }}-legacy_sw92_asymmetric_fixed_pair__fixed-pair
-      cancel-in-progress: true
   legacy_sw92_asymmetric_max2__max2:
     needs:
     - impact
@@ -2508,9 +2433,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: sw92-asymmetric-max2-${{ github.ref }}-legacy_sw92_asymmetric_max2__max2
-      cancel-in-progress: true
   legacy_sw92_asymmetric_max2_physical_ternary__ternary:
     needs:
     - impact
@@ -2572,9 +2494,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: sw92-asymmetric-max2-physical-ternary-${{ github.ref }}-legacy_sw92_asymmetric_max2_physical_ternary__ternary
-      cancel-in-progress: true
   legacy_sw92_asymmetric_max2_validation__validation:
     needs:
     - impact
@@ -2636,9 +2555,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: sw92-asymmetric-max2-validation-${{ github.ref }}-legacy_sw92_asymmetric_max2_validation__validation
-      cancel-in-progress: true
   legacy_sw92_asymmetric_orchestration__orchestration:
     needs:
     - impact
@@ -2708,9 +2624,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: sw92-asymmetric-orchestration-${{ github.ref }}-legacy_sw92_asymmetric_orchestration__orchestration
-      cancel-in-progress: true
   legacy_sw92_asymmetric_stability__asymmetric-stability:
     needs:
     - impact
@@ -2760,9 +2673,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: sw92-asymmetric-stability-${{ github.ref }}-legacy_sw92_asymmetric_stability__asymmetric-stability
-      cancel-in-progress: true
   legacy_sw92_dual_model__dual-model:
     needs:
     - impact
@@ -2811,9 +2721,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: sw92-dual-model-${{ github.ref }}-legacy_sw92_dual_model__dual-model
-      cancel-in-progress: true
   legacy_sw92_three_phase_experimental_line__experimental-line:
     needs:
     - impact
@@ -2864,9 +2771,6 @@ jobs:
       == 'true' && ('true' == 'true')
     permissions:
       contents: read
-    concurrency:
-      group: sw92-three-phase-experimental-line-${{ github.ref }}-legacy_sw92_three_phase_experimental_line__experimental-line
-      cancel-in-progress: true
   result:
     name: Required CI result
     if: ${{ always() }}
@@ -2891,7 +2795,6 @@ jobs:
     - model-configuration
     - sw92-thermodynamics
     - sw92-family-vle
-    - sw92-profile-c-pt
     - sw92-profile-c-phase-set
     - sw92-profile-c-sensitivity
     - sw92-physics-closure
@@ -2941,25 +2844,15 @@ jobs:
     permissions:
       contents: read
     steps:
-    - name: Reject failures, cancellations and missing impact
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Reject failures, cancellations, missing and selected-but-skipped jobs
       env:
         NEEDS_JSON: ${{ toJSON(needs) }}
-      shell: python
-      run: 'import json, os
+        IMPACT_JSON: ${{ toJSON(needs.impact.outputs) }}
+      run: python3 .github/ci/verify_result.py
 
-        needs = json.loads(os.environ[''NEEDS_JSON''])
-
-        assert needs[''impact''][''result''] == ''success'', ''impact did not complete''
-
-        assert needs[''impact''][''outputs''].get(''trusted'') == ''true'', ''fork validation requires trusted execution''
-
-        failed = {k:v[''result''] for k,v in needs.items() if v[''result''] not in (''success'', ''skipped'')}
-
-        assert not failed, failed
-
-        print(''Selected CI jobs completed; unselected or conditionally inapplicable jobs are skipped, not test passes.'')
-
-        '
 'on':
   pull_request:
     types:

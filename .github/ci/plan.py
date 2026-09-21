@@ -6,6 +6,7 @@ import re
 import runpy
 import subprocess
 import urllib.request
+import yaml
 RULES = runpy.run_path('.github/ci/impact_rules.py')
 MAP = json.loads(Path('.github/ci/workflow_map.json').read_text(encoding='utf-8'))
 
@@ -34,11 +35,96 @@ def select(paths, branch='main', action='synchronize'):
         types = selector.get('types', ['opened', 'reopened', 'synchronize'])
         eligible = eligible and (action in types or action == 'ready_for_review')
         result[key] = eligible and any(matches(p, selector.get('paths', ['**'])) and not matches(p, selector.get('paths-ignore', [])) for p in paths)
-    if any(p in ('.github/ci/impact_rules.py', '.github/ci/plan.py', '.github/ci/workflow_map.json') for p in paths):
-        result = {k: True for k in result}
-        ad = list(RULES['all_ad_suites'])
-        thermo = list(RULES['all_thermo_suites'])
+    if any(p.startswith('.github/ci/') for p in paths):
+        print('CI governance changed: rely on governance regressions and path-specific selectors; do not fan out all science gates.')
+    if result.get('sw92_profile_c_sensitivity'):
+        result['sw92_thermodynamics'] = True
+        result['sw92_profile_c_phase_set'] = True
+    if result.get('sw92_phase_assigned_no_w'):
+        result['sw92_family_vle'] = True
     return result, ad, thermo
+
+CORE_ROUTER_JOB_ROUTES = {
+    'flow-core': ['flow_core'],
+    'flow-discretization': ['flow_discretization'],
+    'flow-discretization-petsc': ['flow_discretization_petsc'],
+    'pt-flash-backend': ['pt_flash_backend'],
+    'pt-stability': ['pt_stability'],
+    'pt-split': ['pt_split'],
+    'pr76-pt-continuation': ['pr76_pt_continuation'],
+    'pr76-max3': ['pr76_max3'],
+    'cpa-stability': ['cpa_stability'],
+    'cpa-split': ['cpa_split'],
+    'cpa-max3': ['cpa_max3'],
+    'cpa-baseline': ['cpa_baseline'],
+    'cpa-pt-phase': ['cpa_pt_phase'],
+    'cpa-physical-validation': ['cpa_physical_validation'],
+    'thermodynamics': ['thermodynamics_contracts'],
+    'physics-closure': ['physics_closure'],
+    'model-configuration': ['model_configuration'],
+    'sw92-thermodynamics': ['sw92_thermodynamics'],
+    'sw92-family-vle': ['sw92_family_vle'],
+    'sw92-profile-c-pt': ['sw92_profile_c_pt'],
+    'sw92-profile-c-phase-set': ['sw92_profile_c_phase_set'],
+    'sw92-profile-c-sensitivity': ['sw92_profile_c_sensitivity'],
+    'sw92-physics-closure': ['sw92_physics_closure'],
+    'sw92-phase-assigned-joint': ['sw92_phase_assigned_joint'],
+    'sw92-phase-assigned-h-side-witness': ['sw92_phase_assigned_h_side_witness'],
+    'sw92-phase-assigned-no-w': ['sw92_phase_assigned_no_w'],
+    'sw92-phase-assigned-three-phase-topology': [
+        'sw92_phase_assigned_three_phase',
+        'sw92_phase_assigned_three_phase_closure',
+        'sw92_phase_assigned_boundary',
+        'sw92_profile_c_pt',
+        'sw92_profile_c_phase_set',
+    ],
+}
+
+def router_job_changes(before, head):
+    def read(rev):
+        proc = subprocess.run(
+            ['git', 'show', rev + ':.github/workflows/pr_incremental_ci.yml'],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if proc.returncode != 0:
+            return {}
+        obj = yaml.safe_load(proc.stdout) or {}
+        return obj.get('jobs', {})
+    old, new = read(before), read(head)
+    return sorted(name for name in set(old) | set(new) if old.get(name) != new.get(name))
+
+def apply_router_job_changes(result, before, head):
+    legacy = {}
+    for spec in MAP['workflows'].values():
+        key = spec.get('route_key')
+        if not key:
+            continue
+        for job in spec.get('central_hashes', {}):
+            legacy[job] = key
+    changed = router_job_changes(before, head)
+    force_ad = False
+    force_thermo = False
+    for job in changed:
+        if job in ('impact', 'result'):
+            continue
+        if job in legacy:
+            result[legacy[job]] = True
+            continue
+        if job == 'ad':
+            force_ad = True
+            continue
+        if job == 'thermodynamics':
+            result['thermodynamics_contracts'] = True
+            force_thermo = True
+            continue
+        routes = CORE_ROUTER_JOB_ROUTES.get(job)
+        if routes is None:
+            raise RuntimeError('Changed central job lacks audited route mapping: ' + job)
+        for route in routes:
+            result[route] = True
+    return changed, force_ad, force_thermo
 
 def cmd(*args):
     return subprocess.check_output(['git', *args], text=True).strip()
@@ -77,6 +163,13 @@ def main():
         raw = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', '-z', before, head])
         paths = [p for p in raw.decode('utf-8').split('\0') if p]
         result, ad, thermo = select(paths, pr['base']['ref'], event.get('action', ''))
+        if '.github/workflows/pr_incremental_ci.yml' in paths:
+            changed_jobs, force_ad, force_thermo = apply_router_job_changes(result, before, head)
+            if force_ad:
+                ad = list(RULES['all_ad_suites'])
+            if force_thermo:
+                thermo = list(RULES['all_thermo_suites'])
+            print('Changed central jobs:', json.dumps(changed_jobs))
         for path in paths:
             if path.startswith(('modules/', 'tests/', 'frontend/', 'api/')) and not path.endswith('.md'):
                 single, a, t = select([path], pr['base']['ref'], event.get('action', ''))

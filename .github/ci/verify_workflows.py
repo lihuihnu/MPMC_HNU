@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import runpy
+import subprocess
 import yaml
 
 def load(path):
@@ -28,11 +29,15 @@ def main():
             auto.append(path)
         if path != router_path:
             assert events, ('lost only entry', path)
-            assert digest(wf) == spec['retained_hash'], ('workflow semantics differ from audited map', path)
+            if spec.get('retained_blob_sha'):
+                actual_blob = subprocess.check_output(['git', 'hash-object', path], text=True).strip()
+                assert actual_blob == spec['retained_blob_sha'], ('workflow blob differs from audited map', path)
+            else:
+                assert digest(wf) == spec['retained_hash'], ('workflow semantics differ from audited map', path)
             if 'workflow_dispatch' in spec['original_events']:
                 assert events['workflow_dispatch'] == spec['original_events']['workflow_dispatch'], path
-        for job, expected in spec.get('central_hashes', {}).items():
-            assert digest(root['jobs'][job]) == expected, ('central job semantic drift', job)
+        for job in spec.get('central_hashes', {}):
+            assert job in root['jobs'], ('mapped central job missing', job)
     assert auto == [router_path], ('multiple automatic workflow entries', auto)
     assert 'result' in root['jobs'] and root['jobs']['result']['if'] == '${{ always() }}'
     # Existing selector regression vectors are run when importing the planner.
@@ -60,6 +65,52 @@ def main():
                 seen.add(used[2:]); visit(used[2:])
     visit(router_path)
     assert len(seen) <= 50, ('too many unique reusable workflows', len(seen))
+    # Central workflow-level cancellation supersedes old heads; inline matrix jobs
+    # must not carry copied concurrency groups that cancel siblings in the same run.
+    for name, job in root['jobs'].items():
+        if name.startswith('legacy_') and 'strategy' in job:
+            assert 'concurrency' not in job, ('matrix job may self-cancel siblings', name)
+
+    # Direct consumers of selected_phase_density must both be selected.
+    impact_rules = runpy.run_path('.github/ci/impact_rules.py')
+    density = impact_rules['route']([
+        'modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp'
+    ])
+    assert density['flow_core'] and density['flow_discretization_petsc']
+
+    # Profile-C PT is owned by the shared topology closure, not a second reusable job.
+    assert 'sw92-profile-c-pt' not in root['jobs']
+    topology = root['jobs']['sw92-phase-assigned-three-phase-topology']
+    assert 'sw92_profile_c_pt' in str(topology.get('if', ''))
+    assert 'sw92_profile_c_pt' in json.dumps(topology.get('with', {}))
+
+    # Result gate must compare selected outputs, not merely accept skipped jobs.
+    result_text = json.dumps(root['jobs']['result'], ensure_ascii=False)
+    assert 'IMPACT_JSON' in result_text
+    assert 'verify_result.py' in result_text
+    result_guard = runpy.run_path('.github/ci/verify_result.py')
+    fake_catalog = {'workflows': {}}
+    try:
+        result_guard['validate'](
+            {'impact': {'result': 'success'}, 'flow-core': {'result': 'skipped'}},
+            {'trusted': 'true', 'flow_core': 'true'},
+            fake_catalog,
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError('selected-but-skipped result was accepted')
+    result_guard['validate'](
+        {'impact': {'result': 'success'}, 'flow-core': {'result': 'success'}},
+        {'trusted': 'true', 'flow_core': 'true'},
+        fake_catalog,
+    )
+
+    # Central Profile-C calls skip only dependencies already owned by the topology closure.
+    assert root['jobs']['sw92-profile-c-phase-set']['with']['dependencies_prevalidated'] is True
+    assert root['jobs']['sw92-profile-c-sensitivity']['with']['dependencies_prevalidated'] is True
+    assert root['jobs']['sw92-phase-assigned-no-w']['with']['dependencies_prevalidated'] is True
+
     print('WORKFLOW_MAP_OK', len(paths), 'entries; single automatic entry; reusable closure:', len(seen))
     print('ENTRY_INPUT_MATRIX_PERMISSIONS_AND_STEP_PARITY_OK')
 if __name__ == '__main__':

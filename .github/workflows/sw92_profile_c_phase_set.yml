@@ -5,6 +5,12 @@ name: SW92 Profile-C authoritative phase set
 # has no local PR path gate; it only executes routed or explicit manual validation.
 on:
   workflow_call:
+    inputs:
+      dependencies_prevalidated:
+        description: Central CI already validated audited downstream dependencies.
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -62,6 +68,7 @@ jobs:
           echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
 
       - name: Regenerate physical Sample-6 oracle
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
 
@@ -81,6 +88,7 @@ jobs:
         run: ctest --test-dir build/sw92-profile-c-phase-set -C ${{ matrix.config }} -R '^flash[.]sw92_profile_c_phase_set[.]' --verbose --no-tests=error
 
       - name: Configure affected boundary-aware PT regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
@@ -88,11 +96,14 @@ jobs:
             "${config_arg[@]}" ${{ matrix.compiler }} \
             -DMPMC_SW92_PHASE_ASSIGNED_BOUNDARY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Build affected boundary-aware PT regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: cmake --build build/sw92-boundary --target mpmc_sw92_phase_assigned_boundary_tests --config ${{ matrix.config }} --parallel 2
       - name: Run affected boundary-aware PT regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: ctest --test-dir build/sw92-boundary -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_boundary[.]' --verbose --no-tests=error
 
       - name: Configure affected Profile-C PT regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
@@ -100,8 +111,10 @@ jobs:
             "${config_arg[@]}" ${{ matrix.compiler }} \
             -DMPMC_SW92_PHASE_ASSIGNED_PT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Build affected Profile-C PT regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: cmake --build build/sw92-pt --target mpmc_sw92_phase_assigned_pt_tests --config ${{ matrix.config }} --parallel 2
       - name: Run affected Profile-C PT regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: ctest --test-dir build/sw92-pt -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_pt[.]' --verbose --no-tests=error
 
       - name: Configure generic phase-set contract regression
