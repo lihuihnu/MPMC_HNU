@@ -13,12 +13,8 @@ jobs:
   paired-baseline:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
-    name: main vs PR head / private Linux x64
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    name: main vs PR head / GitHub-hosted Linux x64
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
       run:
