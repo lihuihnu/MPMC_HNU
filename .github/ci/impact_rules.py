@@ -70,6 +70,7 @@ ownership = {
         "modules/flow_discretization_petsc/**",
         "modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp",
         "modules/flow/include/mpmc/flow/fugacity_equilibrium_linearization.hpp",
+        "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp",
         "modules/flow_discretization/include/mpmc/flow_discretization/local_energy_conservation_residual.hpp",
         "modules/flow_discretization/include/mpmc/flow_discretization/energy_face_flux.hpp",
         "modules/flow/include/mpmc/flow/energy_accumulation.hpp",
