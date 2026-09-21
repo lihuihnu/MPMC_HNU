@@ -5,6 +5,12 @@ name: SW92 Profile-C implicit sensitivity
 # has no local PR path gate; it only executes routed or explicit manual validation.
 on:
   workflow_call:
+    inputs:
+      dependencies_prevalidated:
+        description: Central CI already validated audited downstream dependencies.
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -62,6 +68,7 @@ jobs:
           echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
 
       - name: Regenerate physical Sample-6 oracle
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
 
@@ -81,6 +88,7 @@ jobs:
         run: ctest --test-dir build/sw92-profile-c-sensitivity -C ${{ matrix.config }} -R '^flash[.]sw92_profile_c_sensitivity[.]' --verbose --no-tests=error
 
       - name: Configure affected SW92 thermodynamics regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
@@ -89,11 +97,14 @@ jobs:
           cmake -S tests/thermodynamics/sw92 -B build/sw92-thermodynamics \
             "${config_arg[@]}" ${{ matrix.compiler }}
       - name: Build affected SW92 thermodynamics regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: cmake --build build/sw92-thermodynamics --config ${{ matrix.config }} --parallel 2
       - name: Run affected SW92 thermodynamics regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: ctest --test-dir build/sw92-thermodynamics -C ${{ matrix.config }} --verbose --no-tests=error
 
       - name: Configure affected Profile-C publication regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
@@ -103,6 +114,8 @@ jobs:
             -B build/sw92-profile-c-phase-set \
             "${config_arg[@]}" ${{ matrix.compiler }}
       - name: Build affected Profile-C publication regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: cmake --build build/sw92-profile-c-phase-set --config ${{ matrix.config }} --parallel 2
       - name: Run affected Profile-C publication regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: ctest --test-dir build/sw92-profile-c-phase-set -C ${{ matrix.config }} -R '^flash[.]sw92_profile_c_phase_set[.]' --verbose --no-tests=error
