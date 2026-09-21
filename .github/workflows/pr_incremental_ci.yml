@@ -223,11 +223,7 @@ jobs:
     needs:
     - impact
     name: CPA Clapeyron external oracle / Pinned Clapeyron sCPA oracle
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
     - name: Checkout MPMC_HNU
@@ -375,12 +371,8 @@ jobs:
   legacy_cpa_performance_audit__paired-baseline:
     needs:
     - impact
-    name: CPA flash performance audit / main vs PR head / private Linux x64
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    name: CPA flash performance audit / main vs PR head / GitHub-hosted Linux x64
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
       run:
@@ -454,11 +446,7 @@ jobs:
     needs:
     - impact
     name: CPA ThermoPack external oracle / Pinned ThermoPack SRK-CPA oracle
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
     - name: Checkout MPMC_HNU
@@ -565,13 +553,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           build_type: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           build_type: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -603,11 +591,7 @@ jobs:
     needs:
     - impact
     name: Frontend / Node 24 · typecheck, test, build
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -649,11 +633,7 @@ jobs:
     needs:
     - impact
     name: Hosted Web model product / Chrome → trusted edge → native Classic PR
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -731,12 +711,8 @@ jobs:
   legacy_mesh_baseline_benchmark__baseline:
     needs:
     - impact
-    name: Mesh baseline benchmark / Private Linux x64 GCC Release fixed workload
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    name: Mesh baseline benchmark / GitHub-hosted Linux x64 GCC Release fixed workload
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -788,13 +764,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           build_type: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           build_type: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -826,11 +802,7 @@ jobs:
     needs:
     - impact
     name: Mesh external format compatibility / Pinned public Gmsh VTU GRDECL samples
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -918,11 +890,7 @@ jobs:
     needs:
     - impact
     name: Mesh/discretization PETSc adapter correctness / PETSc 3.19.6 mesh/discretization synthetic MPI
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -945,11 +913,7 @@ jobs:
     needs:
     - impact
     name: Versioned model configuration service / ${{ matrix.name }}
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -1193,13 +1157,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -1232,18 +1196,14 @@ jobs:
     needs:
     - impact
     name: PT Android JNI emulator / Android JNI isolation contract
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
     - name: Validate Android JNI and emulator boundary
-      run: python -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
+      run: python3 -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
     if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_android_jni_emulator
       == 'true' && ('true' == 'true')
     permissions:
@@ -1253,11 +1213,7 @@ jobs:
     needs:
     - impact
     - legacy_pt_android_jni_emulator__boundary
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       NDK_VERSION: 30.0.16248370
@@ -1315,18 +1271,14 @@ jobs:
     needs:
     - impact
     name: PT Android NDK portability / Android isolation contract
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
     - name: Validate isolated Android boundary
-      run: python -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
+      run: python3 -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
     if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_android_ndk_portability
       == 'true' && ('true' == 'true')
     permissions:
@@ -1336,11 +1288,7 @@ jobs:
     needs:
     - impact
     - legacy_pt_android_ndk_portability__boundary
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1402,11 +1350,7 @@ jobs:
     needs:
     - impact
     name: PT Android Product Shell / Android universal React + Capacitor + JNI product shell
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       NDK_VERSION: 30.0.16248370
@@ -1506,11 +1450,7 @@ jobs:
     needs:
     - impact
     name: PT gRPC process adapter / ${{ matrix.name }}
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1646,7 +1586,7 @@ jobs:
         include:
         - name: Linux x64 Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           profile: linux-x86_64-release
         - name: Windows x64 Release
           os: windows-2022
@@ -1698,7 +1638,7 @@ jobs:
         include:
         - name: Linux x64 Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           profile: linux-x86_64-release
         - name: Windows x64 Release
           os: windows-2022
@@ -1768,7 +1708,7 @@ jobs:
         include:
         - name: Linux x64
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           profile: linux-x86_64-release
           electron_platform: linux
           electron_arch: x64
@@ -1866,13 +1806,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -1912,7 +1852,7 @@ jobs:
         include:
         - name: Linux x64 DEB
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           profile: linux-x86_64-release
           target: linux-x86_64
           extension: deb
@@ -2037,13 +1977,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2229,13 +2169,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2287,13 +2227,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2366,13 +2306,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2445,13 +2385,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2506,13 +2446,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2567,13 +2507,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2636,13 +2576,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2685,13 +2625,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
@@ -2733,13 +2673,13 @@ jobs:
         include:
         - name: GCC Debug + ASan/UBSan
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Debug
           compiler: -DCMAKE_CXX_COMPILER=g++
           sanitizer: 'ON'
         - name: Clang Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           config: Release
           compiler: -DCMAKE_CXX_COMPILER=clang++
           sanitizer: 'OFF'
