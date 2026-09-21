@@ -371,8 +371,12 @@ jobs:
   legacy_cpa_performance_audit__paired-baseline:
     needs:
     - impact
-    name: CPA flash performance audit / main vs PR head / GitHub-hosted Linux x64
-    runs-on: ubuntu-24.04
+    name: CPA flash performance audit / main vs PR head / private Linux x64
+    runs-on:
+    - self-hosted
+    - linux
+    - x64
+    - mpmc_hnu
     timeout-minutes: 30
     defaults:
       run:

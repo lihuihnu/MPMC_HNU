@@ -7,6 +7,10 @@ on:
         description: Audited AD matrix selected by the PR impact router.
         required: true
         type: string
+    outputs:
+      validated:
+        description: Routed AD matrix completed successfully.
+        value: ${{ jobs.validation-result.outputs.validated }}
   workflow_dispatch:
     inputs:
       suite:
@@ -19,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ad-${{ github.ref }}
+  group: ad-${{ inputs.matrix_json != '' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -104,3 +108,31 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} ${{ matrix.compiler }}
           cmake --build build/standalone --config ${{ matrix.build_type }} --parallel 2
           ctest --test-dir build/standalone -C ${{ matrix.build_type }} --verbose --no-tests=error
+
+  validation-result:
+    name: AD reusable result
+    needs:
+      - manual-select
+      - ad
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      validated: ${{ steps.verdict.outputs.validated }}
+    steps:
+      - name: Validate routed/manual AD result
+        id: verdict
+        shell: bash
+        env:
+          ROUTED: ${{ inputs.matrix_json != '' }}
+          SELECT_RESULT: ${{ needs.manual-select.result }}
+          AD_RESULT: ${{ needs.ad.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$ROUTED" == "true" ]]; then
+            test "$AD_RESULT" = "success"
+          else
+            test "$SELECT_RESULT" = "success"
+            test "$AD_RESULT" = "success"
+          fi
+          echo "validated=true" >> "$GITHUB_OUTPUT"

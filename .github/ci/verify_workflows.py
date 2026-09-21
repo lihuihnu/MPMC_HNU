@@ -39,11 +39,22 @@ def main():
         for job in spec.get('central_hashes', {}):
             assert job in root['jobs'], ('mapped central job missing', job)
     assert auto == [router_path], ('multiple automatic workflow entries', auto)
-    # Linux CI must be portable to GitHub-hosted runners; no private labels remain.
+    # Private Linux runners are reserved for audited long-running gates.
+    private_allowlist = {
+        ('.github/workflows/cpa_performance_audit.yml', 'paired-baseline'),
+        (router_path, 'legacy_cpa_performance_audit__paired-baseline'),
+    }
+    private_seen = set()
     for workflow_path in sorted(paths):
-        serialized = Path(workflow_path).read_text(encoding='utf-8')
-        assert 'mpmc_hnu' not in serialized, ('private runner label remains', workflow_path)
-        assert 'self-hosted' not in serialized, ('self-hosted runner remains', workflow_path)
+        wf = load(workflow_path)
+        for job_name, job in (wf.get('jobs') or {}).items():
+            serialized = json.dumps(job, sort_keys=True)
+            uses_private = 'mpmc_hnu' in serialized or 'self-hosted' in serialized
+            if uses_private:
+                pair = (workflow_path, job_name)
+                assert pair in private_allowlist, ('private runner used outside long-test allowlist', pair)
+                private_seen.add(pair)
+    assert private_seen == private_allowlist, ('private runner allowlist drift', private_seen, private_allowlist)
 
     assert 'result' in root['jobs'] and root['jobs']['result']['if'] == '${{ always() }}'
     # Existing selector regression vectors are run when importing the planner.
@@ -111,6 +122,32 @@ def main():
         {'trusted': 'true', 'flow_core': 'true'},
         fake_catalog,
     )
+
+    # Routed reusable workflows publish explicit validated outputs. Caller-level
+    # cancellation must not hide a successful validated matrix, while missing
+    # validated evidence must still fail.
+    result_guard['validate'](
+        {
+            'impact': {'result': 'success'},
+            'ad': {'result': 'cancelled', 'outputs': {'validated': 'true'}},
+            'pt-stability': {'result': 'cancelled', 'outputs': {'validated': 'true'}},
+        },
+        {'trusted': 'true', 'ad_has_work': 'true', 'pt_stability': 'true'},
+        fake_catalog,
+    )
+    try:
+        result_guard['validate'](
+            {
+                'impact': {'result': 'success'},
+                'ad': {'result': 'cancelled', 'outputs': {}},
+            },
+            {'trusted': 'true', 'ad_has_work': 'true'},
+            fake_catalog,
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError('routed reusable cancellation without validated output was accepted')
 
     # Central Profile-C calls skip only dependencies already owned by the topology closure.
     assert root['jobs']['sw92-profile-c-phase-set']['with']['dependencies_prevalidated'] is True

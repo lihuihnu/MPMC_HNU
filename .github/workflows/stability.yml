@@ -2,7 +2,7 @@ name: PT stability
 permissions:
   contents: read
 concurrency:
-  group: pt-stability-${{ github.ref }}
+  group: pt-stability-${{ inputs.routed && github.run_id || github.ref }}
   cancel-in-progress: true
 jobs:
   incremental-path-gate:
@@ -65,6 +65,39 @@ jobs:
       run: '"$MPMC_PYTHON" tests/flash/stability/reference_sw92_decimal.py
 
         '
+  validation-result:
+    name: PT stability reusable result
+    needs:
+    - incremental-path-gate
+    - stability
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      validated: ${{ steps.verdict.outputs.validated }}
+    steps:
+    - name: Validate routed/manual stability result
+      id: verdict
+      shell: bash
+      env:
+        ROUTED: ${{ inputs.routed }}
+        GATE_RESULT: ${{ needs.incremental-path-gate.result }}
+        STABILITY_RESULT: ${{ needs.stability.result }}
+      run: |
+        set -euo pipefail
+        if [[ "$ROUTED" == "true" ]]; then
+          test "$STABILITY_RESULT" = "success"
+        else
+          case "$GATE_RESULT" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac
+          case "$STABILITY_RESULT" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac
+        fi
+        echo "validated=true" >> "$GITHUB_OUTPUT"
 'on':
   workflow_call:
     inputs:
@@ -72,4 +105,8 @@ jobs:
         required: false
         type: boolean
         default: false
+    outputs:
+      validated:
+        description: Routed PT stability matrix completed successfully.
+        value: ${{ jobs.validation-result.outputs.validated }}
   workflow_dispatch: null

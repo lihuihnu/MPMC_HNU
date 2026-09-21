@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 
+VALIDATED_OUTPUT_JOBS = {"ad", "pt-stability"}
+
 SIMPLE = {
     "flow-core": "flow_core",
     "flow-discretization": "flow_discretization",
@@ -74,21 +76,31 @@ def required_jobs(impact, catalog):
             required.update(spec.get("central_hashes", {}).keys())
     return required
 
+def job_succeeded(job, record):
+    if job in VALIDATED_OUTPUT_JOBS:
+        return str((record.get("outputs") or {}).get("validated", "")).lower() == "true"
+    return record.get("result") == "success"
+
+
 def validate(needs, impact, catalog):
     assert needs.get("impact", {}).get("result") == "success", "impact did not complete"
     assert yes(impact, "trusted"), "trusted execution required"
-    failed = {
-        job: record.get("result")
-        for job, record in needs.items()
-        if record.get("result") not in ("success", "skipped")
-    }
+
+    failed = {}
+    for job, record in needs.items():
+        result = record.get("result")
+        if result in ("success", "skipped"):
+            continue
+        if job in VALIDATED_OUTPUT_JOBS and job_succeeded(job, record):
+            continue
+        failed[job] = result
     assert not failed, ("failed-or-cancelled", failed)
 
     required = required_jobs(impact, catalog)
     missing = {
         job: needs.get(job, {}).get("result", "missing")
         for job in sorted(required)
-        if needs.get(job, {}).get("result") != "success"
+        if not job_succeeded(job, needs.get(job, {}))
     }
     assert not missing, ("selected-but-not-successful", missing)
     return required
