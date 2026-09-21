@@ -1,4 +1,4 @@
-name: Hosted runner map regeneration
+name: Final CI governance validation
 on:
   push:
     branches: [work/ci-single-entry-20260921]
@@ -7,20 +7,20 @@ permissions:
   contents: write
 
 jobs:
-  regenerate:
+  validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: work/hosted-linux-runner-migration-20260921
+          ref: work/ci-final-governance-fixes-20260922
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Install pinned metadata validator
+      - name: Install pinned metadata parser
         run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
 
-      - name: Recompute audited workflow map and validate
+      - name: Regenerate workflow map and run governance regressions
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -37,7 +37,8 @@ jobs:
 
           repo = os.environ["GITHUB_REPOSITORY"]
           token = os.environ["GH_TOKEN"]
-          branch = "work/hosted-linux-runner-migration-20260921"
+          branch = "work/ci-final-governance-fixes-20260922"
+          router_path = ".github/workflows/pr_incremental_ci.yml"
 
           def load(path):
               obj = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -52,8 +53,6 @@ jobs:
 
           map_path = Path(".github/ci/workflow_map.json")
           catalog = json.loads(map_path.read_text(encoding="utf-8"))
-          router_path = ".github/workflows/pr_incremental_ci.yml"
-
           for path, spec in catalog["workflows"].items():
               wf = load(path)
               if path != router_path:
@@ -65,14 +64,32 @@ jobs:
                       continue
                   job_spec["runner"] = actual.get("runs-on")
                   job_spec["strategy"] = actual.get("strategy")
-
           content = json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
           map_path.write_text(content, encoding="utf-8")
 
-          for path in Path(".github/workflows").glob("*.yml"):
-              text = path.read_text(encoding="utf-8")
-              if "mpmc_hnu" in text or "self-hosted" in text:
-                  raise SystemExit("private runner reference remains: " + str(path))
+          # Structural checks for the two routed reusable workflows.
+          ad = load(".github/workflows/ad.yml")
+          stability = load(".github/workflows/stability.yml")
+          assert ad["on"]["workflow_call"]["outputs"]["validated"]["value"] == "${{ jobs.validation-result.outputs.validated }}"
+          assert stability["on"]["workflow_call"]["outputs"]["validated"]["value"] == "${{ jobs.validation-result.outputs.validated }}"
+          assert "github.run_id" in ad["concurrency"]["group"]
+          assert "github.run_id" in stability["concurrency"]["group"]
+          assert "validation-result" in ad["jobs"]
+          assert "validation-result" in stability["jobs"]
+
+          # Private runner is only the long CPA performance gate, both standalone and central owner.
+          private = []
+          for path in sorted(catalog["workflows"]):
+              wf = load(path)
+              for job_name, job in (wf.get("jobs") or {}).items():
+                  serialized = json.dumps(job, sort_keys=True)
+                  if "mpmc_hnu" in serialized or "self-hosted" in serialized:
+                      private.append((path, job_name))
+          expected_private = sorted([
+              (".github/workflows/cpa_performance_audit.yml", "paired-baseline"),
+              (router_path, "legacy_cpa_performance_audit__paired-baseline"),
+          ])
+          assert sorted(private) == expected_private, (private, expected_private)
 
           subprocess.run([
               "python3", "-m", "py_compile",
@@ -80,11 +97,16 @@ jobs:
               ".github/ci/plan.py",
               ".github/ci/verify_result.py",
               ".github/ci/verify_workflows.py",
+              "products/pt_android/tests/test_android_boundary.py",
+          ], check=True)
+          subprocess.run([
+              "python3", "-m", "unittest", "discover",
+              "-s", "products/pt_android/tests", "-p", "test_*.py", "-v",
           ], check=True)
           subprocess.run(["python3", ".github/ci/verify_workflows.py"], check=True)
-          subprocess.run(["git", "diff", "--check"], check=True)
+          subprocess.run(["git", "diff", "--check", "070efd87bd30e6bfc4899bc4d7e81fd14469ea06..HEAD"], check=True)
 
-          # Update only the non-workflow audit map on the temporary branch.
+          # Push only the regenerated non-workflow audit map to the temporary branch.
           api_url = "https://api.github.com/repos/" + repo + "/contents/.github/ci/workflow_map.json?ref=" + branch
           req = urllib.request.Request(
               api_url,
@@ -93,7 +115,7 @@ jobs:
           with urllib.request.urlopen(req, timeout=30) as response:
               current = json.load(response)
           payload = {
-              "message": "chore(ci): refresh hosted runner workflow map",
+              "message": "chore(ci): refresh final workflow map",
               "content": base64.b64encode(content.encode()).decode(),
               "sha": current["sha"],
               "branch": branch,
@@ -111,5 +133,5 @@ jobs:
           with urllib.request.urlopen(req, timeout=30) as response:
               result = json.load(response)
           print("UPDATED_MAP_COMMIT=" + result["commit"]["sha"])
-          print("HOSTED_RUNNER_MAP_VALIDATED")
+          print("FINAL_CI_GOVERNANCE_VALIDATION_OK")
           PY
