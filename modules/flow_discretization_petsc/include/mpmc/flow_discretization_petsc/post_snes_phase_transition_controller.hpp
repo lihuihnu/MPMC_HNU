@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -55,6 +56,9 @@ struct GlobalPhaseSetSignatureEntry3D {
     mpmc::mesh::GlobalEntityId cell_global{
         mpmc::mesh::GlobalEntityId::value_type{0}};
     std::size_t phase_count{};
+    std::vector<
+        mpmc::flow::FrozenPhysicalPhaseIdentity>
+        ordered_active_phases;
 
     friend bool operator==(
         const GlobalPhaseSetSignatureEntry3D&,
@@ -269,11 +273,101 @@ validate_local_proposals(
     return PETSC_SUCCESS;
 }
 
+inline void append_u64_be(
+    std::vector<unsigned char>* output,
+    std::uint64_t value) {
+    if (output == nullptr) {
+        throw std::invalid_argument(
+            "null phase-signature serialization output");
+    }
+    for (int shift = 56;
+         shift >= 0;
+         shift -= 8) {
+        output->push_back(
+            static_cast<unsigned char>(
+                (value >>
+                 static_cast<unsigned int>(
+                     shift)) &
+                UINT64_C(0xff)));
+    }
+}
+
+[[nodiscard]] inline bool read_u64_be(
+    std::span<const unsigned char> input,
+    std::size_t* cursor,
+    std::uint64_t* output) {
+    if (cursor == nullptr ||
+        output == nullptr ||
+        *cursor > input.size() ||
+        input.size() - *cursor < 8U) {
+        return false;
+    }
+    std::uint64_t value = 0U;
+    for (std::size_t byte = 0U;
+         byte < 8U;
+         ++byte) {
+        value =
+            (value << 8U) |
+            static_cast<std::uint64_t>(
+                input[*cursor + byte]);
+    }
+    *cursor += 8U;
+    *output = value;
+    return true;
+}
+
+inline void append_string(
+    std::vector<unsigned char>* output,
+    std::string_view value) {
+    append_u64_be(
+        output,
+        static_cast<std::uint64_t>(
+            value.size()));
+    output->insert(
+        output->end(),
+        value.begin(),
+        value.end());
+}
+
+[[nodiscard]] inline bool read_string(
+    std::span<const unsigned char> input,
+    std::size_t* cursor,
+    std::string* output) {
+    std::uint64_t size_u64 = 0U;
+    if (output == nullptr ||
+        !read_u64_be(
+            input,
+            cursor,
+            &size_u64) ||
+        size_u64 >
+            static_cast<std::uint64_t>(
+                input.size()) ||
+        size_u64 >
+            static_cast<std::uint64_t>(
+                std::numeric_limits<
+                    std::size_t>::max())) {
+        return false;
+    }
+    const std::size_t size =
+        static_cast<std::size_t>(
+            size_u64);
+    if (*cursor > input.size() ||
+        size > input.size() - *cursor) {
+        return false;
+    }
+    output->assign(
+        reinterpret_cast<const char*>(
+            input.data() + *cursor),
+        size);
+    *cursor += size;
+    return true;
+}
+
 [[nodiscard]] inline PetscErrorCode
 gather_phase_signature(
     MPI_Comm comm,
-    const VariableCardinalityNaturalVariableNumbering3D&
-        numbering,
+    const PhaseTransitionRebuiltNaturalVariableSystem3D&
+        system,
     std::vector<
         GlobalPhaseSetSignatureEntry3D>*
             output) {
@@ -282,29 +376,67 @@ gather_phase_signature(
     }
     output->clear();
 
-    std::vector<std::uint64_t>
+    const auto& numbering =
+        system.numbering();
+    std::vector<unsigned char>
         local;
-    for (const auto& record :
-         numbering.cells()) {
-        if (record.owner_rank !=
-            numbering.local_rank()) {
-            continue;
+    try {
+        for (const auto& record :
+             numbering.cells()) {
+            if (record.owner_rank !=
+                numbering.local_rank()) {
+                continue;
+            }
+            const auto& registry_cell =
+                system
+                    .coordinate_registry()
+                    .cell(
+                        record.cell_global);
+            if (registry_cell
+                    .active_phases
+                    .phase_count() !=
+                record.phase_count) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+
+            append_u64_be(
+                &local,
+                record.cell_global.value());
+            append_u64_be(
+                &local,
+                static_cast<std::uint64_t>(
+                    record.phase_count));
+            append_u64_be(
+                &local,
+                static_cast<std::uint64_t>(
+                    registry_cell
+                        .active_phases
+                        .phase_count()));
+            for (const auto& identity :
+                 registry_cell
+                     .active_phases
+                     .identities()) {
+                append_string(
+                    &local,
+                    identity.provenance_scope);
+                append_string(
+                    &local,
+                    identity.opaque_phase_key);
+            }
         }
-        local.push_back(
-            record.cell_global.value());
-        local.push_back(
-            static_cast<std::uint64_t>(
-                record.phase_count));
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
     }
-    if (local.size() / 2U >
+
+    if (local.size() >
         static_cast<std::size_t>(
             std::numeric_limits<int>::max())) {
         return PETSC_ERR_ARG_OUTOFRANGE;
     }
-
-    const int local_records =
+    const int local_bytes =
         static_cast<int>(
-            local.size() / 2U);
+            local.size());
+
     int mpi_size = 0;
     if (MPI_Comm_size(
             comm,
@@ -317,7 +449,7 @@ gather_phase_signature(
             mpi_size),
         0);
     if (MPI_Allgather(
-            &local_records,
+            &local_bytes,
             1,
             MPI_INT,
             counts.data(),
@@ -327,74 +459,144 @@ gather_phase_signature(
         return PETSC_ERR_MPI;
     }
 
-    std::vector<int> counts_u64(
+    std::vector<int> displacements(
         counts.size(),
         0);
-    std::vector<int> displacements_u64(
-        counts.size(),
-        0);
-    int total_u64 = 0;
+    int total_bytes = 0;
     for (std::size_t rank = 0U;
          rank < counts.size();
          ++rank) {
         if (counts[rank] < 0 ||
             counts[rank] >
-                (std::numeric_limits<int>::max() -
-                 total_u64) /
-                    2) {
+                std::numeric_limits<int>::max() -
+                    total_bytes) {
             return PETSC_ERR_ARG_OUTOFRANGE;
         }
-        counts_u64[rank] =
-            counts[rank] * 2;
-        displacements_u64[rank] =
-            total_u64;
-        total_u64 +=
-            counts_u64[rank];
+        displacements[rank] =
+            total_bytes;
+        total_bytes +=
+            counts[rank];
     }
-    std::vector<std::uint64_t>
+
+    std::vector<unsigned char>
         gathered(
             static_cast<std::size_t>(
-                total_u64));
+                total_bytes));
     if (MPI_Allgatherv(
             local.empty()
                 ? nullptr
                 : local.data(),
-            static_cast<int>(
-                local.size()),
-            MPI_UINT64_T,
+            local_bytes,
+            MPI_BYTE,
             gathered.empty()
                 ? nullptr
                 : gathered.data(),
-            counts_u64.data(),
-            displacements_u64.data(),
-            MPI_UINT64_T,
+            counts.data(),
+            displacements.data(),
+            MPI_BYTE,
             comm) != MPI_SUCCESS) {
         return PETSC_ERR_MPI;
     }
 
-    if (gathered.size() % 2U != 0U) {
-        return PETSC_ERR_PLIB;
-    }
-    output->reserve(
-        gathered.size() / 2U);
-    for (std::size_t index = 0U;
-         index < gathered.size();
-         index += 2U) {
-        const std::uint64_t p =
-            gathered[index + 1U];
-        if (p == 0U ||
-            p >
-                mpmc::flow::
-                    fixed_three_phase_count) {
-            return PETSC_ERR_ARG_INCOMP;
-        }
-        output->push_back(
-            {
-                mpmc::mesh::GlobalEntityId{
-                    gathered[index]},
+    try {
+        for (std::size_t rank = 0U;
+             rank < counts.size();
+             ++rank) {
+            const std::size_t begin =
                 static_cast<std::size_t>(
-                    p)});
+                    displacements[rank]);
+            const std::size_t count =
+                static_cast<std::size_t>(
+                    counts[rank]);
+            const auto payload =
+                std::span<const unsigned char>{
+                    gathered.data() + begin,
+                    count};
+            std::size_t cursor = 0U;
+
+            while (cursor < payload.size()) {
+                std::uint64_t cell_id = 0U;
+                std::uint64_t phase_count_u64 = 0U;
+                std::uint64_t identity_count_u64 = 0U;
+                if (!read_u64_be(
+                        payload,
+                        &cursor,
+                        &cell_id) ||
+                    !read_u64_be(
+                        payload,
+                        &cursor,
+                        &phase_count_u64) ||
+                    !read_u64_be(
+                        payload,
+                        &cursor,
+                        &identity_count_u64) ||
+                    phase_count_u64 == 0U ||
+                    phase_count_u64 >
+                        mpmc::flow::
+                            fixed_three_phase_count ||
+                    identity_count_u64 !=
+                        phase_count_u64) {
+                    return PETSC_ERR_ARG_INCOMP;
+                }
+
+                std::vector<
+                    mpmc::flow::
+                        FrozenPhysicalPhaseIdentity>
+                    identities;
+                identities.reserve(
+                    static_cast<std::size_t>(
+                        identity_count_u64));
+                for (std::uint64_t phase = 0U;
+                     phase < identity_count_u64;
+                     ++phase) {
+                    std::string scope;
+                    std::string key;
+                    if (!read_string(
+                            payload,
+                            &cursor,
+                            &scope) ||
+                        !read_string(
+                            payload,
+                            &cursor,
+                            &key) ||
+                        scope.empty() ||
+                        key.empty()) {
+                        return PETSC_ERR_ARG_INCOMP;
+                    }
+                    identities.push_back(
+                        {
+                            std::move(scope),
+                            std::move(key)});
+                }
+
+                mpmc::flow::
+                    FrozenActivePhaseIdentityMap
+                    validated{
+                        identities};
+                output->push_back(
+                    {
+                        mpmc::mesh::GlobalEntityId{
+                            cell_id},
+                        static_cast<std::size_t>(
+                            phase_count_u64),
+                        std::vector<
+                            mpmc::flow::
+                                FrozenPhysicalPhaseIdentity>{
+                            validated
+                                .identities()
+                                .begin(),
+                            validated
+                                .identities()
+                                .end()}});
+            }
+            if (cursor != payload.size()) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        }
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
     }
+
     std::sort(
         output->begin(),
         output->end(),
@@ -468,7 +670,8 @@ gather_accepted_batch(
 
     if (local_proposals.size() >
         static_cast<std::size_t>(
-            std::numeric_limits<int>::max())) {
+            std::numeric_limits<int>::max()) /
+            width) {
         return PETSC_ERR_ARG_OUTOFRANGE;
     }
     const int local_records =
@@ -618,47 +821,54 @@ gather_accepted_batch(
 }
 
 [[nodiscard]] inline PetscErrorCode
-apply_transition_batch_to_signature(
+validate_rebuilt_signature_against_batch(
     std::span<
         const GlobalPhaseSetSignatureEntry3D>
         current,
     std::span<
         const AcceptedPhaseTransitionSummary3D>
         batch,
-    std::vector<
-        GlobalPhaseSetSignatureEntry3D>*
-            target) {
-    if (target == nullptr) {
-        return PETSC_ERR_ARG_NULL;
+    std::span<
+        const GlobalPhaseSetSignatureEntry3D>
+        rebuilt) {
+    if (current.size() !=
+        rebuilt.size()) {
+        return PETSC_ERR_ARG_INCOMP;
     }
-    target->assign(
-        current.begin(),
-        current.end());
 
-    for (const auto& transition :
-         batch) {
-        const auto found =
+    for (std::size_t index = 0U;
+         index < current.size();
+         ++index) {
+        if (current[index].cell_global !=
+            rebuilt[index].cell_global) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        const auto transition =
             std::lower_bound(
-                target->begin(),
-                target->end(),
-                transition.cell_global,
+                batch.begin(),
+                batch.end(),
+                current[index].cell_global,
                 [](const auto& entry,
-                   mpmc::mesh::GlobalEntityId
-                       value) {
+                   mpmc::mesh::GlobalEntityId value) {
                     return entry.cell_global <
                         value;
                 });
-        if (found ==
-                target->end() ||
-            found->cell_global !=
-                transition.cell_global ||
-            found->phase_count !=
-                transition
-                    .source_phase_count) {
+        if (transition != batch.end() &&
+            transition->cell_global ==
+                current[index].cell_global) {
+            if (current[index].phase_count !=
+                    transition
+                        ->source_phase_count ||
+                rebuilt[index].phase_count !=
+                    transition
+                        ->target_phase_count) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
+        } else if (
+            current[index] !=
+            rebuilt[index]) {
             return PETSC_ERR_ARG_INCOMP;
         }
-        found->phase_count =
-            transition.target_phase_count;
     }
     return PETSC_SUCCESS;
 }
@@ -744,7 +954,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
     error =
         gather_phase_signature(
             comm,
-            current->numbering(),
+            *current,
             &signature);
     if (error != PETSC_SUCCESS) {
         return error;
@@ -892,36 +1102,6 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
             return PETSC_SUCCESS;
         }
 
-        std::vector<
-            GlobalPhaseSetSignatureEntry3D>
-            target_signature;
-        error =
-            apply_transition_batch_to_signature(
-                signature,
-                accepted_batch,
-                &target_signature);
-        if (error != PETSC_SUCCESS) {
-            (void)VecDestroy(
-                &solved);
-            return error;
-        }
-        if (signature_seen(
-                seen_signatures,
-                target_signature)) {
-            completed.outcome =
-                PostSnesPhaseTransitionOutcome3D::
-                    phase_set_cycle_detected;
-            completed.generations.push_back(
-                std::move(
-                    generation_report));
-            *final_state = solved;
-            *final_system =
-                std::move(current);
-            report->emplace(
-                std::move(completed));
-            return PETSC_SUCCESS;
-        }
-
         std::unique_ptr<
             PhaseTransitionRebuiltNaturalVariableSystem3D>
             rebuilt;
@@ -955,18 +1135,39 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         error =
             gather_phase_signature(
                 comm,
-                rebuilt->numbering(),
+                *rebuilt,
                 &rebuilt_signature);
         if (error != PETSC_SUCCESS) {
             (void)VecDestroy(
                 &solved);
             return error;
         }
-        if (rebuilt_signature !=
-            target_signature) {
+        error =
+            validate_rebuilt_signature_against_batch(
+                signature,
+                accepted_batch,
+                rebuilt_signature);
+        if (error != PETSC_SUCCESS) {
             (void)VecDestroy(
                 &solved);
-            return PETSC_ERR_ARG_INCOMP;
+            return error;
+        }
+
+        if (signature_seen(
+                seen_signatures,
+                rebuilt_signature)) {
+            completed.outcome =
+                PostSnesPhaseTransitionOutcome3D::
+                    phase_set_cycle_detected;
+            completed.generations.push_back(
+                std::move(
+                    generation_report));
+            *final_state = solved;
+            *final_system =
+                std::move(current);
+            report->emplace(
+                std::move(completed));
+            return PETSC_SUCCESS;
         }
 
         completed.generations.push_back(
@@ -974,10 +1175,10 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
                 generation_report));
         ++completed.transition_restarts;
         seen_signatures.push_back(
-            target_signature);
+            rebuilt_signature);
         signature =
             std::move(
-                target_signature);
+                rebuilt_signature);
 
         error =
             VecDestroy(

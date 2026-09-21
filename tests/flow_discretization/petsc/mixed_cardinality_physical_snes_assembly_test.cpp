@@ -2591,18 +2591,26 @@ make_controller_cells(
         controller_transitioned_3p_state();
     const auto layout =
         layout_3p();
-    const std::vector<std::string>
-        ids{"A", "B", "C"};
+
+    // This controller-policy fixture isolates outer orchestration from the
+    // already-covered BE history-migration contract.  Seed the rebuilt 3P
+    // previous state from the same controlled 3P closure so the restarted
+    // SNES is an exact zero-residual solve; make_accepted_phase_transition_
+    // rebuild_cell_3d above separately verifies preservation of real 2P
+    // histories through an accepted transition.
     std::optional<
         fdp::
             FixedThreePhaseCurrentCellLinearization3D>
-        evaluated;
+        controlled_three_phase;
     fdp::NaturalVariableSnesEvaluationStatus3D
-        status =
+        controlled_status =
             fdp::
                 NaturalVariableSnesEvaluationStatus3D::
                     success;
-    const PetscErrorCode eval_error =
+    const std::vector<std::string>
+        controlled_ids{
+            "A", "B", "C"};
+    const PetscErrorCode controlled_error =
         evaluate_3p(
             mesh::LocalIndex{
                 static_cast<
@@ -2612,18 +2620,18 @@ make_controller_cells(
                 UINT64_C(30)},
             q,
             layout,
-            ids,
+            controlled_ids,
             audit,
-            &evaluated,
-            &status);
-    if (eval_error != PETSC_SUCCESS ||
-        status !=
+            &controlled_three_phase,
+            &controlled_status);
+    if (controlled_error != PETSC_SUCCESS ||
+        controlled_status !=
             fdp::
                 NaturalVariableSnesEvaluationStatus3D::
                     success ||
-        !evaluated.has_value()) {
+        !controlled_three_phase.has_value()) {
         throw std::runtime_error(
-            "failed to build controller target 3P closure");
+            "failed to build controlled 3P controller state");
     }
 
     fdp::FrozenPhaseTransitionRebuildCell3D
@@ -2641,7 +2649,7 @@ make_controller_cells(
     transitioned.porosity =
         0.26;
     transitioned.component_ids =
-        ids;
+        {"A", "B", "C"};
     transitioned.target_layout =
         flow::NaturalVariableLayoutDescriptor{
             layout};
@@ -2658,25 +2666,22 @@ make_controller_cells(
                     "hydrocarbon-1")}};
     transitioned.transition_evidence_profile =
         "fixture/controller-accepted-2p-to-3p/v1";
-
-    const bool owned =
-        rank == 0;
-    if (owned) {
+    if (rank == 0) {
         transitioned
             .previous_component_accumulation =
             flow::
                 build_pore_volume_component_accumulation(
-                    evaluated->state,
+                    controlled_three_phase->state,
                     transitioned.porosity);
         transitioned
             .previous_energy_accumulation =
             flow::
                 build_pore_volume_energy_accumulation_snapshot(
-                    evaluated->state,
+                    controlled_three_phase->state,
                     transitioned.porosity,
-                    evaluated->transport,
-                    evaluated->caloric,
-                    evaluated->rock);
+                    controlled_three_phase->transport,
+                    controlled_three_phase->caloric,
+                    controlled_three_phase->rock);
     }
 
     result[local] =
@@ -2832,22 +2837,45 @@ controller_rebuild(
         accepted_global_batch[0]
                 .cell_global !=
             mesh::GlobalEntityId{
-                UINT64_C(30)} ||
-        accepted_global_batch[0]
-                .source_phase_count !=
-            2U ||
-        accepted_global_batch[0]
-                .target_phase_count !=
-            3U) {
+                UINT64_C(30)}) {
         return PETSC_ERR_ARG_INCOMP;
     }
+    const bool target_three_phase =
+        accepted_global_batch[0]
+                .source_phase_count ==
+            2U &&
+        accepted_global_batch[0]
+                .target_phase_count ==
+            3U;
+    const bool target_two_phase =
+        accepted_global_batch[0]
+                .source_phase_count ==
+            3U &&
+        accepted_global_batch[0]
+                .target_phase_count ==
+            2U;
+    if (!target_three_phase &&
+        !target_two_phase) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
     if (fixture->rank == 0) {
         if (local_owned_proposals.size() !=
                 1U ||
             local_owned_proposals[0]
                     .cell_global !=
                 mesh::GlobalEntityId{
-                    UINT64_C(30)}) {
+                    UINT64_C(30)} ||
+            local_owned_proposals[0]
+                    .candidate
+                    .source_phase_count !=
+                accepted_global_batch[0]
+                    .source_phase_count ||
+            local_owned_proposals[0]
+                    .candidate
+                    .target_phase_count !=
+                accepted_global_batch[0]
+                    .target_phase_count) {
             return PETSC_ERR_ARG_INCOMP;
         }
     } else if (
@@ -2859,7 +2887,7 @@ controller_rebuild(
     auto cells =
         make_controller_cells(
             fixture->rank,
-            true,
+            target_three_phase,
             fixture->audit);
     auto faces =
         make_face_inputs(
@@ -3026,8 +3054,10 @@ void run_controller_case(
                     ->generations[1]
                     .accepted_transition_batch
                     .size() ==
-                1U,
-            "cycle detector did not observe reverse transition");
+                1U &&
+                fixture->rebuild_calls ==
+                    2U,
+            "physical phase-set cycle was not detected after the reverse rebuild");
     } else if (
         expected_outcome ==
         fdp::
