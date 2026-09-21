@@ -1,30 +1,7 @@
 name: PT flash backend conformance
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_profile_c_pt_flash_backend.hpp'
-      - 'modules/flash/include/mpmc/flash/cpa_pt_flash_backend.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_*.hpp'
-      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/**'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/**'
-      - 'tests/flash/pt_flash_backend/**'
-      - 'tests/flash/pt_split/boundary_references.hpp'
-      - 'tests/flash/pt_split/dew_limit_references.hpp'
-      - 'tests/flash/pt_split/reference_boundary_decimal.py'
-      - 'tests/flash/pt_split/reference_dew_limit_decimal.py'
-      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
-      - 'tests/flash/cpa_max3/test_support.hpp'
-      - 'tests/flash/cpa_physical_validation/**'
-      - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
-      - 'tests/support/sw92/test_support.hpp'
-      - '.github/workflows/pt_flash_backend.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -35,16 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["modules/flash/include/mpmc/flash/pt_flash_backend.hpp","modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp","modules/flash/include/mpmc/flash/sw92_profile_c_pt_flash_backend.hpp","modules/flash/include/mpmc/flash/cpa_pt_flash_backend.hpp","modules/flash/include/mpmc/flash/pr76_*.hpp","modules/flash/include/mpmc/flash/pt_*.hpp","modules/flash/include/mpmc/flash/sw92_*.hpp","modules/flash/include/mpmc/flash/cpa_*.hpp","modules/flash/include/mpmc/flash/detail/**","modules/thermodynamics/include/mpmc/thermodynamics/**","tests/flash/pt_flash_backend/**","tests/flash/pt_split/boundary_references.hpp","tests/flash/pt_split/dew_limit_references.hpp","tests/flash/pt_split/reference_boundary_decimal.py","tests/flash/pt_split/reference_dew_limit_decimal.py","tests/flash/pr76_three_phase/synthetic_fixture.hpp","tests/flash/cpa_max3/test_support.hpp","tests/flash/cpa_physical_validation/**","tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp","tests/support/sw92/test_support.hpp",".github/workflows/pt_flash_backend.yml"]
-
   backend:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30

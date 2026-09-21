@@ -1,7 +1,13 @@
 name: PT phase split
 on:
+  workflow_call:
+    inputs:
+      routed:
+        required: false
+        type: boolean
+        default: false
   pull_request:
-    branches: [main, feat/pt-stability-tpd, feat/pt-vle-split, test/pt-boundary-regression, fix/tpd-flat-descent, test/pt-dew-limit-audit]
+    branches: [feat/pt-stability-tpd, feat/pt-vle-split, test/pt-boundary-regression, fix/tpd-flat-descent, test/pt-dew-limit-audit]
     paths:
       - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
       - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
@@ -30,6 +36,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   incremental-path-gate:
+    if: inputs.routed != true
     name: Incremental path gate
     uses: ./.github/workflows/_incremental_path_gate.yml
     with:
@@ -38,7 +45,7 @@ jobs:
 
   split:
     needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
+    if: ${{ always() && (inputs.routed == true || needs.incremental-path-gate.outputs.affected == 'true') }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10

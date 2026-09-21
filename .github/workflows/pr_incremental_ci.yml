@@ -23,6 +23,9 @@ jobs:
       flow_discretization_petsc: ${{ steps.route.outputs.flow_discretization_petsc }}
       ad_has_work: ${{ steps.route.outputs.ad_has_work }}
       ad_matrix: ${{ steps.route.outputs.ad_matrix }}
+      pt_flash_backend: ${{ steps.route.outputs.pt_flash_backend }}
+      pt_stability: ${{ steps.route.outputs.pt_stability }}
+      pt_split: ${{ steps.route.outputs.pt_split }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -108,6 +111,62 @@ jobs:
                   "tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp",
                   "tests/support/sw92/test_support.hpp",
                   ".github/workflows/flow_discretization_petsc.yml",
+              ],
+              "pt_flash_backend": [
+                  "modules/flash/include/mpmc/flash/pt_flash_backend.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_profile_c_pt_flash_backend.hpp",
+                  "modules/flash/include/mpmc/flash/cpa_pt_flash_backend.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_*.hpp",
+                  "modules/flash/include/mpmc/flash/pt_*.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_*.hpp",
+                  "modules/flash/include/mpmc/flash/cpa_*.hpp",
+                  "modules/flash/include/mpmc/flash/detail/**",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/**",
+                  "tests/flash/pt_flash_backend/**",
+                  "tests/flash/pt_split/boundary_references.hpp",
+                  "tests/flash/pt_split/dew_limit_references.hpp",
+                  "tests/flash/pt_split/reference_boundary_decimal.py",
+                  "tests/flash/pt_split/reference_dew_limit_decimal.py",
+                  "tests/flash/pr76_three_phase/synthetic_fixture.hpp",
+                  "tests/flash/cpa_max3/test_support.hpp",
+                  "tests/flash/cpa_physical_validation/**",
+                  "tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp",
+                  "tests/support/sw92/test_support.hpp",
+                  ".github/workflows/pt_flash_backend.yml",
+              ],
+              "pt_stability": [
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+                  "modules/flash/**/CMakeLists.txt",
+                  "tests/flash/stability/**",
+                  "modules/thermodynamics/**/*.hpp",
+                  "modules/thermodynamics/**/CMakeLists.txt",
+                  "modules/ad/include/mpmc/ad/**",
+                  "modules/ad/CMakeLists.txt",
+                  ".github/workflows/stability.yml",
+              ],
+              "pt_split": [
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_stability.hpp",
+                  "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+                  "modules/flash/include/mpmc/flash/pt_split.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_split.hpp",
+                  "modules/flash/include/mpmc/flash/pt_phase_set.hpp",
+                  "modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_phase_set.hpp",
+                  "modules/flash/include/mpmc/flash/pt_sensitivity.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_sensitivity.hpp",
+                  "modules/flash/include/mpmc/flash/detail/**",
+                  "modules/flash/CMakeLists.txt",
+                  "modules/flash/sensitivity/CMakeLists.txt",
+                  "modules/thermodynamics/**/*.hpp",
+                  "modules/thermodynamics/**/CMakeLists.txt",
+                  "modules/ad/**/*.hpp",
+                  "modules/ad/**/CMakeLists.txt",
+                  "tests/flash/pt_split/**",
+                  ".github/workflows/pt_split.yml",
               ],
           }
 
@@ -214,6 +273,9 @@ jobs:
                       "flow_core": False,
                       "flow_discretization": False,
                       "flow_discretization_petsc": True,
+                      "pt_flash_backend": False,
+                      "pt_stability": False,
+                      "pt_split": False,
                   },
               ),
               (
@@ -222,6 +284,53 @@ jobs:
                       "flow_core": True,
                       "flow_discretization": True,
                       "flow_discretization_petsc": False,
+                      "pt_flash_backend": False,
+                      "pt_stability": False,
+                      "pt_split": False,
+                  },
+              ),
+              (
+                  ["modules/flash/include/mpmc/flash/pt_flash_backend.hpp"],
+                  {
+                      "flow_core": True,
+                      "flow_discretization": False,
+                      "flow_discretization_petsc": False,
+                      "pt_flash_backend": True,
+                      "pt_stability": False,
+                      "pt_split": False,
+                  },
+              ),
+              (
+                  ["tests/flash/stability/stability_test.cpp"],
+                  {
+                      "flow_core": False,
+                      "flow_discretization": False,
+                      "flow_discretization_petsc": False,
+                      "pt_flash_backend": False,
+                      "pt_stability": True,
+                      "pt_split": False,
+                  },
+              ),
+              (
+                  ["modules/flash/include/mpmc/flash/rachford_rice.hpp"],
+                  {
+                      "flow_core": False,
+                      "flow_discretization": False,
+                      "flow_discretization_petsc": False,
+                      "pt_flash_backend": True,
+                      "pt_stability": False,
+                      "pt_split": True,
+                  },
+              ),
+              (
+                  ["modules/thermodynamics/include/mpmc/thermodynamics/pr76.hpp"],
+                  {
+                      "flow_core": True,
+                      "flow_discretization": False,
+                      "flow_discretization_petsc": False,
+                      "pt_flash_backend": True,
+                      "pt_stability": True,
+                      "pt_split": True,
                   },
               ),
               (
@@ -230,6 +339,9 @@ jobs:
                       "flow_core": False,
                       "flow_discretization": False,
                       "flow_discretization_petsc": False,
+                      "pt_flash_backend": False,
+                      "pt_stability": False,
+                      "pt_split": False,
                   },
               ),
               (
@@ -238,6 +350,9 @@ jobs:
                       "flow_core": False,
                       "flow_discretization": False,
                       "flow_discretization_petsc": False,
+                      "pt_flash_backend": False,
+                      "pt_stability": False,
+                      "pt_split": False,
                   },
               ),
           ]
@@ -354,6 +469,25 @@ jobs:
     needs: impact
     if: needs.impact.outputs.flow_discretization_petsc == 'true'
     uses: ./.github/workflows/flow_discretization_petsc.yml
+
+  pt-flash-backend:
+    needs: impact
+    if: needs.impact.outputs.pt_flash_backend == 'true'
+    uses: ./.github/workflows/pt_flash_backend.yml
+
+  pt-stability:
+    needs: impact
+    if: needs.impact.outputs.pt_stability == 'true'
+    uses: ./.github/workflows/stability.yml
+    with:
+      routed: true
+
+  pt-split:
+    needs: impact
+    if: needs.impact.outputs.pt_split == 'true'
+    uses: ./.github/workflows/pt_split.yml
+    with:
+      routed: true
 
   ad:
     needs: impact
