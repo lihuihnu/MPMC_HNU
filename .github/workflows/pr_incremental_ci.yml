@@ -25,5 +25,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp .github/ci/_entry_migration_stage.py /tmp/entry_migration.py
+          cp .github/ci/_entry_migration_patch.py /tmp/fix_entry_migration.py
           git reset --hard bcf2ce8dfaa8fd6f63749db1fac1db6dfb571a6f
+          python3 /tmp/fix_entry_migration.py
           python3 /tmp/entry_migration.py
