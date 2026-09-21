@@ -509,6 +509,7 @@ jobs:
                   "tests/flash/sw92_phase_assigned_h_side_witness/**",
                   "tests/flash/sw92_phase_assigned_three_phase/**",
                   ".github/workflows/sw92_phase_assigned_three_phase.yml",
+                  ".github/workflows/_sw92_phase_assigned_topology.yml",
               ],
               "sw92_phase_assigned_three_phase_closure": [
                   "tests/support/sw92/test_support.hpp",
@@ -525,6 +526,7 @@ jobs:
                   "tests/flash/sw92_phase_assigned_three_phase/**",
                   "tests/flash/sw92_phase_assigned_three_phase_closure/**",
                   ".github/workflows/sw92_phase_assigned_three_phase_closure.yml",
+                  ".github/workflows/_sw92_phase_assigned_topology.yml",
               ],
               "sw92_phase_assigned_boundary": [
                   "tests/support/sw92/test_support.hpp",
@@ -544,6 +546,7 @@ jobs:
                   "tests/flash/sw92_phase_assigned_joint/**",
                   "tests/flash/sw92_phase_assigned_h_side_witness/**",
                   ".github/workflows/sw92_phase_assigned_boundary.yml",
+                  ".github/workflows/_sw92_phase_assigned_topology.yml",
               ],
 
           }
@@ -766,6 +769,7 @@ jobs:
               ([".github/workflows/sw92_phase_assigned_three_phase.yml"], expected_route(sw92_phase_assigned_three_phase=True)),
               ([".github/workflows/sw92_phase_assigned_three_phase_closure.yml"], expected_route(sw92_phase_assigned_three_phase_closure=True)),
               ([".github/workflows/sw92_phase_assigned_boundary.yml"], expected_route(sw92_phase_assigned_boundary=True)),
+              ([".github/workflows/_sw92_phase_assigned_topology.yml"], expected_route(sw92_phase_assigned_three_phase=True, sw92_phase_assigned_three_phase_closure=True, sw92_phase_assigned_boundary=True)),
           ]
           for paths, expected in checks:
               actual = route(paths)
@@ -1064,20 +1068,17 @@ jobs:
     if: needs.impact.outputs.sw92_phase_assigned_no_w == 'true'
     uses: ./.github/workflows/sw92_phase_assigned_no_w.yml
 
-  sw92-phase-assigned-three-phase:
+  sw92-phase-assigned-three-phase-topology:
     needs: impact
-    if: needs.impact.outputs.sw92_phase_assigned_three_phase == 'true'
-    uses: ./.github/workflows/sw92_phase_assigned_three_phase.yml
-
-  sw92-phase-assigned-three-phase-closure:
-    needs: impact
-    if: needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true'
-    uses: ./.github/workflows/sw92_phase_assigned_three_phase_closure.yml
-
-  sw92-phase-assigned-boundary:
-    needs: impact
-    if: needs.impact.outputs.sw92_phase_assigned_boundary == 'true'
-    uses: ./.github/workflows/sw92_phase_assigned_boundary.yml
+    if: >-
+      needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' ||
+      needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' ||
+      needs.impact.outputs.sw92_phase_assigned_boundary == 'true'
+    uses: ./.github/workflows/_sw92_phase_assigned_topology.yml
+    with:
+      run_three_phase: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' }}
+      run_three_phase_closure: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' }}
+      run_boundary: ${{ needs.impact.outputs.sw92_phase_assigned_boundary == 'true' }}
 
   ad:
     needs: impact
