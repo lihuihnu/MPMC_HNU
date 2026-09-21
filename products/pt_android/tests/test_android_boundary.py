@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import unittest
 
 ANDROID_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -13,6 +14,11 @@ SHELL_ROOT = ANDROID_ROOT / "shell"
 
 
 class AndroidPortabilityBoundaryTest(unittest.TestCase):
+    def assert_workflow_scalar(self, workflow: str, key: str, expected: str) -> None:
+        """Assert a YAML scalar by meaning, independent of optional quoting."""
+        pattern = rf"(?m)^\s*{re.escape(key)}:\s*['\"]?{re.escape(expected)}['\"]?\s*$"
+        self.assertRegex(workflow, pattern)
+
     def test_android_product_stays_out_of_existing_transport_and_ui_layers(self) -> None:
         texts = "\n".join(
             path.read_text(encoding="utf-8")
@@ -208,8 +214,8 @@ class AndroidPortabilityBoundaryTest(unittest.TestCase):
 
         self.assertNotIn("self-hosted", workflow)
         self.assertIn("ubuntu-24.04", workflow)
-        self.assertIn("node-version: '24.21.0'", workflow)
-        self.assertIn("CAPACITOR_VERSION: 8.5.2", workflow)
+        self.assert_workflow_scalar(workflow, "node-version", "24.21.0")
+        self.assert_workflow_scalar(workflow, "CAPACITOR_VERSION", "8.5.2")
         self.assertIn("VITE_MPMC_ANDROID_PRODUCT_SHELL_SMOKE", workflow)
         self.assertIn("modules/model_configuration/**", workflow)
         self.assertIn("platforms;android-36", workflow)
