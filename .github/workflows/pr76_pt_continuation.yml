@@ -1,20 +1,9 @@
 name: PR76 PT continuation scan
 
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# only executes the routed matrix or an explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_split.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp'
-      - 'tests/flash/pr76_pt_continuation/**'
-      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
-      - '.github/workflows/pr76_pt_continuation.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -25,16 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp","modules/flash/include/mpmc/flash/pr76_three_phase.hpp","modules/flash/include/mpmc/flash/pr76_split.hpp","modules/flash/include/mpmc/flash/pr76_stability.hpp","modules/flash/include/mpmc/flash/pt_three_phase.hpp","modules/flash/include/mpmc/flash/pt_split.hpp","modules/flash/include/mpmc/flash/pt_stability.hpp","modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp","tests/flash/pr76_pt_continuation/**","tests/flash/pr76_three_phase/synthetic_fixture.hpp",".github/workflows/pr76_pt_continuation.yml"]
-
   continuation:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30

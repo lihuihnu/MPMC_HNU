@@ -26,6 +26,8 @@ jobs:
       pt_flash_backend: ${{ steps.route.outputs.pt_flash_backend }}
       pt_stability: ${{ steps.route.outputs.pt_stability }}
       pt_split: ${{ steps.route.outputs.pt_split }}
+      pr76_pt_continuation: ${{ steps.route.outputs.pr76_pt_continuation }}
+      pr76_max3: ${{ steps.route.outputs.pr76_max3 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -168,6 +170,36 @@ jobs:
                   "tests/flash/pt_split/**",
                   ".github/workflows/pt_split.yml",
               ],
+              "pr76_pt_continuation": [
+                  "modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_three_phase.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_split.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_stability.hpp",
+                  "modules/flash/include/mpmc/flash/pt_three_phase.hpp",
+                  "modules/flash/include/mpmc/flash/pt_split.hpp",
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp",
+                  "tests/flash/pr76_pt_continuation/**",
+                  "tests/flash/pr76_three_phase/synthetic_fixture.hpp",
+                  ".github/workflows/pr76_pt_continuation.yml",
+              ],
+              "pr76_max3": [
+                  "modules/flash/include/mpmc/flash/pt_three_phase.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_three_phase.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_max3_phase_set.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp",
+                  "modules/flash/include/mpmc/flash/pr76_*.hpp",
+                  "modules/flash/include/mpmc/flash/pt_*.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp",
+                  "modules/flow/CMakeLists.txt",
+                  "modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp",
+                  "modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp",
+                  "modules/flow/include/mpmc/flow/thermodynamics_fugacity_adapters.hpp",
+                  "tests/support/flow/fugacity_adapter_regression.hpp",
+                  "tests/flash/pr76_three_phase/**",
+                  ".github/workflows/pr76_three_phase.yml",
+              ],
           }
 
           def compile_pattern(pattern):
@@ -207,6 +239,11 @@ jobs:
                   for gate, patterns in compiled.items()
               }
               return result
+
+          def expected_route(**overrides):
+              expected = {gate: False for gate in ownership}
+              expected.update(overrides)
+              return expected
 
           def ad_suites_for(paths):
               selected = set()
@@ -269,91 +306,57 @@ jobs:
           checks = [
               (
                   ["tests/flow_discretization/petsc/scanner.cpp"],
-                  {
-                      "flow_core": False,
-                      "flow_discretization": False,
-                      "flow_discretization_petsc": True,
-                      "pt_flash_backend": False,
-                      "pt_stability": False,
-                      "pt_split": False,
-                  },
+                  expected_route(flow_discretization_petsc=True),
               ),
               (
                   ["modules/flow/include/mpmc/flow/phase_transport.hpp"],
-                  {
-                      "flow_core": True,
-                      "flow_discretization": True,
-                      "flow_discretization_petsc": False,
-                      "pt_flash_backend": False,
-                      "pt_stability": False,
-                      "pt_split": False,
-                  },
+                  expected_route(flow_core=True, flow_discretization=True),
               ),
               (
                   ["modules/flash/include/mpmc/flash/pt_flash_backend.hpp"],
-                  {
-                      "flow_core": True,
-                      "flow_discretization": False,
-                      "flow_discretization_petsc": False,
-                      "pt_flash_backend": True,
-                      "pt_stability": False,
-                      "pt_split": False,
-                  },
+                  expected_route(flow_core=True, pt_flash_backend=True, pr76_max3=True),
               ),
               (
                   ["tests/flash/stability/stability_test.cpp"],
-                  {
-                      "flow_core": False,
-                      "flow_discretization": False,
-                      "flow_discretization_petsc": False,
-                      "pt_flash_backend": False,
-                      "pt_stability": True,
-                      "pt_split": False,
-                  },
+                  expected_route(pt_stability=True),
               ),
               (
                   ["modules/flash/include/mpmc/flash/rachford_rice.hpp"],
-                  {
-                      "flow_core": False,
-                      "flow_discretization": False,
-                      "flow_discretization_petsc": False,
-                      "pt_flash_backend": False,
-                      "pt_stability": False,
-                      "pt_split": True,
-                  },
+                  expected_route(pt_split=True),
               ),
               (
                   ["modules/thermodynamics/include/mpmc/thermodynamics/pr76.hpp"],
-                  {
-                      "flow_core": False,
-                      "flow_discretization": False,
-                      "flow_discretization_petsc": False,
-                      "pt_flash_backend": True,
-                      "pt_stability": True,
-                      "pt_split": True,
-                  },
+                  expected_route(
+                      pt_flash_backend=True,
+                      pt_stability=True,
+                      pt_split=True,
+                      pr76_pt_continuation=True,
+                      pr76_max3=True,
+                  ),
+              ),
+              (
+                  ["tests/flash/pr76_pt_continuation/continuation_test.cpp"],
+                  expected_route(pr76_pt_continuation=True),
+              ),
+              (
+                  ["tests/flash/pr76_three_phase/max3_test.cpp"],
+                  expected_route(pr76_max3=True),
+              ),
+              (
+                  ["modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp"],
+                  expected_route(
+                      pt_flash_backend=True,
+                      pr76_pt_continuation=True,
+                      pr76_max3=True,
+                  ),
               ),
               (
                   [router_path],
-                  {
-                      "flow_core": False,
-                      "flow_discretization": False,
-                      "flow_discretization_petsc": False,
-                      "pt_flash_backend": False,
-                      "pt_stability": False,
-                      "pt_split": False,
-                  },
+                  expected_route(),
               ),
               (
                   ["README.md"],
-                  {
-                      "flow_core": False,
-                      "flow_discretization": False,
-                      "flow_discretization_petsc": False,
-                      "pt_flash_backend": False,
-                      "pt_stability": False,
-                      "pt_split": False,
-                  },
+                  expected_route(),
               ),
           ]
           for paths, expected in checks:
@@ -488,6 +491,16 @@ jobs:
     uses: ./.github/workflows/pt_split.yml
     with:
       routed: true
+
+  pr76-pt-continuation:
+    needs: impact
+    if: needs.impact.outputs.pr76_pt_continuation == 'true'
+    uses: ./.github/workflows/pr76_pt_continuation.yml
+
+  pr76-max3:
+    needs: impact
+    if: needs.impact.outputs.pr76_max3 == 'true'
+    uses: ./.github/workflows/pr76_three_phase.yml
 
   ad:
     needs: impact
