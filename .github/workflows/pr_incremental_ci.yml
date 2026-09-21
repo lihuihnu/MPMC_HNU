@@ -317,7 +317,7 @@ jobs:
                       "flow_core": False,
                       "flow_discretization": False,
                       "flow_discretization_petsc": False,
-                      "pt_flash_backend": True,
+                      "pt_flash_backend": False,
                       "pt_stability": False,
                       "pt_split": True,
                   },

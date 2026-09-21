@@ -1,5 +1,7 @@
 name: PT flash backend conformance
 
+# Main-target PRs are routed once by pr_incremental_ci.yml; this file is the
+# reusable/manual executor and no longer owns a separate main PR path gate.
 on:
   workflow_call:
   workflow_dispatch:

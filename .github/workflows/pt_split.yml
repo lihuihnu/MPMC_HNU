@@ -1,4 +1,6 @@
 name: PT phase split
+# Main-target PRs are routed once by pr_incremental_ci.yml. The direct PR
+# trigger below preserves the historical non-main validation bases.
 on:
   workflow_call:
     inputs:
