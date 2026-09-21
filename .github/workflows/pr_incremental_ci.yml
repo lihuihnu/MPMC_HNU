@@ -394,7 +394,7 @@ jobs:
         persist-credentials: false
     - name: Record compared revisions and create main worktree
       run: "set -euo pipefail\ngit fetch origin main:refs/remotes/origin/main\nhead_sha=\"$(git rev-parse HEAD)\"\nmain_sha=\"$(git rev-parse origin/main)\"\nmain_root=\"\
-        ${RUNNER_TEMP}/mpmc-main\"\nrm -rf \"${main_root}\"\ngit worktree prune\ngit worktree add --detach \"${main_root}\" \"${main_sha}\"\n{\n  echo \"CPA_PERF_HEAD_SHA=${head_sha}\"\n  echo \"CPA_PERF_MAIN_SHA=${main_sha}\"\
+        ${RUNNER_TEMP}/mpmc-main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"\nrm -rf \"${main_root}\"\ngit worktree prune\ngit worktree add --detach \"${main_root}\" \"${main_sha}\"\n{\n  echo \"CPA_PERF_HEAD_SHA=${head_sha}\"\n  echo \"CPA_PERF_MAIN_SHA=${main_sha}\"\
         \n  echo \"CPA_PERF_MAIN_ROOT=${main_root}\"\n} >> \"${GITHUB_ENV}\"\necho \"head=${head_sha}\"\necho \"main=${main_sha}\"\nclang++ --version | head -n 1\n\
         g++ --version | head -n 1\ncmake --version | head -n 1\n"
     - name: Configure paired Clang Release binaries
@@ -437,6 +437,15 @@ jobs:
         \ build/cpa-perf-results/coverage-main.json \\\n  --head-coverage build/cpa-perf-results/coverage-head.json \\\n  --main-sha \"${CPA_PERF_MAIN_SHA}\" \\\n\
         \  --head-sha \"${CPA_PERF_HEAD_SHA}\" \\\n  --markdown build/cpa-perf-results/report.md \\\n  --json build/cpa-perf-results/report.json \\\n  | tee build/cpa-perf-results/summary.log\n\
         cat build/cpa-perf-results/report.md >> \"${GITHUB_STEP_SUMMARY}\"\n"
+    - name: Cleanup main comparison worktree
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${CPA_PERF_MAIN_ROOT:-}" ]; then
+          git worktree remove --force "${CPA_PERF_MAIN_ROOT}" 2>/dev/null || rm -rf "${CPA_PERF_MAIN_ROOT}"
+        fi
+        git worktree prune
     if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_cpa_performance_audit
       == 'true' && ('true' == 'true')
     permissions:
