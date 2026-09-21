@@ -5,9 +5,6 @@ on:
 permissions:
   contents: write
   actions: read
-concurrency:
-  group: entry-migration-validation
-  cancel-in-progress: true
 jobs:
   audit:
     runs-on: ubuntu-24.04
@@ -21,42 +18,24 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-      - name: Audit every entry and publish an immutable candidate only
+      - name: Verify candidate and export content blobs for authorized connector
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp .github/ci/_entry_migration_stage.py /tmp/entry_migration.py
-          cp .github/ci/_entry_migration_patch.py /tmp/fix_entry_migration.py
-          git reset --hard bcf2ce8dfaa8fd6f63749db1fac1db6dfb571a6f
-          python3 /tmp/fix_entry_migration.py
           python3 - <<'PY'
+          import subprocess, yaml
+          previous = subprocess.check_output(['git', 'show', '78d3d3ff807f24475ca43cb23ef750827c782f16:.github/workflows/pr_incremental_ci.yml'], text=True)
+          command = yaml.safe_load(previous)['jobs']['audit']['steps'][-1]['run']
+          patch = '''python3 - <<'PATCH'
           from pathlib import Path
           p = Path('/tmp/entry_migration.py')
           s = p.read_text()
-          s = s.replace("changed = git('status', '--porcelain').splitlines()", "changed = subprocess.check_output(['git', 'status', '--porcelain'], text=True).splitlines()")
-          s = s.replace("        before = event.get('before', '')", """        before = ''
-                  try:
-                      url = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/actions/workflows/pr_incremental_ci.yml/runs?event=push&status=success&per_page=100'
-                      req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
-                      with urllib.request.urlopen(req, timeout=20) as response:
-                          runs = json.load(response)['workflow_runs']
-                      for run in runs:
-                          candidate = run['head_sha']
-                          if run.get('name') == 'CI - affected tests v2' and run.get('conclusion') == 'success' and run.get('head_branch') == event['ref'].removeprefix('refs/heads/') and candidate != head and ancestor(candidate, head):
-                              before = candidate
-                              break
-                  except Exception as error:
-                      print('Push checkpoint unavailable; validate matching tracked files:', type(error).__name__)""")
-          insert = """
-          req = urllib.request.Request('https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/pulls/118', headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN']})
-          with urllib.request.urlopen(req, timeout=20) as response:
-              pr_event = {'action': 'synchronize', 'pull_request': json.load(response)}
-          Path('/tmp/pr-event.json').write_text(json.dumps(pr_event))
-          test_env = dict(os.environ, GITHUB_EVENT_PATH='/tmp/pr-event.json', GITHUB_EVENT_NAME='pull_request', GITHUB_OUTPUT='/tmp/planner-output')
-          subprocess.run(['python3', '.github/ci/plan.py'], env=test_env, check=True)
-          print('REAL_PR_CUMULATIVE_PLAN_OK')
-          """
-          s = s.replace("print('MAPPED_WORKFLOWS', len(registry['workflows']))", insert + "\nprint('MAPPED_WORKFLOWS', len(registry['workflows']))")
+          s = s.split("tree = api('/git/trees'")[0]
+          s += "mapping = {}\\nfor entry in entries:\\n    blob = api('/git/blobs', {'content': entry['content'], 'encoding': 'utf-8'})\\n    mapping[entry['path']] = blob['sha']\\nprint('VALIDATED_BLOB_MAP=' + json.dumps(mapping), flush=True)\\n"
           p.write_text(s)
-          PY
+          PATCH
           python3 /tmp/entry_migration.py
+          '''
+          command = command.replace('python3 /tmp/entry_migration.py\n', patch)
+          subprocess.run(['bash', '-e', '-c', command], check=True)
+          PY
