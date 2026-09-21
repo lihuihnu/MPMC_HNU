@@ -171,7 +171,7 @@ jobs:
     uses: ./.github/workflows/sw92.yml
   sw92-family-vle:
     needs: impact
-    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_family_vle == 'true' && needs.impact.outputs.sw92_phase_assigned_no_w != 'true')
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_family_vle == 'true')
     uses: ./.github/workflows/sw92_family_vle.yml
   sw92-profile-c-phase-set:
     needs: impact
@@ -201,6 +201,8 @@ jobs:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_no_w == 'true' && needs.impact.outputs.sw92_profile_c_pt != 'true' && needs.impact.outputs.sw92_phase_assigned_boundary != 'true')
     uses: ./.github/workflows/sw92_phase_assigned_no_w.yml
+    with:
+      dependencies_prevalidated: true
   sw92-phase-assigned-three-phase-topology:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_pt == 'true' || needs.impact.outputs.sw92_profile_c_phase_set == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' || needs.impact.outputs.sw92_phase_assigned_boundary == 'true')
