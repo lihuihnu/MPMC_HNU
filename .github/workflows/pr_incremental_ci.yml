@@ -349,7 +349,13 @@ jobs:
               ),
               (
                   ["modules/flash/include/mpmc/flash/pt_flash_backend.hpp"],
-                  expected_route(flow_core=True, pt_flash_backend=True, pr76_max3=True),
+                  expected_route(
+                      flow_core=True,
+                      pt_flash_backend=True,
+                      pr76_max3=True,
+                      cpa_split=True,
+                      cpa_max3=True,
+                  ),
               ),
               (
                   ["tests/flash/stability/stability_test.cpp"],

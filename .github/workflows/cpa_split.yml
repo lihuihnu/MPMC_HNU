@@ -2,7 +2,7 @@ name: CPA PT vapor-liquid split baseline
 
 
 # Main-target PR path matching is owned by pr_incremental_ci.yml. This file
-# only executes the routed matrix or an explicit manual validation.
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
   workflow_call:
   workflow_dispatch:
