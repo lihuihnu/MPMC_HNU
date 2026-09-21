@@ -1,4 +1,4 @@
-#include <mpmc/flow_discretization_petsc/thermodynamic_cross_cardinality_tpfa_adapter.hpp>
+#include <mpmc/flow_discretization_petsc/phase_transition_outer_rebuild.hpp>
 #include <mpmc/thermodynamics/pr_parameters.hpp>
 
 #include <petscmat.h>
@@ -2156,6 +2156,332 @@ void insert_target(
         "failed to assemble mixed physical target state");
 }
 
+
+fdp::FrozenAbsentPhaseCoordinateEntry3D
+make_frozen_absent_coordinate_entry(
+    std::uint64_t stable,
+    flow::FrozenPhysicalPhaseIdentity identity,
+    std::vector<double> composition,
+    std::string branch_provenance,
+    DispatchAudit* audit) {
+    const auto current =
+        evaluate_target(
+            stable,
+            audit);
+    const auto host_identity =
+        std::visit(
+            [](const auto& typed) {
+                return typed.transport
+                    .state_identity;
+            },
+            current);
+    const std::size_t q =
+        host_identity.layout
+            .unknown_count();
+    const std::size_t n =
+        host_identity.layout
+            .component_count();
+    if (composition.size() != n) {
+        throw std::invalid_argument(
+            "frozen absent coordinate composition size mismatch");
+    }
+
+    flow::
+        AbsentPhaseThermodynamicCoordinateExtension
+        coordinates;
+    coordinates.identity =
+        identity;
+    coordinates.host_state_identity =
+        host_identity;
+    coordinates.phase_pressure_pa =
+        host_identity
+            .reference_pressure_pa;
+    coordinates.phase_pressure_gradient
+        .assign(q, 0.0);
+    coordinates.phase_pressure_gradient[
+        host_identity.layout
+            .pressure_unknown_index()] =
+        1.0;
+    coordinates.hypothetical_composition =
+        std::move(composition);
+    coordinates
+        .hypothetical_composition_jacobian
+        .assign(n * q, 0.0);
+    coordinates.provenance =
+        "fixture/frozen-absent-coordinate-reference/v1";
+    coordinates.validate();
+
+    return {
+        std::move(identity),
+        std::move(coordinates),
+        std::move(branch_provenance)};
+}
+
+flow::Pr76AbsentPhasePotentialExtensionProvider<double>
+make_outer_rebuild_pr_provider(
+    const th::Pr76Phase<double>& model) {
+    flow::PhaseSetTransitionCandidate
+        candidate;
+    candidate.source_phase_count = 1U;
+    candidate.target_phase_count = 3U;
+    candidate.status =
+        flow::
+            PhaseSetTransitionCandidateStatus::
+                target_resolved;
+    candidate.trigger =
+        flow::
+            PhaseSetTransitionTrigger::
+                stability_witness;
+    candidate.evidence_profile =
+        "fixture/outer-rebuild-phase-universe/v1";
+
+    const auto continuation =
+        flow::
+            make_phase_identity_continuation_snapshot(
+                candidate,
+                flow::FrozenActivePhaseIdentityMap{
+                    {
+                        mixed_physical_phase_identity(
+                            "aqueous")}},
+                flow::FrozenActivePhaseIdentityMap{
+                    {
+                        mixed_physical_phase_identity(
+                            "aqueous"),
+                        mixed_physical_phase_identity(
+                            "hydrocarbon-0"),
+                        mixed_physical_phase_identity(
+                            "hydrocarbon-1")}});
+
+    auto registry =
+        flow::
+            make_transition_selected_phase_branch_registry(
+                continuation,
+                std::vector<
+                    flow::
+                        FrozenSelectedPhaseBranchBinding<
+                            th::Pr76SelectedPhase>>{
+                    {
+                        mixed_physical_phase_identity(
+                            "aqueous"),
+                        {0U, {}},
+                        "fixture/aqueous-root0"},
+                    {
+                        mixed_physical_phase_identity(
+                            "hydrocarbon-0"),
+                        {0U, {}},
+                        "fixture/hydrocarbon0-root0"},
+                    {
+                        mixed_physical_phase_identity(
+                            "hydrocarbon-1"),
+                        {0U, {}},
+                        "fixture/hydrocarbon1-root0"}});
+
+    return {
+        model,
+        std::move(registry)};
+}
+
+std::vector<
+    fdp::FrozenPhaseTransitionRebuildCell3D>
+make_outer_rebuild_cells(
+    int rank,
+    DispatchAudit* audit) {
+    auto base_inputs =
+        make_cell_inputs(
+            rank,
+            audit);
+    auto phase_maps =
+        make_phase_identity_maps();
+
+    std::vector<
+        fdp::
+            FrozenPhaseTransitionRebuildCell3D>
+        result;
+    result.reserve(
+        base_inputs.size());
+
+    for (std::size_t local = 0U;
+         local < base_inputs.size();
+         ++local) {
+        const std::uint64_t stable =
+            static_cast<std::uint64_t>(
+                (local + 1U) * 10U);
+
+        fdp::FrozenPhaseTransitionRebuildCell3D
+            snapshot;
+        std::visit(
+            [&](const auto& typed) {
+                snapshot.cell =
+                    typed.cell;
+                snapshot.cell_global =
+                    typed.cell_global;
+                snapshot.bulk_volume_m3 =
+                    typed.bulk_volume_m3;
+                snapshot.porosity =
+                    typed.porosity;
+                snapshot.component_ids =
+                    typed.component_ids;
+                using Typed =
+                    std::remove_cvref_t<
+                        decltype(typed)>;
+                if constexpr (
+                    std::is_same_v<
+                        Typed,
+                        fdp::
+                            FixedThreePhaseSnesCellInput3D>) {
+                    snapshot.target_layout =
+                        flow::
+                            NaturalVariableLayoutDescriptor{
+                                typed.frozen_layout};
+                } else {
+                    snapshot.target_layout =
+                        typed.frozen_layout
+                            .descriptor();
+                }
+                snapshot.previous_component_accumulation =
+                    typed.previous_component_accumulation;
+                snapshot.previous_energy_accumulation =
+                    typed.previous_energy_accumulation;
+            },
+            base_inputs[local]);
+
+        snapshot.target_natural_variables =
+            target_state(stable);
+        snapshot.target_active_phases =
+            phase_maps[local];
+        snapshot.transition_evidence_profile =
+            "fixture/frozen-active-set/no-transition/v1";
+
+        if (stable == UINT64_C(20)) {
+            snapshot.frozen_absent_phases.push_back(
+                make_frozen_absent_coordinate_entry(
+                    stable,
+                    mixed_physical_phase_identity(
+                        "hydrocarbon-0"),
+                    {0.40, 0.20, 0.40},
+                    "fixture/hydrocarbon0-root0",
+                    audit));
+            snapshot.frozen_absent_phases.push_back(
+                make_frozen_absent_coordinate_entry(
+                    stable,
+                    mixed_physical_phase_identity(
+                        "hydrocarbon-1"),
+                    {0.10, 0.50, 0.40},
+                    "fixture/hydrocarbon1-root0",
+                    audit));
+        } else if (
+            stable == UINT64_C(40)) {
+            snapshot.frozen_absent_phases.push_back(
+                make_frozen_absent_coordinate_entry(
+                    stable,
+                    mixed_physical_phase_identity(
+                        "hydrocarbon-1"),
+                    {0.10, 0.50, 0.40},
+                    "fixture/hydrocarbon1-root0",
+                    audit));
+        }
+
+        result.push_back(
+            std::move(snapshot));
+    }
+
+    // Accept a real 2P -> 3P transition on stable cell30.  The target phase
+    // compositions are identical to the source overall inventory so the
+    // transition projection passes the existing material-balance gate.
+    constexpr std::size_t transitioned_local = 2U;
+    constexpr double porosity = 0.26;
+    const auto source_current =
+        evaluate_target(
+            UINT64_C(30),
+            audit);
+    const auto& source_two_phase =
+        std::get<
+            fdp::
+                TwoPhaseCurrentCellLinearization3D>(
+                    source_current);
+    const auto source_component =
+        flow::
+            build_two_phase_component_accumulation(
+                source_two_phase.state,
+                porosity);
+    const auto source_energy =
+        flow::
+            build_two_phase_energy_accumulation_snapshot(
+                source_two_phase.state,
+                porosity,
+                source_two_phase.transport,
+                source_two_phase.caloric,
+                source_two_phase.rock);
+
+    double inventory_total = 0.0;
+    for (const double value :
+         source_component
+             .component_accumulation_mol_per_bulk_m3) {
+        inventory_total += value;
+    }
+    std::vector<double>
+        overall;
+    overall.reserve(3U);
+    for (const double value :
+         source_component
+             .component_accumulation_mol_per_bulk_m3) {
+        overall.push_back(
+            value / inventory_total);
+    }
+
+    flow::PhaseSetTransitionCandidate
+        candidate;
+    candidate.source_phase_count = 2U;
+    candidate.target_phase_count = 3U;
+    candidate.trigger =
+        flow::
+            PhaseSetTransitionTrigger::
+                stability_witness;
+    candidate.status =
+        flow::
+            PhaseSetTransitionCandidateStatus::
+                target_resolved;
+    candidate.pressure_pa = 20.0;
+    candidate.temperature_k = 9.0;
+    candidate.component_ids =
+        {"A", "B", "C"};
+    candidate.target_phases = {
+        {0.20, overall, 2.0},
+        {0.30, overall, 4.0},
+        {0.50, overall, 7.0}};
+    candidate.evidence_profile =
+        "fixture/accepted-2p-to-3p/v1";
+    candidate.diagnostic =
+        "controlled outer rebuild transition";
+
+    result[transitioned_local] =
+        fdp::
+            make_accepted_phase_transition_rebuild_cell_3d(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            transitioned_local)},
+                mesh::GlobalEntityId{
+                    UINT64_C(30)},
+                4.0,
+                porosity,
+                candidate,
+                source_component,
+                source_energy,
+                phase_maps[transitioned_local],
+                flow::FrozenActivePhaseIdentityMap{
+                    {
+                        mixed_physical_phase_identity(
+                            "aqueous"),
+                        mixed_physical_phase_identity(
+                            "hydrocarbon-0"),
+                        mixed_physical_phase_identity(
+                            "hydrocarbon-1")}},
+                {});
+
+    return result;
+}
+
 [[nodiscard]] bool
 local_solution_matches_target(
     const fdp::
@@ -2851,6 +3177,172 @@ void mixed_cardinality_physical_snes_assembly_test() {
             MatDestroy(&bridged_jacobian) ==
                 PETSC_SUCCESS,
         "bridged cross-cardinality fixture cleanup failed");
+
+    // Accepted phase transitions are applied only outside SNES.  Rebuild the
+    // complete q-ragged production system after cell30 changes 2P -> 3P.
+    // This must recreate global numbering/state, the PetscSF-backed physical
+    // context and MPIAIJ structure while preserving BE histories.
+    auto rebuild_cells =
+        make_outer_rebuild_cells(
+            rank,
+            &audit);
+    auto rebuild_faces =
+        make_face_inputs(
+            rank,
+            true);
+    auto outer_provider =
+        make_outer_rebuild_pr_provider(
+            pr_model);
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        rebuilt_system;
+    error =
+        fdp::
+            rebuild_phase_transition_natural_variable_system_3d(
+                PETSC_COMM_WORLD,
+                cross_schedule,
+                partition,
+                bridge,
+                pattern,
+                1.0,
+                std::move(rebuild_cells),
+                std::move(rebuild_faces),
+                {
+                    {&evaluate_1p, &audit},
+                    {&evaluate_2p, &audit},
+                    {&evaluate_3p, &audit}},
+                &fdp::
+                    evaluate_absent_phase_thermodynamic_provider_3d<
+                        flow::
+                            Pr76AbsentPhasePotentialExtensionProvider<
+                                double>>,
+                &outer_provider,
+                &rebuilt_system);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            rebuilt_system != nullptr &&
+            rebuilt_system
+                    ->numbering()
+                    .petsc_global_scalar_count() ==
+                45 &&
+            rebuilt_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                3U &&
+            rebuilt_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .scalar_count ==
+                10U,
+        "accepted 2P->3P transition did not rebuild q-ragged numbering");
+
+    Vec rebuild_residual = nullptr;
+    error =
+        VecDuplicate(
+            rebuilt_system
+                ->initial_state(),
+            &rebuild_residual);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecSet(
+                rebuild_residual,
+                PetscScalar{0.0});
+    }
+    auto rebuild_evaluator =
+        rebuilt_system
+            ->snes_evaluator();
+    status =
+        fdp::
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            rebuild_evaluator.function(
+                rebuilt_system
+                    ->initial_state(),
+                rebuild_residual,
+                rebuild_evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyBegin(
+                rebuild_residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyEnd(
+                rebuild_residual);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success,
+        "rebuilt phase-transition residual callback failed");
+
+    error =
+        MatZeroEntries(
+            rebuilt_system
+                ->jacobian_structure());
+    status =
+        fdp::
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            rebuild_evaluator.jacobian(
+                rebuilt_system
+                    ->initial_state(),
+                rebuilt_system
+                    ->jacobian_structure(),
+                rebuild_evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyBegin(
+                rebuilt_system
+                    ->jacobian_structure(),
+                MAT_FINAL_ASSEMBLY);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyEnd(
+                rebuilt_system
+                    ->jacobian_structure(),
+                MAT_FINAL_ASSEMBLY);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success,
+        "rebuilt phase-transition Jacobian callback failed");
+
+    require_collective(
+        rebuilt_system
+                ->coordinate_registry()
+                .reference_entry(
+                    mesh::GlobalEntityId{
+                        UINT64_C(20)},
+                    mixed_physical_phase_identity(
+                        "hydrocarbon-1"))
+                .selected_branch_provenance ==
+            "fixture/hydrocarbon1-root0",
+        "outer rebuild did not retain frozen absent-phase branch provenance");
+
+    require_collective(
+        VecDestroy(&rebuild_residual) ==
+            PETSC_SUCCESS,
+        "phase-transition rebuild residual cleanup failed");
+    rebuilt_system.reset();
 
     require_collective(
         VecDestroy(&solution) ==
