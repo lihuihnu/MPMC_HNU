@@ -14,26 +14,18 @@ jobs:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Android JNI isolation contract
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
     - name: Validate Android JNI and emulator boundary
-      run: python -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
+      run: python3 -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
   emulator:
     name: Android x86_64 JNI PtService discovery/solve
     needs: boundary
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       NDK_VERSION: 30.0.16248370

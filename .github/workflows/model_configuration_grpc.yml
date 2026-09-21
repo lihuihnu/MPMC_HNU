@@ -14,11 +14,7 @@ jobs:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
-    runs-on:
-    - self-hosted
-    - linux
-    - x64
-    - mpmc_hnu
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false

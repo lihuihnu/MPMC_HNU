@@ -46,9 +46,9 @@ jobs:
               raise ValueError("Unknown requested AD suite")
           selected = all_suites if requested == "all" else [requested]
           platforms = [
-              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "ubuntu-24.04",
                "build_type": "Debug", "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
-              {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+              {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "ubuntu-24.04",
                "build_type": "Release", "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
               {"name": "MSVC Release", "os": "windows-2022", "runner": "windows-2022",
                "build_type": "Release", "compiler": "", "sanitizer": "OFF"},

@@ -6,9 +6,9 @@ import subprocess
 router_path = ".github/workflows/pr_incremental_ci.yml"
 all_ad_suites = ["arithmetic", "jacobian", "math", "runtime"]
 ad_platforms = [
-    {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+    {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "ubuntu-24.04",
      "build_type": "Debug", "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
-    {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+    {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "ubuntu-24.04",
      "build_type": "Release", "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
     {"name": "MSVC Release", "os": "windows-2022", "runner": "windows-2022",
      "build_type": "Release", "compiler": "", "sanitizer": "OFF"},
@@ -16,9 +16,9 @@ ad_platforms = [
 
 all_thermo_suites = ["contracts", "pr76", "pr76_mixture", "pr76_pt"]
 thermo_platforms = [
-    {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+    {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "ubuntu-24.04",
      "config": "Debug", "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
-    {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+    {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "ubuntu-24.04",
      "config": "Release", "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
     {"name": "MSVC Release", "os": "windows-2022", "runner": "windows-2022",
      "config": "Release", "compiler": "", "sanitizer": "OFF"},

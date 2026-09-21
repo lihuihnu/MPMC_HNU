@@ -13,7 +13,7 @@
 ## 验收与安全
 
 - 保留测试名、目标、断言、参考值、数值容差、严格告警及适用 GCC sanitizer / Clang / MSVC / macOS 组合。不通过删测试、改变 golden 或忽略失败换取速度。
-- Linux 编译/数值测试使用私有 `mpmc_hnu`；Windows/macOS 使用官方 runner。官方 Linux 只承担轻量元数据、结构检查与汇总。不受信任 fork 不得自动在私有 runner 执行。
+- Linux 编译/数值测试统一使用 GitHub 官方 `ubuntu-24.04`；Windows 使用 `windows-2022`、macOS 使用既有官方托管 runner。不得新增仓库私有/self-hosted runner 依赖；runner 可移植性问题应在 workflow 中显式安装或选择工具，而不是依赖机器预装状态。
 - 默认最小只读权限，固定 Action 提交，合理 timeout 与 superseded-run cancellation。临时迁移/预检入口完成或失败后清理，不作为长期产品代码保留。
 - 必须报告 selected、未选中、实际执行、失败、取消和未验证状态；workflow success 不等于其 CTest 执行通过。最终汇总不得把失败、取消或缺失验收计为成功；不擅改分支保护。
 - 一次切片先形成完整差异并静态审计，再统一提交触发一轮验收。失败后收齐证据集中修复，不逐文件 push，不在无关 pending 验证期间追加清理提交。

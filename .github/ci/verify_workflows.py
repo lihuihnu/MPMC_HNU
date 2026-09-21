@@ -39,6 +39,12 @@ def main():
         for job in spec.get('central_hashes', {}):
             assert job in root['jobs'], ('mapped central job missing', job)
     assert auto == [router_path], ('multiple automatic workflow entries', auto)
+    # Linux CI must be portable to GitHub-hosted runners; no private labels remain.
+    for workflow_path in sorted(paths):
+        serialized = Path(workflow_path).read_text(encoding='utf-8')
+        assert 'mpmc_hnu' not in serialized, ('private runner label remains', workflow_path)
+        assert 'self-hosted' not in serialized, ('self-hosted runner remains', workflow_path)
+
     assert 'result' in root['jobs'] and root['jobs']['result']['if'] == '${{ always() }}'
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')

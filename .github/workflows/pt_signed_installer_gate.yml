@@ -22,7 +22,7 @@ jobs:
         include:
         - name: Linux x64 DEB
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           profile: linux-x86_64-release
           target: linux-x86_64
           extension: deb

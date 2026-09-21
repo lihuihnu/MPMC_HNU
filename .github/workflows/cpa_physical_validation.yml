@@ -25,7 +25,7 @@ jobs:
         include:
           - name: Clang Release
             os: ubuntu-24.04
-            runner: mpmc_hnu
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
@@ -62,7 +62,7 @@ jobs:
 
   sanitizer-safety-regression:
     name: GCC Debug + ASan/UBSan
-    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
