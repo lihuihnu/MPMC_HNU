@@ -22,7 +22,7 @@ jobs:
         include:
         - name: Linux x64 Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           profile: linux-x86_64-release
         - name: Windows x64 Release
           os: windows-2022
@@ -68,7 +68,7 @@ jobs:
         include:
         - name: Linux x64 Release
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           profile: linux-x86_64-release
         - name: Windows x64 Release
           os: windows-2022
@@ -132,7 +132,7 @@ jobs:
         include:
         - name: Linux x64
           os: ubuntu-24.04
-          runner: mpmc_hnu
+          runner: ubuntu-24.04
           profile: linux-x86_64-release
           electron_platform: linux
           electron_arch: x64
