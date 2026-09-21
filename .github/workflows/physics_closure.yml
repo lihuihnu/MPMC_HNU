@@ -1,21 +1,8 @@
 name: Physics thermodynamic closure
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/physics/**'
-      - 'modules/flash/include/mpmc/flash/pr76_split.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_sensitivity.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/**'
-      - 'modules/flash/sensitivity/CMakeLists.txt'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'modules/thermodynamics/**/CMakeLists.txt'
-      - 'modules/ad/**/*.hpp'
-      - 'modules/ad/**/CMakeLists.txt'
-      - 'tests/flash/pt_split/reference_sensitivity_decimal.py'
-      - 'tests/physics/thermodynamic_closure/**'
-      - '.github/workflows/physics_closure.yml'
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,16 +10,7 @@ concurrency:
   group: physics-thermodynamic-closure-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["modules/physics/**","modules/flash/include/mpmc/flash/pr76_split.hpp","modules/flash/include/mpmc/flash/pr76_sensitivity.hpp","modules/flash/include/mpmc/flash/pt_sensitivity.hpp","modules/flash/include/mpmc/flash/detail/**","modules/flash/sensitivity/CMakeLists.txt","modules/thermodynamics/**/*.hpp","modules/thermodynamics/**/CMakeLists.txt","modules/ad/**/*.hpp","modules/ad/**/CMakeLists.txt","tests/flash/pt_split/reference_sensitivity_decimal.py","tests/physics/thermodynamic_closure/**",".github/workflows/physics_closure.yml"]
-
   closure:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
@@ -65,6 +43,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Select Python interpreter
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Configure only physics thermodynamic closure
         run: |
           config_arg=()
@@ -79,4 +69,5 @@ jobs:
       - name: Run physics thermodynamic closure increment
         run: ctest --test-dir build/physics-closure -C ${{ matrix.config }} -R '^physics[.]thermodynamic_closure[.]' --verbose --no-tests=error
       - name: Independently regenerate closure references
-        run: python tests/physics/thermodynamic_closure/reference_closure_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/physics/thermodynamic_closure/reference_closure_decimal.py

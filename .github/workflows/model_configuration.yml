@@ -1,33 +1,9 @@
 name: Public thermodynamic model configuration
 
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/model_configuration/**'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp'
-      - 'modules/thermodynamics/CMakeLists.txt'
-      - 'modules/flash/CMakeLists.txt'
-      - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_phase_transition.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp'
-      - 'tests/model_configuration/parameters/**'
-      - 'tests/model_configuration/solver_settings/**'
-      - 'tests/model_configuration/executable_model/**'
-      - 'tests/model_configuration/registry/**'
-      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
-      - 'tests/flash/pr76_three_phase/sour_gas_fixture.hpp'
-      - 'tests/flash/pr76_three_phase/sour_gas_references.hpp'
-      - 'tests/thermodynamics/contracts/**'
-      - '.github/workflows/model_configuration.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -38,16 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["modules/model_configuration/**","modules/thermodynamics/include/mpmc/thermodynamics/components.hpp","modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp","modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp","modules/thermodynamics/CMakeLists.txt","modules/flash/CMakeLists.txt","modules/flash/include/mpmc/flash/pr76_*.hpp","modules/flash/include/mpmc/flash/pt_stability.hpp","modules/flash/include/mpmc/flash/pt_split.hpp","modules/flash/include/mpmc/flash/pt_three_phase.hpp","modules/flash/include/mpmc/flash/rachford_rice.hpp","modules/flash/include/mpmc/flash/pt_flash_backend.hpp","modules/flash/include/mpmc/flash/pt_phase_set.hpp","modules/flash/include/mpmc/flash/pt_phase_transition.hpp","modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp","tests/model_configuration/parameters/**","tests/model_configuration/solver_settings/**","tests/model_configuration/executable_model/**","tests/model_configuration/registry/**","tests/flash/pr76_three_phase/synthetic_fixture.hpp","tests/flash/pr76_three_phase/sour_gas_fixture.hpp","tests/flash/pr76_three_phase/sour_gas_references.hpp","tests/thermodynamics/contracts/**",".github/workflows/model_configuration.yml"]
-
   parameters:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
