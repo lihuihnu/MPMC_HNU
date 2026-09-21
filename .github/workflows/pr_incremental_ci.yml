@@ -1,4 +1,4 @@
-# candidate-head: 5d4898d9df4ec83eeeb8c91cf29605da5959702d
+# candidate-head: 5d4898d9df4ec83eeeb8c91cf29605da5959702d actionlint-configured
 name: CI governance candidate validation
 on:
   push:
@@ -28,7 +28,12 @@ jobs:
           set -euo pipefail
           python3 -m py_compile             .github/ci/impact_rules.py             .github/ci/plan.py             .github/ci/verify_workflows.py             .github/ci/verify_result.py
           python3 .github/ci/verify_workflows.py
-          actionlint .github/workflows/*.yml
+          cat > /tmp/actionlint.yaml <<'EOF'
+          self-hosted-runner:
+            labels:
+              - mpmc_hnu
+          EOF
+          actionlint -config-file /tmp/actionlint.yaml .github/workflows/*.yml
           git diff --check f4f11807d3476aac6d3e19f2afcd98863d05a7c4..HEAD
           bad="$(git diff --name-only f4f11807d3476aac6d3e19f2afcd98863d05a7c4..HEAD | grep -Ev '^\.github/' || true)"
           test -z "$bad" || { echo "non-governance changes: $bad" >&2; exit 1; }
