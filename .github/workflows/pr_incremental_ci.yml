@@ -28,6 +28,9 @@ jobs:
       pt_split: ${{ steps.route.outputs.pt_split }}
       pr76_pt_continuation: ${{ steps.route.outputs.pr76_pt_continuation }}
       pr76_max3: ${{ steps.route.outputs.pr76_max3 }}
+      cpa_stability: ${{ steps.route.outputs.cpa_stability }}
+      cpa_split: ${{ steps.route.outputs.cpa_split }}
+      cpa_max3: ${{ steps.route.outputs.cpa_max3 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -200,6 +203,38 @@ jobs:
                   "tests/flash/pr76_three_phase/**",
                   ".github/workflows/pr76_three_phase.yml",
               ],
+              "cpa_stability": [
+                  "modules/flash/include/mpmc/flash/cpa_stability.hpp",
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
+                  "tests/flash/cpa_stability/**",
+                  ".github/workflows/cpa_stability.yml",
+                  ".github/workflows/_cpp_ctest.yml",
+                  "tests/support/cmake/cpp_test_options.cmake",
+              ],
+              "cpa_split": [
+                  "modules/flash/include/mpmc/flash/cpa_*.hpp",
+                  "modules/flash/include/mpmc/flash/pt_*.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
+                  "tests/flash/cpa_split/**",
+                  "tests/flash/cpa_stability/**",
+                  "tests/thermodynamics/cpa_pt_phase/**",
+                  ".github/workflows/cpa_split.yml",
+              ],
+              "cpa_max3": [
+                  "modules/flash/include/mpmc/flash/cpa_*.hpp",
+                  "modules/flash/include/mpmc/flash/pt_*.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp",
+                  "modules/flow/CMakeLists.txt",
+                  "modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp",
+                  "modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp",
+                  "modules/flow/include/mpmc/flow/thermodynamics_fugacity_adapters.hpp",
+                  "tests/support/flow/fugacity_adapter_regression.hpp",
+                  "tests/flash/cpa_max3/**",
+                  "tests/flash/cpa_split/**",
+                  ".github/workflows/cpa_max3.yml",
+              ],
           }
 
           def compile_pattern(pattern):
@@ -349,6 +384,31 @@ jobs:
                       pr76_pt_continuation=True,
                       pr76_max3=True,
                   ),
+              ),
+              (
+                  ["tests/flash/cpa_stability/stability_test.cpp"],
+                  expected_route(cpa_stability=True, cpa_split=True),
+              ),
+              (
+                  ["tests/flash/cpa_split/split_test.cpp"],
+                  expected_route(cpa_split=True, cpa_max3=True),
+              ),
+              (
+                  ["tests/flash/cpa_max3/max3_test.cpp"],
+                  expected_route(cpa_max3=True),
+              ),
+              (
+                  ["modules/flash/include/mpmc/flash/cpa_stability.hpp"],
+                  expected_route(
+                      pt_flash_backend=True,
+                      cpa_stability=True,
+                      cpa_split=True,
+                      cpa_max3=True,
+                  ),
+              ),
+              (
+                  [".github/workflows/_cpp_ctest.yml"],
+                  expected_route(cpa_stability=True),
               ),
               (
                   [router_path],
@@ -501,6 +561,21 @@ jobs:
     needs: impact
     if: needs.impact.outputs.pr76_max3 == 'true'
     uses: ./.github/workflows/pr76_three_phase.yml
+
+  cpa-stability:
+    needs: impact
+    if: needs.impact.outputs.cpa_stability == 'true'
+    uses: ./.github/workflows/cpa_stability.yml
+
+  cpa-split:
+    needs: impact
+    if: needs.impact.outputs.cpa_split == 'true'
+    uses: ./.github/workflows/cpa_split.yml
+
+  cpa-max3:
+    needs: impact
+    if: needs.impact.outputs.cpa_max3 == 'true'
+    uses: ./.github/workflows/cpa_max3.yml
 
   ad:
     needs: impact

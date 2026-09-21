@@ -1,16 +1,10 @@
 name: CPA PT vapor-liquid split baseline
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# only executes the routed matrix or an explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
-      - 'tests/flash/cpa_split/**'
-      - 'tests/flash/cpa_stability/**'
-      - 'tests/thermodynamics/cpa_pt_phase/**'
-      - '.github/workflows/cpa_split.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -21,16 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["modules/flash/include/mpmc/flash/cpa_*.hpp","modules/flash/include/mpmc/flash/pt_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp","tests/flash/cpa_split/**","tests/flash/cpa_stability/**","tests/thermodynamics/cpa_pt_phase/**",".github/workflows/cpa_split.yml"]
-
   split:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
