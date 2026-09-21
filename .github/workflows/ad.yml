@@ -38,12 +38,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # A PR merge commit and its two parents suffice for a two-tree diff.
-          fetch-depth: 2
+          # synchronize compares previous PR HEAD -> current PR HEAD; first/open
+          # and explicit review checkpoints still compare the full PR.
+          fetch-depth: 0
       - name: Select by audited dependency boundaries
         id: scope
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REQUESTED_SUITE: ${{ inputs.suite }}
@@ -51,6 +55,7 @@ jobs:
         run: |
           import json
           import os
+          import re
           import subprocess
 
           all_suites = ["arithmetic", "jacobian", "math", "runtime"]
@@ -125,11 +130,22 @@ jobs:
                   raise ValueError("Unknown requested AD suite")
               selected = all_suites if requested == "all" else [requested]
           else:
+              before = os.environ["BASE_SHA"]
+              after = os.environ["HEAD_SHA"]
+              if os.environ.get("EVENT_ACTION") == "synchronize":
+                  candidate_before = os.environ.get("BEFORE_SHA", "")
+                  candidate_after = os.environ.get("AFTER_SHA", "")
+                  sha = re.compile(r"^[0-9a-fA-F]{40}$")
+                  if sha.match(candidate_before) and sha.match(candidate_after):
+                      before = candidate_before
+                      after = candidate_after
+                  else:
+                      print("Synchronize SHAs unavailable; failing open to full PR diff.")
               raw = subprocess.check_output([
-                  "git", "diff", "--name-only", "-z",
-                  os.environ["BASE_SHA"], os.environ["HEAD_SHA"],
+                  "git", "diff", "--name-only", "-z", before, after,
               ])
               paths = [p for p in raw.decode("utf-8").split("\0") if p]
+              print("Diff scope:", before, "->", after)
               print("Changed paths:", json.dumps(paths, ensure_ascii=False))
               selected = suites_for(paths)
           platforms = [

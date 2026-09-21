@@ -39,6 +39,9 @@ add_executable(
 target_link_libraries(
     mpmc_flow_discretization_petsc_tests
     PRIVATE mpmc::flow_discretization_petsc)
+target_include_directories(
+    mpmc_flow_discretization_petsc_tests
+    PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
 set_target_properties(
     mpmc_flow_discretization_petsc_tests
     PROPERTIES CXX_EXTENSIONS OFF)

@@ -1242,7 +1242,7 @@ private:
         }
 
         PetscErrorCode error =
-            collective_error(
+            mixed_cardinality_physical_detail::collective_error(
                 comm_,
                 local_error);
         if (error != PETSC_SUCCESS) {
