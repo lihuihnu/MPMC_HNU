@@ -233,6 +233,30 @@ jobs:
               "\n".join(changed) + "\n", encoding="utf-8"
           )
           print("HOSTED_RUNNER_CANDIDATE_READY")
+
+          # Create an unreferenced candidate commit; the authorized connector
+          # moves the PR branch only after this validation job succeeds.
+          base_commit = api("/git/commits/" + expected)
+          elements = []
+          for path in changed:
+              content = Path(path).read_text(encoding="utf-8")
+              blob = api("/git/blobs", {"content": content, "encoding": "utf-8"})
+              elements.append({
+                  "path": path,
+                  "mode": "100644",
+                  "type": "blob",
+                  "sha": blob["sha"],
+              })
+          tree = api("/git/trees", {
+              "base_tree": base_commit["tree"]["sha"],
+              "tree": elements,
+          })
+          commit = api("/git/commits", {
+              "message": "refactor(ci): restore GitHub-hosted Linux runners",
+              "tree": tree["sha"],
+              "parents": [expected],
+          })
+          print("CANDIDATE_COMMIT=" + commit["sha"])
           PY
           tar -czf /tmp/hosted-runner-candidate.tar.gz .github AGENTS.md
       - name: Upload verified hosted-runner candidate
