@@ -1,4 +1,4 @@
-# candidate-head: 5d4898d9df4ec83eeeb8c91cf29605da5959702d actionlint-no-shellcheck
+# candidate-head: 9487ffdde33d8045fb09aebab5fa005d0b739b9b
 name: CI governance candidate validation
 on:
   push:
