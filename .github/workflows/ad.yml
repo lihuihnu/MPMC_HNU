@@ -1,20 +1,16 @@
 name: AD correctness
 
-# Validate affected suites on the PR; do not rerun the same tree on merge.
 on:
-  pull_request:
-    branches: [main]
-    # Before configuring required checks, use an always-reporting outer gate.
-    paths:
-      - 'modules/ad/**'
-      - 'tests/ad/**'
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - '.github/workflows/ad.yml'
+  workflow_call:
+    inputs:
+      matrix_json:
+        description: Audited AD matrix selected by the PR impact router.
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       suite:
-        description: 'Audited test scope; all is the default for infrastructure changes'
+        description: 'Audited test scope; all is the default for manual validation'
         type: choice
         options: [all, arithmetic, math, jacobian, runtime]
         default: all
@@ -23,165 +19,54 @@ permissions:
   contents: read
 
 concurrency:
-  group: ad-${{ github.workflow }}-${{ github.ref }}
+  group: ad-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  select:
-    name: Select affected AD suites
+  manual-select:
+    name: Select manual AD suite
+    if: ${{ inputs.matrix_json == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
-      has_work: ${{ steps.scope.outputs.has_work }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          # synchronize compares previous PR HEAD -> current PR HEAD; first/open
-          # and explicit review checkpoints still compare the full PR.
-          fetch-depth: 0
-      - name: Select by audited dependency boundaries
+      - name: Build requested manual matrix
         id: scope
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_ACTION: ${{ github.event.action }}
-          BEFORE_SHA: ${{ github.event.before }}
-          AFTER_SHA: ${{ github.event.after }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REQUESTED_SUITE: ${{ inputs.suite }}
         shell: python
+        env:
+          REQUESTED_SUITE: ${{ inputs.suite }}
         run: |
           import json
           import os
-          import re
-          import subprocess
 
           all_suites = ["arithmetic", "jacobian", "math", "runtime"]
-
-          def suites_for(paths):
-              selected = set()
-              infrastructure = False
-              shared = {
-                  "modules/ad/include/mpmc/ad/dual.hpp", "modules/ad/CMakeLists.txt",
-                  "CMakeLists.txt", "CMakePresets.json",
-              }
-              owned_exact = {
-                  "CMakeLists.txt", "CMakePresets.json", ".github/workflows/ad.yml",
-              }
-              for path in paths:
-                  owned = (
-                      path.startswith("modules/ad/") or
-                      path.startswith("tests/ad/") or
-                      path in owned_exact
-                  )
-                  if not owned:
-                      continue
-                  if path.endswith(".md"):
-                      continue
-                  if path == ".github/workflows/ad.yml":
-                      infrastructure = True
-                  elif path in shared:
-                      selected.update(all_suites)
-                  elif path == "modules/ad/include/mpmc/ad/runtime_differentiate.hpp" or path.startswith("tests/ad/runtime/"):
-                      selected.add("runtime")
-                  elif path == "modules/ad/include/mpmc/ad/differentiate.hpp":
-                      selected.update(("jacobian", "runtime"))  # Runtime crosscheck uses the fixed API.
-                  elif path.startswith("tests/ad/jacobian/"):
-                      selected.add("jacobian")
-                  elif path == "modules/ad/include/mpmc/ad/math.hpp":
-                      selected.update(("jacobian", "math", "runtime"))  # Integration tests use math.hpp.
-                  elif path.startswith("tests/ad/math/"):
-                      selected.add("math")
-                  elif path.startswith("tests/ad/"):
-                      selected.add("arithmetic")
-                  else:
-                      selected.update(all_suites)  # Unknown dependency: be conservative.
-              # Workflow-only changes require all suites. When a workflow change
-              # accompanies code, audit its scope: compiler/flags/environment changes
-              # affecting an additional suite MUST dispatch 'all' before integration.
-              if infrastructure and not selected:
-                  selected.update(all_suites)
-              return sorted(selected)
-
-          # Necessary regression checks for this newly introduced selection logic.
-          checks = [
-              (["modules/ad/include/mpmc/ad/math.hpp"], ["jacobian", "math", "runtime"]),
-              (["tests/ad/math/math_test.cpp", ".github/workflows/ad.yml"], ["math"]),
-              (["modules/ad/include/mpmc/ad/dual.hpp"], all_suites),
-              (["tests/ad/dual_test.cpp"], ["arithmetic"]),
-              ([".github/workflows/ad.yml"], all_suites),
-              (["modules/ad/include/mpmc/ad/unknown.hpp"], all_suites),
-              (["README.md"], []),
-              (["tests/flow_discretization/petsc/scanner.cpp"], []),
-              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["jacobian", "runtime"]),
-              (["tests/ad/jacobian/jacobian_test.cpp", ".github/workflows/ad.yml"], ["jacobian"]),
-              (["modules/ad/include/mpmc/ad/differentiate.hpp", "AGENTS.md"], ["jacobian", "runtime"]),
-              (["tests/ad/math/math_test.cpp", "tests/ad/jacobian/header_self_contained.cpp"],
-               ["jacobian", "math"]),
-              (["CMakeLists.txt"], all_suites),
-              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp"], ["runtime"]),
-              (["tests/ad/runtime/runtime_test.cpp", ".github/workflows/ad.yml"], ["runtime"]),
-              (["tests/ad/runtime/header_self_contained.cpp"], ["runtime"]),
-              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp", "AGENTS.md"], ["runtime"]),
-              (["modules/ad/include/mpmc/ad/math.hpp", "tests/ad/runtime/runtime_test.cpp"],
-               ["jacobian", "math", "runtime"]),
-              (["modules/ad/runtime_differentiate.md"], []),
-          ]
-          for paths, expected in checks:
-              if suites_for(paths) != expected:
-                  raise RuntimeError(f"Invalid suite selection for {paths}")
-
-          print(f"Suite-selection regressions: {len(checks)}/{len(checks)} passed")
-
-          if os.environ["EVENT_NAME"] == "workflow_dispatch":
-              requested = os.environ.get("REQUESTED_SUITE") or "all"
-              if requested not in ["all", *all_suites]:
-                  raise ValueError("Unknown requested AD suite")
-              selected = all_suites if requested == "all" else [requested]
-          else:
-              before = os.environ["BASE_SHA"]
-              after = os.environ["HEAD_SHA"]
-              if os.environ.get("EVENT_ACTION") == "synchronize":
-                  candidate_before = os.environ.get("BEFORE_SHA", "")
-                  candidate_after = os.environ.get("AFTER_SHA", "")
-                  sha = re.compile(r"^[0-9a-fA-F]{40}$")
-                  if sha.match(candidate_before) and sha.match(candidate_after):
-                      before = candidate_before
-                      after = candidate_after
-                  else:
-                      print("Synchronize SHAs unavailable; failing open to full PR diff.")
-              raw = subprocess.check_output([
-                  "git", "diff", "--name-only", "-z", before, after,
-              ])
-              paths = [p for p in raw.decode("utf-8").split("\0") if p]
-              print("Diff scope:", before, "->", after)
-              print("Changed paths:", json.dumps(paths, ensure_ascii=False))
-              selected = suites_for(paths)
+          requested = os.environ.get("REQUESTED_SUITE") or "all"
+          if requested not in ["all", *all_suites]:
+              raise ValueError("Unknown requested AD suite")
+          selected = all_suites if requested == "all" else [requested]
           platforms = [
-              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "mpmc_hnu", "build_type": "Debug",
-               "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
-              {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "mpmc_hnu", "build_type": "Release",
-               "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
-              {"name": "MSVC Release", "os": "windows-2022", "runner": "windows-2022", "build_type": "Release",
-               "compiler": "", "sanitizer": "OFF"},
+              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+               "build_type": "Debug", "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
+              {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+               "build_type": "Release", "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
+              {"name": "MSVC Release", "os": "windows-2022", "runner": "windows-2022",
+               "build_type": "Release", "compiler": "", "sanitizer": "OFF"},
           ]
-          matrix = {"include": [{**p, "suite": s} for s in selected for p in platforms]}
-          print("Selected suites:", selected)
+          matrix = {"include": [{**platform, "suite": suite} for suite in selected for platform in platforms]}
+          print("Selected manual suites:", selected)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write("matrix=" + json.dumps(matrix) + "\n")
-              output.write("has_work=" + str(bool(selected)).lower() + "\n")
+              output.write("matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n")
 
   ad:
-    needs: select
-    if: needs.select.outputs.has_work == 'true'
+    needs: manual-select
+    if: ${{ always() && (inputs.matrix_json != '' || needs.manual-select.result == 'success') }}
     name: ${{ matrix.suite }} / ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+      matrix: ${{ fromJSON(inputs.matrix_json != '' && inputs.matrix_json || needs.manual-select.outputs.matrix) }}
     defaults:
       run:
         shell: bash

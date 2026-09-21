@@ -21,13 +21,15 @@ jobs:
       flow_core: ${{ steps.route.outputs.flow_core }}
       flow_discretization: ${{ steps.route.outputs.flow_discretization }}
       flow_discretization_petsc: ${{ steps.route.outputs.flow_discretization_petsc }}
+      ad_has_work: ${{ steps.route.outputs.ad_has_work }}
+      ad_matrix: ${{ steps.route.outputs.ad_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Route one PR diff to audited Flow gates
+      - name: Route one PR diff to audited CI gates
         id: route
         shell: python
         env:
@@ -44,6 +46,15 @@ jobs:
           import subprocess
 
           router_path = ".github/workflows/pr_incremental_ci.yml"
+          all_ad_suites = ["arithmetic", "jacobian", "math", "runtime"]
+          ad_platforms = [
+              {"name": "GCC Debug + ASan/UBSan", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+               "build_type": "Debug", "compiler": "-DCMAKE_CXX_COMPILER=g++", "sanitizer": "ON"},
+              {"name": "Clang Release", "os": "ubuntu-24.04", "runner": "mpmc_hnu",
+               "build_type": "Release", "compiler": "-DCMAKE_CXX_COMPILER=clang++", "sanitizer": "OFF"},
+              {"name": "MSVC Release", "os": "windows-2022", "runner": "windows-2022",
+               "build_type": "Release", "compiler": "", "sanitizer": "OFF"},
+          ]
 
           ownership = {
               "flow_core": [
@@ -136,9 +147,65 @@ jobs:
                   )
                   for gate, patterns in compiled.items()
               }
-              if router_path in paths:
-                  result = {gate: True for gate in ownership}
               return result
+
+          def ad_suites_for(paths):
+              selected = set()
+              infrastructure = False
+              shared = {
+                  "modules/ad/include/mpmc/ad/dual.hpp",
+                  "modules/ad/CMakeLists.txt",
+                  "CMakeLists.txt",
+                  "CMakePresets.json",
+              }
+              owned_exact = {
+                  "CMakeLists.txt",
+                  "CMakePresets.json",
+                  ".github/workflows/ad.yml",
+              }
+              for path in paths:
+                  owned = (
+                      path.startswith("modules/ad/") or
+                      path.startswith("tests/ad/") or
+                      path in owned_exact
+                  )
+                  if not owned:
+                      continue
+                  if path.endswith(".md"):
+                      continue
+                  if path == ".github/workflows/ad.yml":
+                      infrastructure = True
+                  elif path in shared:
+                      selected.update(all_ad_suites)
+                  elif (
+                      path == "modules/ad/include/mpmc/ad/runtime_differentiate.hpp" or
+                      path.startswith("tests/ad/runtime/")
+                  ):
+                      selected.add("runtime")
+                  elif path == "modules/ad/include/mpmc/ad/differentiate.hpp":
+                      selected.update(("jacobian", "runtime"))
+                  elif path.startswith("tests/ad/jacobian/"):
+                      selected.add("jacobian")
+                  elif path == "modules/ad/include/mpmc/ad/math.hpp":
+                      selected.update(("jacobian", "math", "runtime"))
+                  elif path.startswith("tests/ad/math/"):
+                      selected.add("math")
+                  elif path.startswith("tests/ad/"):
+                      selected.add("arithmetic")
+                  else:
+                      selected.update(all_ad_suites)
+              if infrastructure and not selected:
+                  selected.update(all_ad_suites)
+              return sorted(selected)
+
+          def ad_matrix(selected):
+              return {
+                  "include": [
+                      {**platform, "suite": suite}
+                      for suite in selected
+                      for platform in ad_platforms
+                  ]
+              }
 
           checks = [
               (
@@ -160,9 +227,9 @@ jobs:
               (
                   [router_path],
                   {
-                      "flow_core": True,
-                      "flow_discretization": True,
-                      "flow_discretization_petsc": True,
+                      "flow_core": False,
+                      "flow_discretization": False,
+                      "flow_discretization_petsc": False,
                   },
               ),
               (
@@ -182,6 +249,37 @@ jobs:
                   )
           print(f"Impact-router regressions: {len(checks)}/{len(checks)} passed")
 
+          ad_checks = [
+              (["modules/ad/include/mpmc/ad/math.hpp"], ["jacobian", "math", "runtime"]),
+              (["tests/ad/math/math_test.cpp", ".github/workflows/ad.yml"], ["math"]),
+              (["modules/ad/include/mpmc/ad/dual.hpp"], all_ad_suites),
+              (["tests/ad/dual_test.cpp"], ["arithmetic"]),
+              ([".github/workflows/ad.yml"], all_ad_suites),
+              (["modules/ad/include/mpmc/ad/unknown.hpp"], all_ad_suites),
+              (["README.md"], []),
+              (["tests/flow_discretization/petsc/scanner.cpp"], []),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["jacobian", "runtime"]),
+              (["tests/ad/jacobian/jacobian_test.cpp", ".github/workflows/ad.yml"], ["jacobian"]),
+              (["modules/ad/include/mpmc/ad/differentiate.hpp", "AGENTS.md"], ["jacobian", "runtime"]),
+              (["tests/ad/math/math_test.cpp", "tests/ad/jacobian/header_self_contained.cpp"],
+               ["jacobian", "math"]),
+              (["CMakeLists.txt"], all_ad_suites),
+              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp"], ["runtime"]),
+              (["tests/ad/runtime/runtime_test.cpp", ".github/workflows/ad.yml"], ["runtime"]),
+              (["tests/ad/runtime/header_self_contained.cpp"], ["runtime"]),
+              (["modules/ad/include/mpmc/ad/runtime_differentiate.hpp", "AGENTS.md"], ["runtime"]),
+              (["modules/ad/include/mpmc/ad/math.hpp", "tests/ad/runtime/runtime_test.cpp"],
+               ["jacobian", "math", "runtime"]),
+              (["modules/ad/runtime_differentiate.md"], []),
+          ]
+          for paths, expected in ad_checks:
+              actual = ad_suites_for(paths)
+              if actual != expected:
+                  raise RuntimeError(
+                      f"AD selector regression failed for {paths}: {actual} != {expected}"
+                  )
+          print(f"AD selector regressions: {len(ad_checks)}/{len(ad_checks)} passed")
+
           event_name = os.environ.get("EVENT_NAME", "")
           action = os.environ.get("EVENT_ACTION", "")
           changed = []
@@ -189,7 +287,8 @@ jobs:
 
           if event_name == "workflow_dispatch":
               impact = {gate: True for gate in ownership}
-              print("Manual dispatch: running all migrated Flow gates.")
+              selected_ad = list(all_ad_suites)
+              print("Manual dispatch: running all migrated CI gates.")
           else:
               before = os.environ.get("BASE_SHA", "")
               after = os.environ.get("HEAD_SHA", "")
@@ -218,6 +317,7 @@ jobs:
                           if path
                       ]
                       impact = route(changed)
+                      selected_ad = ad_suites_for(changed)
                   else:
                       fail_open = True
                       print("PR diff failed; failing open.")
@@ -226,14 +326,19 @@ jobs:
 
               if fail_open:
                   impact = {gate: True for gate in ownership}
+                  selected_ad = list(all_ad_suites)
 
               print("Diff scope:", before, "->", after)
               print("Changed paths:", json.dumps(changed, ensure_ascii=False))
 
+          matrix = ad_matrix(selected_ad)
           print("Impact:", json.dumps(impact, sort_keys=True))
+          print("Selected AD suites:", selected_ad)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               for gate, affected in impact.items():
                   output.write(f"{gate}={'true' if affected else 'false'}\n")
+              output.write(f"ad_has_work={'true' if selected_ad else 'false'}\n")
+              output.write("ad_matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n")
 
   flow-core:
     needs: impact
@@ -249,3 +354,10 @@ jobs:
     needs: impact
     if: needs.impact.outputs.flow_discretization_petsc == 'true'
     uses: ./.github/workflows/flow_discretization_petsc.yml
+
+  ad:
+    needs: impact
+    if: needs.impact.outputs.ad_has_work == 'true'
+    uses: ./.github/workflows/ad.yml
+    with:
+      matrix_json: ${{ needs.impact.outputs.ad_matrix }}
