@@ -4,6 +4,7 @@ on:
     branches: [work/ci-single-entry-20260921]
 permissions:
   contents: write
+  actions: read
 concurrency:
   group: entry-migration-validation
   cancel-in-progress: true
@@ -28,4 +29,34 @@ jobs:
           cp .github/ci/_entry_migration_patch.py /tmp/fix_entry_migration.py
           git reset --hard bcf2ce8dfaa8fd6f63749db1fac1db6dfb571a6f
           python3 /tmp/fix_entry_migration.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/entry_migration.py')
+          s = p.read_text()
+          s = s.replace("changed = git('status', '--porcelain').splitlines()", "changed = subprocess.check_output(['git', 'status', '--porcelain'], text=True).splitlines()")
+          s = s.replace("        before = event.get('before', '')", """        before = ''
+                  try:
+                      url = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/actions/workflows/pr_incremental_ci.yml/runs?event=push&status=success&per_page=100'
+                      req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+                      with urllib.request.urlopen(req, timeout=20) as response:
+                          runs = json.load(response)['workflow_runs']
+                      for run in runs:
+                          candidate = run['head_sha']
+                          if run.get('name') == 'CI - affected tests v2' and run.get('conclusion') == 'success' and run.get('head_branch') == event['ref'].removeprefix('refs/heads/') and candidate != head and ancestor(candidate, head):
+                              before = candidate
+                              break
+                  except Exception as error:
+                      print('Push checkpoint unavailable; validate matching tracked files:', type(error).__name__)""")
+          insert = """
+          req = urllib.request.Request('https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/pulls/118', headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN']})
+          with urllib.request.urlopen(req, timeout=20) as response:
+              pr_event = {'action': 'synchronize', 'pull_request': json.load(response)}
+          Path('/tmp/pr-event.json').write_text(json.dumps(pr_event))
+          test_env = dict(os.environ, GITHUB_EVENT_PATH='/tmp/pr-event.json', GITHUB_EVENT_NAME='pull_request', GITHUB_OUTPUT='/tmp/planner-output')
+          subprocess.run(['python3', '.github/ci/plan.py'], env=test_env, check=True)
+          print('REAL_PR_CUMULATIVE_PLAN_OK')
+          """
+          s = s.replace("print('MAPPED_WORKFLOWS', len(registry['workflows']))", insert + "\nprint('MAPPED_WORKFLOWS', len(registry['workflows']))")
+          p.write_text(s)
+          PY
           python3 /tmp/entry_migration.py
