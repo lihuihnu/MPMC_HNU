@@ -1,17 +1,10 @@
 name: CPA associating physical validation
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json'
-      - 'tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json'
-      - 'tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
-      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
-      - 'tests/flash/cpa_physical_validation/**'
-      - '.github/workflows/cpa_physical_validation.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -22,16 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json","tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json","tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json","modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp","modules/flash/include/mpmc/flash/cpa_*.hpp","modules/flash/include/mpmc/flash/pt_*.hpp","tests/flash/cpa_physical_validation/**",".github/workflows/cpa_physical_validation.yml"]
-
   full-physical-regression:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -77,8 +61,6 @@ jobs:
         run: ctest --test-dir build/cpa-physical-validation -C ${{ matrix.config }} -L '^full_physical$' --verbose --no-tests=error
 
   sanitizer-safety-regression:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: GCC Debug + ASan/UBSan
     runs-on: [self-hosted, linux, x64, mpmc_hnu]
     timeout-minutes: 15

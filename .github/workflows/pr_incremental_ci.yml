@@ -31,6 +31,9 @@ jobs:
       cpa_stability: ${{ steps.route.outputs.cpa_stability }}
       cpa_split: ${{ steps.route.outputs.cpa_split }}
       cpa_max3: ${{ steps.route.outputs.cpa_max3 }}
+      cpa_baseline: ${{ steps.route.outputs.cpa_baseline }}
+      cpa_pt_phase: ${{ steps.route.outputs.cpa_pt_phase }}
+      cpa_physical_validation: ${{ steps.route.outputs.cpa_physical_validation }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -235,6 +238,32 @@ jobs:
                   "tests/flash/cpa_split/**",
                   ".github/workflows/cpa_max3.yml",
               ],
+              "cpa_baseline": [
+                  "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
+                  "tests/thermodynamics/cpa_baseline/**",
+                  ".github/workflows/cpa_baseline.yml",
+                  ".github/workflows/_cpp_ctest.yml",
+                  "tests/support/cmake/cpp_test_options.cmake",
+              ],
+              "cpa_pt_phase": [
+                  "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp",
+                  "modules/thermodynamics/cpa*.md",
+                  "tests/thermodynamics/cpa_pt_phase/**",
+                  ".github/workflows/cpa_pt_phase.yml",
+                  ".github/workflows/_cpp_ctest.yml",
+                  "tests/support/cmake/cpp_test_options.cmake",
+              ],
+              "cpa_physical_validation": [
+                  "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json",
+                  "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json",
+                  "tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
+                  "modules/flash/include/mpmc/flash/cpa_*.hpp",
+                  "modules/flash/include/mpmc/flash/pt_*.hpp",
+                  "tests/flash/cpa_physical_validation/**",
+                  ".github/workflows/cpa_physical_validation.yml",
+              ],
           }
 
           def compile_pattern(pattern):
@@ -355,6 +384,7 @@ jobs:
                       pr76_max3=True,
                       cpa_split=True,
                       cpa_max3=True,
+                      cpa_physical_validation=True,
                   ),
               ),
               (
@@ -410,11 +440,46 @@ jobs:
                       cpa_stability=True,
                       cpa_split=True,
                       cpa_max3=True,
+                      cpa_physical_validation=True,
                   ),
               ),
               (
                   [".github/workflows/_cpp_ctest.yml"],
-                  expected_route(cpa_stability=True),
+                  expected_route(
+                      cpa_stability=True,
+                      cpa_baseline=True,
+                      cpa_pt_phase=True,
+                  ),
+              ),
+              (
+                  ["tests/thermodynamics/cpa_baseline/baseline_test.cpp"],
+                  expected_route(cpa_baseline=True),
+              ),
+              (
+                  ["tests/thermodynamics/cpa_pt_phase/phase_test.cpp"],
+                  expected_route(cpa_split=True, cpa_pt_phase=True),
+              ),
+              (
+                  ["tests/flash/cpa_physical_validation/physical_validation_test.cpp"],
+                  expected_route(
+                      pt_flash_backend=True,
+                      cpa_physical_validation=True,
+                  ),
+              ),
+              (
+                  ["modules/thermodynamics/include/mpmc/thermodynamics/cpa_phase.hpp"],
+                  expected_route(
+                      flow_core=True,
+                      pt_flash_backend=True,
+                      pt_stability=True,
+                      pt_split=True,
+                      cpa_stability=True,
+                      cpa_split=True,
+                      cpa_max3=True,
+                      cpa_baseline=True,
+                      cpa_pt_phase=True,
+                      cpa_physical_validation=True,
+                  ),
               ),
               (
                   [router_path],
@@ -582,6 +647,21 @@ jobs:
     needs: impact
     if: needs.impact.outputs.cpa_max3 == 'true'
     uses: ./.github/workflows/cpa_max3.yml
+
+  cpa-baseline:
+    needs: impact
+    if: needs.impact.outputs.cpa_baseline == 'true'
+    uses: ./.github/workflows/cpa_baseline.yml
+
+  cpa-pt-phase:
+    needs: impact
+    if: needs.impact.outputs.cpa_pt_phase == 'true'
+    uses: ./.github/workflows/cpa_pt_phase.yml
+
+  cpa-physical-validation:
+    needs: impact
+    if: needs.impact.outputs.cpa_physical_validation == 'true'
+    uses: ./.github/workflows/cpa_physical_validation.yml
 
   ad:
     needs: impact

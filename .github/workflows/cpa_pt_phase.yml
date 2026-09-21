@@ -1,16 +1,10 @@
 name: CPA PT density-root and fugacity kernel
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp'
-      - 'modules/thermodynamics/cpa*.md'
-      - 'tests/thermodynamics/cpa_pt_phase/**'
-      - '.github/workflows/cpa_pt_phase.yml'
-      - '.github/workflows/_cpp_ctest.yml'
-      - 'tests/support/cmake/cpp_test_options.cmake'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -21,16 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp","modules/thermodynamics/cpa*.md","tests/thermodynamics/cpa_pt_phase/**",".github/workflows/cpa_pt_phase.yml",".github/workflows/_cpp_ctest.yml","tests/support/cmake/cpp_test_options.cmake"]
-
   cpa-pt-phase:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     uses: ./.github/workflows/_cpp_ctest.yml
     with:
       source_dir: tests/thermodynamics/cpa_pt_phase
