@@ -325,7 +325,7 @@ jobs:
               (
                   ["modules/thermodynamics/include/mpmc/thermodynamics/pr76.hpp"],
                   {
-                      "flow_core": True,
+                      "flow_core": False,
                       "flow_discretization": False,
                       "flow_discretization_petsc": False,
                       "pt_flash_backend": True,

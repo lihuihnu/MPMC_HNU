@@ -1,6 +1,6 @@
 name: PT phase split
-# Main-target PRs are routed once by pr_incremental_ci.yml. The direct PR
-# trigger below preserves the historical non-main validation bases.
+# Main-target PRs arrive with routed=true and bypass the local path gate.
+# Historical non-main validation bases keep the direct incremental path gate.
 on:
   workflow_call:
     inputs:
