@@ -215,7 +215,7 @@ jobs:
           )
           subprocess.run(["python3", ".github/ci/verify_workflows.py"], check=True)
           subprocess.run(
-              ["actionlint", "-shellcheck=/bin/true", ".github/workflows/*.yml"],
+              ["actionlint", "-ignore", "shellcheck reported issue", ".github/workflows/*.yml"],
               shell=True,
               check=True,
           )
