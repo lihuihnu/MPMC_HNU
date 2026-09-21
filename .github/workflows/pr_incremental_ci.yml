@@ -229,31 +229,16 @@ jobs:
           print("HOSTED_RUNNER_MIGRATION_STATIC_OK", len(changed), "files")
           print("\n".join(changed))
 
-          # Publish exactly one atomic commit to the PR branch.
-          base_commit = api("/git/commits/" + expected)
-          elements = []
-          for path in changed:
-              content = Path(path).read_text(encoding="utf-8")
-              blob = api("/git/blobs", {"content": content, "encoding": "utf-8"})
-              elements.append({
-                  "path": path,
-                  "mode": "100644",
-                  "type": "blob",
-                  "sha": blob["sha"],
-              })
-          tree = api("/git/trees", {
-              "base_tree": base_commit["tree"]["sha"],
-              "tree": elements,
-          })
-          commit = api("/git/commits", {
-              "message": "refactor(ci): restore GitHub-hosted Linux runners",
-              "tree": tree["sha"],
-              "parents": [expected],
-          })
-          api(
-              "/git/refs/heads/" + target_branch,
-              {"sha": commit["sha"], "force": False},
-              method="PATCH",
+          Path("/tmp/hosted-runner-changed.txt").write_text(
+              "\n".join(changed) + "\n", encoding="utf-8"
           )
-          print("PUBLISHED_COMMIT=" + commit["sha"])
+          print("HOSTED_RUNNER_CANDIDATE_READY")
           PY
+          tar -czf /tmp/hosted-runner-candidate.tar.gz .github AGENTS.md
+      - name: Upload verified hosted-runner candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hosted-runner-candidate
+          path: /tmp/hosted-runner-candidate.tar.gz
+          if-no-files-found: error
+          retention-days: 1
