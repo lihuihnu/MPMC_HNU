@@ -177,10 +177,14 @@ jobs:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_phase_set == 'true')
     uses: ./.github/workflows/sw92_profile_c_phase_set.yml
+    with:
+      dependencies_prevalidated: true
   sw92-profile-c-sensitivity:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_sensitivity == 'true')
     uses: ./.github/workflows/sw92_profile_c_sensitivity.yml
+    with:
+      dependencies_prevalidated: true
   sw92-physics-closure:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_physics_closure == 'true')
@@ -199,12 +203,14 @@ jobs:
     uses: ./.github/workflows/sw92_phase_assigned_no_w.yml
   sw92-phase-assigned-three-phase-topology:
     needs: impact
-    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_pt == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' || needs.impact.outputs.sw92_phase_assigned_boundary == 'true')
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_pt == 'true' || needs.impact.outputs.sw92_profile_c_phase_set == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' || needs.impact.outputs.sw92_phase_assigned_boundary == 'true')
     uses: ./.github/workflows/_sw92_phase_assigned_topology.yml
     with:
-      run_three_phase: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' || needs.impact.outputs.sw92_profile_c_pt == 'true' }}
-      run_three_phase_closure: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' || needs.impact.outputs.sw92_profile_c_pt == 'true' }}
-      run_boundary: ${{ needs.impact.outputs.sw92_phase_assigned_boundary == 'true' || needs.impact.outputs.sw92_profile_c_pt == 'true' }}
+      run_three_phase: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' }}
+      run_three_phase_closure: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' }}
+      run_boundary: ${{ needs.impact.outputs.sw92_phase_assigned_boundary == 'true' }}
+      run_pt: ${{ needs.impact.outputs.sw92_profile_c_pt == 'true' }}
+      run_phase_set_dependencies: ${{ needs.impact.outputs.sw92_profile_c_phase_set == 'true' }}
   ad:
     needs: impact
     if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.ad_has_work == 'true')
