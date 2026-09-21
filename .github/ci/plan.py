@@ -82,11 +82,15 @@ CORE_ROUTER_JOB_ROUTES = {
 
 def router_job_changes(before, head):
     def read(rev):
-        raw = subprocess.check_output(
+        proc = subprocess.run(
             ['git', 'show', rev + ':.github/workflows/pr_incremental_ci.yml'],
             text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
-        obj = yaml.safe_load(raw)
+        if proc.returncode != 0:
+            return {}
+        obj = yaml.safe_load(proc.stdout) or {}
         return obj.get('jobs', {})
     old, new = read(before), read(head)
     return sorted(name for name in set(old) | set(new) if old.get(name) != new.get(name))
