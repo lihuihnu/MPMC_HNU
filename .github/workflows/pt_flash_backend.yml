@@ -79,8 +79,10 @@ jobs:
         run: ctest --test-dir build/pt-flash-backend -C ${{ matrix.config }} -R '^flash[.]pt_flash_backend[.]' --verbose --no-tests=error
 
       - name: Independently verify frozen PR76 near-dew references
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py
 
       - name: Cross-check PR76 near-dew reference precision
         if: matrix.sanitizer == 'ON'
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96

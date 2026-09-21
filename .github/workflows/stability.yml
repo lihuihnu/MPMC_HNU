@@ -98,6 +98,8 @@ jobs:
       - name: Run necessary stability increment
         run: ctest --test-dir build/flash-stability -C ${{ matrix.config }} -R '^flash[.]stability[.]' --verbose --no-tests=error
       - name: Regenerate independent fixed-state PR76 references
-        run: "$MPMC_PYTHON" tests/flash/stability/reference_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/stability/reference_decimal.py
       - name: Regenerate independent fixed-state SW92 references
-        run: "$MPMC_PYTHON" tests/flash/stability/reference_sw92_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/stability/reference_sw92_decimal.py

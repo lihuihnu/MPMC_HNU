@@ -107,18 +107,25 @@ jobs:
       - name: Run phase split increment
         run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
       - name: Independently regenerate binary equilibrium references
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_split_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_split_decimal.py
       - name: Independently regenerate ternary equilibrium references
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_ternary_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_ternary_decimal.py
       - name: Independently regenerate converged-solution sensitivity references
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_sensitivity_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_sensitivity_decimal.py
       - name: Independently check saturation and continuous boundary references
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py
       - name: Cross-check boundary reference precision on the sanitizer configuration
         if: matrix.sanitizer == 'ON'
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py --precision 96
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py --precision 96
       - name: Independently audit near-dew input resolution and phase gate
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py
       - name: Cross-check near-dew reference precision
         if: matrix.sanitizer == 'ON'
-        run: "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
+        run: |
+          "$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
