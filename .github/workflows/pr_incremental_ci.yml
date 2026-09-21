@@ -1,57 +1,263 @@
-# candidate-head: 9487ffdde33d8045fb09aebab5fa005d0b739b9b
-name: CI governance candidate validation
+name: Hosted Linux runner migration validation
 on:
   push:
     branches: [work/ci-single-entry-20260921]
+
 permissions:
-  contents: read
-  actions: read
+  contents: write
+
 jobs:
-  audit:
+  migrate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: work/ci-governance-fix-20260921
+          ref: e4fdd3414b2f4cb13628a47cf53999b5c5263a33
           persist-credentials: false
           fetch-depth: 0
+
       - name: Install pinned validators
         run: |
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Validate governance candidate
+
+      - name: Switch Linux gates to GitHub-hosted runners and validate
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: e4fdd3414b2f4cb13628a47cf53999b5c5263a33
+          TARGET_BRANCH: feat/three-phase-compositional-flow
         run: |
           set -euo pipefail
-          python3 -m py_compile             .github/ci/impact_rules.py             .github/ci/plan.py             .github/ci/verify_workflows.py             .github/ci/verify_result.py
-          python3 .github/ci/verify_workflows.py
-          cat > /tmp/actionlint.yaml <<'EOF'
-          self-hosted-runner:
-            labels:
-              - mpmc_hnu
-          EOF
-          actionlint -shellcheck= -config-file /tmp/actionlint.yaml .github/workflows/*.yml
-          git diff --check f4f11807d3476aac6d3e19f2afcd98863d05a7c4..HEAD
-          bad="$(git diff --name-only f4f11807d3476aac6d3e19f2afcd98863d05a7c4..HEAD | grep -Ev '^\.github/' || true)"
-          test -z "$bad" || { echo "non-governance changes: $bad" >&2; exit 1; }
-          cat > /tmp/pr-event.json <<EOF
-          {
-            "action": "synchronize",
-            "pull_request": {
-              "number": 118,
-              "base": {"sha": "256b24edffb5b66433f5dcc6984d61072ac11328", "ref": "main"},
-              "head": {
-                "sha": "$(git rev-parse HEAD)",
-                "ref": "work/ci-governance-fix-20260921",
-                "repo": {"full_name": "lihuihnu/MPMC_HNU"}
-              }
-            }
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import urllib.request
+          import yaml
+
+          expected = os.environ["EXPECTED_HEAD"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          target_branch = os.environ["TARGET_BRANCH"]
+
+          def api(path, payload=None, method=None):
+              url = "https://api.github.com/repos/" + repo + path
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  method=method or ("POST" if payload is not None else "GET"),
+                  headers={
+                      "Authorization": "Bearer " + token,
+                      "Accept": "application/vnd.github+json",
+                      "Content-Type": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  return json.load(response)
+
+          def load_yaml(path):
+              obj = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+              if isinstance(obj, dict) and True in obj:
+                  obj["on"] = obj.pop(True)
+              return obj
+
+          def digest(obj):
+              return hashlib.sha256(
+                  json.dumps(obj, sort_keys=True, ensure_ascii=False).encode()
+              ).hexdigest()
+
+          ref = api("/git/ref/heads/" + target_branch)
+          actual = ref["object"]["sha"]
+          if actual != expected:
+              raise SystemExit(f"target moved: expected {expected}, got {actual}")
+
+          workflow_paths = sorted(Path(".github/workflows").glob("*.yml"))
+          changed_workflows = []
+          for path in workflow_paths:
+              text = path.read_text(encoding="utf-8")
+              original = text
+
+              # Matrix selectors: Linux rows now use the official Ubuntu runner.
+              text = re.sub(
+                  r"(runner:\s*)['\"]?mpmc_hnu['\"]?",
+                  r"\1ubuntu-24.04",
+                  text,
+              )
+
+              # Dedicated private-runner jobs become ordinary GitHub-hosted Ubuntu jobs.
+              text = re.sub(
+                  r"(?m)^(\s*)runs-on:\s*\n"
+                  r"\1\s*-\s*self-hosted\s*\n"
+                  r"\1\s*-\s*linux\s*\n"
+                  r"\1\s*-\s*x64\s*\n"
+                  r"\1\s*-\s*mpmc_hnu\s*$",
+                  r"\1runs-on: ubuntu-24.04",
+                  text,
+              )
+              text = re.sub(
+                  r"(?m)^(\s*)runs-on:\s*\[\s*self-hosted\s*,\s*linux\s*,\s*x64\s*,\s*mpmc_hnu\s*\]\s*$",
+                  r"\1runs-on: ubuntu-24.04",
+                  text,
+              )
+
+              # Ubuntu images guarantee python3; do not depend on a 'python' alias.
+              text = text.replace(
+                  "python -m unittest discover -s products/pt_android/tests",
+                  "python3 -m unittest discover -s products/pt_android/tests",
+              )
+
+              if text != original:
+                  path.write_text(text, encoding="utf-8")
+                  changed_workflows.append(str(path))
+
+          # Generated selector matrices must match the workflow policy.
+          impact = Path(".github/ci/impact_rules.py")
+          text = impact.read_text(encoding="utf-8")
+          text = text.replace('"runner": "mpmc_hnu"', '"runner": "ubuntu-24.04"')
+          impact.write_text(text, encoding="utf-8")
+
+          # Update governance docs to the new explicit owner policy.
+          docs = {
+              ".github/AGENTS.md": [
+                  (
+                      "Linux 编译/数值测试使用私有 `mpmc_hnu`；Windows/macOS 使用官方 runner。官方 Linux 只承担轻量元数据、结构检查与汇总。不受信任 fork 不得自动在私有 runner 执行。",
+                      "Linux 编译/数值测试统一使用 GitHub 官方 `ubuntu-24.04`；Windows 使用 `windows-2022`、macOS 使用既有官方托管 runner。不得新增仓库私有/self-hosted runner 依赖；runner 可移植性问题应在 workflow 中显式安装或选择工具，而不是依赖机器预装状态。",
+                  ),
+              ],
+              ".github/ci/README.md": [
+                  (
+                      "不受信任 fork 不在私人 runner 执行。Linux 科学测试保留 `mpmc_hnu`，Windows/macOS 保留官方平台。",
+                      "Linux 科学测试使用 GitHub 官方 `ubuntu-24.04`，Windows/macOS 保留官方平台。不再依赖仓库私有/self-hosted runner。",
+                  ),
+              ],
+              "AGENTS.md": [
+                  (
+                      "正式自动化测试按平台固定 runner ownership：**Linux 测试统一使用仓库私有 self-hosted Linux x64 runner，canonical 自定义 label 为 `mpmc_hnu`；Windows/macOS 测试继续使用 GitHub 官方托管 runner。** Linux 测试 job 应使用 `[self-hosted, linux, x64, mpmc_hnu]` 或在跨平台 matrix 中使用唯一的 `mpmc_hnu` runner selector；不得退回 `ubuntu-*` GitHub-hosted runner。纯路径判断、suite 选择等不执行编译/测试的轻量 metadata gate 可以继续使用官方托管 Linux runner，避免占用私有计算资源。runner 不可用时必须明确报告，不能把未执行的测试冒充通过；本地静态差异检查可以辅助审计，但不能替代对应平台 runner 的编译与运行结果。",
+                      "正式自动化测试按平台固定 runner ownership：**Linux 测试统一使用 GitHub 官方托管 `ubuntu-24.04`；Windows/macOS 测试继续使用 GitHub 官方托管 runner。** 不得新增仓库私有/self-hosted runner 依赖。workflow 必须显式准备所需工具或选择官方镜像已有的稳定接口，不能依赖某台持久机器的偶然环境。runner 不可用时必须明确报告，不能把未执行的测试冒充通过；本地静态差异检查可以辅助审计，但不能替代对应平台 runner 的编译与运行结果。",
+                  ),
+                  (
+                      "优先使用私有 `mpmc_hnu` Linux runner 执行相关核心 Linux 测试；跨平台变化增加必要 Windows/macOS 官方托管作业和编译器组合，不为纯文档或无关变更机械运行全部矩阵。",
+                      "Linux 核心测试统一使用官方 `ubuntu-24.04`；跨平台变化增加必要 Windows/macOS 官方托管作业和编译器组合，不为纯文档或无关变更机械运行全部矩阵。",
+                  ),
+                  (
+                      "当前代码变更经 PR 在对应平台 runner 验证后再集成：Linux 使用私有 `mpmc_hnu`，Windows/macOS 使用官方托管 runner；",
+                      "当前代码变更经 PR 在对应平台 runner 验证后再集成：Linux/Windows/macOS 均使用对应 GitHub 官方托管 runner；",
+                  ),
+                  (
+                      "CI runner 的计时仍具有环境噪声；即使私有 Linux runner 更稳定，性能结论也必须报告硬件/软件环境与重复测量，不能只凭一次 CI 时间宣称加速。",
+                      "CI runner 的计时具有环境噪声；性能结论必须报告 GitHub-hosted 镜像、软件环境与重复测量，不能只凭一次 CI 时间宣称加速。",
+                  ),
+              ],
           }
-          EOF
-          : > /tmp/planner-output
-          GITHUB_EVENT_PATH=/tmp/pr-event.json           GITHUB_EVENT_NAME=pull_request           GITHUB_REPOSITORY=lihuihnu/MPMC_HNU           GITHUB_OUTPUT=/tmp/planner-output           python3 .github/ci/plan.py
-          test -s /tmp/planner-output
-          echo "CI_GOVERNANCE_CANDIDATE_OK"
+          for path, replacements in docs.items():
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              for old, new in replacements:
+                  if old not in text:
+                      raise SystemExit(f"documentation anchor missing: {path}: {old[:60]}")
+                  text = text.replace(old, new)
+              p.write_text(text, encoding="utf-8")
+
+          # Refresh workflow-map runner/matrix metadata and semantic fingerprints.
+          map_path = Path(".github/ci/workflow_map.json")
+          catalog = json.loads(map_path.read_text(encoding="utf-8"))
+          router_path = ".github/workflows/pr_incremental_ci.yml"
+          for path, spec in catalog["workflows"].items():
+              wf = load_yaml(path)
+              if path != router_path:
+                  spec.pop("retained_blob_sha", None)
+                  spec["retained_hash"] = digest(wf)
+              for job_name, job_spec in spec.get("jobs", {}).items():
+                  actual_job = (wf.get("jobs") or {}).get(job_name)
+                  if actual_job is None:
+                      continue
+                  job_spec["runner"] = actual_job.get("runs-on")
+                  job_spec["strategy"] = actual_job.get("strategy")
+          map_path.write_text(
+              json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          # Make hosted-runner ownership executable governance, not just prose.
+          verify = Path(".github/ci/verify_workflows.py")
+          text = verify.read_text(encoding="utf-8")
+          marker = "    assert auto == [router_path], ('multiple automatic workflow entries', auto)\n"
+          extra = """    # Linux CI must be portable to GitHub-hosted runners; no private labels remain.\n    for workflow_path in sorted(paths):\n        serialized = Path(workflow_path).read_text(encoding='utf-8')\n        assert 'mpmc_hnu' not in serialized, ('private runner label remains', workflow_path)\n        assert 'self-hosted' not in serialized, ('self-hosted runner remains', workflow_path)\n\n"""
+          if extra not in text:
+              if marker not in text:
+                  raise SystemExit("verify_workflows insertion anchor missing")
+              text = text.replace(marker, marker + extra)
+          verify.write_text(text, encoding="utf-8")
+
+          # Hard check after all transformations.
+          for path in workflow_paths:
+              text = path.read_text(encoding="utf-8")
+              if "mpmc_hnu" in text or "self-hosted" in text:
+                  raise SystemExit(f"private runner reference remains: {path}")
+
+          # Static governance validation before any write to the PR branch.
+          subprocess.run(
+              [
+                  "python3", "-m", "py_compile",
+                  ".github/ci/impact_rules.py",
+                  ".github/ci/plan.py",
+                  ".github/ci/verify_result.py",
+                  ".github/ci/verify_workflows.py",
+              ],
+              check=True,
+          )
+          subprocess.run(["python3", ".github/ci/verify_workflows.py"], check=True)
+          subprocess.run(
+              ["actionlint", "-shellcheck=", ".github/workflows/*.yml"],
+              shell=True,
+              check=True,
+          )
+          subprocess.run(["git", "diff", "--check"], check=True)
+
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only"], text=True
+          ).splitlines()
+          allowed = [
+              p for p in changed
+              if p.startswith(".github/") or p == "AGENTS.md"
+          ]
+          if changed != allowed:
+              raise SystemExit("runner migration escaped CI/governance scope: " + repr(changed))
+
+          print("HOSTED_RUNNER_MIGRATION_STATIC_OK", len(changed), "files")
+          print("\n".join(changed))
+
+          # Publish exactly one atomic commit to the PR branch.
+          base_commit = api("/git/commits/" + expected)
+          elements = []
+          for path in changed:
+              content = Path(path).read_text(encoding="utf-8")
+              blob = api("/git/blobs", {"content": content, "encoding": "utf-8"})
+              elements.append({
+                  "path": path,
+                  "mode": "100644",
+                  "type": "blob",
+                  "sha": blob["sha"],
+              })
+          tree = api("/git/trees", {
+              "base_tree": base_commit["tree"]["sha"],
+              "tree": elements,
+          })
+          commit = api("/git/commits", {
+              "message": "refactor(ci): restore GitHub-hosted Linux runners",
+              "tree": tree["sha"],
+              "parents": [expected],
+          })
+          api(
+              "/git/refs/heads/" + target_branch,
+              {"sha": commit["sha"], "force": False},
+              method="PATCH",
+          )
+          print("PUBLISHED_COMMIT=" + commit["sha"])
+          PY
