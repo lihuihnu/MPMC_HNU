@@ -479,6 +479,28 @@ public:
     }
 
     [[nodiscard]] PetscErrorCode
+    evaluate_current_cell_for_phase_transition(
+        mpmc::mesh::LocalIndex cell,
+        std::span<const double> natural_variables,
+        std::optional<
+            MixedCardinalityPhysicalCurrentCellLinearization3D>*
+                output,
+        double* porosity,
+        NaturalVariableSnesEvaluationStatus3D*
+            status) const {
+        if (physical_context_ == nullptr) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+        return physical_context_
+            ->evaluate_phase_transition_cell(
+                cell,
+                natural_variables,
+                output,
+                porosity,
+                status);
+    }
+
+    [[nodiscard]] PetscErrorCode
     solve(
         Vec* solution,
         std::optional<

@@ -15,6 +15,12 @@ if(NOT TARGET mpmc_discretization_petsc)
         discretization-petsc)
 endif()
 
+if(NOT TARGET mpmc_flash)
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../flash"
+        flow-discretization-flash)
+endif()
+
 add_library(mpmc_flow_discretization_petsc INTERFACE)
 add_library(
     mpmc::flow_discretization_petsc
@@ -30,4 +36,5 @@ target_link_libraries(
     INTERFACE
         mpmc::flow_discretization
         mpmc::flow_thermodynamics
+        mpmc::flash
         mpmc::discretization_petsc)

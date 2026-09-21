@@ -69,8 +69,14 @@ struct GlobalPhaseSetSignatureEntry3D {
 enum class PostSnesPhaseTransitionOutcome3D {
     stable_phase_set,
     nonlinear_solve_diverged,
+    phase_set_scan_indeterminate,
     transition_restart_budget_exhausted,
     phase_set_cycle_detected
+};
+
+enum class PostSnesPhaseTransitionScanStatus3D {
+    complete,
+    indeterminate
 };
 
 struct PostSnesPhaseTransitionControllerOptions3D {
@@ -84,6 +90,9 @@ struct PostSnesPhaseTransitionGenerationReport3D {
         phase_set_before_solve;
     VariableCardinalityNaturalVariableSnesSolveReport3D
         nonlinear_solve;
+    std::optional<
+        PostSnesPhaseTransitionScanStatus3D>
+        phase_transition_scan_status;
     std::vector<
         AcceptedPhaseTransitionSummary3D>
         accepted_transition_batch;
@@ -114,6 +123,8 @@ using PostSnesPhaseTransitionScanner3D =
         const VariableCardinalityNaturalVariableSnesSolveReport3D&
             solve_report,
         void* user_context,
+        PostSnesPhaseTransitionScanStatus3D*
+            scan_status,
         std::vector<
             PostSnesPhaseTransitionProposal3D>*
                 local_owned_proposals);
@@ -1022,12 +1033,17 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         std::vector<
             PostSnesPhaseTransitionProposal3D>
             local_proposals;
+        PostSnesPhaseTransitionScanStatus3D
+            local_scan_status =
+                PostSnesPhaseTransitionScanStatus3D::
+                    complete;
         local_error =
             bindings.scanner(
                 *current,
                 solved,
                 *solve_report,
                 bindings.scanner_context,
+                &local_scan_status,
                 &local_proposals);
         error =
             collective_error(
@@ -1037,6 +1053,46 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
             (void)VecDestroy(
                 &solved);
             return error;
+        }
+
+        int local_indeterminate =
+            local_scan_status ==
+                    PostSnesPhaseTransitionScanStatus3D::
+                        indeterminate
+                ? 1
+                : 0;
+        int global_indeterminate = 0;
+        if (MPI_Allreduce(
+                &local_indeterminate,
+                &global_indeterminate,
+                1,
+                MPI_INT,
+                MPI_MAX,
+                comm) != MPI_SUCCESS) {
+            (void)VecDestroy(
+                &solved);
+            return PETSC_ERR_MPI;
+        }
+        generation_report
+            .phase_transition_scan_status =
+            global_indeterminate != 0
+                ? PostSnesPhaseTransitionScanStatus3D::
+                      indeterminate
+                : PostSnesPhaseTransitionScanStatus3D::
+                      complete;
+        if (global_indeterminate != 0) {
+            completed.outcome =
+                PostSnesPhaseTransitionOutcome3D::
+                    phase_set_scan_indeterminate;
+            completed.generations.push_back(
+                std::move(
+                    generation_report));
+            *final_state = solved;
+            *final_system =
+                std::move(current);
+            report->emplace(
+                std::move(completed));
+            return PETSC_SUCCESS;
         }
 
         local_error =

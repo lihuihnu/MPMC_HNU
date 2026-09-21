@@ -3584,3 +3584,35 @@ This bridge establishes heterogeneous distributed numbering only. Complete
 component/energy/fugacity residual assembly and MPIAIJ symbolic preallocation still
 need to be generalized from uniform `q` to per-row-cell/per-column-cell widths before
 mixed-cardinality SNES can assemble one coupled Jacobian.
+
+## 46. Production post-SNES PT phase-transition scanner
+
+The mixed-cardinality outer controller now has a production scanner bridge from one
+converged frozen-cardinality flow state to the existing model-neutral
+`PtFlashBackend`.
+
+For every locally owned cell the scanner:
+
+1. re-evaluates the same production cell closure used by SNES at the converged
+   natural-variable state;
+2. derives the overall feed from the current pore-volume component inventory,
+   `z_i = N_i / sum_j N_j`, rather than substituting a phase composition;
+3. calls the configured PT backend only after SNES convergence;
+4. treats an accepted equal-cardinality result as a completed scan with no transition;
+5. converts an accepted different-cardinality result through the existing
+   `make_phase_set_transition_candidate_from_flash()` evidence guard; and
+6. leaves target phase molar density to an explicit resolver callback because the
+   generic PT publication does not promise a density or even a published `Z` for
+   every provider/topology.
+
+A missing target-density resolution, a non-accepted/indeterminate PT result, or a
+three-phase state whose capillary offsets imply different active phase pressures is a
+**scan-indeterminate** result. It is not silently interpreted as a stable phase set.
+The post-SNES controller therefore accepts the timestep only when every MPI rank
+reports a complete scan and the global accepted transition batch is empty.
+
+The scanner never changes phase cardinality inside an SNES callback, never changes
+EOS/flash tolerances, and never infers oil/gas/water identity from phase slots,
+density, `Z`, or provider ordering. The physical SW92 Sample-6 PT backend remains
+the real 2->3 transition regression for this bridge; controlled flow fixtures test
+only orchestration and failure semantics.

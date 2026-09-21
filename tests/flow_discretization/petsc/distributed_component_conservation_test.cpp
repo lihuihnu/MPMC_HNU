@@ -46,6 +46,8 @@ bool cross_cardinality_tpfa_bridge_header();
 bool thermodynamic_cross_cardinality_tpfa_adapter_header();
 bool phase_transition_outer_rebuild_header();
 bool post_snes_phase_transition_controller_header();
+bool post_snes_pt_flash_phase_transition_scanner_header();
+void post_snes_pt_flash_phase_transition_scanner_test();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -5389,6 +5391,9 @@ void headers() {
         post_snes_phase_transition_controller_header(),
         "post-SNES phase-transition controller header probe failed");
     require_collective(
+        post_snes_pt_flash_phase_transition_scanner_header(),
+        "post-SNES PT flash phase-transition scanner header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -5433,6 +5438,7 @@ int main(int argc, char** argv) {
         variable_cardinality_natural_variable_numbering_test();
         variable_cardinality_snes_assembly_test();
         mixed_cardinality_physical_snes_assembly_test();
+        post_snes_pt_flash_phase_transition_scanner_test();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();

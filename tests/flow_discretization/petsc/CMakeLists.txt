@@ -15,6 +15,7 @@ add_executable(
     variable_cardinality_natural_variable_numbering_test.cpp
     variable_cardinality_snes_assembly_test.cpp
     mixed_cardinality_physical_snes_assembly_test.cpp
+    post_snes_pt_flash_phase_transition_scanner_test.cpp
     distributed_component_conservation_header.cpp
     distributed_energy_conservation_header.cpp
     energy_global_assembly_mapping_header.cpp
@@ -32,6 +33,7 @@ add_executable(
     thermodynamic_cross_cardinality_tpfa_adapter_header.cpp
     phase_transition_outer_rebuild_header.cpp
     post_snes_phase_transition_controller_header.cpp
+    post_snes_pt_flash_phase_transition_scanner_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(

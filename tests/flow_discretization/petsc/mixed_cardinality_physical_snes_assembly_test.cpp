@@ -2711,6 +2711,7 @@ struct ControllerFixture {
             provider{};
     bool oscillate_after_restart{};
     std::size_t rebuild_calls{};
+    bool scan_indeterminate{};
 };
 
 PetscErrorCode
@@ -2723,13 +2724,19 @@ controller_scan(
         VariableCardinalityNaturalVariableSnesSolveReport3D&
             solve_report,
     void* raw_context,
+    fdp::PostSnesPhaseTransitionScanStatus3D*
+        scan_status,
     std::vector<
         fdp::PostSnesPhaseTransitionProposal3D>*
             output) {
     if (raw_context == nullptr ||
+        scan_status == nullptr ||
         output == nullptr) {
         return PETSC_ERR_ARG_NULL;
     }
+    *scan_status =
+        fdp::PostSnesPhaseTransitionScanStatus3D::
+            complete;
     output->clear();
     auto* fixture =
         static_cast<
@@ -2740,6 +2747,12 @@ controller_scan(
             solve_report.converged_reason) <=
         0) {
         return PETSC_ERR_ARG_WRONGSTATE;
+    }
+    if (fixture->scan_indeterminate) {
+        *scan_status =
+            fdp::PostSnesPhaseTransitionScanStatus3D::
+                indeterminate;
+        return PETSC_SUCCESS;
     }
 
     const auto& record =
@@ -3058,6 +3071,24 @@ void run_controller_case(
                 fixture->rebuild_calls ==
                     2U,
             "physical phase-set cycle was not detected after the reverse rebuild");
+    } else if (
+        expected_outcome ==
+        fdp::
+            PostSnesPhaseTransitionOutcome3D::
+                phase_set_scan_indeterminate) {
+        require_collective(
+            controller_report
+                    ->generations.size() ==
+                1U &&
+                controller_report
+                    ->generations.front()
+                    .phase_transition_scan_status ==
+                    fdp::
+                        PostSnesPhaseTransitionScanStatus3D::
+                            indeterminate &&
+                fixture->rebuild_calls ==
+                    0U,
+            "indeterminate phase-set scan was incorrectly accepted or rebuilt");
     } else if (
         expected_outcome ==
         fdp::
@@ -4000,6 +4031,27 @@ void mixed_cardinality_physical_snes_assembly_test() {
         fdp::
             PostSnesPhaseTransitionOutcome3D::
                 transition_restart_budget_exhausted,
+        0U);
+
+    ControllerFixture indeterminate_controller{
+        rank,
+        &schedule,
+        &partition,
+        &bridge,
+        &pattern,
+        &audit,
+        &pr_model,
+        &outer_provider,
+        false,
+        0U};
+    indeterminate_controller.scan_indeterminate =
+        true;
+    run_controller_case(
+        &indeterminate_controller,
+        4U,
+        fdp::
+            PostSnesPhaseTransitionOutcome3D::
+                phase_set_scan_indeterminate,
         0U);
 
     require_collective(
