@@ -1,3 +1,4 @@
+# candidate-head: 5d4898d9df4ec83eeeb8c91cf29605da5959702d
 name: CI governance candidate validation
 on:
   push:
