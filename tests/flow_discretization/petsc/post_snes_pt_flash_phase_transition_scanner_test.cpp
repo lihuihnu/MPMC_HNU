@@ -1,4 +1,5 @@
 #include <mpmc/flow_discretization_petsc/post_snes_pt_flash_phase_transition_scanner.hpp>
+#include <mpmc/flash/sw92_profile_c_pt_flash_backend.hpp>
 
 #include "../../flash/sw92_phase_assigned_pt/physical_sample6.hpp"
 
