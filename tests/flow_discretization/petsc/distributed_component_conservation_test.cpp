@@ -45,6 +45,7 @@ void mixed_cardinality_physical_snes_assembly_test();
 bool cross_cardinality_tpfa_bridge_header();
 bool thermodynamic_cross_cardinality_tpfa_adapter_header();
 bool phase_transition_outer_rebuild_header();
+bool post_snes_phase_transition_controller_header();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -5385,6 +5386,9 @@ void headers() {
         phase_transition_outer_rebuild_header(),
         "phase-transition outer rebuild header probe failed");
     require_collective(
+        post_snes_phase_transition_controller_header(),
+        "post-SNES phase-transition controller header probe failed");
+    require_collective(
         global_component_assembly_mapping_header(),
         "global component assembly mapping header probe failed");
     require_collective(
@@ -5441,7 +5445,7 @@ int main(int argc, char** argv) {
                 &rank) == MPI_SUCCESS &&
             rank == 0) {
             std::cout
-                << "[PASS] PETSc SNES mixed-cardinality outer phase-transition rebuild lifecycle\n";
+                << "[PASS] PETSc SNES post-convergence phase-transition controller lifecycle\n";
         }
     } catch (const std::exception& exception) {
         int rank = -1;

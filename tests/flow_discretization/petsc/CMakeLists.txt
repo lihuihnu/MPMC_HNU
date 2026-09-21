@@ -31,6 +31,7 @@ add_executable(
     cross_cardinality_tpfa_bridge_header.cpp
     thermodynamic_cross_cardinality_tpfa_adapter_header.cpp
     phase_transition_outer_rebuild_header.cpp
+    post_snes_phase_transition_controller_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(
