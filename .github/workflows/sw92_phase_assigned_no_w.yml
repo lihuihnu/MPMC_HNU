@@ -4,6 +4,12 @@ name: SW92 phase-assigned no-W topology
 # has no local PR path gate; it only executes routed or explicit manual validation.
 on:
   workflow_call:
+    inputs:
+      dependencies_prevalidated:
+        description: Central CI already validated fixed-family VLE dependency.
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -79,6 +85,7 @@ jobs:
         run: ctest --test-dir build/sw92-phase-assigned-no-w -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_no_w[.]' --verbose --no-tests=error
 
       - name: Configure affected fixed-family VLE
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
@@ -88,6 +95,8 @@ jobs:
             "${config_arg[@]}" ${{ matrix.compiler }} \
             -DMPMC_SW92_FAMILY_VLE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Build affected fixed-family VLE
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: cmake --build build/sw92-family-vle --target mpmc_sw92_family_vle_tests --config ${{ matrix.config }} --parallel 2
       - name: Run affected fixed-family VLE
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: ctest --test-dir build/sw92-family-vle -C ${{ matrix.config }} -R '^flash[.]sw92_family_vle[.]' --verbose --no-tests=error
