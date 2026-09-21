@@ -4812,7 +4812,8 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "71aac96a200e53042e4674eb8fd4b9424f74e663eb4175fa63f0836e467e808c"
+      "retained_hash": "71aac96a200e53042e4674eb8fd4b9424f74e663eb4175fa63f0836e467e808c",
+      "retained_blob_sha": "fa2e8cfa647723c89d18997b07b5915321465524"
     },
     ".github/workflows/sw92_phase_assigned_pt.yml": {
       "name": "SW92 Profile-C top-level PT",
