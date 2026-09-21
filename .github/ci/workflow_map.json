@@ -272,7 +272,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "1e52c3b800a31b474f2936ea1389b4eff0ea58c88638012b00600879ddec7f16"
+      "retained_hash": "d0d848b7913bae4df2698ff72d3fe2e4b08b4b7cecfdc0d5a84603078938afab"
     },
     ".github/workflows/cpa_baseline.yml": {
       "name": "CPA parameter-association baseline",
@@ -457,7 +457,12 @@
           "timeout_minutes": null
         },
         "paired-baseline": {
-          "runner": "ubuntu-24.04",
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -479,7 +484,7 @@
           ".github/workflows/cpa_performance_audit.yml"
         ]
       },
-      "retained_hash": "b194b859d0e032847cf4930ee301b21a74e5e0be4b5155ccb5b265f08241f208",
+      "retained_hash": "5642af21c80c3a34cad40ab0e634ab508d2e1ce78bbee92cad6d671b02eb159b",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "paired-baseline": "legacy_cpa_performance_audit__paired-baseline"
@@ -3614,7 +3619,7 @@
           ".github/workflows/stability.yml"
         ]
       },
-      "retained_hash": "ad6bdd35e9a79d59fa8d03fc218219af8225617a2d1a3320e2e9a8eae4311628",
+      "retained_hash": "355be2fdde9070acba309fbb7627e69f14035fceba6124e19b70504bfd36bdb3",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "stability": "legacy_stability__stability"
