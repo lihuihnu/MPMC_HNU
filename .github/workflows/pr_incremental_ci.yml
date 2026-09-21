@@ -3,7 +3,7 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: pr-incremental-ci-${{ github.ref }}
+  group: pr-incremental-ci-v2-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   impact:
