@@ -44,6 +44,9 @@ jobs:
       sw92_profile_c_phase_set: ${{ steps.route.outputs.sw92_profile_c_phase_set }}
       sw92_profile_c_sensitivity: ${{ steps.route.outputs.sw92_profile_c_sensitivity }}
       sw92_physics_closure: ${{ steps.route.outputs.sw92_physics_closure }}
+      sw92_phase_assigned_joint: ${{ steps.route.outputs.sw92_phase_assigned_joint }}
+      sw92_phase_assigned_h_side_witness: ${{ steps.route.outputs.sw92_phase_assigned_h_side_witness }}
+      sw92_phase_assigned_no_w: ${{ steps.route.outputs.sw92_phase_assigned_no_w }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -451,6 +454,44 @@ jobs:
                   "tests/support/sw92/test_support.hpp",
                   ".github/workflows/physics_sw92_closure.yml",
               ],
+              "sw92_phase_assigned_joint": [
+                  "tests/support/sw92/test_support.hpp",
+                  "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp",
+                  "modules/flash/sw92_phase_assigned_joint.md",
+                  "modules/flash/sw92_phase_assigned_c2_stability_audit.md",
+                  "modules/thermodynamics/**/*.hpp",
+                  "tests/flash/sw92_phase_assigned_joint/**",
+                  ".github/workflows/sw92_phase_assigned_joint.yml",
+              ],
+              "sw92_phase_assigned_h_side_witness": [
+                  "tests/support/sw92/test_support.hpp",
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp",
+                  "modules/flash/sw92_phase_assigned_h_side_witness.md",
+                  "modules/thermodynamics/**/*.hpp",
+                  "tests/flash/sw92_phase_assigned_joint/**",
+                  "tests/flash/sw92_phase_assigned_h_side_witness/**",
+                  ".github/workflows/sw92_phase_assigned_h_side_witness.yml",
+              ],
+              "sw92_phase_assigned_no_w": [
+                  "tests/support/sw92/test_support.hpp",
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/flash/include/mpmc/flash/pt_split.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_split.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp",
+                  "modules/flash/sw92_phase_assigned_no_w.md",
+                  "modules/thermodynamics/**/*.hpp",
+                  "tests/flash/sw92_family_vle/**",
+                  "tests/flash/sw92_phase_assigned_joint/**",
+                  "tests/flash/sw92_phase_assigned_no_w/**",
+                  ".github/workflows/sw92_phase_assigned_no_w.yml",
+              ],
 
           }
 
@@ -611,8 +652,8 @@ jobs:
               (["modules/flow/include/mpmc/flow/phase_transport.hpp"], expected_route(flow_core=True, flow_discretization=True)),
               (["modules/flash/include/mpmc/flash/pt_flash_backend.hpp"], expected_route(flow_core=True, pt_flash_backend=True, pr76_max3=True, cpa_split=True, cpa_max3=True, cpa_physical_validation=True, model_configuration=True)),
               (["tests/flash/stability/stability_test.cpp"], expected_route(pt_stability=True)),
-              (["modules/flash/include/mpmc/flash/rachford_rice.hpp"], expected_route(pt_split=True, model_configuration=True, sw92_family_vle=True)),
-              (["modules/thermodynamics/include/mpmc/thermodynamics/pr76.hpp"], expected_route(pt_flash_backend=True, pt_stability=True, pt_split=True, pr76_pt_continuation=True, pr76_max3=True, thermodynamics_contracts=True, physics_closure=True, sw92_family_vle=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True)),
+              (["modules/flash/include/mpmc/flash/rachford_rice.hpp"], expected_route(pt_split=True, model_configuration=True, sw92_family_vle=True, sw92_phase_assigned_joint=True)),
+              (["modules/thermodynamics/include/mpmc/thermodynamics/pr76.hpp"], expected_route(pt_flash_backend=True, pt_stability=True, pt_split=True, pr76_pt_continuation=True, pr76_max3=True, thermodynamics_contracts=True, physics_closure=True, sw92_family_vle=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_phase_assigned_joint=True, sw92_phase_assigned_h_side_witness=True, sw92_phase_assigned_no_w=True)),
               (["tests/flash/pr76_pt_continuation/continuation_test.cpp"], expected_route(pr76_pt_continuation=True)),
               (["tests/flash/pr76_three_phase/max3_test.cpp"], expected_route(pr76_max3=True)),
               (["modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp"], expected_route(pt_flash_backend=True, pr76_pt_continuation=True, pr76_max3=True, model_configuration=True)),
@@ -624,8 +665,8 @@ jobs:
               (["tests/thermodynamics/cpa_baseline/baseline_test.cpp"], expected_route(cpa_baseline=True, thermodynamics_contracts=True)),
               (["tests/thermodynamics/cpa_pt_phase/phase_test.cpp"], expected_route(cpa_split=True, cpa_pt_phase=True, thermodynamics_contracts=True)),
               (["tests/flash/cpa_physical_validation/physical_validation_test.cpp"], expected_route(pt_flash_backend=True, cpa_physical_validation=True)),
-              (["modules/thermodynamics/include/mpmc/thermodynamics/cpa_phase.hpp"], expected_route(flow_core=True, pt_flash_backend=True, pt_stability=True, pt_split=True, cpa_stability=True, cpa_split=True, cpa_max3=True, cpa_baseline=True, cpa_pt_phase=True, cpa_physical_validation=True, thermodynamics_contracts=True, physics_closure=True, sw92_family_vle=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True)),
-              (["modules/thermodynamics/include/mpmc/thermodynamics/components.hpp"], expected_route(pt_flash_backend=True, pt_stability=True, pt_split=True, thermodynamics_contracts=True, physics_closure=True, model_configuration=True, sw92_thermodynamics=True, sw92_family_vle=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True)),
+              (["modules/thermodynamics/include/mpmc/thermodynamics/cpa_phase.hpp"], expected_route(flow_core=True, pt_flash_backend=True, pt_stability=True, pt_split=True, cpa_stability=True, cpa_split=True, cpa_max3=True, cpa_baseline=True, cpa_pt_phase=True, cpa_physical_validation=True, thermodynamics_contracts=True, physics_closure=True, sw92_family_vle=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_phase_assigned_joint=True, sw92_phase_assigned_h_side_witness=True, sw92_phase_assigned_no_w=True)),
+              (["modules/thermodynamics/include/mpmc/thermodynamics/components.hpp"], expected_route(pt_flash_backend=True, pt_stability=True, pt_split=True, thermodynamics_contracts=True, physics_closure=True, model_configuration=True, sw92_thermodynamics=True, sw92_family_vle=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_phase_assigned_joint=True, sw92_phase_assigned_h_side_witness=True, sw92_phase_assigned_no_w=True)),
               (["tests/thermodynamics/contracts/contracts_test.cpp"], expected_route(thermodynamics_contracts=True, model_configuration=True)),
               (["tests/thermodynamics/pr76_pt/pt_test.cpp"], expected_route(thermodynamics_contracts=True)),
               (["modules/physics/include/mpmc/physics/component_inventory.hpp"], expected_route(physics_closure=True)),
@@ -635,11 +676,11 @@ jobs:
               ([".github/workflows/thermodynamics.yml"], expected_route(thermodynamics_contracts=True)),
               ([".github/workflows/physics_closure.yml"], expected_route(physics_closure=True)),
               ([".github/workflows/model_configuration.yml"], expected_route(model_configuration=True)),
-              (["modules/thermodynamics/include/mpmc/thermodynamics/sw92_phase.hpp"], expected_route(flow_core=True, pt_flash_backend=True, pt_stability=True, pt_split=True, thermodynamics_contracts=True, physics_closure=True, sw92_thermodynamics=True, sw92_family_vle=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_profile_c_sensitivity=True, sw92_physics_closure=True)),
+              (["modules/thermodynamics/include/mpmc/thermodynamics/sw92_phase.hpp"], expected_route(flow_core=True, pt_flash_backend=True, pt_stability=True, pt_split=True, thermodynamics_contracts=True, physics_closure=True, sw92_thermodynamics=True, sw92_family_vle=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_profile_c_sensitivity=True, sw92_physics_closure=True, sw92_phase_assigned_joint=True, sw92_phase_assigned_h_side_witness=True, sw92_phase_assigned_no_w=True)),
               (["tests/thermodynamics/sw92/sw92_test.cpp"], expected_route(thermodynamics_contracts=True, sw92_thermodynamics=True, sw92_profile_c_sensitivity=True)),
-              (["tests/flash/sw92_family_vle/family_vle_test.cpp"], expected_route(sw92_family_vle=True, sw92_profile_c_pt=True)),
+              (["tests/flash/sw92_family_vle/family_vle_test.cpp"], expected_route(sw92_family_vle=True, sw92_profile_c_pt=True, sw92_phase_assigned_no_w=True)),
               (["tests/flash/sw92_phase_assigned_pt/pt_test.cpp"], expected_route(sw92_profile_c_pt=True, sw92_profile_c_phase_set=True)),
-              (["tests/support/sw92/test_support.hpp"], expected_route(flow_discretization_petsc=True, pt_flash_backend=True, sw92_thermodynamics=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_profile_c_sensitivity=True, sw92_physics_closure=True)),
+              (["tests/support/sw92/test_support.hpp"], expected_route(flow_discretization_petsc=True, pt_flash_backend=True, sw92_thermodynamics=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_profile_c_sensitivity=True, sw92_physics_closure=True, sw92_phase_assigned_joint=True, sw92_phase_assigned_h_side_witness=True, sw92_phase_assigned_no_w=True)),
               ([".github/workflows/sw92.yml"], expected_route(sw92_thermodynamics=True)),
               ([".github/workflows/sw92_family_vle.yml"], expected_route(sw92_family_vle=True)),
               ([".github/workflows/sw92_phase_assigned_pt.yml"], expected_route(sw92_profile_c_pt=True)),
@@ -654,6 +695,15 @@ jobs:
               ([".github/workflows/sw92_profile_c_phase_set.yml"], expected_route(sw92_profile_c_phase_set=True)),
               ([".github/workflows/sw92_profile_c_sensitivity.yml"], expected_route(sw92_profile_c_sensitivity=True)),
               ([".github/workflows/physics_sw92_closure.yml"], expected_route(sw92_physics_closure=True)),
+              (["modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp"], expected_route(pt_flash_backend=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_physics_closure=True, sw92_phase_assigned_joint=True, sw92_phase_assigned_h_side_witness=True)),
+              (["tests/flash/sw92_phase_assigned_joint/joint_test.cpp"], expected_route(sw92_profile_c_pt=True, sw92_phase_assigned_joint=True, sw92_phase_assigned_h_side_witness=True, sw92_phase_assigned_no_w=True)),
+              (["modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp"], expected_route(pt_flash_backend=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_physics_closure=True, sw92_phase_assigned_h_side_witness=True)),
+              (["tests/flash/sw92_phase_assigned_h_side_witness/witness_test.cpp"], expected_route(sw92_profile_c_pt=True, sw92_phase_assigned_h_side_witness=True)),
+              (["modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp"], expected_route(pt_flash_backend=True, sw92_profile_c_pt=True, sw92_profile_c_phase_set=True, sw92_physics_closure=True, sw92_phase_assigned_no_w=True)),
+              (["tests/flash/sw92_phase_assigned_no_w/no_w_test.cpp"], expected_route(sw92_profile_c_pt=True, sw92_phase_assigned_no_w=True)),
+              ([".github/workflows/sw92_phase_assigned_joint.yml"], expected_route(sw92_phase_assigned_joint=True)),
+              ([".github/workflows/sw92_phase_assigned_h_side_witness.yml"], expected_route(sw92_phase_assigned_h_side_witness=True)),
+              ([".github/workflows/sw92_phase_assigned_no_w.yml"], expected_route(sw92_phase_assigned_no_w=True)),
           ]
           for paths, expected in checks:
               actual = route(paths)
@@ -936,6 +986,21 @@ jobs:
     needs: impact
     if: needs.impact.outputs.sw92_physics_closure == 'true'
     uses: ./.github/workflows/physics_sw92_closure.yml
+
+  sw92-phase-assigned-joint:
+    needs: impact
+    if: needs.impact.outputs.sw92_phase_assigned_joint == 'true'
+    uses: ./.github/workflows/sw92_phase_assigned_joint.yml
+
+  sw92-phase-assigned-h-side-witness:
+    needs: impact
+    if: needs.impact.outputs.sw92_phase_assigned_h_side_witness == 'true'
+    uses: ./.github/workflows/sw92_phase_assigned_h_side_witness.yml
+
+  sw92-phase-assigned-no-w:
+    needs: impact
+    if: needs.impact.outputs.sw92_phase_assigned_no_w == 'true'
+    uses: ./.github/workflows/sw92_phase_assigned_no_w.yml
 
   ad:
     needs: impact
