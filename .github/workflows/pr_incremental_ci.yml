@@ -38,6 +38,9 @@ jobs:
       thermo_matrix: ${{ steps.route.outputs.thermo_matrix }}
       physics_closure: ${{ steps.route.outputs.physics_closure }}
       model_configuration: ${{ steps.route.outputs.model_configuration }}
+      sw92_thermodynamics: ${{ steps.route.outputs.sw92_thermodynamics }}
+      sw92_family_vle: ${{ steps.route.outputs.sw92_family_vle }}
+      sw92_profile_c_pt: ${{ steps.route.outputs.sw92_profile_c_pt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -336,6 +339,53 @@ jobs:
                   "tests/thermodynamics/contracts/**",
                   ".github/workflows/model_configuration.yml",
               ],
+              "sw92_thermodynamics": [
+                  "tests/support/sw92/test_support.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/components.hpp",
+                  "modules/thermodynamics/include/mpmc/thermodynamics/pr76_roots.hpp",
+                  "modules/thermodynamics/CMakeLists.txt",
+                  "modules/thermodynamics/sw92.md",
+                  "tests/thermodynamics/sw92/**",
+                  ".github/workflows/sw92.yml",
+              ],
+              "sw92_family_vle": [
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+                  "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+                  "modules/flash/include/mpmc/flash/pt_split.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_split.hpp",
+                  "modules/flash/CMakeLists.txt",
+                  "modules/thermodynamics/**/*.hpp",
+                  "modules/thermodynamics/**/CMakeLists.txt",
+                  "tests/flash/sw92_family_vle/**",
+                  ".github/workflows/sw92_family_vle.yml",
+              ],
+              "sw92_profile_c_pt": [
+                  "tests/support/sw92/test_support.hpp",
+                  "modules/flash/include/mpmc/flash/pt_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_stability.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_split.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase_closure.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp",
+                  "modules/flash/include/mpmc/flash/sw92_phase_assigned_pt.hpp",
+                  "modules/flash/sw92_phase_assigned_pt.md",
+                  "modules/flash/sw92_authoritative_three_phase_audit.md",
+                  "modules/thermodynamics/**/*.hpp",
+                  "tests/flash/sw92_family_vle/**",
+                  "tests/flash/sw92_phase_assigned_joint/**",
+                  "tests/flash/sw92_phase_assigned_h_side_witness/**",
+                  "tests/flash/sw92_phase_assigned_three_phase/**",
+                  "tests/flash/sw92_phase_assigned_three_phase_closure/**",
+                  "tests/flash/sw92_phase_assigned_no_w/**",
+                  "tests/flash/sw92_phase_assigned_pt/**",
+                  ".github/workflows/sw92_phase_assigned_pt.yml",
+              ],
           }
 
           def compile_pattern(pattern):
@@ -491,190 +541,100 @@ jobs:
               }
 
           checks = [
-              (
-                  ["tests/flow_discretization/petsc/scanner.cpp"],
-                  expected_route(flow_discretization_petsc=True),
-              ),
-              (
-                  ["modules/flow/include/mpmc/flow/phase_transport.hpp"],
-                  expected_route(flow_core=True, flow_discretization=True),
-              ),
-              (
-                  ["modules/flash/include/mpmc/flash/pt_flash_backend.hpp"],
-                  expected_route(
-                      flow_core=True,
-                      pt_flash_backend=True,
-                      pr76_max3=True,
-                      cpa_split=True,
-                      cpa_max3=True,
-                      cpa_physical_validation=True,
-                      model_configuration=True,
-                  ),
-              ),
-              (
-                  ["tests/flash/stability/stability_test.cpp"],
-                  expected_route(pt_stability=True),
-              ),
-              (
-                  ["modules/flash/include/mpmc/flash/rachford_rice.hpp"],
-                  expected_route(pt_split=True, model_configuration=True),
-              ),
-              (
-                  ["modules/thermodynamics/include/mpmc/thermodynamics/pr76.hpp"],
-                  expected_route(
-                      pt_flash_backend=True,
-                      pt_stability=True,
-                      pt_split=True,
-                      pr76_pt_continuation=True,
-                      pr76_max3=True,
-                      thermodynamics_contracts=True,
-                      physics_closure=True,
-                  ),
-              ),
-              (
-                  ["tests/flash/pr76_pt_continuation/continuation_test.cpp"],
-                  expected_route(pr76_pt_continuation=True),
-              ),
-              (
-                  ["tests/flash/pr76_three_phase/max3_test.cpp"],
-                  expected_route(pr76_max3=True),
-              ),
-              (
-                  ["modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp"],
-                  expected_route(
-                      pt_flash_backend=True,
-                      pr76_pt_continuation=True,
-                      pr76_max3=True,
-                      model_configuration=True,
-                  ),
-              ),
-              (
-                  ["tests/flash/cpa_stability/stability_test.cpp"],
-                  expected_route(cpa_stability=True, cpa_split=True),
-              ),
-              (
-                  ["tests/flash/cpa_split/split_test.cpp"],
-                  expected_route(cpa_split=True, cpa_max3=True),
-              ),
-              (
-                  ["tests/flash/cpa_max3/max3_test.cpp"],
-                  expected_route(cpa_max3=True),
-              ),
-              (
-                  ["modules/flash/include/mpmc/flash/cpa_stability.hpp"],
-                  expected_route(
-                      pt_flash_backend=True,
-                      cpa_stability=True,
-                      cpa_split=True,
-                      cpa_max3=True,
-                      cpa_physical_validation=True,
-                  ),
-              ),
-              (
-                  [".github/workflows/_cpp_ctest.yml"],
-                  expected_route(
-                      cpa_stability=True,
-                      cpa_baseline=True,
-                      cpa_pt_phase=True,
-                  ),
-              ),
-              (
-                  ["tests/thermodynamics/cpa_baseline/baseline_test.cpp"],
-                  expected_route(
-                      cpa_baseline=True,
-                      thermodynamics_contracts=True,
-                  ),
-              ),
-              (
-                  ["tests/thermodynamics/cpa_pt_phase/phase_test.cpp"],
-                  expected_route(
-                      cpa_split=True,
-                      cpa_pt_phase=True,
-                      thermodynamics_contracts=True,
-                  ),
-              ),
-              (
-                  ["tests/flash/cpa_physical_validation/physical_validation_test.cpp"],
-                  expected_route(
-                      pt_flash_backend=True,
-                      cpa_physical_validation=True,
-                  ),
-              ),
-              (
-                  ["modules/thermodynamics/include/mpmc/thermodynamics/cpa_phase.hpp"],
-                  expected_route(
-                      flow_core=True,
-                      pt_flash_backend=True,
-                      pt_stability=True,
-                      pt_split=True,
-                      cpa_stability=True,
-                      cpa_split=True,
-                      cpa_max3=True,
-                      cpa_baseline=True,
-                      cpa_pt_phase=True,
-                      cpa_physical_validation=True,
-                      thermodynamics_contracts=True,
-                      physics_closure=True,
-                  ),
-              ),
-              (
-                  ["modules/thermodynamics/include/mpmc/thermodynamics/components.hpp"],
-                  expected_route(
-                      pt_flash_backend=True,
-                      pt_stability=True,
-                      pt_split=True,
-                      thermodynamics_contracts=True,
-                      physics_closure=True,
-                      model_configuration=True,
-                  ),
-              ),
-              (
-                  ["tests/thermodynamics/contracts/contracts_test.cpp"],
-                  expected_route(
-                      thermodynamics_contracts=True,
-                      model_configuration=True,
-                  ),
-              ),
-              (
-                  ["tests/thermodynamics/pr76_pt/pt_test.cpp"],
-                  expected_route(thermodynamics_contracts=True),
-              ),
-              (
-                  ["modules/physics/include/mpmc/physics/component_inventory.hpp"],
-                  expected_route(physics_closure=True),
-              ),
-              (
-                  ["tests/physics/thermodynamic_closure/closure_test.cpp"],
-                  expected_route(physics_closure=True),
-              ),
-              (
-                  ["modules/model_configuration/include/mpmc/model_configuration/model.hpp"],
-                  expected_route(model_configuration=True),
-              ),
-              (
-                  ["tests/model_configuration/parameters/parameter_test.cpp"],
-                  expected_route(model_configuration=True),
-              ),
-              (
-                  [".github/workflows/thermodynamics.yml"],
-                  expected_route(thermodynamics_contracts=True),
-              ),
-              (
-                  [".github/workflows/physics_closure.yml"],
-                  expected_route(physics_closure=True),
-              ),
-              (
-                  [".github/workflows/model_configuration.yml"],
-                  expected_route(model_configuration=True),
-              ),
-              (
-                  [router_path],
-                  expected_route(),
-              ),
-              (
-                  ["README.md"],
-                  expected_route(),
-              ),
+              (["tests/flow_discretization/petsc/scanner.cpp"],
+               expected_route(flow_discretization_petsc=True)),
+              (["modules/flow/include/mpmc/flow/phase_transport.hpp"],
+               expected_route(flow_core=True, flow_discretization=True)),
+              (["modules/flash/include/mpmc/flash/pt_flash_backend.hpp"],
+               expected_route(flow_core=True, pt_flash_backend=True, pr76_max3=True,
+                              cpa_split=True, cpa_max3=True, cpa_physical_validation=True,
+                              model_configuration=True)),
+              (["tests/flash/stability/stability_test.cpp"],
+               expected_route(pt_stability=True)),
+              (["modules/flash/include/mpmc/flash/rachford_rice.hpp"],
+               expected_route(pt_split=True, model_configuration=True, sw92_family_vle=True)),
+              (["modules/thermodynamics/include/mpmc/thermodynamics/pr76.hpp"],
+               expected_route(pt_flash_backend=True, pt_stability=True, pt_split=True,
+                              pr76_pt_continuation=True, pr76_max3=True,
+                              thermodynamics_contracts=True, physics_closure=True,
+                              sw92_family_vle=True, sw92_profile_c_pt=True)),
+              (["tests/flash/pr76_pt_continuation/continuation_test.cpp"],
+               expected_route(pr76_pt_continuation=True)),
+              (["tests/flash/pr76_three_phase/max3_test.cpp"],
+               expected_route(pr76_max3=True)),
+              (["modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp"],
+               expected_route(pt_flash_backend=True, pr76_pt_continuation=True,
+                              pr76_max3=True, model_configuration=True)),
+              (["tests/flash/cpa_stability/stability_test.cpp"],
+               expected_route(cpa_stability=True, cpa_split=True)),
+              (["tests/flash/cpa_split/split_test.cpp"],
+               expected_route(cpa_split=True, cpa_max3=True)),
+              (["tests/flash/cpa_max3/max3_test.cpp"],
+               expected_route(cpa_max3=True)),
+              (["modules/flash/include/mpmc/flash/cpa_stability.hpp"],
+               expected_route(pt_flash_backend=True, cpa_stability=True, cpa_split=True,
+                              cpa_max3=True, cpa_physical_validation=True)),
+              ([".github/workflows/_cpp_ctest.yml"],
+               expected_route(cpa_stability=True, cpa_baseline=True, cpa_pt_phase=True)),
+              (["tests/thermodynamics/cpa_baseline/baseline_test.cpp"],
+               expected_route(cpa_baseline=True, thermodynamics_contracts=True)),
+              (["tests/thermodynamics/cpa_pt_phase/phase_test.cpp"],
+               expected_route(cpa_split=True, cpa_pt_phase=True,
+                              thermodynamics_contracts=True)),
+              (["tests/flash/cpa_physical_validation/physical_validation_test.cpp"],
+               expected_route(pt_flash_backend=True, cpa_physical_validation=True)),
+              (["modules/thermodynamics/include/mpmc/thermodynamics/cpa_phase.hpp"],
+               expected_route(flow_core=True, pt_flash_backend=True, pt_stability=True,
+                              pt_split=True, cpa_stability=True, cpa_split=True,
+                              cpa_max3=True, cpa_baseline=True, cpa_pt_phase=True,
+                              cpa_physical_validation=True, thermodynamics_contracts=True,
+                              physics_closure=True, sw92_family_vle=True,
+                              sw92_profile_c_pt=True)),
+              (["modules/thermodynamics/include/mpmc/thermodynamics/components.hpp"],
+               expected_route(pt_flash_backend=True, pt_stability=True, pt_split=True,
+                              thermodynamics_contracts=True, physics_closure=True,
+                              model_configuration=True, sw92_thermodynamics=True,
+                              sw92_family_vle=True, sw92_profile_c_pt=True)),
+              (["tests/thermodynamics/contracts/contracts_test.cpp"],
+               expected_route(thermodynamics_contracts=True, model_configuration=True)),
+              (["tests/thermodynamics/pr76_pt/pt_test.cpp"],
+               expected_route(thermodynamics_contracts=True)),
+              (["modules/physics/include/mpmc/physics/component_inventory.hpp"],
+               expected_route(physics_closure=True)),
+              (["tests/physics/thermodynamic_closure/closure_test.cpp"],
+               expected_route(physics_closure=True)),
+              (["modules/model_configuration/include/mpmc/model_configuration/model.hpp"],
+               expected_route(model_configuration=True)),
+              (["tests/model_configuration/parameters/parameter_test.cpp"],
+               expected_route(model_configuration=True)),
+              ([".github/workflows/thermodynamics.yml"],
+               expected_route(thermodynamics_contracts=True)),
+              ([".github/workflows/physics_closure.yml"],
+               expected_route(physics_closure=True)),
+              ([".github/workflows/model_configuration.yml"],
+               expected_route(model_configuration=True)),
+              (["modules/thermodynamics/include/mpmc/thermodynamics/sw92_phase.hpp"],
+               expected_route(flow_core=True, pt_flash_backend=True, pt_stability=True,
+                              pt_split=True, thermodynamics_contracts=True,
+                              physics_closure=True, sw92_thermodynamics=True,
+                              sw92_family_vle=True, sw92_profile_c_pt=True)),
+              (["tests/thermodynamics/sw92/sw92_test.cpp"],
+               expected_route(thermodynamics_contracts=True, sw92_thermodynamics=True)),
+              (["tests/flash/sw92_family_vle/family_vle_test.cpp"],
+               expected_route(sw92_family_vle=True, sw92_profile_c_pt=True)),
+              (["tests/flash/sw92_phase_assigned_pt/pt_test.cpp"],
+               expected_route(sw92_profile_c_pt=True)),
+              (["tests/support/sw92/test_support.hpp"],
+               expected_route(flow_discretization_petsc=True, pt_flash_backend=True,
+                              sw92_thermodynamics=True, sw92_profile_c_pt=True)),
+              ([".github/workflows/sw92.yml"],
+               expected_route(sw92_thermodynamics=True)),
+              ([".github/workflows/sw92_family_vle.yml"],
+               expected_route(sw92_family_vle=True)),
+              ([".github/workflows/sw92_phase_assigned_pt.yml"],
+               expected_route(sw92_profile_c_pt=True)),
+              ([router_path], expected_route()),
+              (["README.md"], expected_route()),
           ]
           for paths, expected in checks:
               actual = route(paths)
@@ -927,6 +887,21 @@ jobs:
     needs: impact
     if: needs.impact.outputs.model_configuration == 'true'
     uses: ./.github/workflows/model_configuration.yml
+
+  sw92-thermodynamics:
+    needs: impact
+    if: needs.impact.outputs.sw92_thermodynamics == 'true'
+    uses: ./.github/workflows/sw92.yml
+
+  sw92-family-vle:
+    needs: impact
+    if: needs.impact.outputs.sw92_family_vle == 'true'
+    uses: ./.github/workflows/sw92_family_vle.yml
+
+  sw92-profile-c-pt:
+    needs: impact
+    if: needs.impact.outputs.sw92_profile_c_pt == 'true'
+    uses: ./.github/workflows/sw92_phase_assigned_pt.yml
 
   ad:
     needs: impact

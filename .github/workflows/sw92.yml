@@ -1,19 +1,10 @@
 name: SW92 thermodynamics
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr76_roots.hpp'
-      - 'modules/thermodynamics/CMakeLists.txt'
-      - 'modules/thermodynamics/sw92.md'
-      - 'tests/thermodynamics/sw92/**'
-      - '.github/workflows/sw92.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -24,16 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["tests/support/sw92/test_support.hpp","modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp","modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp","modules/thermodynamics/include/mpmc/thermodynamics/components.hpp","modules/thermodynamics/include/mpmc/thermodynamics/pr76_roots.hpp","modules/thermodynamics/CMakeLists.txt","modules/thermodynamics/sw92.md","tests/thermodynamics/sw92/**",".github/workflows/sw92.yml"]
-
   sw92:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
