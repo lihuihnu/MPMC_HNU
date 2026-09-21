@@ -196,7 +196,8 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "63d36624efaac81bdc37c911c8a09ec0426c9c85047d0b4e5b83b99b34cf53c7"
+      "retained_hash": "63d36624efaac81bdc37c911c8a09ec0426c9c85047d0b4e5b83b99b34cf53c7",
+      "retained_blob_sha": "0087e233e0d479de10bbf602f8ba2660dacce53d"
     },
     ".github/workflows/ad.yml": {
       "name": "AD correctness",
@@ -4987,7 +4988,8 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "ba44aca368ff103d61eaab4c4050af422eebf8d9987ba56e6b011b5ca0c34101"
+      "retained_hash": "ba44aca368ff103d61eaab4c4050af422eebf8d9987ba56e6b011b5ca0c34101",
+      "retained_blob_sha": "a6b3b9c59e18b7cddad46a917bb3b9dacadca31c"
     },
     ".github/workflows/sw92_profile_c_sensitivity.yml": {
       "name": "SW92 Profile-C implicit sensitivity",
@@ -5046,7 +5048,8 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "9f0a739770c056664e0cad3dda9d791e22d101507a340447d6d7237d308036ac"
+      "retained_hash": "9f0a739770c056664e0cad3dda9d791e22d101507a340447d6d7237d308036ac",
+      "retained_blob_sha": "811ced46b5a6570a7ef4ef23481b37796dc2c5c2"
     },
     ".github/workflows/sw92_three_phase_experimental_line.yml": {
       "name": "SW92 experimental three-phase line",
