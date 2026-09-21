@@ -67,7 +67,17 @@ jobs:
                   "modules/ad/include/mpmc/ad/dual.hpp", "modules/ad/CMakeLists.txt",
                   "CMakeLists.txt", "CMakePresets.json",
               }
+              owned_exact = {
+                  "CMakeLists.txt", "CMakePresets.json", ".github/workflows/ad.yml",
+              }
               for path in paths:
+                  owned = (
+                      path.startswith("modules/ad/") or
+                      path.startswith("tests/ad/") or
+                      path in owned_exact
+                  )
+                  if not owned:
+                      continue
                   if path.endswith(".md"):
                       continue
                   if path == ".github/workflows/ad.yml":
@@ -104,6 +114,7 @@ jobs:
               ([".github/workflows/ad.yml"], all_suites),
               (["modules/ad/include/mpmc/ad/unknown.hpp"], all_suites),
               (["README.md"], []),
+              (["tests/flow_discretization/petsc/scanner.cpp"], []),
               (["modules/ad/include/mpmc/ad/differentiate.hpp"], ["jacobian", "runtime"]),
               (["tests/ad/jacobian/jacobian_test.cpp", ".github/workflows/ad.yml"], ["jacobian"]),
               (["modules/ad/include/mpmc/ad/differentiate.hpp", "AGENTS.md"], ["jacobian", "runtime"]),
