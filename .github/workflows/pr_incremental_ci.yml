@@ -70,8 +70,9 @@ jobs:
           # Structural checks for the two routed reusable workflows.
           ad = load(".github/workflows/ad.yml")
           stability = load(".github/workflows/stability.yml")
-          assert ad["on"]["workflow_call"]["outputs"]["validated"]["value"] == "${{ jobs.validation-result.outputs.validated }}"
-          assert stability["on"]["workflow_call"]["outputs"]["validated"]["value"] == "${{ jobs.validation-result.outputs.validated }}"
+          validated_expr = "$" + "{{ jobs.validation-result.outputs.validated }}"
+          assert ad["on"]["workflow_call"]["outputs"]["validated"]["value"] == validated_expr
+          assert stability["on"]["workflow_call"]["outputs"]["validated"]["value"] == validated_expr
           assert "github.run_id" in ad["concurrency"]["group"]
           assert "github.run_id" in stability["concurrency"]["group"]
           assert "validation-result" in ad["jobs"]
