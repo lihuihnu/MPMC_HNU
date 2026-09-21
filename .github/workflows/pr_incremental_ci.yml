@@ -89,6 +89,7 @@ jobs:
                   r"\1ubuntu-24.04",
                   text,
               )
+              text = text.replace('"runner": "mpmc_hnu"', '"runner": "ubuntu-24.04"')
 
               # Dedicated private-runner jobs become ordinary GitHub-hosted Ubuntu jobs.
               text = re.sub(
