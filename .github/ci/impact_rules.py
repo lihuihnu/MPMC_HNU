@@ -35,6 +35,7 @@ ownership = {
         "modules/flow/**",
         "modules/thermodynamics/CMakeLists.txt",
         "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp",
+        "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp",
         "modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp",
         "modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp",
         "modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp",
