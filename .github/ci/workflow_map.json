@@ -51,7 +51,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -59,7 +59,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -82,7 +82,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "601b9013b14f087bd420222aec10a449e7978e9f7650d905779b46a1ab52c879"
+      "retained_hash": "754ed3c497b37461d09df4f35c1c8d23480a450514a38b156294c662a7c0d46b"
     },
     ".github/workflows/_incremental_path_gate.yml": {
       "name": "Incremental PR path gate",
@@ -165,7 +165,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -173,7 +173,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -196,8 +196,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "63d36624efaac81bdc37c911c8a09ec0426c9c85047d0b4e5b83b99b34cf53c7",
-      "retained_blob_sha": "0087e233e0d479de10bbf602f8ba2660dacce53d"
+      "retained_hash": "8c7c0450f400c4e6b74d846f27830ce48194830a10982749075121c4f18ab53c"
     },
     ".github/workflows/ad.yml": {
       "name": "AD correctness",
@@ -273,7 +272,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "b6f192401b2bea7cc9da6d76f3491ac2035e55d0142f2d1f5be4d5d31f0ac9a4"
+      "retained_hash": "1e52c3b800a31b474f2936ea1389b4eff0ea58c88638012b00600879ddec7f16"
     },
     ".github/workflows/cpa_baseline.yml": {
       "name": "CPA parameter-association baseline",
@@ -335,12 +334,7 @@
           "timeout_minutes": null
         },
         "pinned-clapeyron-oracle": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -357,7 +351,7 @@
         ]
       },
       "entry_repair": "Former PR-only gate: add parameter-free manual entry; automatic body remains in central router.",
-      "retained_hash": "e8982a0e225da2666d7fec974f7f0e99c57564b203c4b5c1d38dcfd8c87cf44c",
+      "retained_hash": "cc1e1f733ee53334bd6c1fc7cfd598767ba15685ae4aca5be1d631fe65629dda",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "pinned-clapeyron-oracle": "legacy_cpa_clapeyron_oracle__pinned-clapeyron-oracle"
@@ -392,7 +386,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -400,7 +394,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -423,7 +417,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "e7efe4601c77d076994a54985659e1b49dbf3d6df9a03b0867cf8052e06748d1"
+      "retained_hash": "482970c75293d2905393753c71db4e615f2f43f41fa0218e97f366c5f9539823"
     },
     ".github/workflows/cpa_performance_audit.yml": {
       "name": "CPA flash performance audit",
@@ -463,12 +457,7 @@
           "timeout_minutes": null
         },
         "paired-baseline": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -490,7 +479,7 @@
           ".github/workflows/cpa_performance_audit.yml"
         ]
       },
-      "retained_hash": "7668ead8734082e9b5ac84c06f92c3f0751e34b667151bce0ba1cd4f0fafb5aa",
+      "retained_hash": "b194b859d0e032847cf4930ee301b21a74e5e0be4b5155ccb5b265f08241f208",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "paired-baseline": "legacy_cpa_performance_audit__paired-baseline"
@@ -525,7 +514,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -547,12 +536,7 @@
           "timeout_minutes": 30
         },
         "sanitizer-safety-regression": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": null,
           "environment": null,
@@ -561,7 +545,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "ee346baa1c6c7084b422e088741523253f1e3e551ab094f4e7841c80415b9b95"
+      "retained_hash": "d3ee0d787b9216f529ab2f7a2ca8e29731d6adccaa04d6d22a9b25e3314d13ab"
     },
     ".github/workflows/cpa_pt_phase.yml": {
       "name": "CPA PT density-root and fugacity kernel",
@@ -618,7 +602,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -626,7 +610,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -649,7 +633,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "ccb401859bbe4c73ac670bfbdfb600c6dd16a1cf13f5ea34b665cd120f3d5c25"
+      "retained_hash": "78542b7df5647fef3bb1625078d14202af82b115b6293d64c67cd34981cd6a38"
     },
     ".github/workflows/cpa_stability.yml": {
       "name": "CPA PT stability",
@@ -716,12 +700,7 @@
           "timeout_minutes": null
         },
         "pinned-thermopack-oracle": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -741,7 +720,7 @@
           "modules/flash/cpa_flash.md"
         ]
       },
-      "retained_hash": "c3855a57ffa70b1ede458715ac123ea2682cbd01127aabe11537442f4c56bc56",
+      "retained_hash": "463b8d17f78ab2f3ed626cdc575e2e6cbb16e9e28ca8c275d7e7097f1ff24060",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "pinned-thermopack-oracle": "legacy_cpa_thermopack_oracle__pinned-thermopack-oracle"
@@ -795,7 +774,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "build_type": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -803,7 +782,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "build_type": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -838,7 +817,7 @@
           ".github/workflows/discretization_core.yml"
         ]
       },
-      "retained_hash": "2a3e288bdf9fe93f9be7e86e3e19651d3bac0621283751d29eedf020482cb73d",
+      "retained_hash": "1f7fda1ad8d9aa8ddc050a0555b2a743a6aca385e28046ef1f6ffb85c0896cab",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "core": "legacy_discretization_core__core"
@@ -873,7 +852,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -881,7 +860,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -904,7 +883,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "e9deaebd7d6e3f35b14cb1f863fba8828142137e3c39eb1042aa5d78fc9eb01b"
+      "retained_hash": "6c371026df4d997a042053997b4f217c275563dacc564dc084e25f8123a07f18"
     },
     ".github/workflows/flow_discretization.yml": {
       "name": "Flow-discretization TPFA phase flux",
@@ -932,7 +911,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -940,7 +919,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -963,7 +942,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "23bdbcefbf813a6b8ff8538d1b8e0335b9f9d8597c560ae9ac7334c355d11471"
+      "retained_hash": "b1526f81f9f91e81a9adabb159542f00b6428d68dfb175863b45469c07246def"
     },
     ".github/workflows/flow_discretization_petsc.yml": {
       "name": "Flow-discretization PETSc/MPI owner exchange",
@@ -983,12 +962,7 @@
       },
       "jobs": {
         "distributed": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": null,
           "environment": null,
@@ -997,7 +971,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "cf8e137642d4f01858ae2c80c4a0910af5570ef92c9919a62f1bff19e8507048"
+      "retained_hash": "c2d982304393d96f35fe8c637245b3c594f0da6043b3b9f3e57b47a0b7c15bc9"
     },
     ".github/workflows/frontend.yml": {
       "name": "Frontend",
@@ -1037,12 +1011,7 @@
           "timeout_minutes": null
         },
         "verify": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -1064,7 +1033,7 @@
           ".gitignore"
         ]
       },
-      "retained_hash": "9991302b4776abb6561835376d85de8458513855aecda69f6f018e40065ff24c",
+      "retained_hash": "76547fb2a9350b2c368d3bed0c57e431dba8def5f5978c68bdb1d850e08544a5",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "verify": "legacy_frontend__verify"
@@ -1114,12 +1083,7 @@
           "timeout_minutes": null
         },
         "hosted-web-model": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -1144,7 +1108,7 @@
           ".github/workflows/hosted_web_model_product.yml"
         ]
       },
-      "retained_hash": "b7e09370ae3bf38ac043b28d100e645aedc2373d2cad499e2decef26e9746a2b",
+      "retained_hash": "f11602fde8332bb35e4d3b0a7220071bc58fb39745f9bfbb692c558102c6fcfe",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "hosted-web-model": "legacy_hosted_web_model_product__hosted-web-model"
@@ -1196,12 +1160,7 @@
           "timeout_minutes": null
         },
         "baseline": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -1228,7 +1187,7 @@
           ".github/workflows/mesh_baseline_benchmark.yml"
         ]
       },
-      "retained_hash": "1f336cfdcd8884d6dd80fbb2be369de7ed818fadbe6db3d41b73aeb50da6c87a",
+      "retained_hash": "74eed77a063fbd1ed71310bd8283c75312360ae079748b6ca98215b3d9bfacf6",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "baseline": "legacy_mesh_baseline_benchmark__baseline"
@@ -1281,7 +1240,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "build_type": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -1289,7 +1248,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "build_type": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -1323,7 +1282,7 @@
           ".github/workflows/mesh_core.yml"
         ]
       },
-      "retained_hash": "5727ae255bce0e9aa322a365de522f462dc4d424a1c4645ccde4f43a6de210ed",
+      "retained_hash": "3356dd04e0c23edd9c6fc40b648f18961cddd9bcd6ee3774a051506b93e1c01a",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "core": "legacy_mesh_core__core"
@@ -1385,12 +1344,7 @@
           "timeout_minutes": null
         },
         "compatibility": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -1427,7 +1381,7 @@
           ".github/workflows/mesh_external_compatibility.yml"
         ]
       },
-      "retained_hash": "3e95b77b92da3ac0691f2b8ee4407c80cb0d95f74bdd1c6c69f6920ec6b8c0d1",
+      "retained_hash": "09b44ded0bc1e294e951168dbb99a0a635f71c0d71a412ad2449ea4b1afa9e0f",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "compatibility": "legacy_mesh_external_compatibility__compatibility"
@@ -1475,12 +1429,7 @@
           "timeout_minutes": null
         },
         "petsc": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -1503,7 +1452,7 @@
           ".github/workflows/mesh_petsc.yml"
         ]
       },
-      "retained_hash": "1bd3a96d4bf0f22da1905fa0bbcf942357ac264b6d5d383da2a145f0512059a6",
+      "retained_hash": "a55c5c8582bab277fd15be3e69897bc0e9dff1e6c8d4da007f5a58aa5d32768b",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "petsc": "legacy_mesh_petsc__petsc"
@@ -1538,7 +1487,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "config": "Debug",
                   "sanitizers": "ON"
@@ -1546,7 +1495,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "config": "Release",
                   "sanitizers": "OFF"
@@ -1569,7 +1518,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "d70a177769b9a2b50d1c3b85944470654d20b8ce69731511415e043a88a5daee"
+      "retained_hash": "7eeb3e8c28987b33867e7d68f626623a0a493a9b5fa7617360d2014099236866"
     },
     ".github/workflows/model_configuration_grpc.yml": {
       "name": "Versioned model configuration service",
@@ -1634,12 +1583,7 @@
           "timeout_minutes": null
         },
         "linux": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": {
             "fail-fast": false,
             "matrix": {
@@ -1720,7 +1664,7 @@
           ".github/workflows/model_configuration_grpc.yml"
         ]
       },
-      "retained_hash": "02f0b8450cd5296d04b062cd45522ed9a20f4e9c4be36392f59c21833e738270",
+      "retained_hash": "490f16d698ab59624013690494e06f58da5023bcd67b6c74c0ff8be81ae88e1d",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "linux": "legacy_model_configuration_grpc__linux",
@@ -1759,7 +1703,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -1767,7 +1711,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -1790,7 +1734,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "e67286fef88f490e0e589c2bda6f1ad8bf4326e183e9b0d12b53c3e2936668de"
+      "retained_hash": "dab76605545782c70934fa49d19fd9ca6501fba8a3338a3baf413af963172e07"
     },
     ".github/workflows/physics_component_inventory.yml": {
       "name": "Physics PT component inventory",
@@ -1843,7 +1787,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -1851,7 +1795,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -1892,7 +1836,7 @@
           ".github/workflows/physics_component_inventory.yml"
         ]
       },
-      "retained_hash": "e02d636145e0a5c1b9814195c825cfe4a4b49a8a510c5a84e41ba6b0d3b2c2b2",
+      "retained_hash": "b78ebccb6b218875983dbf94293d1a6d1943ad421bbaec5b61a8613f47050837",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "inventory": "legacy_physics_component_inventory__inventory"
@@ -1927,7 +1871,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -1935,7 +1879,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -1958,7 +1902,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "878f49d36bef61b717bbaade1be2ee3ef26e016d9fe19b0d71cf8eeadb9eed4b"
+      "retained_hash": "4c3429c33b153d913d85f0d959fb984e9ced7956b2d70cd75f6a9bf759be56ee"
     },
     ".github/workflows/pr76_pt_continuation.yml": {
       "name": "PR76 PT continuation scan",
@@ -1986,7 +1930,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -1994,7 +1938,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -2017,7 +1961,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "c023887094ab3b3d0cca8c36ac28f3db2cd8e6da3fcaf86ec4d3833fec08a716"
+      "retained_hash": "da9df1ee16446851da29e2d2cdfd8ebdecdbc68ac546b50952550f8e690e1539"
     },
     ".github/workflows/pr76_three_phase.yml": {
       "name": "PR76 PT max-three-phase baseline",
@@ -2045,7 +1989,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -2053,7 +1997,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -2076,7 +2020,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "6c0bfefda37ef338cb0e8a92ea7e2ca81c7a78503cc081586de6d179f4313fe9"
+      "retained_hash": "1baaa9c38a449e63d1b1951ac083606008cb0cecec412750ec03b2b42eec788a"
     },
     ".github/workflows/pr_incremental_ci.yml": {
       "name": "PR incremental CI router",
@@ -2394,12 +2338,7 @@
           "timeout_minutes": null
         },
         "boundary": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -2407,12 +2346,7 @@
           "timeout_minutes": 5
         },
         "emulator": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": null,
           "environment": null,
@@ -2439,7 +2373,7 @@
           ".github/workflows/pt_android_jni_emulator.yml"
         ]
       },
-      "retained_hash": "dd2746a8ee79fe21661f3c12582233d59f417a656d5e13dc67bbd5d9c0c07057",
+      "retained_hash": "98681e0ef1155eaf4e99e286bc210d13a58f344da42bbb59b57cafb4ffa26ad6",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "boundary": "legacy_pt_android_jni_emulator__boundary",
@@ -2511,12 +2445,7 @@
           "timeout_minutes": null
         },
         "boundary": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -2524,12 +2453,7 @@
           "timeout_minutes": 5
         },
         "build": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": {
             "fail-fast": false,
             "matrix": {
@@ -2570,7 +2494,7 @@
           ".github/workflows/pt_android_ndk_portability.yml"
         ]
       },
-      "retained_hash": "4aa24c2e07b4982f8fd367783ea09b262ed8229895c3cd5eb2e168c976a136fe",
+      "retained_hash": "da4097670794dd9ecb0cca4c49d82248ee7e51ce0d20f69956a2c2c206d5d1dd",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "boundary": "legacy_pt_android_ndk_portability__boundary",
@@ -2644,12 +2568,7 @@
           "timeout_minutes": null
         },
         "product-shell": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": null,
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
@@ -2677,7 +2596,7 @@
           ".github/workflows/pt_android_product_shell.yml"
         ]
       },
-      "retained_hash": "b563dd4124fccb7ea87e24fea3eb16e6f61d8468db53b13054a82a1205e14b27",
+      "retained_hash": "01a64c1dd777e34603df059d81ab1dbabb70936039ff3db831e7465a3c6bb503",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "product-shell": "legacy_pt_android_product_shell__product-shell"
@@ -2712,7 +2631,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -2720,7 +2639,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -2743,7 +2662,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "8ba20a53ee3f4390a53a03b255605539d19abf00ccac8955f7b31f9bb9117b6a"
+      "retained_hash": "1e76f0853cadaa19f83b453de8cc4501a458692d632fff171c5b009b11c4375f"
     },
     ".github/workflows/pt_process_adapter.yml": {
       "name": "PT gRPC process adapter",
@@ -2797,12 +2716,7 @@
           "timeout_minutes": null
         },
         "adapter": {
-          "runner": [
-            "self-hosted",
-            "linux",
-            "x64",
-            "mpmc_hnu"
-          ],
+          "runner": "ubuntu-24.04",
           "strategy": {
             "fail-fast": false,
             "matrix": {
@@ -2858,7 +2772,7 @@
           ".github/workflows/pt_process_adapter.yml"
         ]
       },
-      "retained_hash": "2eb756eb2bbf5b7768e9b82f7544121ce82e0ade7405f1117746f8f607a0f990",
+      "retained_hash": "6ae5f393d065343789630fb44bf443577d0df375f53a091d10b3025045cd5e21",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "adapter": "legacy_pt_process_adapter__adapter"
@@ -2949,7 +2863,7 @@
                 {
                   "name": "Linux x64 Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "profile": "linux-x86_64-release"
                 },
                 {
@@ -2981,7 +2895,7 @@
                 {
                   "name": "Linux x64 Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "profile": "linux-x86_64-release"
                 },
                 {
@@ -3013,7 +2927,7 @@
                 {
                   "name": "Linux x64",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "profile": "linux-x86_64-release",
                   "electron_platform": "linux",
                   "electron_arch": "x64",
@@ -3085,7 +2999,7 @@
           ".github/workflows/pt_product_staging.yml"
         ]
       },
-      "retained_hash": "e818fa6bce4428035a9e7365e7744efb52754c2e9ed6ba4e96d29a43975f463e",
+      "retained_hash": "bbbe344f9330e6c98e14d899e7ceeab935c62133b2982460ab943d773d8c4fbc",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "seed": "legacy_pt_product_staging__seed",
@@ -3151,7 +3065,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -3159,7 +3073,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -3202,7 +3116,7 @@
           ".github/workflows/pt_service.yml"
         ]
       },
-      "retained_hash": "13d0f2af9e2bd6f91d610bdba0f4d4c282da25e45195098a24192e0750e5cad1",
+      "retained_hash": "43c1fd334a4a5e64d260732515100b3e9c8bd5239490358893d8476f2c88bfa1",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "service": "legacy_pt_service__service"
@@ -3256,7 +3170,7 @@
                 {
                   "name": "Linux x64 DEB",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "profile": "linux-x86_64-release",
                   "target": "linux-x86_64",
                   "extension": "deb"
@@ -3299,7 +3213,7 @@
           ".github/workflows/pt_signed_installer_gate.yml"
         ]
       },
-      "retained_hash": "4b15bc9b4d6c09c9de333d6c36d529c76e42d2c3661e280d833a48daf07541e7",
+      "retained_hash": "319a47d695ca93bc005a884c1733c8f8a362c14cc44c99224fb3d7d9382677c9",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "candidate": "legacy_pt_signed_installer_gate__candidate"
@@ -3380,7 +3294,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -3388,7 +3302,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -3441,7 +3355,7 @@
           ".github/workflows/pt_split.yml"
         ]
       },
-      "retained_hash": "954b39affef6106075f650f99a4ddcd796132e85e4ea4c45619cfcc34fb00e16",
+      "retained_hash": "2a4c0c20decaf595e7c2c56beb8da8b15353295987900e7af8f04fa7e6e63d47",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "split": "legacy_pt_split__split"
@@ -3651,7 +3565,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -3659,7 +3573,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -3700,7 +3614,7 @@
           ".github/workflows/stability.yml"
         ]
       },
-      "retained_hash": "7be63213a02b9619d01134b755abcbaaaad56df7b1dc305057d995de987c4dd5",
+      "retained_hash": "ad6bdd35e9a79d59fa8d03fc218219af8225617a2d1a3320e2e9a8eae4311628",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "stability": "legacy_stability__stability"
@@ -3735,7 +3649,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -3743,7 +3657,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -3766,7 +3680,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "43be216a08046a8116f1b70203c9f231b030bafff5d65d8931e91e926c4d44d6"
+      "retained_hash": "828129d8c3fef8719fc8a8235c6d9aa83b098de42e3830f7998b01a727b323c9"
     },
     ".github/workflows/sw92_asymmetric_fixed_pair.yml": {
       "name": "SW92 asymmetric fixed pair",
@@ -3823,7 +3737,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -3831,7 +3745,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -3876,7 +3790,7 @@
           ".github/workflows/sw92_asymmetric_fixed_pair.yml"
         ]
       },
-      "retained_hash": "a55499cf16ae72805e03c0a92afc8e99637d9990181fa7d00d5e12c9e38e6238",
+      "retained_hash": "94729a7f7043c48258941e4462290e7682f12f91ff1cf1001c2642916700066e",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "fixed-pair": "legacy_sw92_asymmetric_fixed_pair__fixed-pair"
@@ -3941,7 +3855,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -3949,7 +3863,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -3995,7 +3909,7 @@
           ".github/workflows/sw92_asymmetric_max2.yml"
         ]
       },
-      "retained_hash": "24ce0bc3338d062a90dbd08975fe45acc0dccdb18821d77a90467eab2cb51d50",
+      "retained_hash": "53c275679163b17371160e485ffdd244a879a956ceb816e93456770144ed1d4a",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "max2": "legacy_sw92_asymmetric_max2__max2"
@@ -4055,7 +3969,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4063,7 +3977,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4104,7 +4018,7 @@
           ".github/workflows/sw92_asymmetric_max2_physical_ternary.yml"
         ]
       },
-      "retained_hash": "124e008513158b2e826354ea5779dbcb9dd24ff261b212a57eb732d12c532d90",
+      "retained_hash": "72b42554457d888e4875c4924d70628a044d89f900b44dd3c8efa7302b1b5113",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "ternary": "legacy_sw92_asymmetric_max2_physical_ternary__ternary"
@@ -4164,7 +4078,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4172,7 +4086,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4213,7 +4127,7 @@
           ".github/workflows/sw92_asymmetric_max2_validation.yml"
         ]
       },
-      "retained_hash": "ec3445561756b4d142351c8a7cfe9aaa0006ae94ac3b4fb5662781a2e829eeaf",
+      "retained_hash": "0f6d38e0d0eddc6a64e20b37340d7c6c89bcafa2abf1fdbfa9636f3e2138461a",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "validation": "legacy_sw92_asymmetric_max2_validation__validation"
@@ -4276,7 +4190,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4284,7 +4198,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4328,7 +4242,7 @@
           ".github/workflows/sw92_asymmetric_orchestration.yml"
         ]
       },
-      "retained_hash": "e2396925be368c9d352bd3dbe24e2c9151dd6fce5f3b9d550490589cb96c94a3",
+      "retained_hash": "134d5f8cec693a3444f0e01ec395f0c9f485a6b5e90492a6824e99407ad80b15",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "orchestration": "legacy_sw92_asymmetric_orchestration__orchestration"
@@ -4385,7 +4299,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4393,7 +4307,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4431,7 +4345,7 @@
           ".github/workflows/sw92_asymmetric_stability.yml"
         ]
       },
-      "retained_hash": "482b5ca65c51e855e972afbbdd6bab9208549ddec72ae52a3cd434f8f1b972a9",
+      "retained_hash": "69058af0f87e06380e13ec98542b9f223e53fe1647273f0ac49a4d787a4ecf1f",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "asymmetric-stability": "legacy_sw92_asymmetric_stability__asymmetric-stability"
@@ -4491,7 +4405,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4499,7 +4413,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4540,7 +4454,7 @@
           ".github/workflows/sw92_dual_model.yml"
         ]
       },
-      "retained_hash": "eca8dd573527bc2c64084648e9bcf1312548f7765ff17fa27e7033a2dcf08e17",
+      "retained_hash": "534eb4765d06ff5c8243d3b0b78cded36df8f7584e66a0248d7a0813c781c0f6",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "dual-model": "legacy_sw92_dual_model__dual-model"
@@ -4575,7 +4489,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4583,7 +4497,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4606,7 +4520,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "0755c0cf9bd5e7b48689cebfb64d66c0227749777f3aa9ff6b978b94f30831f2"
+      "retained_hash": "5d9aa3cb162630e74a93c3dc65e134c36b43f261d49b779b36a42c1c7f27c2e0"
     },
     ".github/workflows/sw92_phase_assigned_boundary.yml": {
       "name": "SW92 three-phase boundary re-solve",
@@ -4663,7 +4577,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4671,7 +4585,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4694,7 +4608,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "23df666c66da1ac158c393e6835dc80ad637f19ea77337c338b417ba6b504c2b"
+      "retained_hash": "b39d9c352396313041243f587a696060ca2f6a67f02adafc2fc2f1729fe70c82"
     },
     ".github/workflows/sw92_phase_assigned_joint.yml": {
       "name": "SW92 phase-assigned AQ/NA joint",
@@ -4722,7 +4636,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4730,7 +4644,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4753,7 +4667,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "d4cd6b52c2f7f85ed259d2e5b3536d1041374d81f8736ad7f37f5e5529bcec6b"
+      "retained_hash": "9c9e38eff52320da3d0d53784006a15b93f1a57db7e5f3785a37c66fc0575da8"
     },
     ".github/workflows/sw92_phase_assigned_no_w.yml": {
       "name": "SW92 phase-assigned no-W topology",
@@ -4781,7 +4695,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4789,7 +4703,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4812,8 +4726,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "71aac96a200e53042e4674eb8fd4b9424f74e663eb4175fa63f0836e467e808c",
-      "retained_blob_sha": "fa2e8cfa647723c89d18997b07b5915321465524"
+      "retained_hash": "0ed55774554b1e602ef6bc6dd31446f4f2d85311d95c30bb3f3049d0518db425"
     },
     ".github/workflows/sw92_phase_assigned_pt.yml": {
       "name": "SW92 Profile-C top-level PT",
@@ -4841,7 +4754,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4849,7 +4762,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4872,7 +4785,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "a6bcde710bb57e3946b1600ca2f4d987e8af695c5fed17a9bd7ece73d93e9ad0"
+      "retained_hash": "5be4afb15a562eed885dcaaca3066a3e945236470bbce8a4e81ad171142b4d4f"
     },
     ".github/workflows/sw92_phase_assigned_three_phase.yml": {
       "name": "SW92 phase-assigned C2b1 three-phase",
@@ -4958,7 +4871,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -4966,7 +4879,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -4989,8 +4902,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "ba44aca368ff103d61eaab4c4050af422eebf8d9987ba56e6b011b5ca0c34101",
-      "retained_blob_sha": "a6b3b9c59e18b7cddad46a917bb3b9dacadca31c"
+      "retained_hash": "1b04ece6f81792ad2cc71f35e7511080940ccd76ae4ed4939d3aeb849c371aa7"
     },
     ".github/workflows/sw92_profile_c_sensitivity.yml": {
       "name": "SW92 Profile-C implicit sensitivity",
@@ -5018,7 +4930,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -5026,7 +4938,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -5049,8 +4961,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "9f0a739770c056664e0cad3dda9d791e22d101507a340447d6d7237d308036ac",
-      "retained_blob_sha": "811ced46b5a6570a7ef4ef23481b37796dc2c5c2"
+      "retained_hash": "d59503258c6241f48805ef0eb8e6b65906634c4c049baf8030c20f182cd19688"
     },
     ".github/workflows/sw92_three_phase_experimental_line.yml": {
       "name": "SW92 experimental three-phase line",
@@ -5096,7 +5007,7 @@
                 {
                   "name": "GCC Debug + ASan/UBSan",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Debug",
                   "compiler": "-DCMAKE_CXX_COMPILER=g++",
                   "sanitizer": "ON"
@@ -5104,7 +5015,7 @@
                 {
                   "name": "Clang Release",
                   "os": "ubuntu-24.04",
-                  "runner": "mpmc_hnu",
+                  "runner": "ubuntu-24.04",
                   "config": "Release",
                   "compiler": "-DCMAKE_CXX_COMPILER=clang++",
                   "sanitizer": "OFF"
@@ -5138,7 +5049,7 @@
           ".github/workflows/sw92_three_phase_experimental_line.yml"
         ]
       },
-      "retained_hash": "6bac39ef5b0c62461ee51b61b7bbe8ddf4e98950204ada08441277a02908668e",
+      "retained_hash": "b2616f29591ecc053aa5996ad4bcd9ce0dbb8f8e8884347bd8635b6f50877450",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "experimental-line": "legacy_sw92_three_phase_experimental_line__experimental-line"
@@ -5221,7 +5132,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "959010d4bf94a8439b003fd2c381b986a1d003e654849cf9549b4ac848e31ccd"
+      "retained_hash": "ec2ff6eb0eef98cc5ddaf92d0099f071224bb25ddd89efdb4e3632022c2e4d82"
     }
   }
 }
