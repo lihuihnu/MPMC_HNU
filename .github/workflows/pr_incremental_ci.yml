@@ -1,138 +1,40 @@
-name: Final CI governance validation
+name: Routed reusable result validation
 on:
   push:
     branches: [work/ci-single-entry-20260921]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  validate:
+  ad:
+    uses: lihuihnu/MPMC_HNU/.github/workflows/ad.yml@c31c64a1003f60fb2118b354555f946cc8cb08cc
+    with:
+      matrix_json: '{"include":[{"name":"GCC Debug + ASan/UBSan","os":"ubuntu-24.04","runner":"ubuntu-24.04","build_type":"Debug","compiler":"-DCMAKE_CXX_COMPILER=g++","sanitizer":"ON","suite":"arithmetic"}]}'
+
+  pt-stability:
+    uses: lihuihnu/MPMC_HNU/.github/workflows/stability.yml@c31c64a1003f60fb2118b354555f946cc8cb08cc
+    with:
+      routed: true
+
+  verify:
+    needs: [ad, pt-stability]
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: work/ci-final-governance-fixes-20260922
-          persist-credentials: false
-          fetch-depth: 0
-
-      - name: Install pinned metadata parser
-        run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
-
-      - name: Regenerate workflow map and run governance regressions
+      - name: Verify reusable caller evidence
         env:
-          GH_TOKEN: ${{ github.token }}
+          AD_RESULT: ${{ needs.ad.result }}
+          AD_VALIDATED: ${{ needs.ad.outputs.validated }}
+          STABILITY_RESULT: ${{ needs.pt-stability.result }}
+          STABILITY_VALIDATED: ${{ needs.pt-stability.outputs.validated }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import base64
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-          import subprocess
-          import urllib.request
-          import yaml
-
-          repo = os.environ["GITHUB_REPOSITORY"]
-          token = os.environ["GH_TOKEN"]
-          branch = "work/ci-final-governance-fixes-20260922"
-          router_path = ".github/workflows/pr_incremental_ci.yml"
-
-          def load(path):
-              obj = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-              if isinstance(obj, dict) and True in obj:
-                  obj["on"] = obj.pop(True)
-              return obj
-
-          def digest(obj):
-              return hashlib.sha256(
-                  json.dumps(obj, sort_keys=True, ensure_ascii=False).encode()
-              ).hexdigest()
-
-          map_path = Path(".github/ci/workflow_map.json")
-          catalog = json.loads(map_path.read_text(encoding="utf-8"))
-          for path, spec in catalog["workflows"].items():
-              wf = load(path)
-              if path != router_path:
-                  spec.pop("retained_blob_sha", None)
-                  spec["retained_hash"] = digest(wf)
-              for job_name, job_spec in spec.get("jobs", {}).items():
-                  actual = (wf.get("jobs") or {}).get(job_name)
-                  if actual is None:
-                      continue
-                  job_spec["runner"] = actual.get("runs-on")
-                  job_spec["strategy"] = actual.get("strategy")
-          content = json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
-          map_path.write_text(content, encoding="utf-8")
-
-          # Structural checks for the two routed reusable workflows.
-          ad = load(".github/workflows/ad.yml")
-          stability = load(".github/workflows/stability.yml")
-          validated_expr = "$" + "{{ jobs.validation-result.outputs.validated }}"
-          assert ad["on"]["workflow_call"]["outputs"]["validated"]["value"] == validated_expr
-          assert stability["on"]["workflow_call"]["outputs"]["validated"]["value"] == validated_expr
-          assert "github.run_id" in ad["concurrency"]["group"]
-          assert "github.run_id" in stability["concurrency"]["group"]
-          assert "validation-result" in ad["jobs"]
-          assert "validation-result" in stability["jobs"]
-
-          # Private runner is only the long CPA performance gate, both standalone and central owner.
-          private = []
-          for path in sorted(catalog["workflows"]):
-              wf = load(path)
-              for job_name, job in (wf.get("jobs") or {}).items():
-                  serialized = json.dumps(job, sort_keys=True)
-                  if "mpmc_hnu" in serialized or "self-hosted" in serialized:
-                      private.append((path, job_name))
-          expected_private = sorted([
-              (".github/workflows/cpa_performance_audit.yml", "paired-baseline"),
-              (router_path, "legacy_cpa_performance_audit__paired-baseline"),
-          ])
-          assert sorted(private) == expected_private, (private, expected_private)
-
-          subprocess.run([
-              "python3", "-m", "py_compile",
-              ".github/ci/impact_rules.py",
-              ".github/ci/plan.py",
-              ".github/ci/verify_result.py",
-              ".github/ci/verify_workflows.py",
-              "products/pt_android/tests/test_android_boundary.py",
-          ], check=True)
-          subprocess.run([
-              "python3", "-m", "unittest", "discover",
-              "-s", "products/pt_android/tests", "-p", "test_*.py", "-v",
-          ], check=True)
-          subprocess.run(["python3", ".github/ci/verify_workflows.py"], check=True)
-          subprocess.run(["git", "diff", "--check", "070efd87bd30e6bfc4899bc4d7e81fd14469ea06..HEAD"], check=True)
-
-          # Push only the regenerated non-workflow audit map to the temporary branch.
-          api_url = "https://api.github.com/repos/" + repo + "/contents/.github/ci/workflow_map.json?ref=" + branch
-          req = urllib.request.Request(
-              api_url,
-              headers={"Authorization":"Bearer " + token, "Accept":"application/vnd.github+json"},
-          )
-          with urllib.request.urlopen(req, timeout=30) as response:
-              current = json.load(response)
-          payload = {
-              "message": "chore(ci): refresh final workflow map",
-              "content": base64.b64encode(content.encode()).decode(),
-              "sha": current["sha"],
-              "branch": branch,
-          }
-          req = urllib.request.Request(
-              "https://api.github.com/repos/" + repo + "/contents/.github/ci/workflow_map.json",
-              data=json.dumps(payload).encode(),
-              method="PUT",
-              headers={
-                  "Authorization":"Bearer " + token,
-                  "Accept":"application/vnd.github+json",
-                  "Content-Type":"application/json",
-              },
-          )
-          with urllib.request.urlopen(req, timeout=30) as response:
-              result = json.load(response)
-          print("UPDATED_MAP_COMMIT=" + result["commit"]["sha"])
-          print("FINAL_CI_GOVERNANCE_VALIDATION_OK")
-          PY
+          echo "ad_result=$AD_RESULT ad_validated=$AD_VALIDATED"
+          echo "stability_result=$STABILITY_RESULT stability_validated=$STABILITY_VALIDATED"
+          test "$AD_RESULT" = "success"
+          test "$AD_VALIDATED" = "true"
+          test "$STABILITY_RESULT" = "success"
+          test "$STABILITY_VALIDATED" = "true"
+          echo "ROUTED_REUSABLE_RESULT_OK"
