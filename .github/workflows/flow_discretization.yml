@@ -1,47 +1,18 @@
 name: Flow-discretization TPFA phase flux
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flow_discretization/**'
-      - 'modules/flow/include/mpmc/flow/phase_potential_upwind.hpp'
-      - 'modules/flow/include/mpmc/flow/phase_transport.hpp'
-      - 'modules/flow/include/mpmc/flow/saturation_constitutive.hpp'
-      - 'modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp'
-      - 'modules/flow/include/mpmc/flow/component_accumulation.hpp'
-      - 'modules/flow/include/mpmc/flow/component_accumulation_time.hpp'
-      - 'modules/flow/include/mpmc/flow/energy_accumulation.hpp'
-      - 'modules/flow/CMakeLists.txt'
-      - 'modules/discretization/include/mpmc/discretization/tpfa_internal_face_transmissibility_snapshot_3d.hpp'
-      - 'modules/discretization/include/mpmc/discretization/tpfa_static_face_transmissibility_3d.hpp'
-      - 'modules/discretization/include/mpmc/discretization/transmissibility_admissibility_3d.hpp'
-      - 'modules/discretization/CMakeLists.txt'
-      - 'modules/mesh/include/mpmc/mesh/entity.hpp'
-      - 'modules/mesh/include/mpmc/mesh/partition_snapshot.hpp'
-      - 'modules/mesh/include/mpmc/mesh/topology.hpp'
-      - 'tests/flow_discretization/core/**'
-      - '.github/workflows/flow_discretization.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: flow-discretization-${{ github.workflow }}-${{ github.ref }}
+  group: flow-discretization-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["modules/flow_discretization/**","modules/flow/include/mpmc/flow/phase_potential_upwind.hpp","modules/flow/include/mpmc/flow/phase_transport.hpp","modules/flow/include/mpmc/flow/saturation_constitutive.hpp","modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp","modules/flow/include/mpmc/flow/component_accumulation.hpp","modules/flow/include/mpmc/flow/component_accumulation_time.hpp","modules/flow/include/mpmc/flow/energy_accumulation.hpp","modules/flow/CMakeLists.txt","modules/discretization/include/mpmc/discretization/tpfa_internal_face_transmissibility_snapshot_3d.hpp","modules/discretization/include/mpmc/discretization/tpfa_static_face_transmissibility_3d.hpp","modules/discretization/include/mpmc/discretization/transmissibility_admissibility_3d.hpp","modules/discretization/CMakeLists.txt","modules/mesh/include/mpmc/mesh/entity.hpp","modules/mesh/include/mpmc/mesh/partition_snapshot.hpp","modules/mesh/include/mpmc/mesh/topology.hpp","tests/flow_discretization/core/**",".github/workflows/flow_discretization.yml"]
-
   core:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10

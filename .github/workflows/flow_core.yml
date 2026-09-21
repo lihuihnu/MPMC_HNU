@@ -1,42 +1,18 @@
 name: Flow natural-variable core contract
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flow/**'
-      - 'modules/thermodynamics/CMakeLists.txt'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
-      - 'modules/ad/include/mpmc/ad/**'
-      - 'modules/ad/CMakeLists.txt'
-      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_phase_transition.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_flash_backend.hpp'
-      - 'tests/flow/core/**'
-      - '.github/workflows/flow_core.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: flow-core-${{ github.workflow }}-${{ github.ref }}
+  group: flow-core-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  incremental-path-gate:
-    name: Incremental path gate
-    uses: ./.github/workflows/_incremental_path_gate.yml
-    with:
-      paths_json: >-
-        ["modules/flow/**","modules/thermodynamics/CMakeLists.txt","modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp","modules/thermodynamics/include/mpmc/thermodynamics/pr76_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp","modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp","modules/ad/include/mpmc/ad/**","modules/ad/CMakeLists.txt","modules/flash/include/mpmc/flash/pt_phase_set.hpp","modules/flash/include/mpmc/flash/pt_phase_transition.hpp","modules/flash/include/mpmc/flash/pt_flash_backend.hpp","tests/flow/core/**",".github/workflows/flow_core.yml"]
-
   core:
-    needs: incremental-path-gate
-    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
