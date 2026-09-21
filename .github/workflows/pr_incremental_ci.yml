@@ -1,41 +1,51 @@
-name: CI entry migration validation
+name: CI governance candidate validation
 on:
   push:
     branches: [work/ci-single-entry-20260921]
 permissions:
-  contents: write
+  contents: read
   actions: read
 jobs:
   audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: work/ci-governance-fix-20260921
           persist-credentials: false
           fetch-depth: 0
-      - name: Install pinned metadata validators
+      - name: Install pinned validators
         run: |
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-      - name: Verify candidate and export content blobs for authorized connector
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Validate governance candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
-          import subprocess, yaml
-          previous = subprocess.check_output(['git', 'show', '78d3d3ff807f24475ca43cb23ef750827c782f16:.github/workflows/pr_incremental_ci.yml'], text=True)
-          command = yaml.safe_load(previous)['jobs']['audit']['steps'][-1]['run']
-          patch = '''python3 - <<'PATCH'
-          from pathlib import Path
-          p = Path('/tmp/entry_migration.py')
-          s = p.read_text()
-          s = s.split("tree = api('/git/trees'")[0]
-          s += "mapping = {}\\nfor entry in entries:\\n    blob = api('/git/blobs', {'content': entry['content'], 'encoding': 'utf-8'})\\n    mapping[entry['path']] = blob['sha']\\nprint('VALIDATED_BLOB_MAP=' + json.dumps(mapping), flush=True)\\n"
-          p.write_text(s)
-          PATCH
-          python3 /tmp/entry_migration.py
-          '''
-          command = command.replace('python3 /tmp/entry_migration.py\n', patch)
-          subprocess.run(['bash', '-e', '-c', command], check=True)
-          PY
+          set -euo pipefail
+          python3 -m py_compile             .github/ci/impact_rules.py             .github/ci/plan.py             .github/ci/verify_workflows.py             .github/ci/verify_result.py
+          python3 .github/ci/verify_workflows.py
+          actionlint .github/workflows/*.yml
+          git diff --check f4f11807d3476aac6d3e19f2afcd98863d05a7c4..HEAD
+          bad="$(git diff --name-only f4f11807d3476aac6d3e19f2afcd98863d05a7c4..HEAD | grep -Ev '^\.github/' || true)"
+          test -z "$bad" || { echo "non-governance changes: $bad" >&2; exit 1; }
+          cat > /tmp/pr-event.json <<EOF
+          {
+            "action": "synchronize",
+            "pull_request": {
+              "number": 118,
+              "base": {"sha": "256b24edffb5b66433f5dcc6984d61072ac11328", "ref": "main"},
+              "head": {
+                "sha": "$(git rev-parse HEAD)",
+                "ref": "work/ci-governance-fix-20260921",
+                "repo": {"full_name": "lihuihnu/MPMC_HNU"}
+              }
+            }
+          }
+          EOF
+          : > /tmp/planner-output
+          GITHUB_EVENT_PATH=/tmp/pr-event.json           GITHUB_EVENT_NAME=pull_request           GITHUB_REPOSITORY=lihuihnu/MPMC_HNU           GITHUB_OUTPUT=/tmp/planner-output           python3 .github/ci/plan.py
+          test -s /tmp/planner-output
+          echo "CI_GOVERNANCE_CANDIDATE_OK"
