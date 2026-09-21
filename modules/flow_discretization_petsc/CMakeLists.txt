@@ -29,4 +29,5 @@ target_link_libraries(
     mpmc_flow_discretization_petsc
     INTERFACE
         mpmc::flow_discretization
+        mpmc::flow_thermodynamics
         mpmc::discretization_petsc)

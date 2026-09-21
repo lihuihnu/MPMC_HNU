@@ -1,4 +1,5 @@
-#include <mpmc/flow_discretization_petsc/cross_cardinality_tpfa_bridge.hpp>
+#include <mpmc/flow_discretization_petsc/thermodynamic_cross_cardinality_tpfa_adapter.hpp>
+#include <mpmc/thermodynamics/pr_parameters.hpp>
 
 #include <petscmat.h>
 #include <petscvec.h>
@@ -24,6 +25,7 @@ namespace flow = mpmc::flow;
 namespace disc = mpmc::discretization;
 namespace dp = mpmc::discretization_petsc;
 namespace fdp = mpmc::flow_discretization_petsc;
+namespace th = mpmc::thermodynamics;
 
 void require_collective(
     bool condition,
@@ -1553,6 +1555,303 @@ phase_identity_map_for_stable(
     return maps.at(index);
 }
 
+
+th::Provenance thermodynamic_adapter_source(
+    std::string locator) {
+    return {
+        th::SourceKind::synthetic_test,
+        "MPMC_HNU thermodynamic cross-cardinality adapter regression",
+        "v1",
+        std::move(locator),
+        "Manufactured values verify identity-to-selected-branch TPFA integration only",
+        "tests/flow_discretization/petsc/mixed_cardinality_physical_snes_assembly_test.cpp",
+        "Repository structural regression"};
+}
+
+th::SourcedScalar thermodynamic_adapter_scalar(
+    double value,
+    th::Unit unit,
+    std::string locator) {
+    return {
+        value,
+        unit,
+        thermodynamic_adapter_source(
+            std::move(locator)),
+        "SI",
+        "identity"};
+}
+
+th::Component thermodynamic_adapter_component(
+    std::string id,
+    double molar_mass_kg_per_mol) {
+    const auto definition =
+        thermodynamic_adapter_source(
+            "component-" + id);
+    return {
+        id,
+        id,
+        th::ComponentKind::pure,
+        definition,
+        thermodynamic_adapter_scalar(
+            molar_mass_kg_per_mol,
+            th::Unit::kilogram_per_mole,
+            "molar-mass-" + id)};
+}
+
+th::PrParameterSet
+thermodynamic_adapter_pr_parameters() {
+    std::vector<th::Component> catalog{
+        thermodynamic_adapter_component(
+            "A", 0.020),
+        thermodynamic_adapter_component(
+            "B", 0.030),
+        thermodynamic_adapter_component(
+            "C", 0.040)};
+    const std::vector<std::string>
+        order{"A", "B", "C"};
+
+    th::PrParameterInput input;
+    input.model_id =
+        std::string{th::pr76_profile};
+    input.dataset_id =
+        "synthetic-cross-cardinality-pr76";
+    input.revision = "v1";
+    input.applicability = {
+        std::nullopt,
+        std::nullopt,
+        thermodynamic_adapter_source(
+            "applicability")};
+
+    const std::array<double, 3>
+        critical_temperature{
+            20.0, 25.0, 30.0};
+    const std::array<double, 3>
+        critical_pressure{
+            1.0e6, 1.2e6, 1.5e6};
+    const std::array<double, 3>
+        acentric_factor{
+            0.0, 0.1, 0.2};
+    for (std::size_t index = 0U;
+         index < order.size();
+         ++index) {
+        input.pure.push_back({
+            order[index],
+            thermodynamic_adapter_scalar(
+                critical_temperature[index],
+                th::Unit::kelvin,
+                order[index] + "-Tc"),
+            thermodynamic_adapter_scalar(
+                critical_pressure[index],
+                th::Unit::pascal,
+                order[index] + "-Pc"),
+            thermodynamic_adapter_scalar(
+                acentric_factor[index],
+                th::Unit::dimensionless,
+                order[index] + "-omega")});
+    }
+    for (std::size_t first = 0U;
+         first < order.size();
+         ++first) {
+        for (std::size_t second =
+                 first + 1U;
+             second < order.size();
+             ++second) {
+            input.binary.push_back({
+                order[first],
+                order[second],
+                thermodynamic_adapter_scalar(
+                    0.0,
+                    th::Unit::dimensionless,
+                    order[first] + "-" +
+                        order[second] +
+                        "-kij")});
+        }
+    }
+    return th::PrParameterSet::create(
+        catalog,
+        order,
+        input,
+        th::DataPolicy::
+            allow_synthetic_tests);
+}
+
+flow::FrozenPhysicalPhaseIdentity
+mixed_physical_phase_identity(
+    std::string key) {
+    return {
+        "fixture/mixed-physical-dispatch",
+        std::move(key)};
+}
+
+flow::PhaseIdentityContinuationSnapshot
+thermodynamic_adapter_continuation() {
+    flow::PhaseSetTransitionCandidate
+        candidate;
+    candidate.source_phase_count = 1U;
+    candidate.target_phase_count = 2U;
+    candidate.trigger =
+        flow::
+            PhaseSetTransitionTrigger::
+                stability_witness;
+    candidate.status =
+        flow::
+            PhaseSetTransitionCandidateStatus::
+                target_resolved;
+    candidate.evidence_profile =
+        "fixture/cross-cardinality-fresh-target/v1";
+    candidate.diagnostic =
+        "explicit 1P->2P phase identity continuation";
+
+    return flow::
+        make_phase_identity_continuation_snapshot(
+            candidate,
+            flow::FrozenActivePhaseIdentityMap{
+                {
+                    mixed_physical_phase_identity(
+                        "aqueous")}},
+            flow::FrozenActivePhaseIdentityMap{
+                {
+                    mixed_physical_phase_identity(
+                        "aqueous"),
+                    mixed_physical_phase_identity(
+                        "hydrocarbon-0")}});
+}
+
+flow::Pr76AbsentPhasePotentialExtensionProvider<double>
+make_thermodynamic_adapter_pr_provider(
+    const th::Pr76Phase<double>& model) {
+    const auto continuation =
+        thermodynamic_adapter_continuation();
+    auto registry =
+        flow::
+            make_transition_selected_phase_branch_registry(
+                continuation,
+                std::vector<
+                    flow::
+                        FrozenSelectedPhaseBranchBinding<
+                            th::Pr76SelectedPhase>>{
+                    {
+                        mixed_physical_phase_identity(
+                            "aqueous"),
+                        {0U, {}},
+                        "fixture/aqueous-root0"},
+                    {
+                        mixed_physical_phase_identity(
+                            "hydrocarbon-0"),
+                        {0U, {}},
+                        "fixture/hydrocarbon0-root0"}});
+    return {
+        model,
+        std::move(registry)};
+}
+
+struct ThermodynamicCoordinateResolverAudit {
+    std::uint64_t calls{};
+};
+
+PetscErrorCode
+resolve_absent_phase_thermodynamic_coordinates(
+    const fdp::
+        MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D&,
+    const flow::
+        CrossCardinalityFacePhaseIdentityBinding&
+            phase_binding,
+    fdp::CrossCardinalityAbsentPhaseSide3D
+        absent_side,
+    const fdp::
+        MixedCardinalityPhysicalCurrentCellLinearization3D&
+            owner,
+    const fdp::
+        MixedCardinalityPhysicalCurrentCellLinearization3D&
+            neighbour,
+    void* raw_context,
+    std::optional<
+        flow::
+            AbsentPhaseThermodynamicCoordinateExtension>*
+                output,
+    fdp::NaturalVariableSnesEvaluationStatus3D*
+        status) {
+    if (raw_context == nullptr ||
+        output == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    auto* audit =
+        static_cast<
+            ThermodynamicCoordinateResolverAudit*>(
+                raw_context);
+    ++audit->calls;
+
+    try {
+        if (phase_binding
+                .identity.opaque_phase_key !=
+                "hydrocarbon-0" ||
+            absent_side !=
+                fdp::
+                    CrossCardinalityAbsentPhaseSide3D::
+                        owner) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        const auto host_identity =
+            std::visit(
+                [](const auto& typed) {
+                    return typed.transport
+                        .state_identity;
+                },
+                owner);
+        (void)neighbour;
+
+        const std::size_t q =
+            host_identity.layout
+                .unknown_count();
+        const std::size_t n =
+            host_identity.layout
+                .component_count();
+        if (n != 3U) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        flow::
+            AbsentPhaseThermodynamicCoordinateExtension
+            coordinates;
+        coordinates.identity =
+            phase_binding.identity;
+        coordinates.host_state_identity =
+            host_identity;
+        coordinates.phase_pressure_pa =
+            host_identity
+                .reference_pressure_pa;
+        coordinates.phase_pressure_gradient
+            .assign(q, 0.0);
+        coordinates.phase_pressure_gradient[
+            host_identity.layout
+                .pressure_unknown_index()] =
+            1.0;
+        coordinates.hypothetical_composition =
+            {0.40, 0.20, 0.40};
+        coordinates
+            .hypothetical_composition_jacobian
+            .assign(n * q, 0.0);
+        coordinates.provenance =
+            "fixture/stability-hypothetical-composition/v1";
+        coordinates.validate();
+
+        output->emplace(
+            std::move(coordinates));
+        *status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+        return PETSC_SUCCESS;
+    } catch (const std::invalid_argument&) {
+        return PETSC_ERR_ARG_INCOMP;
+    } catch (...) {
+        return PETSC_ERR_LIB;
+    }
+}
+
 PetscErrorCode
 evaluate_absent_phase_extension(
     const fdp::
@@ -2240,10 +2539,33 @@ void mixed_cardinality_physical_snes_assembly_test() {
         make_face_inputs(
             rank,
             true);
+    const auto pr_parameters =
+        thermodynamic_adapter_pr_parameters();
+    const auto pr_model =
+        th::Pr76Phase<double>::
+            from_parameters(
+                pr_parameters);
+    auto pr_provider =
+        make_thermodynamic_adapter_pr_provider(
+            pr_model);
+    ThermodynamicCoordinateResolverAudit
+        coordinate_audit;
+    fdp::
+        ThermodynamicAbsentPhaseExtensionAdapterBinding3D
+        thermodynamic_adapter{
+            &resolve_absent_phase_thermodynamic_coordinates,
+            &coordinate_audit,
+            &fdp::
+                evaluate_absent_phase_thermodynamic_provider_3d<
+                    flow::
+                        Pr76AbsentPhasePotentialExtensionProvider<
+                            double>>,
+            &pr_provider};
     fdp::CrossCardinalityTpfaBridgeBinding3D
         standard_bridge{
-            &evaluate_absent_phase_extension,
-            nullptr};
+            &fdp::
+                evaluate_thermodynamic_absent_phase_extension_3d,
+            &thermodynamic_adapter};
     std::optional<
         fdp::
             MixedCardinalityPhysicalSnesAssemblyContext3D>
@@ -2506,6 +2828,20 @@ void mixed_cardinality_physical_snes_assembly_test() {
     require_collective(
         cross_block_nonzero,
         "distributed 4x7/7x4 cross-cardinality Jacobian block is missing");
+    std::uint64_t global_coordinate_calls = 0U;
+    require_collective(
+        MPI_Allreduce(
+            &coordinate_audit.calls,
+            &global_coordinate_calls,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce thermodynamic coordinate resolver call count");
+    require_collective(
+        global_coordinate_calls > 0U,
+        "authoritative distributed bridge did not invoke the thermodynamic coordinate resolver");
 
     require_collective(
         VecDestroy(&bridged_residual) ==
