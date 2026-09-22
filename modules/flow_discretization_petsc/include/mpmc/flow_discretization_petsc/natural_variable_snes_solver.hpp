@@ -66,6 +66,21 @@ struct NaturalVariableSnesEvaluator3D {
     void* user_context{};
 };
 
+struct NaturalVariableSnesFailureDiagnostics3D {
+    SNESConvergedReason snes_reason{
+        SNES_CONVERGED_ITERATING};
+    KSPConvergedReason ksp_reason{
+        KSP_CONVERGED_ITERATING};
+    PetscInt nonlinear_iterations{};
+    PetscInt function_evaluations{};
+    PetscInt jacobian_evaluations{};
+    PetscInt function_domain_errors{};
+    PetscInt jacobian_domain_errors{};
+    PetscInt line_search_prechecks{};
+    PetscInt line_search_direction_changes{};
+    double function_l2_norm{};
+};
+
 struct NaturalVariableSnesSolutionEntry3D {
     PetscInt petsc_global_scalar{-1};
     mpmc::mesh::GlobalDofIndex mesh_global_dof{
@@ -1077,7 +1092,10 @@ solve_natural_variable_snes_3d(
     Vec* solution,
     std::optional<NaturalVariableSnesSolveReport3D>*
         report,
-    Vec row_scaling = nullptr) {
+    Vec row_scaling = nullptr,
+    std::optional<
+        NaturalVariableSnesFailureDiagnostics3D>*
+            failure_diagnostics = nullptr) {
     using namespace natural_variable_snes_detail;
 
     int mpi_rank = -1;
@@ -1126,6 +1144,9 @@ solve_natural_variable_snes_3d(
 
     *solution = nullptr;
     report->reset();
+    if (failure_diagnostics != nullptr) {
+        failure_diagnostics->reset();
+    }
 
     local_error =
         validate_linear_layout(
@@ -1475,6 +1496,39 @@ solve_natural_variable_snes_3d(
         return error;
     }
     if (static_cast<int>(reason) <= 0) {
+        if (failure_diagnostics != nullptr) {
+            KSPConvergedReason ksp_reason{
+                KSP_CONVERGED_ITERATING};
+            PetscReal function_norm = 0.0;
+            const PetscErrorCode ksp_reason_error =
+                KSPGetConvergedReason(
+                    ksp,
+                    &ksp_reason);
+            const PetscErrorCode norm_error =
+                SNESGetFunctionNorm(
+                    snes,
+                    &function_norm);
+            if (ksp_reason_error == PETSC_SUCCESS &&
+                norm_error == PETSC_SUCCESS &&
+                std::isfinite(
+                    static_cast<double>(
+                        function_norm)) &&
+                function_norm >= 0.0) {
+                failure_diagnostics->emplace(
+                    NaturalVariableSnesFailureDiagnostics3D{
+                        reason,
+                        ksp_reason,
+                        nonlinear_iterations,
+                        callback_context.function_evaluations,
+                        callback_context.jacobian_evaluations,
+                        callback_context.function_domain_errors,
+                        callback_context.jacobian_domain_errors,
+                        callback_context.line_search_prechecks,
+                        callback_context.line_search_direction_changes,
+                        static_cast<double>(
+                            function_norm)});
+            }
+        }
         (void)cleanup();
         return PETSC_ERR_NOT_CONVERGED;
     }

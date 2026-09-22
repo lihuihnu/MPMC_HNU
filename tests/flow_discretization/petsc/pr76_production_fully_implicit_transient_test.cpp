@@ -1486,6 +1486,9 @@ void pr76_production_fully_implicit_transient_test() {
     std::optional<
         fdp::NaturalVariableSnesSolveReport3D>
         report;
+    std::optional<
+        fdp::NaturalVariableSnesFailureDiagnostics3D>
+        failure_diagnostics;
     error =
         fdp::solve_natural_variable_snes_3d(
             PETSC_COMM_WORLD,
@@ -1495,27 +1498,83 @@ void pr76_production_fully_implicit_transient_test() {
             context->snes_evaluator(),
             &solution,
             &report,
-            row_scaling);
-    require_real_collective(
+            row_scaling,
+            &failure_diagnostics);
+    const bool solve_ok =
         error == PETSC_SUCCESS &&
-            solution != nullptr &&
-            report.has_value() &&
-            static_cast<int>(
-                report->converged_reason()) >
-                0 &&
-            report->function_domain_errors() ==
-                0 &&
-            report->jacobian_domain_errors() ==
-                0 &&
-            report->snes_type() ==
-                std::string_view{SNESNEWTONLS} &&
-            report->line_search_type() ==
-                std::string_view{SNESLINESEARCHBT} &&
-            report->ksp_type() ==
-                std::string_view{KSPGMRES} &&
-            report->pc_type() ==
-                std::string_view{PCASM},
-        "real PR76 fully implicit PETSc solve failed");
+        solution != nullptr &&
+        report.has_value() &&
+        static_cast<int>(
+            report->converged_reason()) >
+            0 &&
+        report->function_domain_errors() ==
+            0 &&
+        report->jacobian_domain_errors() ==
+            0 &&
+        report->snes_type() ==
+            std::string_view{SNESNEWTONLS} &&
+        report->line_search_type() ==
+            std::string_view{SNESLINESEARCHBT} &&
+        report->ksp_type() ==
+            std::string_view{KSPGMRES} &&
+        report->pc_type() ==
+            std::string_view{PCASM};
+    std::string solve_message =
+        "real PR76 fully implicit PETSc solve failed";
+    if (!solve_ok &&
+        failure_diagnostics.has_value()) {
+        solve_message +=
+            " snes_reason=" +
+            std::to_string(
+                static_cast<int>(
+                    failure_diagnostics
+                        ->snes_reason)) +
+            " ksp_reason=" +
+            std::to_string(
+                static_cast<int>(
+                    failure_diagnostics
+                        ->ksp_reason)) +
+            " nonlinear_iterations=" +
+            std::to_string(
+                failure_diagnostics
+                    ->nonlinear_iterations) +
+            " function_evaluations=" +
+            std::to_string(
+                failure_diagnostics
+                    ->function_evaluations) +
+            " jacobian_evaluations=" +
+            std::to_string(
+                failure_diagnostics
+                    ->jacobian_evaluations) +
+            " function_domain_errors=" +
+            std::to_string(
+                failure_diagnostics
+                    ->function_domain_errors) +
+            " jacobian_domain_errors=" +
+            std::to_string(
+                failure_diagnostics
+                    ->jacobian_domain_errors) +
+            " line_search_prechecks=" +
+            std::to_string(
+                failure_diagnostics
+                    ->line_search_prechecks) +
+            " line_search_direction_changes=" +
+            std::to_string(
+                failure_diagnostics
+                    ->line_search_direction_changes) +
+            " function_l2_norm=" +
+            std::to_string(
+                failure_diagnostics
+                    ->function_l2_norm);
+    } else if (!solve_ok) {
+        solve_message +=
+            " petsc_error=" +
+            std::to_string(
+                static_cast<int>(error));
+    }
+    require_real_collective(
+        solve_ok,
+        solve_message);
 
     const auto converged =
         read_owned_real_state(
