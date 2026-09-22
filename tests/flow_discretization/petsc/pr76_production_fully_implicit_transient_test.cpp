@@ -1,8 +1,10 @@
 #include <mpmc/flow/pr76_methane_ethane_propane_properties.hpp>
+#include <mpmc/flash/pr76_pt_flash_backend.hpp>
 #include <mpmc/flow_discretization/single_phase_tpfa.hpp>
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
 #include <mpmc/flow_discretization_petsc/adaptive_timestep_controller.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_production_cell_evaluator.hpp>
+#include <mpmc/flow_discretization_petsc/post_snes_pt_flash_phase_transition_scanner.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_adaptive_timestep_attempt.hpp>
 
 #include <petscsys.h>
@@ -26,6 +28,7 @@ namespace disc = mpmc::discretization;
 namespace dp = mpmc::discretization_petsc;
 namespace fd = mpmc::flow_discretization;
 namespace fdp = mpmc::flow_discretization_petsc;
+namespace fl = mpmc::flash;
 namespace flow = mpmc::flow;
 namespace mesh = mpmc::mesh;
 namespace th = mpmc::thermodynamics;
@@ -1138,15 +1141,29 @@ real_owned_history_signature(
     return result;
 }
 
-PetscErrorCode real_frozen_phase_post_snes_review(
+template <typename Closure>
+struct RealPr76PostSnesPtReviewContext {
+    fl::Pr76PtFlashBackend* backend{};
+    fdp::Pr76SinglePhaseProductionCellEvaluatorContext3D<
+        Closure>* evaluator_context{};
+    int rank{-1};
+    std::size_t equal_cardinality_stable_scans{};
+    std::vector<
+        fdp::PostSnesPtFlashSourceCellSnapshot3D>
+        scanned_sources;
+};
+
+template <typename Closure>
+PetscErrorCode real_pr76_post_snes_pt_review(
     const fdp::AdaptiveTimestepAttemptRequest3D&,
     Vec converged_state,
     const fdp::NaturalVariableSnesSolveReport3D&
         solve_report,
-    void*,
+    void* raw_context,
     fdp::AdaptiveTimestepAttemptOutcome3D* outcome,
     std::size_t* phase_transition_restarts) {
     if (converged_state == nullptr ||
+        raw_context == nullptr ||
         outcome == nullptr ||
         phase_transition_restarts == nullptr) {
         return PETSC_ERR_ARG_NULL;
@@ -1157,10 +1174,108 @@ PetscErrorCode real_frozen_phase_post_snes_review(
         solve_report.jacobian_domain_errors() != 0) {
         return PETSC_ERR_ARG_INCOMP;
     }
+
+    auto* context =
+        static_cast<
+            RealPr76PostSnesPtReviewContext<Closure>*>(
+                raw_context);
+    if (context->backend == nullptr ||
+        context->evaluator_context == nullptr ||
+        context->rank < 0) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    fdp::PostSnesPtFlashSourceCellSnapshot3D
+        source;
+    try {
+        const std::uint64_t stable =
+            context->rank == 0
+                ? UINT64_C(10)
+                : UINT64_C(20);
+        const auto converged =
+            read_owned_real_state(
+                converged_state,
+                context->rank);
+        auto evaluated =
+            real_direct_cell_typed(
+                stable,
+                std::span<const double>{
+                    converged.data(),
+                    converged.size()},
+                context->evaluator_context);
+
+        source.cell_global =
+            mesh::GlobalEntityId{stable};
+        source.source_phase_count = 1U;
+        source.pressure_pa =
+            evaluated->state.reference_pressure_pa();
+        source.temperature_k =
+            evaluated->state.temperature_k();
+        source.component_ids.assign(
+            evaluated->state.component_ids().begin(),
+            evaluated->state.component_ids().end());
+        source.overall_composition.assign(
+            evaluated->state.phase_composition().begin(),
+            evaluated->state.phase_composition().end());
+    } catch (const std::exception&) {
+        return PETSC_ERR_LIB;
+    }
+
+    std::optional<
+        fdp::PostSnesPhaseTransitionProposal3D>
+        proposal;
+    fdp::PostSnesPhaseTransitionScanStatus3D
+        scan_status =
+            fdp::PostSnesPhaseTransitionScanStatus3D::
+                indeterminate;
+    const PetscErrorCode scan_error =
+        fdp::scan_post_snes_pt_flash_source_cell_3d(
+            source,
+            *context->backend,
+            {},
+            &proposal,
+            &scan_status);
+    if (scan_error != PETSC_SUCCESS) {
+        return scan_error;
+    }
+
+    const int local_stable =
+        scan_status ==
+                fdp::
+                    PostSnesPhaseTransitionScanStatus3D::
+                        complete &&
+            !proposal.has_value()
+        ? 1
+        : 0;
+    int global_stable = 0;
+    if (MPI_Allreduce(
+            &local_stable,
+            &global_stable,
+            1,
+            MPI_INT,
+            MPI_MIN,
+            PETSC_COMM_WORLD) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+
+    *phase_transition_restarts = 0U;
+    if (global_stable == 0) {
+        *outcome =
+            fdp::AdaptiveTimestepAttemptOutcome3D::
+                phase_set_scan_indeterminate;
+        return PETSC_SUCCESS;
+    }
+
+    try {
+        context->scanned_sources.push_back(
+            std::move(source));
+    } catch (const std::exception&) {
+        return PETSC_ERR_MEM;
+    }
+    ++context->equal_cardinality_stable_scans;
     *outcome =
         fdp::AdaptiveTimestepAttemptOutcome3D::
             stable_phase_set;
-    *phase_transition_restarts = 0U;
     return PETSC_SUCCESS;
 }
 
@@ -1425,6 +1540,18 @@ void pr76_production_fully_implicit_transient_test() {
             &closure,
             1.0,
             {&disabled_rock_storage, nullptr},
+            {}};
+
+    fl::Pr76VleEvaluator pt_evaluator(
+        model);
+    fl::Pr76PtFlashBackend pt_backend(
+        pt_evaluator);
+    RealPr76PostSnesPtReviewContext<Closure>
+        pt_review_context{
+            &pt_backend,
+            &evaluator_context,
+            rank,
+            0U,
             {}};
 
     check_real_face_flux(
@@ -1768,8 +1895,9 @@ void pr76_production_fully_implicit_transient_test() {
                     &evaluator_context},
                 initial,
                 {
-                    &real_frozen_phase_post_snes_review,
-                    nullptr},
+                    &real_pr76_post_snes_pt_review<
+                        Closure>,
+                    &pt_review_context},
                 &production_attempt);
     require_real_collective(
         error == PETSC_SUCCESS &&
@@ -1836,6 +1964,11 @@ void pr76_production_fully_implicit_transient_test() {
             harness.forced_recoverable_rejection &&
             harness.commits == 1U &&
             harness.committed_report.has_value() &&
+            pt_review_context
+                    .equal_cardinality_stable_scans ==
+                2U &&
+            pt_review_context.scanned_sources.size() ==
+                2U &&
             harness.attempted_dt.size() == 2U &&
             harness.history_before_attempt.size() ==
                 2U &&
@@ -1900,6 +2033,19 @@ void pr76_production_fully_implicit_transient_test() {
 
     const double accepted_dt_seconds =
         *adaptive_report->accepted_timestep_seconds;
+
+    for (const auto& source :
+         pt_review_context.scanned_sources) {
+        require_real_collective(
+            source.source_phase_count == 1U &&
+                source.component_ids ==
+                    real_component_ids() &&
+                source.overall_composition.size() ==
+                    real_component_ids().size() &&
+                source.pressure_pa > 0.0 &&
+                source.temperature_k > 0.0,
+            "real PR76 post-SNES PT scanner source snapshot changed");
+    }
 
     const auto converged =
         read_owned_real_state(
@@ -2017,6 +2163,35 @@ void pr76_production_fully_implicit_transient_test() {
                 converged.data(),
                 converged.size()},
             &evaluator_context);
+
+    const auto& accepted_scan_source =
+        pt_review_context.scanned_sources.back();
+    near_real_collective(
+        accepted_scan_source.pressure_pa,
+        final_eval->state.reference_pressure_pa(),
+        0.0,
+        0.0,
+        "accepted PR76 PT scan did not use the converged pressure");
+    near_real_collective(
+        accepted_scan_source.temperature_k,
+        final_eval->state.temperature_k(),
+        0.0,
+        0.0,
+        "accepted PR76 PT scan did not use the converged temperature");
+    for (std::size_t component = 0U;
+         component <
+             accepted_scan_source
+                 .overall_composition.size();
+         ++component) {
+        near_real_collective(
+            accepted_scan_source
+                .overall_composition[component],
+            final_eval->state
+                .phase_composition()[component],
+            0.0,
+            0.0,
+            "accepted PR76 PT scan did not use the converged overall composition");
+    }
     const double volume =
         stable == UINT64_C(10)
             ? 2.0

@@ -3908,3 +3908,51 @@ The injected first rejection exists only in the regression harness; production c
 does not manufacture a nonlinear or physical failure. This bridge remains
 fixed-cardinality. Actual 1 <-> 2 <-> 3 topology rebuild continues to belong to
 the existing post-SNES transition controller.
+
+
+### 47.5 Real PR76 post-SNES equal-cardinality PT review
+
+The real two-rank methane/ethane/propane transient no longer uses a callback that
+unconditionally labels a converged frozen single-phase solve as stable.
+
+The post-SNES review now constructs a model-neutral
+`PostSnesPtFlashSourceCellSnapshot3D` from each rank's **converged production
+cell state**:
+
+```text
+converged PETSc state
+-> production PR76 selected-phase cell evaluator
+-> p / T / overall composition
+-> Pr76PtFlashBackend
+-> scan_post_snes_pt_flash_source_cell_3d
+```
+
+The PT backend is built from the same frozen PR76 parameter snapshot as the flow
+property closure. The scanner therefore performs the existing production PR76
+initial-stability / max-three-phase / final phase-set publication path; the flow
+test does not reproduce a second stability criterion.
+
+For this fixed-cardinality slice, acceptance is deliberately narrow:
+
+- every MPI rank must report scanner status `complete`;
+- the accepted PT result must have the same one-phase cardinality, so the scanner
+  publishes no transition proposal;
+- an indeterminate scan or any unresolved different-cardinality path is **not**
+  converted to stable and instead maps to the adaptive recoverable
+  `phase_set_scan_indeterminate` outcome.
+
+No target-density resolver is needed on the verified equal-cardinality path,
+because the production scanner returns before transition projection when the
+accepted phase count matches the source phase count.
+
+The adaptive regression still keeps its deterministic test-only first rejection
+after this real PT review, solely to exercise `0.1 s -> 0.05 s` cutback. Both
+real SNES attempts must first pass the production PR76 PT scanner. The regression
+checks two completed equal-cardinality scans and verifies that the second scan's
+pressure, temperature and overall composition exactly match the state that is
+subsequently committed.
+
+This slice does not yet feed an accepted different-cardinality proposal into the
+outer `1 <-> 2 <-> 3` rebuild controller. It closes only the
+`SNES converged -> real PR76 PT scan -> equal-cardinality stable acceptance`
+path.
