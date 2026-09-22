@@ -2071,15 +2071,49 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 request,
                 &*source_attempt,
                 &attempt_result);
-    require_real_collective(
-        error == PETSC_SUCCESS &&
-            attempt_result.outcome ==
-                fdp::
-                    AdaptiveTimestepAttemptOutcome3D::
-                        phase_transition_proposed &&
-            source_attempt
-                ->has_pending_transition(),
-        "real PR76 1P source solve did not trigger a physical transition handoff");
+    if (!(error == PETSC_SUCCESS &&
+          attempt_result.outcome ==
+              fdp::
+                  AdaptiveTimestepAttemptOutcome3D::
+                      phase_transition_proposed &&
+          source_attempt
+              ->has_pending_transition())) {
+        throw std::runtime_error(
+            std::string{
+                "real PR76 1P source solve did not trigger a physical transition handoff: petsc_error="} +
+            std::to_string(
+                static_cast<int>(error)) +
+            " outcome=" +
+            std::to_string(
+                static_cast<int>(
+                    attempt_result.outcome)) +
+            " pending=" +
+            std::to_string(
+                source_attempt->has_pending()
+                    ? 1
+                    : 0) +
+            " pending_transition=" +
+            std::to_string(
+                source_attempt
+                        ->has_pending_transition()
+                    ? 1
+                    : 0) +
+            " nonlinear_iterations=" +
+            std::to_string(
+                static_cast<long long>(
+                    attempt_result
+                        .nonlinear_iterations)) +
+            " function_domain_errors=" +
+            std::to_string(
+                static_cast<long long>(
+                    attempt_result
+                        .function_domain_errors)) +
+            " jacobian_domain_errors=" +
+            std::to_string(
+                static_cast<long long>(
+                    attempt_result
+                        .jacobian_domain_errors)));
+    }
 
     Vec converged_source = nullptr;
     std::optional<
