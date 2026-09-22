@@ -1597,6 +1597,15 @@ struct RealPr76PostSnesPtReviewContext {
         target_density;
     int rank{-1};
     std::size_t equal_cardinality_stable_scans{};
+    std::size_t review_calls{};
+    std::optional<
+        fdp::AdaptiveTimestepAttemptOutcome3D>
+        last_review_outcome;
+    std::size_t last_local_proposal_count{};
+    fdp::PostSnesPhaseTransitionScanStatus3D
+        last_scan_status{
+            fdp::PostSnesPhaseTransitionScanStatus3D::
+                indeterminate};
     std::vector<
         fdp::PostSnesPtFlashSourceCellSnapshot3D>
         scanned_sources;
@@ -1638,6 +1647,12 @@ PetscErrorCode real_pr76_post_snes_pt_review(
         context->rank < 0) {
         return PETSC_ERR_ARG_INCOMP;
     }
+    ++context->review_calls;
+    context->last_review_outcome.reset();
+    context->last_local_proposal_count = 0U;
+    context->last_scan_status =
+        fdp::PostSnesPhaseTransitionScanStatus3D::
+            indeterminate;
 
     fdp::PostSnesPtFlashSourceCellSnapshot3D
         source;
@@ -1689,6 +1704,8 @@ PetscErrorCode real_pr76_post_snes_pt_review(
             context->target_density,
             &proposal,
             &scan_status);
+    context->last_scan_status =
+        scan_status;
     if (scan_error != PETSC_SUCCESS) {
         return scan_error;
     }
@@ -1715,6 +1732,8 @@ PetscErrorCode real_pr76_post_snes_pt_review(
         local_owned_proposals->push_back(
             std::move(*proposal));
     }
+    context->last_local_proposal_count =
+        local_owned_proposals->size();
     const int local_transition =
         local_owned_proposals->empty()
         ? 0
@@ -1736,12 +1755,16 @@ PetscErrorCode real_pr76_post_snes_pt_review(
         *outcome =
             fdp::AdaptiveTimestepAttemptOutcome3D::
                 phase_set_scan_indeterminate;
+        context->last_review_outcome =
+            *outcome;
         return PETSC_SUCCESS;
     }
     if (global_transition != 0) {
         *outcome =
             fdp::AdaptiveTimestepAttemptOutcome3D::
                 phase_transition_proposed;
+        context->last_review_outcome =
+            *outcome;
         return PETSC_SUCCESS;
     }
 
@@ -1755,6 +1778,8 @@ PetscErrorCode real_pr76_post_snes_pt_review(
     *outcome =
         fdp::AdaptiveTimestepAttemptOutcome3D::
             stable_phase_set;
+    context->last_review_outcome =
+        *outcome;
     return PETSC_SUCCESS;
 }
 
@@ -2016,15 +2041,16 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
             pt_evaluator.root_options()};
     RealPr76PostSnesPtReviewContext<
         Closure>
-        review_context{
-            &pt_backend,
-            source_evaluator_context,
-            {
-                &resolve_real_pr76_flash_target_densities,
-                &density_context},
-            rank,
-            0U,
-            {}};
+        review_context;
+    review_context.backend =
+        &pt_backend;
+    review_context.evaluator_context =
+        source_evaluator_context;
+    review_context.target_density = {
+        &resolve_real_pr76_flash_target_densities,
+        &density_context};
+    review_context.rank =
+        rank;
 
     std::optional<
         fdp::SinglePhaseAdaptiveTimestepAttemptContext3D>
@@ -2112,7 +2138,29 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
             std::to_string(
                 static_cast<long long>(
                     attempt_result
-                        .jacobian_domain_errors)));
+                        .jacobian_domain_errors)) +
+            " review_calls=" +
+            std::to_string(
+                review_context
+                    .review_calls) +
+            " review_outcome=" +
+            std::to_string(
+                review_context
+                        .last_review_outcome
+                        .has_value()
+                    ? static_cast<int>(
+                          *review_context
+                               .last_review_outcome)
+                    : -1) +
+            " scan_status=" +
+            std::to_string(
+                static_cast<int>(
+                    review_context
+                        .last_scan_status)) +
+            " local_proposals=" +
+            std::to_string(
+                review_context
+                    .last_local_proposal_count));
     }
 
     Vec converged_source = nullptr;
@@ -2836,13 +2884,13 @@ void pr76_production_fully_implicit_transient_test() {
     fl::Pr76PtFlashBackend pt_backend(
         pt_evaluator);
     RealPr76PostSnesPtReviewContext<Closure>
-        pt_review_context{
-            &pt_backend,
-            &evaluator_context,
-            {},
-            rank,
-            0U,
-            {}};
+        pt_review_context;
+    pt_review_context.backend =
+        &pt_backend;
+    pt_review_context.evaluator_context =
+        &evaluator_context;
+    pt_review_context.rank =
+        rank;
 
     check_real_face_flux(
         &evaluator_context);
