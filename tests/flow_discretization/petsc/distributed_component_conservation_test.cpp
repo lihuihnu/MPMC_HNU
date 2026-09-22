@@ -47,6 +47,7 @@ void pr76_production_fully_implicit_transient_test();
 bool adaptive_timestep_controller_header();
 void adaptive_timestep_controller_test();
 bool single_phase_adaptive_timestep_attempt_header();
+bool single_phase_handoff_initial_system_header();
 bool cross_cardinality_tpfa_bridge_header();
 bool thermodynamic_cross_cardinality_tpfa_adapter_header();
 bool phase_transition_outer_rebuild_header();
@@ -5393,6 +5394,9 @@ void headers() {
     require_collective(
         single_phase_adaptive_timestep_attempt_header(),
         "single-phase adaptive timestep attempt header probe failed");
+    require_collective(
+        single_phase_handoff_initial_system_header(),
+        "single-phase handoff initial-system header probe failed");
     require_collective(
         cross_cardinality_tpfa_bridge_header(),
         "cross-cardinality TPFA bridge header probe failed");

@@ -4000,3 +4000,41 @@ balance, and unchanged accepted component/energy history.
 The controlled proposal is software orchestration evidence, not physical PR76
 1->2 evidence. This slice does not yet construct the initial variable-cardinality
 PhaseTransitionRebuiltNaturalVariableSystem3D from the fixed-cardinality handoff.
+
+### 47.7 Fixed-1P handoff to initial outer-controller system
+
+The fixed-cardinality handoff now has a production bridge to the source-topology
+PhaseTransitionRebuiltNaturalVariableSystem3D used by the existing outer controller.
+
+The bridge consumes the converged fixed-1P SNES report, accepted cell metadata and
+unchanged previous-time histories. Only owned q values are copied into the new
+ragged PETSc Vec. Ghost rebuild snapshots may omit q entirely; the rebuilt mixed
+physical context obtains ghost state from the existing owner/PetscSF path. No
+global solution Allgather is introduced at this control boundary.
+
+The phase-transition rebuild cell contract was also corrected to separate two
+different physical inventories:
+
+- current converged component inventory: used only to verify candidate material
+  balance and construct the target-topology initial guess;
+- previous-time BE component/energy history: copied unchanged into the restarted
+  system and never recomputed from the candidate.
+
+This matches the earlier documented contract: PT scanning is based on current
+pore-volume inventory while backward-Euler history remains the accepted t_n state.
+
+The real CH4/C2H6/C3H8 regression now transfers a converged fixed-1P handoff into
+an initial outer-controller system and checks global scalar count 8, both local
+source cells remaining 1P, exact owned-q preservation, zero absent-phase provider
+calls, and independently reassembled source residual <= 1e-6.
+
+The preserved-proposal scanner is also exercised inside the existing controlled
+mixed-cardinality outer-controller fixture. Its first generation replays the
+preserved local 2P->3P proposal, the existing rebuild factory rebuilds the target
+ragged topology, restarted SNES runs, and the controller reaches stable_phase_set
+after exactly one transition restart.
+
+The controlled 2P->3P proposal remains orchestration evidence only. This slice does
+not claim a real PR76 1->2 physical transition; it closes the software boundary from
+fixed handoff materialization through outer-controller proposal consumption and
+topology restart.

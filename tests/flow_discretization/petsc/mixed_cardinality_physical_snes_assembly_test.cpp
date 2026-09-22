@@ -1,4 +1,5 @@
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_controller.hpp>
+#include <mpmc/flow_discretization_petsc/post_snes_phase_transition_handoff_scanner.hpp>
 #include <mpmc/thermodynamics/pr_parameters.hpp>
 
 #include <petscmat.h>
@@ -2467,6 +2468,7 @@ make_outer_rebuild_cells(
                 porosity,
                 candidate,
                 source_component,
+                source_component,
                 source_energy,
                 phase_maps[transitioned_local],
                 flow::FrozenActivePhaseIdentityMap{
@@ -2714,6 +2716,36 @@ struct ControllerFixture {
     bool scan_indeterminate{};
 };
 
+fdp::PostSnesPhaseTransitionProposal3D
+controller_two_to_three_proposal() {
+    flow::PhaseSetTransitionCandidate
+        candidate;
+    candidate.status =
+        flow::
+            PhaseSetTransitionCandidateStatus::
+                target_resolved;
+    candidate.component_ids =
+        {"A", "B", "C"};
+    candidate.pressure_pa = 20.0;
+    candidate.temperature_k = 9.0;
+    candidate.evidence_profile =
+        "fixture/post-snes-scan/v1";
+    candidate.source_phase_count = 2U;
+    candidate.target_phase_count = 3U;
+    candidate.trigger =
+        flow::
+            PhaseSetTransitionTrigger::
+                stability_witness;
+    candidate.target_phases = {
+        {0.3, {0.3, 0.3, 0.4}, 2.0},
+        {0.3, {0.3, 0.3, 0.4}, 4.0},
+        {0.4, {0.3, 0.3, 0.4}, 7.0}};
+    return {
+        mesh::GlobalEntityId{
+            UINT64_C(30)},
+        std::move(candidate)};
+}
+
 PetscErrorCode
 controller_scan(
     const fdp::
@@ -2764,40 +2796,27 @@ controller_scan(
         return PETSC_SUCCESS;
     }
 
-    flow::PhaseSetTransitionCandidate
-        candidate;
-    candidate.status =
-        flow::
-            PhaseSetTransitionCandidateStatus::
-                target_resolved;
-    candidate.component_ids =
-        {"A", "B", "C"};
-    candidate.pressure_pa = 20.0;
-    candidate.temperature_k = 9.0;
-    candidate.evidence_profile =
-        "fixture/post-snes-scan/v1";
-
     if (record.phase_count == 2U) {
-        candidate.source_phase_count = 2U;
-        candidate.target_phase_count = 3U;
-        candidate.trigger =
-            flow::
-                PhaseSetTransitionTrigger::
-                    stability_witness;
-        candidate.target_phases = {
-            {0.3, {0.3, 0.3, 0.4}, 2.0},
-            {0.3, {0.3, 0.3, 0.4}, 4.0},
-            {0.4, {0.3, 0.3, 0.4}, 7.0}};
         output->push_back(
-            {
-                record.cell_global,
-                std::move(candidate)});
+            controller_two_to_three_proposal());
         return PETSC_SUCCESS;
     }
 
     if (record.phase_count == 3U &&
         fixture
             ->oscillate_after_restart) {
+        flow::PhaseSetTransitionCandidate
+            candidate;
+        candidate.status =
+            flow::
+                PhaseSetTransitionCandidateStatus::
+                    target_resolved;
+        candidate.component_ids =
+            {"A", "B", "C"};
+        candidate.pressure_pa = 20.0;
+        candidate.temperature_k = 9.0;
+        candidate.evidence_profile =
+            "fixture/post-snes-scan/v1";
         candidate.source_phase_count = 3U;
         candidate.target_phase_count = 2U;
         candidate.trigger =
@@ -3990,6 +4009,87 @@ void mixed_cardinality_physical_snes_assembly_test() {
             PostSnesPhaseTransitionOutcome3D::
                 stable_phase_set,
         1U);
+
+    // Preserved proposal handoff: the first outer-controller scan is not
+    // recomputed. It replays the exact local-owned batch captured by the
+    // preceding fixed-cardinality solve, then delegates subsequent generations
+    // to the normal controller scanner.
+    stable_controller.rebuild_calls = 0U;
+    auto handoff_initial =
+        make_controller_initial_system(
+            &stable_controller);
+    fdp::PostSnesPhaseTransitionHandoffScannerContext3D
+        handoff_scanner;
+    if (rank == 0) {
+        handoff_scanner
+            .initial_local_owned_proposals
+            .push_back(
+                controller_two_to_three_proposal());
+    }
+    handoff_scanner.subsequent_scanner =
+        &controller_scan;
+    handoff_scanner.subsequent_scanner_context =
+        &stable_controller;
+
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        handoff_final_system;
+    Vec handoff_final_state = nullptr;
+    std::optional<
+        fdp::
+            PostSnesPhaseTransitionControllerReport3D>
+        handoff_controller_report;
+    error =
+        fdp::
+            solve_nonlinear_timestep_with_phase_transitions_3d(
+                PETSC_COMM_WORLD,
+                std::move(
+                    handoff_initial),
+                {
+                    &fdp::
+                        scan_post_snes_phase_transition_handoff_3d,
+                    &handoff_scanner,
+                    &controller_rebuild,
+                    &stable_controller},
+                {4U},
+                &handoff_final_system,
+                &handoff_final_state,
+                &handoff_controller_report);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            handoff_scanner.initial_batch_consumed &&
+            handoff_controller_report.has_value() &&
+            handoff_controller_report->outcome ==
+                fdp::
+                    PostSnesPhaseTransitionOutcome3D::
+                        stable_phase_set &&
+            handoff_controller_report
+                    ->transition_restarts ==
+                1U &&
+            handoff_controller_report
+                    ->generations.size() ==
+                2U &&
+            handoff_controller_report
+                    ->generations.front()
+                    .accepted_transition_batch
+                    .size() ==
+                1U &&
+            stable_controller.rebuild_calls ==
+                1U &&
+            handoff_final_system != nullptr &&
+            handoff_final_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                3U,
+        "preserved proposal did not drive one outer-controller topology restart");
+    require_collective(
+        VecDestroy(
+            &handoff_final_state) ==
+            PETSC_SUCCESS,
+        "handoff outer-controller final state cleanup failed");
 
     // Reverse 3P->2P proposal returns to the previously visited global
     // signature and must be rejected as a phase-set cycle before rebuilding.

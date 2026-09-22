@@ -77,6 +77,9 @@ make_accepted_phase_transition_rebuild_cell_3d(
             candidate,
     const mpmc::flow::
         PoreVolumeComponentAccumulationSnapshot3P&
+            current_component_inventory,
+    const mpmc::flow::
+        PoreVolumeComponentAccumulationSnapshot3P&
             previous_component_accumulation,
     const mpmc::flow::
         PoreVolumeEnergyAccumulationSnapshot3P&
@@ -95,7 +98,7 @@ make_accepted_phase_transition_rebuild_cell_3d(
         mpmc::flow::
             project_phase_set_transition_candidate(
                 candidate,
-                previous_component_accumulation,
+                current_component_inventory,
                 projection_options);
     const auto continuation =
         mpmc::flow::
@@ -205,10 +208,19 @@ inline void validate_cell_snapshot(
                 .phase_count() !=
             snapshot.target_active_phases
                 .phase_count() ||
-        snapshot.target_natural_variables
-                .size() !=
-            snapshot.target_layout
-                .unknown_count() ||
+        (partition.is_owned(
+             mpmc::mesh::EntityKind::cell,
+             snapshot.cell)
+             ? snapshot.target_natural_variables
+                       .size() !=
+                   snapshot.target_layout
+                       .unknown_count()
+             : !snapshot.target_natural_variables
+                       .empty() &&
+                   snapshot.target_natural_variables
+                           .size() !=
+                       snapshot.target_layout
+                           .unknown_count()) ||
         snapshot.transition_evidence_profile
             .empty()) {
         throw std::invalid_argument(

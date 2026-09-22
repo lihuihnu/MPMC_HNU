@@ -6,6 +6,7 @@
 #include <mpmc/flow_discretization_petsc/pr76_production_cell_evaluator.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_pt_flash_phase_transition_scanner.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_adaptive_timestep_attempt.hpp>
+#include <mpmc/flow_discretization_petsc/single_phase_handoff_initial_system.hpp>
 
 #include <petscsys.h>
 
@@ -222,6 +223,36 @@ real_previous_state(std::uint64_t stable) {
         2U)] =
         0.20;
     return q;
+}
+
+PetscErrorCode unexpected_absent_phase_provider(
+    const flow::AbsentPhaseThermodynamicCoordinateExtension&,
+    void* raw_context,
+    std::optional<
+        flow::AbsentPhasePotentialExtensionLinearization>* output,
+    fdp::NaturalVariableSnesEvaluationStatus3D* status) {
+    if (raw_context == nullptr ||
+        output == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    *status =
+        fdp::NaturalVariableSnesEvaluationStatus3D::
+            success;
+    auto* calls =
+        static_cast<std::size_t*>(
+            raw_context);
+    ++(*calls);
+    return PETSC_ERR_SUP;
+}
+
+flow::FrozenPhysicalPhaseIdentity
+real_handoff_phase_identity(
+    std::string key) {
+    return {
+        "test/pr76-fixed-handoff/v1",
+        std::move(key)};
 }
 
 PetscErrorCode disabled_rock_storage(
@@ -1718,6 +1749,43 @@ void pr76_production_fully_implicit_transient_test() {
             {&disabled_rock_storage, nullptr},
             {}};
 
+    auto handoff_two_closure =
+        flow::
+            make_pr76_methane_ethane_propane_property_closure(
+                model,
+                std::vector<
+                    th::Pr76SelectedPhase>{
+                    {0U, {}},
+                    {0U, {}}});
+    using HandoffClosure2 =
+        decltype(handoff_two_closure);
+    fdp::Pr76TwoPhaseProductionCellEvaluatorContext3D<
+        HandoffClosure2>
+        handoff_two_context{
+            &handoff_two_closure,
+            {&linear_two_phase_kr, nullptr},
+            {&disabled_rock_storage, nullptr},
+            {}};
+
+    auto handoff_three_closure =
+        flow::
+            make_pr76_methane_ethane_propane_property_closure(
+                model,
+                std::vector<
+                    th::Pr76SelectedPhase>{
+                    {0U, {}},
+                    {0U, {}},
+                    {0U, {}}});
+    using HandoffClosure3 =
+        decltype(handoff_three_closure);
+    fdp::Pr76ThreePhaseProductionCellEvaluatorContext3D<
+        HandoffClosure3>
+        handoff_three_context{
+            &handoff_three_closure,
+            {&linear_three_phase_constitutive, nullptr},
+            {&disabled_rock_storage, nullptr},
+            {}};
+
     fl::Pr76VleEvaluator pt_evaluator(
         model);
     fl::Pr76PtFlashBackend pt_backend(
@@ -2161,6 +2229,181 @@ void pr76_production_fully_implicit_transient_test() {
                 !handoff_attempt
                     ->has_pending_transition(),
             "controlled transition proposal/state/report handoff changed");
+
+        std::vector<
+            flow::FrozenActivePhaseIdentityMap>
+            source_phase_maps;
+        source_phase_maps.reserve(
+            accepted_cells.size());
+        for (std::size_t local = 0U;
+             local < accepted_cells.size();
+             ++local) {
+            source_phase_maps.emplace_back(
+                std::vector<
+                    flow::FrozenPhysicalPhaseIdentity>{
+                    real_handoff_phase_identity(
+                        "phase-0")});
+        }
+
+        std::size_t unexpected_absent_calls = 0U;
+        std::unique_ptr<
+            fdp::
+                PhaseTransitionRebuiltNaturalVariableSystem3D>
+            initial_outer_system;
+        error =
+            fdp::
+                make_single_phase_handoff_initial_system_3d(
+                    PETSC_COMM_WORLD,
+                    schedule,
+                    partition,
+                    cell_bridge,
+                    cell_pattern,
+                    0.1,
+                    accepted_cells,
+                    faces,
+                    source_phase_maps,
+                    *handoff_solve_report,
+                    {
+                        {
+                            &fdp::
+                                evaluate_pr76_single_phase_production_cell_3d<
+                                    Closure>,
+                            &evaluator_context},
+                        {
+                            &fdp::
+                                evaluate_pr76_two_phase_production_cell_3d<
+                                    HandoffClosure2>,
+                            &handoff_two_context},
+                        {
+                            &fdp::
+                                evaluate_pr76_three_phase_production_cell_3d<
+                                    HandoffClosure3>,
+                            &handoff_three_context}},
+                    &unexpected_absent_phase_provider,
+                    &unexpected_absent_calls,
+                    &initial_outer_system);
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                initial_outer_system != nullptr &&
+                initial_outer_system
+                        ->numbering()
+                        .petsc_global_scalar_count() ==
+                    8 &&
+                initial_outer_system
+                        ->numbering()
+                        .cell(
+                            mesh::LocalIndex{0U})
+                        .phase_count ==
+                    1U &&
+                initial_outer_system
+                        ->numbering()
+                        .cell(
+                            mesh::LocalIndex{1U})
+                        .phase_count ==
+                    1U &&
+                unexpected_absent_calls == 0U,
+            "fixed 1P handoff did not materialize the source outer system");
+
+        const auto& owned_outer_record =
+            initial_outer_system
+                ->numbering()
+                .cell(
+                    mesh::LocalIndex{0U});
+        std::array<double, 4>
+            outer_owned_state{};
+        for (std::size_t slot = 0U;
+             slot < outer_owned_state.size();
+             ++slot) {
+            const PetscInt index =
+                owned_outer_record
+                    .petsc_global_scalar_start +
+                static_cast<PetscInt>(
+                    slot);
+            PetscScalar value{};
+            require_real_collective(
+                VecGetValues(
+                    initial_outer_system
+                        ->initial_state(),
+                    1,
+                    &index,
+                    &value) ==
+                    PETSC_SUCCESS,
+                "failed to read initial outer handoff state");
+            outer_owned_state[slot] =
+                static_cast<double>(
+                    PetscRealPart(value));
+        }
+        require_real_collective(
+            outer_owned_state ==
+                read_owned_real_state(
+                    handoff_state,
+                    rank),
+            "initial outer system did not preserve converged fixed-1P q");
+
+        Vec outer_residual = nullptr;
+        error =
+            VecDuplicate(
+                initial_outer_system
+                    ->initial_state(),
+                &outer_residual);
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecSet(
+                    outer_residual,
+                    PetscScalar{0.0});
+        }
+        auto outer_evaluator =
+            initial_outer_system
+                ->snes_evaluator();
+        fdp::NaturalVariableSnesEvaluationStatus3D
+            outer_status =
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success;
+        if (error == PETSC_SUCCESS) {
+            error =
+                outer_evaluator.function(
+                    initial_outer_system
+                        ->initial_state(),
+                    outer_residual,
+                    outer_evaluator.user_context,
+                    &outer_status);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecAssemblyBegin(
+                    outer_residual);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecAssemblyEnd(
+                    outer_residual);
+        }
+        PetscReal outer_norm = 0.0;
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecNorm(
+                    outer_residual,
+                    NORM_2,
+                    &outer_norm);
+        }
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                outer_status ==
+                    fdp::
+                        NaturalVariableSnesEvaluationStatus3D::
+                            success &&
+                static_cast<double>(
+                    outer_norm) <=
+                    1.0e-6 &&
+                unexpected_absent_calls == 0U,
+            "initial outer source system changed the converged fixed-1P residual");
+        require_real_collective(
+            VecDestroy(
+                &outer_residual) ==
+                    PETSC_SUCCESS,
+            "initial outer source residual cleanup failed");
+        initial_outer_system.reset();
 
         const auto handoff_state_values =
             read_owned_real_state(
