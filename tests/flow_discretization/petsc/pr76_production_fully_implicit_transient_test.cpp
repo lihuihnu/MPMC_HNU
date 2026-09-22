@@ -290,16 +290,19 @@ PetscErrorCode resolve_real_pr76_flash_target_densities(
              accepted->phases) {
             th::Pr76PhaseWorkspace<double>
                 workspace;
+            const th::Pr76SelectedPhase
+                selection{
+                    phase.activity.branch,
+                    context->root_options};
             const auto density =
                 th::
                     evaluate_selected_phase_molar_density(
                         *context->model,
                         result.solution.pressure_pa,
                         result.solution.temperature_k,
-                        phase.composition,
-                        {
-                            phase.activity.branch,
-                            context->root_options},
+                        std::span<const double>{
+                            phase.composition},
+                        selection,
                         workspace);
             if (!std::isfinite(
                     density
