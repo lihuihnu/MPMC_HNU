@@ -257,6 +257,250 @@ real_handoff_phase_identity(
         std::move(key)};
 }
 
+struct RealPr76FlashDensityContext {
+    const th::Pr76Phase<double>* model{};
+    th::Pr76RootOptions root_options;
+};
+
+PetscErrorCode resolve_real_pr76_flash_target_densities(
+    const fl::PtFlashBackendResult& result,
+    void* raw_context,
+    std::optional<std::vector<double>>* densities) {
+    if (raw_context == nullptr ||
+        densities == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    densities->reset();
+    const auto* accepted =
+        result.accepted_phase_set();
+    auto* context =
+        static_cast<
+            RealPr76FlashDensityContext*>(
+                raw_context);
+    if (accepted == nullptr ||
+        context->model == nullptr) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    try {
+        std::vector<double> resolved;
+        resolved.reserve(
+            accepted->phases.size());
+        for (const auto& phase :
+             accepted->phases) {
+            th::Pr76PhaseWorkspace<double>
+                workspace;
+            const auto density =
+                th::
+                    evaluate_selected_phase_molar_density(
+                        *context->model,
+                        result.solution.pressure_pa,
+                        result.solution.temperature_k,
+                        phase.composition,
+                        {
+                            phase.activity.branch,
+                            context->root_options},
+                        workspace);
+            if (!std::isfinite(
+                    density
+                        .molar_density_mol_per_m3) ||
+                !(density
+                      .molar_density_mol_per_m3 >
+                  0.0)) {
+                return PETSC_ERR_FP;
+            }
+            resolved.push_back(
+                density
+                    .molar_density_mol_per_m3);
+        }
+        densities->emplace(
+            std::move(resolved));
+        return PETSC_SUCCESS;
+    } catch (const std::exception&) {
+        return PETSC_ERR_LIB;
+    }
+}
+
+void check_real_pr76_two_phase_transition_state(
+    const th::Pr76Phase<double>& model) {
+    constexpr double pressure_pa =
+        3.0e6;
+    constexpr double temperature_k =
+        250.0;
+    const std::vector<double> feed{
+        0.50, 0.30, 0.20};
+
+    fl::Pr76VleEvaluator evaluator(
+        model);
+    fl::Pr76PtFlashBackend backend(
+        evaluator);
+    const auto result =
+        backend.solve(
+            {
+                pressure_pa,
+                temperature_k,
+                feed});
+
+    const auto* accepted =
+        result.accepted_phase_set();
+    const bool has_fresh_one_to_two =
+        std::any_of(
+            result.transition_report
+                .evidence.begin(),
+            result.transition_report
+                .evidence.end(),
+            [](const auto& evidence) {
+                return
+                    evidence.source_phase_count ==
+                        1U &&
+                    evidence.target_phase_count ==
+                        std::optional<std::size_t>{
+                            2U} &&
+                    evidence.resolution ==
+                        fl::
+                            PtPhaseTransitionResolution::
+                                accepted_target &&
+                    evidence
+                        .fresh_target_solve_attempted &&
+                    evidence
+                        .target_topology_closed;
+            });
+
+    require_real_collective(
+        result.structurally_valid() &&
+            accepted != nullptr &&
+            accepted->phases.size() ==
+                2U &&
+            has_fresh_one_to_two,
+        "fixed PR76 discovery state did not publish a fresh accepted 1P->2P target");
+
+    double reconstructed_sum = 0.0;
+    double phase_composition_l1 = 0.0;
+    for (std::size_t component = 0U;
+         component < feed.size();
+         ++component) {
+        double reconstructed = 0.0;
+        for (const auto& phase :
+             accepted->phases) {
+            require_real_collective(
+                phase.mole_phase_fraction >
+                        0.05 &&
+                    phase.mole_phase_fraction <
+                        0.95 &&
+                    phase.composition.size() ==
+                        feed.size() &&
+                    phase.activity.smooth,
+                "fixed PR76 discovery state produced a degenerate or nonsmooth accepted phase");
+            reconstructed +=
+                phase.mole_phase_fraction *
+                phase.composition[component];
+        }
+        reconstructed_sum +=
+            reconstructed;
+        near_real_collective(
+            reconstructed,
+            feed[component],
+            1.0e-9,
+            1.0e-10,
+            "fixed PR76 discovery state violated component material balance");
+        phase_composition_l1 +=
+            std::abs(
+                accepted->phases[0]
+                    .composition[component] -
+                accepted->phases[1]
+                    .composition[component]);
+    }
+    near_real_collective(
+        reconstructed_sum,
+        1.0,
+        1.0e-10,
+        1.0e-12,
+        "fixed PR76 discovery target did not reconstruct a normalized feed");
+    require_real_collective(
+        phase_composition_l1 > 0.20,
+        "fixed PR76 discovery state is too close to a phase-coalescence boundary");
+
+    RealPr76FlashDensityContext
+        density_context{
+            &model,
+            evaluator.root_options()};
+    std::optional<std::vector<double>>
+        densities;
+    require_real_collective(
+        resolve_real_pr76_flash_target_densities(
+            result,
+            &density_context,
+            &densities) ==
+                PETSC_SUCCESS &&
+            densities.has_value() &&
+            densities->size() == 2U &&
+            (*densities)[0] > 0.0 &&
+            (*densities)[1] > 0.0,
+        "fixed PR76 discovery target density resolution failed");
+
+    fdp::PostSnesPtFlashSourceCellSnapshot3D
+        source;
+    source.cell_global =
+        mesh::GlobalEntityId{
+            UINT64_C(10)};
+    source.source_phase_count = 1U;
+    source.pressure_pa =
+        pressure_pa;
+    source.temperature_k =
+        temperature_k;
+    source.component_ids =
+        real_component_ids();
+    source.overall_composition =
+        feed;
+
+    std::optional<
+        fdp::PostSnesPhaseTransitionProposal3D>
+        proposal;
+    fdp::PostSnesPhaseTransitionScanStatus3D
+        scan_status =
+            fdp::
+                PostSnesPhaseTransitionScanStatus3D::
+                    indeterminate;
+    require_real_collective(
+        fdp::
+            scan_post_snes_pt_flash_source_cell_3d(
+                source,
+                backend,
+                {
+                    &resolve_real_pr76_flash_target_densities,
+                    &density_context},
+                &proposal,
+                &scan_status) ==
+                PETSC_SUCCESS &&
+            scan_status ==
+                fdp::
+                    PostSnesPhaseTransitionScanStatus3D::
+                        complete &&
+            proposal.has_value() &&
+            proposal->candidate
+                    .source_phase_count ==
+                1U &&
+            proposal->candidate
+                    .target_phase_count ==
+                2U &&
+            proposal->candidate.status ==
+                flow::
+                    PhaseSetTransitionCandidateStatus::
+                        target_resolved &&
+            proposal->candidate
+                    .target_phases.size() ==
+                2U &&
+            proposal->candidate
+                    .target_phases[0]
+                    .provider_activity_branch
+                    .has_value() &&
+            proposal->candidate
+                    .target_phases[1]
+                    .provider_activity_branch
+                    .has_value(),
+        "fixed PR76 discovery state did not survive the production post-SNES scanner");
+}
+
 PetscErrorCode disabled_rock_storage(
     const flow::NaturalVariableLayoutDescriptor& layout,
     std::span<const double>,
@@ -1810,6 +2054,8 @@ void pr76_production_fully_implicit_transient_test() {
     using Closure =
         decltype(closure);
 
+    check_real_pr76_two_phase_transition_state(
+        model);
     check_real_cardinality_bridges(
         model,
         &closure);

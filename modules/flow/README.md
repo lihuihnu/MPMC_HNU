@@ -4123,3 +4123,35 @@ the cell20/phase-1 frozen coordinate entry, executes the cell-scoped PR76 absent
 provider through the standard TPFA bridge, and assembles finite nonzero mixed
 residual/Jacobian data. The synthetic transition is not required to converge and
 remains orchestration evidence only.
+
+### 47.10 Fixed real PR76 1P->2P discovery state
+
+A fixed CH4/C2H6/C3H8 state is now promoted from an external discovery calculation
+into the repository's own PR76 backend/scanner regression:
+
+```text
+T = 250 K
+P = 3.0 MPa
+z = [0.50, 0.30, 0.20]
+component order = methane / ethane / propane
+kij = 0
+```
+
+The regression does not store the external screening phase fraction as an oracle.
+The repository backend must independently prove the state. Acceptance requires:
+
+- a structurally valid `Pr76PtFlashBackendResult`;
+- exactly two accepted phases;
+- fresh closed `1P -> 2P` accepted-target transition evidence;
+- nondegenerate phase fractions away from 0/1;
+- two compositions with clear separation rather than a coalescence-boundary state;
+- exact reconstruction of the feed from beta and phase compositions;
+- positive target molar densities re-evaluated on each accepted phase's own
+  `activity.branch`; and
+- successful conversion by `scan_post_snes_pt_flash_source_cell_3d()` into a
+  resolved `PostSnesPhaseTransitionProposal3D` carrying both provider branches.
+
+This state is therefore the first fixed methane/ethane/propane operating point in
+the flow PR that is required to produce real PR76 thermodynamic `1P -> 2P` evidence.
+It is intentionally separate from the existing 450 K / approximately 8 MPa stable
+single-phase transient fixture.
