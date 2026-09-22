@@ -531,7 +531,7 @@ void nested_mixture_temperature_contract() {
         static_cast<long double>(direct));
 
     const T temperature_step =
-        T{1.0e-2};
+        T{1} / T{100};
     const T d2a_dtemperature2 =
         (first_temperature_derivative(
              T{450} + temperature_step,
@@ -544,7 +544,7 @@ void nested_mixture_temperature_contract() {
         (T{2} * temperature_step);
 
     const T composition_step =
-        T{1.0e-5};
+        T{1} / T{100000};
     const T mixed_tangent =
         (first_temperature_derivative(
              T{450},
@@ -566,7 +566,7 @@ void nested_mixture_temperature_contract() {
             return std::isfinite(actual) &&
                 std::isfinite(expected) &&
                 std::abs(actual - expected) <=
-                    T{2.0e-5} * scale;
+                    (T{2} / T{100000}) * scale;
         };
 
     require(
