@@ -688,12 +688,11 @@ make_pr76_single_phase_transition_target_rebuild_plan_3d(
                 continue;
             }
 
-            const auto continuation =
-                mpmc::flow::
-                    make_phase_identity_continuation_snapshot(
-                        candidate,
-                        source_active_phases[local],
-                        *target_identities);
+            (void)mpmc::flow::
+                make_phase_identity_continuation_snapshot(
+                    candidate,
+                    source_active_phases[local],
+                    *target_identities);
 
             const auto q =
                 owned_q(

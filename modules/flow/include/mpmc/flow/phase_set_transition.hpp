@@ -37,6 +37,26 @@ enum class PhaseSetTransitionCandidateStatus {
 };
 
 struct PhaseSetTransitionPhaseCandidate {
+    PhaseSetTransitionPhaseCandidate() = default;
+
+    PhaseSetTransitionPhaseCandidate(
+        double mole_phase_fraction_value,
+        std::vector<double> composition_value,
+        double molar_density_value,
+        std::optional<std::size_t>
+            provider_branch = std::nullopt,
+        bool provider_smooth = false)
+        : mole_phase_fraction(
+              mole_phase_fraction_value),
+          composition(
+              std::move(composition_value)),
+          molar_density_mol_per_m3(
+              molar_density_value),
+          provider_activity_branch(
+              provider_branch),
+          provider_activity_smooth(
+              provider_smooth) {}
+
     double mole_phase_fraction{};
     std::vector<double> composition;
     double molar_density_mol_per_m3{};
