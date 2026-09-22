@@ -5,6 +5,7 @@
 #include <mpmc/flow_discretization_petsc/adaptive_timestep_controller.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_production_cell_evaluator.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_single_phase_transition_target_rebuild.hpp>
+#include <mpmc/flow_discretization_petsc/pr76_transition_rebuild_materialization.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_pt_flash_phase_transition_scanner.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_adaptive_timestep_attempt.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_handoff_initial_system.hpp>
@@ -1508,6 +1509,42 @@ PetscErrorCode controlled_pr76_target_identity_resolution(
     return PETSC_SUCCESS;
 }
 
+PetscErrorCode controlled_pr76_absent_branch_resolution(
+    mesh::GlobalEntityId absent_cell_global,
+    const flow::FrozenPhysicalPhaseIdentity&
+        identity,
+    const flow::NaturalVariableStateIdentity3P&
+        absent_host_state,
+    std::span<const double>
+        active_reference_composition,
+    const th::Pr76SelectedPhase&
+        active_reference_selection,
+    void*,
+    std::optional<
+        th::Pr76SelectedPhase>*
+            output) {
+    if (output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    if (absent_cell_global !=
+            mesh::GlobalEntityId{UINT64_C(20)} ||
+        identity !=
+            real_handoff_phase_identity(
+                "phase-1") ||
+        absent_host_state.layout.phase_count() !=
+            1U ||
+        active_reference_composition.size() !=
+            real_component_ids().size() ||
+        active_reference_selection.root_index !=
+            0U) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    output->emplace(
+        active_reference_selection);
+    return PETSC_SUCCESS;
+}
+
 PetscErrorCode real_unexpected_transition_commit(
     const fdp::AdaptiveTimestepAttemptRequest3D&,
     const fdp::AdaptiveTimestepAttemptResult3D&,
@@ -2552,6 +2589,374 @@ void pr76_production_fully_implicit_transient_test() {
                         "test/adaptive-transition-handoff/v1"},
                 "PR76 target rebuild lost branch or identity provenance");
         }
+
+        // Materialize one actual cross-cardinality target: only cell10
+        // accepts the controlled 1P->2P proposal. Cell20 remains 1P, so the
+        // authoritative face must use a frozen absent-phase extension on cell20.
+        std::vector<
+            fdp::PostSnesPhaseTransitionProposal3D>
+            single_transition_proposals;
+        if (rank == 0) {
+            single_transition_proposals =
+                handoff_proposals;
+        }
+
+        std::optional<
+            fdp::
+                Pr76SinglePhaseTransitionTargetRebuildPlan3D>
+            single_transition_plan;
+        error =
+            fdp::
+                make_pr76_single_phase_transition_target_rebuild_plan_3d(
+                    PETSC_COMM_WORLD,
+                    partition,
+                    accepted_cells,
+                    *handoff_solve_report,
+                    {
+                        &fdp::
+                            evaluate_pr76_single_phase_production_cell_3d<
+                                Closure>,
+                        &evaluator_context},
+                    source_phase_maps,
+                    single_transition_proposals,
+                    pt_evaluator.root_options(),
+                    {
+                        &controlled_pr76_target_identity_resolution,
+                        nullptr},
+                    &single_transition_plan);
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                single_transition_plan.has_value() &&
+                single_transition_plan
+                        ->local_transition_cells
+                        .size() ==
+                    1U,
+            "single-cell PR76 target plan was not synchronized");
+
+        const auto transition_cell =
+            std::find_if(
+                single_transition_plan
+                    ->local_transition_cells
+                    .begin(),
+                single_transition_plan
+                    ->local_transition_cells
+                    .end(),
+                [](const auto& entry) {
+                    return entry.cell_global ==
+                        mesh::GlobalEntityId{
+                            UINT64_C(10)};
+                });
+        require_real_collective(
+            transition_cell !=
+                    single_transition_plan
+                        ->local_transition_cells
+                        .end() &&
+                transition_cell
+                        ->target_phases.size() ==
+                    2U,
+            "single-cell PR76 plan lost target phase records");
+
+        std::vector<th::Pr76SelectedPhase>
+            target_two_selections;
+        for (const auto& phase :
+             transition_cell->target_phases) {
+            target_two_selections.push_back(
+                phase.selection);
+        }
+        auto materialized_two_closure =
+            flow::
+                make_pr76_methane_ethane_propane_property_closure(
+                    model,
+                    target_two_selections);
+        using MaterializedClosure2 =
+            decltype(materialized_two_closure);
+        fdp::Pr76TwoPhaseProductionCellEvaluatorContext3D<
+            MaterializedClosure2>
+            materialized_two_context{
+                &materialized_two_closure,
+                {&linear_two_phase_kr, nullptr},
+                {&disabled_rock_storage, nullptr},
+                {}};
+
+        fdp::
+            CellScopedMixedCardinalityEvaluatorDispatcher3D
+            target_dispatcher{
+                {
+                    {
+                        mesh::GlobalEntityId{
+                            UINT64_C(20)},
+                        {
+                            &fdp::
+                                evaluate_pr76_single_phase_production_cell_3d<
+                                    Closure>,
+                            &evaluator_context}}
+                },
+                {
+                    {
+                        mesh::GlobalEntityId{
+                            UINT64_C(10)},
+                        {
+                            &fdp::
+                                evaluate_pr76_two_phase_production_cell_3d<
+                                    MaterializedClosure2>,
+                            &materialized_two_context}}
+                },
+                {}};
+
+        std::unique_ptr<
+            fdp::
+                Pr76TransitionRebuildMaterializedSystem3D>
+            materialized_target;
+        error =
+            fdp::
+                materialize_pr76_single_phase_transition_target_rebuild_3d(
+                    PETSC_COMM_WORLD,
+                    schedule,
+                    partition,
+                    cell_bridge,
+                    cell_pattern,
+                    0.1,
+                    std::move(
+                        *single_transition_plan),
+                    faces,
+                    std::move(
+                        target_dispatcher),
+                    model,
+                    {
+                        &controlled_pr76_absent_branch_resolution,
+                        nullptr},
+                    &materialized_target);
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                materialized_target != nullptr &&
+                materialized_target->system != nullptr &&
+                materialized_target->dispatcher != nullptr &&
+                materialized_target
+                        ->absent_provider !=
+                    nullptr &&
+                materialized_target
+                        ->system
+                        ->numbering()
+                        .petsc_global_scalar_count() ==
+                    11U,
+            "PR76 target plan did not materialize a mixed 2P/1P PETSc system");
+
+        const auto cell10_local =
+            partition.local_index(
+                mesh::EntityKind::cell,
+                mesh::GlobalEntityId{
+                    UINT64_C(10)});
+        const auto cell20_local =
+            partition.local_index(
+                mesh::EntityKind::cell,
+                mesh::GlobalEntityId{
+                    UINT64_C(20)});
+        require_real_collective(
+            materialized_target
+                    ->system
+                    ->numbering()
+                    .cell(
+                        cell10_local)
+                    .phase_count ==
+                2U &&
+                materialized_target
+                    ->system
+                    ->numbering()
+                    .cell(
+                        cell20_local)
+                    .phase_count ==
+                1U,
+            "materialized PR76 target cardinality changed");
+
+        bool local_registry_ok =
+            true;
+        if (rank == 0) {
+            try {
+                const auto& entry =
+                    materialized_target
+                        ->system
+                        ->coordinate_registry()
+                        .reference_entry(
+                            mesh::GlobalEntityId{
+                                UINT64_C(20)},
+                            real_handoff_phase_identity(
+                                "phase-1"));
+                local_registry_ok =
+                    !entry
+                         .selected_branch_provenance
+                         .empty() &&
+                    entry
+                        .reference_coordinates
+                        .selected_branch_provenance ==
+                        entry
+                            .selected_branch_provenance &&
+                    entry
+                        .reference_coordinates
+                        .host_state_identity
+                        .layout
+                        .phase_count() ==
+                        1U &&
+                    entry
+                        .reference_coordinates
+                        .hypothetical_composition
+                        .size() ==
+                        real_component_ids()
+                            .size();
+            } catch (...) {
+                local_registry_ok =
+                    false;
+            }
+        }
+        require_real_collective(
+            local_registry_ok,
+            "PR76 materialization did not freeze the required absent-phase coordinate chart");
+
+        Vec materialized_residual = nullptr;
+        error =
+            VecDuplicate(
+                materialized_target
+                    ->system
+                    ->initial_state(),
+                &materialized_residual);
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecSet(
+                    materialized_residual,
+                    PetscScalar{0.0});
+        }
+        auto materialized_evaluator =
+            materialized_target
+                ->system
+                ->snes_evaluator();
+        fdp::NaturalVariableSnesEvaluationStatus3D
+            materialized_status =
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success;
+        if (error == PETSC_SUCCESS) {
+            error =
+                materialized_evaluator.function(
+                    materialized_target
+                        ->system
+                        ->initial_state(),
+                    materialized_residual,
+                    materialized_evaluator
+                        .user_context,
+                    &materialized_status);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecAssemblyBegin(
+                    materialized_residual);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecAssemblyEnd(
+                    materialized_residual);
+        }
+        PetscReal materialized_residual_norm =
+            0.0;
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecNorm(
+                    materialized_residual,
+                    NORM_2,
+                    &materialized_residual_norm);
+        }
+
+        if (error == PETSC_SUCCESS) {
+            error =
+                MatZeroEntries(
+                    materialized_target
+                        ->system
+                        ->jacobian_structure());
+        }
+        materialized_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+        if (error == PETSC_SUCCESS) {
+            error =
+                materialized_evaluator.jacobian(
+                    materialized_target
+                        ->system
+                        ->initial_state(),
+                    materialized_target
+                        ->system
+                        ->jacobian_structure(),
+                    materialized_evaluator
+                        .user_context,
+                    &materialized_status);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                MatAssemblyBegin(
+                    materialized_target
+                        ->system
+                        ->jacobian_structure(),
+                    MAT_FINAL_ASSEMBLY);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                MatAssemblyEnd(
+                    materialized_target
+                        ->system
+                        ->jacobian_structure(),
+                    MAT_FINAL_ASSEMBLY);
+        }
+        PetscReal materialized_jacobian_norm =
+            0.0;
+        if (error == PETSC_SUCCESS) {
+            error =
+                MatNorm(
+                    materialized_target
+                        ->system
+                        ->jacobian_structure(),
+                    NORM_FROBENIUS,
+                    &materialized_jacobian_norm);
+        }
+
+        std::uint64_t local_absent_calls =
+            static_cast<std::uint64_t>(
+                materialized_target
+                    ->absent_provider
+                    ->evaluation_count());
+        std::uint64_t global_absent_calls =
+            0U;
+        require_real_collective(
+            MPI_Allreduce(
+                &local_absent_calls,
+                &global_absent_calls,
+                1,
+                MPI_UINT64_T,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS,
+            "failed to reduce PR76 absent-phase provider calls");
+
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                materialized_status ==
+                    fdp::
+                        NaturalVariableSnesEvaluationStatus3D::
+                            success &&
+                std::isfinite(
+                    static_cast<double>(
+                        materialized_residual_norm)) &&
+                std::isfinite(
+                    static_cast<double>(
+                        materialized_jacobian_norm)) &&
+                static_cast<double>(
+                    materialized_jacobian_norm) >
+                    0.0 &&
+                global_absent_calls > 0U,
+            "materialized PR76 mixed target residual/Jacobian or absent-phase provider failed");
+        require_real_collective(
+            VecDestroy(
+                &materialized_residual) ==
+                    PETSC_SUCCESS,
+            "materialized PR76 target residual cleanup failed");
+        materialized_target.reset();
 
         const auto handoff_state_values =
             read_owned_real_state(

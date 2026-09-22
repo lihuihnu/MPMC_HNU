@@ -10,6 +10,7 @@
 #include <petscsys.h>
 
 #include <algorithm>
+#include <bit>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -49,6 +50,15 @@ struct Pr76SinglePhaseTransitionTargetIdentityBinding3D {
     void* user_context{};
 };
 
+struct Pr76SinglePhaseTransitionResolvedPhase3D {
+    mpmc::flow::FrozenPhysicalPhaseIdentity
+        identity;
+    std::vector<double> composition;
+    mpmc::thermodynamics::Pr76SelectedPhase
+        selection;
+    std::string selected_branch_provenance;
+};
+
 struct Pr76SinglePhaseTransitionResolvedCell3D {
     mpmc::mesh::GlobalEntityId cell_global{
         mpmc::mesh::GlobalEntityId::value_type{0}};
@@ -57,6 +67,9 @@ struct Pr76SinglePhaseTransitionResolvedCell3D {
     mpmc::flow::FrozenSelectedPhaseBranchRegistry<
         mpmc::thermodynamics::Pr76SelectedPhase>
         branch_registry;
+    std::vector<
+        Pr76SinglePhaseTransitionResolvedPhase3D>
+        target_phases;
 };
 
 struct Pr76SinglePhaseTransitionTargetRebuildPlan3D {
@@ -79,6 +92,15 @@ inline void append_u64(
                 (value >> static_cast<unsigned>(shift)) &
                 UINT64_C(0xff)));
     }
+}
+
+inline void append_double(
+    std::vector<unsigned char>* out,
+    double value) {
+    append_u64(
+        out,
+        std::bit_cast<std::uint64_t>(
+            value));
 }
 
 inline void append_string(
@@ -114,6 +136,23 @@ inline void append_string(
     *cursor += 8U;
     *value = result;
     return true;
+}
+
+[[nodiscard]] inline bool read_double(
+    std::span<const unsigned char> bytes,
+    std::size_t* cursor,
+    double* value) {
+    std::uint64_t bits = 0U;
+    if (!read_u64(
+            bytes,
+            cursor,
+            &bits)) {
+        return false;
+    }
+    *value =
+        std::bit_cast<double>(
+            bits);
+    return std::isfinite(*value);
 }
 
 [[nodiscard]] inline bool read_string(
@@ -190,6 +229,8 @@ struct ResolvedWire {
         target_identities;
     std::vector<std::size_t>
         target_root_indices;
+    std::vector<std::vector<double>>
+        target_compositions;
     std::string evidence_profile;
     std::string diagnostic;
 };
@@ -230,6 +271,17 @@ inline void serialize_wire(
             out,
             static_cast<std::uint64_t>(
                 wire.target_root_indices[phase]));
+        append_u64(
+            out,
+            static_cast<std::uint64_t>(
+                wire.target_compositions[
+                    phase].size()));
+        for (double value :
+             wire.target_compositions[phase]) {
+            append_double(
+                out,
+                value);
+        }
     }
     append_string(
         out,
@@ -273,6 +325,7 @@ inline void serialize_wire(
     wire->dependent_components.resize(p);
     wire->target_identities.resize(p);
     wire->target_root_indices.resize(p);
+    wire->target_compositions.resize(p);
     for (std::size_t phase = 0U;
          phase < p;
          ++phase) {
@@ -310,6 +363,29 @@ inline void serialize_wire(
         wire->target_root_indices[phase] =
             static_cast<std::size_t>(
                 root);
+        std::uint64_t composition_size = 0U;
+        if (!read_u64(
+                bytes,
+                cursor,
+                &composition_size) ||
+            composition_size < 2U ||
+            composition_size >
+                UINT64_C(1024)) {
+            return false;
+        }
+        wire->target_compositions[phase]
+            .resize(
+                static_cast<std::size_t>(
+                    composition_size));
+        for (double& value :
+             wire->target_compositions[phase]) {
+            if (!read_double(
+                    bytes,
+                    cursor,
+                    &value)) {
+                return false;
+            }
+        }
     }
     return read_string(
                bytes,
@@ -319,6 +395,25 @@ inline void serialize_wire(
                bytes,
                cursor,
                &wire->diagnostic);
+}
+
+[[nodiscard]] inline std::string
+selected_branch_provenance(
+    mpmc::mesh::GlobalEntityId cell_global,
+    const mpmc::flow::FrozenPhysicalPhaseIdentity&
+        identity,
+    std::size_t root_index) {
+    return std::string{
+               "PR76/PT cell="} +
+        std::to_string(
+            cell_global.value()) +
+        "|phase=" +
+        identity.provenance_scope +
+        "/" +
+        identity.opaque_phase_key +
+        "|activity.branch=" +
+        std::to_string(
+            root_index);
 }
 
 [[nodiscard]] inline PetscErrorCode
@@ -765,6 +860,8 @@ make_pr76_single_phase_transition_target_rebuild_plan_3d(
                     ->identities().end());
             wire.target_root_indices.reserve(
                 target_selections.size());
+            wire.target_compositions.reserve(
+                target_selections.size());
             wire.dependent_components.reserve(
                 candidate.target_phase_count);
             for (std::size_t phase = 0U;
@@ -775,6 +872,11 @@ make_pr76_single_phase_transition_target_rebuild_plan_3d(
                     .push_back(
                         target_selections[phase]
                             .root_index);
+                wire.target_compositions
+                    .push_back(
+                        candidate
+                            .target_phases[phase]
+                            .composition);
                 wire.dependent_components
                     .push_back(
                         plan.cells[local]
@@ -885,32 +987,61 @@ make_pr76_single_phase_transition_target_rebuild_plan_3d(
                         candidate,
                         source_active_phases[local],
                         target_map);
+            if (wire.target_compositions.size() !=
+                    target_count) {
+                return PETSC_ERR_ARG_INCOMP;
+            }
             std::vector<
                 mpmc::flow::
                     FrozenSelectedPhaseBranchBinding<
                         mpmc::thermodynamics::
                             Pr76SelectedPhase>>
                 bindings;
+            std::vector<
+                Pr76SinglePhaseTransitionResolvedPhase3D>
+                resolved_phases;
             bindings.reserve(
+                target_count);
+            resolved_phases.reserve(
                 target_count);
             for (std::size_t phase = 0U;
                  phase < target_count;
                  ++phase) {
+                if (wire.target_compositions[
+                        phase].size() !=
+                    source_cells[local]
+                        .component_ids.size()) {
+                    return PETSC_ERR_ARG_INCOMP;
+                }
+                const auto provenance =
+                    selected_branch_provenance(
+                        wire.cell_global,
+                        target_map.identity(
+                            phase),
+                        wire
+                            .target_root_indices[
+                                phase]);
+                const mpmc::thermodynamics::
+                    Pr76SelectedPhase
+                    selection{
+                        wire
+                            .target_root_indices[
+                                phase],
+                        root_options};
                 bindings.push_back(
                     {
                         target_map.identity(
                             phase),
-                        {
-                            wire
-                                .target_root_indices[
-                                    phase],
-                            root_options},
-                        std::string{
-                            "PR76/PT activity.branch="} +
-                            std::to_string(
-                                wire
-                                    .target_root_indices[
-                                        phase])});
+                        selection,
+                        provenance});
+                resolved_phases.push_back(
+                    {
+                        target_map.identity(
+                            phase),
+                        wire.target_compositions[
+                            phase],
+                        selection,
+                        provenance});
             }
             auto registry =
                 mpmc::flow::
@@ -961,7 +1092,9 @@ make_pr76_single_phase_transition_target_rebuild_plan_3d(
                         std::move(
                             continuation),
                         std::move(
-                            registry)});
+                            registry),
+                        std::move(
+                            resolved_phases)});
         }
     } catch (...) {
         return PETSC_ERR_ARG_INCOMP;

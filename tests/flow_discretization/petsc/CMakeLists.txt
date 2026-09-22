@@ -33,6 +33,7 @@ add_executable(
     mixed_cardinality_physical_snes_assembly_header.cpp
     pr76_production_cell_evaluator_header.cpp
     pr76_single_phase_transition_target_rebuild_header.cpp
+    pr76_transition_rebuild_materialization_header.cpp
     adaptive_timestep_controller_header.cpp
     single_phase_adaptive_timestep_attempt_header.cpp
     single_phase_handoff_initial_system_header.cpp

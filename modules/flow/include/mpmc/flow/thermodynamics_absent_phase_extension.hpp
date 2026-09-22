@@ -36,6 +36,9 @@ struct AbsentPhaseThermodynamicCoordinateExtension {
     std::vector<double> hypothetical_composition;
     std::vector<double> hypothetical_composition_jacobian;
 
+    // Optional opaque selected-branch key. Generic coordinate validation does
+    // not interpret it; cell-scoped providers may require it.
+    std::string selected_branch_provenance;
     std::string provenance;
 
     [[nodiscard]] std::size_t input_count() const noexcept {
@@ -507,6 +510,143 @@ private:
     const thermodynamics::Pr76Phase<T>* model_;
     FrozenSelectedPhaseBranchRegistry<Selection>
         registry_;
+};
+
+template <std::floating_point T = double>
+class Pr76CellScopedAbsentPhasePotentialExtensionProvider {
+public:
+    using Selection =
+        thermodynamics::Pr76SelectedPhase;
+
+    struct Binding {
+        FrozenPhysicalPhaseIdentity identity;
+        Selection selection;
+        std::string transition_evidence_profile;
+        std::string branch_provenance;
+    };
+
+    Pr76CellScopedAbsentPhasePotentialExtensionProvider(
+        const thermodynamics::Pr76Phase<T>& model,
+        std::vector<Binding> bindings)
+        : model_(&model),
+          bindings_(std::move(bindings)) {
+        std::sort(
+            bindings_.begin(),
+            bindings_.end(),
+            [](const auto& first,
+               const auto& second) {
+                return first.branch_provenance <
+                    second.branch_provenance;
+            });
+        for (std::size_t index = 0U;
+             index < bindings_.size();
+             ++index) {
+            const auto& binding =
+                bindings_[index];
+            if (binding.identity.provenance_scope.empty() ||
+                binding.identity.opaque_phase_key.empty() ||
+                binding.transition_evidence_profile.empty() ||
+                binding.branch_provenance.empty() ||
+                (index > 0U &&
+                 bindings_[index - 1U]
+                         .branch_provenance ==
+                     binding.branch_provenance)) {
+                throw std::invalid_argument(
+                    "mpmc::flow: invalid cell-scoped PR76 absent-phase branch binding");
+            }
+        }
+    }
+
+    [[nodiscard]] std::size_t
+    binding_count() const noexcept {
+        return bindings_.size();
+    }
+
+    [[nodiscard]] std::size_t
+    evaluation_count() const noexcept {
+        return evaluation_count_;
+    }
+
+    [[nodiscard]]
+    AbsentPhasePotentialExtensionLinearization
+    evaluate(
+        const AbsentPhaseThermodynamicCoordinateExtension&
+            coordinates) const {
+        if (coordinates
+                .selected_branch_provenance
+                .empty()) {
+            throw std::invalid_argument(
+                "mpmc::flow: cell-scoped PR76 absent-phase coordinates lack selected-branch provenance");
+        }
+
+        const auto found =
+            std::lower_bound(
+                bindings_.begin(),
+                bindings_.end(),
+                coordinates
+                    .selected_branch_provenance,
+                [](const auto& binding,
+                   const auto& provenance) {
+                    return binding
+                               .branch_provenance <
+                        provenance;
+                });
+        if (found == bindings_.end() ||
+            found->branch_provenance !=
+                coordinates
+                    .selected_branch_provenance ||
+            found->identity !=
+                coordinates.identity) {
+            throw std::out_of_range(
+                "mpmc::flow: cell-scoped PR76 absent-phase branch binding not found");
+        }
+
+        ++evaluation_count_;
+        const auto masses =
+            absent_phase_thermodynamics_detail::
+                molar_masses_kg_per_mol(
+                    model_->parameters(),
+                    coordinates
+                        .host_state_identity
+                        .component_ids);
+
+        return absent_phase_thermodynamics_detail::
+            evaluate_blocked_mass_density<4U>(
+                coordinates,
+                masses,
+                absent_phase_thermodynamics_detail::
+                    provider_provenance(
+                        thermodynamics::
+                            pr76_pt_convention,
+                        found
+                            ->transition_evidence_profile,
+                        found->branch_provenance,
+                        coordinates.provenance),
+                [&](const auto& pressure,
+                    const auto& temperature,
+                    auto composition) {
+                    using Number =
+                        std::remove_cvref_t<
+                            decltype(pressure)>;
+                    thermodynamics::
+                        Pr76PhaseWorkspace<Number>
+                        workspace;
+                    return thermodynamics::
+                        evaluate_selected_phase_molar_density(
+                            *model_,
+                            pressure,
+                            temperature,
+                            composition,
+                            found->selection,
+                            workspace)
+                            .molar_density_mol_per_m3;
+                });
+    }
+
+private:
+    const thermodynamics::Pr76Phase<T>* model_;
+    std::vector<Binding> bindings_;
+    mutable std::size_t evaluation_count_{};
 };
 
 template <std::floating_point T = double>

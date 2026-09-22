@@ -408,6 +408,8 @@ public:
             result = reference;
         result.host_state_identity =
             current_host_state;
+        result.selected_branch_provenance =
+            entry.selected_branch_provenance;
 
         for (std::size_t column = 0U;
              column < q_current.size();
@@ -499,6 +501,12 @@ private:
                             .identity ||
                     entry.selected_branch_provenance
                         .empty() ||
+                    (!entry.reference_coordinates
+                          .selected_branch_provenance
+                          .empty() &&
+                     entry.reference_coordinates
+                             .selected_branch_provenance !=
+                         entry.selected_branch_provenance) ||
                     cell_entry
                         .active_phases
                         .find(entry.identity)

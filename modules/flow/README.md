@@ -4082,3 +4082,44 @@ This slice stops at the target-rebuild plan. The next step is to consume these
 per-cell selected-root/identity records in a cell-dispatch PR76 production evaluator
 and resolve the required frozen absent-phase coordinates before materializing the
 actual mixed-cardinality restarted SNES system.
+
+### 47.9 PR76 mixed-cardinality target materialization
+
+The distributed PR76 target plan can now be materialized into the existing
+`PhaseTransitionRebuiltNaturalVariableSystem3D` without assigning one global EOS
+root selection per cardinality.
+
+`CellScopedMixedCardinalityEvaluatorDispatcher3D` dispatches 1P/2P/3P production
+cell evaluation by stable cell ID. Each target cell therefore consumes the selected
+PR76 roots frozen in its own transition plan rather than reusing another cell's
+root map.
+
+Cross-cardinality absent-phase density uses a separate explicit branch resolver.
+The active neighbour's selected root is supplied only as reference evidence; the
+resolver must explicitly publish the branch to use on the absent host cell. No
+neighbour-root, density, Z or phase-slot fallback is applied.
+
+Materialization is deliberately two-stage:
+
+1. build a bootstrap ragged system with the target cell dispatch;
+2. use its existing PetscSF packed-state synchronization to evaluate every local
+   target host state, including ghosts;
+3. for every authoritative cross-cardinality face, freeze the absent phase at the
+   actual target host state, using the adjacent resolved transition composition as
+   the hypothetical composition reference and zero composition tangent;
+4. attach an explicit cell-scoped selected-branch provenance key;
+5. build `Pr76CellScopedAbsentPhasePotentialExtensionProvider`, then rebuild the
+   final mixed system with the normal thermodynamic cross-cardinality TPFA bridge.
+
+If the required active transition phase, host state, or absent-side selected branch
+cannot be resolved, materialization returns no system rather than guessing. Multiple
+faces requesting the same absent cell/identity must agree on the frozen composition
+and selected branch.
+
+The 2-rank CH4/C2H6/C3H8 regression now takes only cell10 through the controlled
+1P->2P transition while cell20 remains 1P. The final ragged system therefore has
+`7 + 4 = 11` global scalars and one real 2P/1P cross-cardinality face. It verifies
+the cell20/phase-1 frozen coordinate entry, executes the cell-scoped PR76 absent
+provider through the standard TPFA bridge, and assembles finite nonzero mixed
+residual/Jacobian data. The synthetic transition is not required to converge and
+remains orchestration evidence only.

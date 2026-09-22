@@ -871,6 +871,70 @@ public:
     }
 
     [[nodiscard]] PetscErrorCode
+    evaluate_local_cells_for_phase_transition(
+        Vec global_state,
+        std::vector<std::optional<
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>*
+                output,
+        std::vector<double>* porosities,
+        NaturalVariableSnesEvaluationStatus3D*
+            status) {
+        using namespace
+            mixed_cardinality_physical_detail;
+
+        if (global_state == nullptr ||
+            output == nullptr ||
+            porosities == nullptr ||
+            status == nullptr) {
+            return PETSC_ERR_ARG_NULL;
+        }
+        output->clear();
+        porosities->clear();
+        *status =
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+
+        std::vector<double> local_state;
+        PetscErrorCode error =
+            infrastructure_
+                .copy_local_packed_state(
+                    global_state,
+                    &local_state);
+        error =
+            collective_error(
+                comm_,
+                error);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+
+        std::vector<std::optional<
+            MixedCardinalityPhysicalMobilityLinearization3D>>
+            unused_mobility;
+        error =
+            evaluate_cells(
+                local_state,
+                output,
+                &unused_mobility,
+                status);
+        if (error != PETSC_SUCCESS ||
+            *status !=
+                NaturalVariableSnesEvaluationStatus3D::
+                    success) {
+            return error;
+        }
+
+        porosities->reserve(
+            cell_inputs_.size());
+        for (const auto& input :
+             cell_inputs_) {
+            porosities->push_back(
+                porosity(input));
+        }
+        return PETSC_SUCCESS;
+    }
+
+    [[nodiscard]] PetscErrorCode
     evaluate_phase_transition_cell(
         mpmc::mesh::LocalIndex cell,
         std::span<const double> natural_variables,
