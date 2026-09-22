@@ -211,16 +211,22 @@ real_transition_source_state(
         0.0);
     q[layout.pressure_unknown_index()] =
         stable == UINT64_C(10)
-            ? 3.0e6
+            ? 2.0e6
             : 8.0e6;
     q[layout.temperature_unknown_index()] =
         stable == UINT64_C(10)
-            ? 250.0
+            ? 300.0
             : 450.0;
     q[*layout.independent_composition_unknown_index(
-        0U)] = 0.50;
+        0U)] =
+        stable == UINT64_C(10)
+            ? 0.20
+            : 0.50;
     q[*layout.independent_composition_unknown_index(
-        2U)] = 0.20;
+        2U)] =
+        stable == UINT64_C(10)
+            ? 0.65
+            : 0.20;
     return q;
 }
 
@@ -350,11 +356,11 @@ PetscErrorCode resolve_real_pr76_flash_target_densities(
 void check_real_pr76_two_phase_transition_state(
     const th::Pr76Phase<double>& model) {
     constexpr double pressure_pa =
-        3.0e6;
+        2.0e6;
     constexpr double temperature_k =
-        250.0;
+        300.0;
     const std::vector<double> feed{
-        0.50, 0.30, 0.20};
+        0.20, 0.15, 0.65};
 
     fl::Pr76VleEvaluator evaluator(
         model);

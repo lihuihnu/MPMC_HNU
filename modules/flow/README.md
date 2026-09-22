@@ -4130,9 +4130,9 @@ A fixed CH4/C2H6/C3H8 state is now promoted from an external discovery calculati
 into the repository's own PR76 backend/scanner regression:
 
 ```text
-T = 250 K
-P = 3.0 MPa
-z = [0.50, 0.30, 0.20]
+T = 300 K
+P = 2.0 MPa
+z = [0.20, 0.15, 0.65]
 component order = methane / ethane / propane
 kij = 0
 ```
@@ -4158,7 +4158,7 @@ single-phase transient fixture.
 
 ### 47.11 Real PR76-triggered fully implicit 1P->2P restart
 
-The fixed 250 K / 3 MPa / z=[0.50,0.30,0.20] state now drives an end-to-end
+The fixed 300 K / 2 MPa / z=[0.20,0.15,0.65] state now drives an end-to-end
 two-rank restart regression. This path no longer injects a controlled transition
 proposal.
 
@@ -4182,3 +4182,16 @@ The final restarted system must contain 11 global scalars (cell10 q=7, cell20 q=
 converge with finite final SNES residual <= 1e-6, leave cell10 on strict-positive
 two-phase saturation support, and pass a fresh production PT rescan with status
 `complete` and no further transition proposal.
+
+### 47.11.1 Production-range correction
+
+The earlier 250 K flash point remains a valid PR76 thermodynamic two-phase test,
+but it is below the production methane/ethane/propane caloric provider's sourced
+NIST ideal-gas Cp lower bound of 298.15 K. It is therefore not used as a flow
+restart source and no enthalpy extrapolation is introduced.
+
+The production restart source is now the fixed 300 K / 2.0 MPa /
+z=[0.20,0.15,0.65] state. This point lies inside the caloric provider temperature
+range and retains an explicit metastable one-phase PR76 root for the frozen source
+chart. The repository backend/scanner still decides whether it is accepted as the
+real 1P->2P trigger; no external phase fraction is used as an oracle.
