@@ -911,7 +911,15 @@ real_direct_cell_typed(
                 success ||
         !output) {
         throw std::runtime_error(
-            "real PR76 direct 1P production evaluation failed");
+            std::string{
+                "real PR76 direct 1P production evaluation failed: cell="} +
+            std::to_string(stable) +
+            " petsc_error=" +
+            std::to_string(
+                static_cast<int>(error)) +
+            " status=" +
+            std::to_string(
+                static_cast<int>(status)));
     }
     return output;
 }
