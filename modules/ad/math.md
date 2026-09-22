@@ -1,6 +1,6 @@
 # AD 初等函数：定义域、异常与增量验证
 
-公共头文件：`<mpmc/ad/math.hpp>`。仅包含本模块 `dual.hpp` 与 C++20 标准库；没有其他项目模块、第三方库、全局状态、录制 tape 或正常计算路径的堆分配。原 `dual.hpp`、算术测试和原 CMake 目标不变。以下是实数、一阶前向 AD 接口，不是复数、广义导数或符号化简系统。
+公共头文件：`<mpmc/ad/math.hpp>`。仅包含本模块 `dual.hpp` 与 C++20 标准库；没有其他项目模块、第三方库、全局状态、录制 tape 或正常计算路径的堆分配。原 `dual.hpp`、算术测试和原 CMake 目标不变。以下是实数 forward AD 接口；同一组函数可递归作用于嵌套 `Dual`，因此链式法则可继续传播到混合二阶及更深层导数。它不是复数、广义导数或符号化简系统。
 
 ## 1. 统一契约
 
@@ -82,7 +82,7 @@ ctest --test-dir build/ad-math -C Debug -R '^ad[.]math[.]' --output-on-failure -
 
 原根目录 `ad-debug` preset **仍只运行原算术测试**，不会隐式运行本新增工程。上面的独立命令才是本增量入口；不把未运行的新测试算进旧入口。正式执行证据以 GitHub 官方托管 runner 的对应提交日志为准。
 
-30 个新增 CTest 条目：22 个一元函数、4 个幂重载，以及 `composition`、`range_regressions`、`overflow_policy`、`header_odr`。除固定 double 的双翻译单元链接检查外，条目均覆盖三种基础浮点类型；尺度回归另含针对 double 的极端输入。
+31 个 CTest 条目：22 个一元函数、4 个幂重载，以及 `composition`、`range_regressions`、`overflow_policy`、`nested_second_order`、`header_odr`。`nested_second_order` 对同一解析函数同时检查值、梯度、Hessian、混合项对称性，并实例化全部既有一元函数族的嵌套路径。除固定 double 的双翻译单元链接检查外，条目均覆盖三种基础浮点类型；尺度回归另含针对 double 的极端输入。
 
 逐函数的三个解析点来自手工可核对的恒等式，不从待测实现生成期望值。例如 `sinh(ln 2)=3/4` 且导数 `5/4`；`atanh(3/5)=ln 2` 且导数 `25/16`。每点使用方向种子 `[1,−2,0]` 和零种子，检查值、全部导数以及输入不变；按每个函数的域逐项测试边界/域外输入，并为每个函数测试 NaN 与正负 Inf。
 
@@ -104,4 +104,4 @@ ctest --test-dir build/ad-math -C Debug -R '^ad[.]math[.]' --output-on-failure -
 
 其他核验入口：[autodiff 官方用法](https://autodiff.github.io/)、[C++ 标准草案数学头说明](https://eel.is/c++draft/c.math)、[NIST DLMF 三角恒等式](https://dlmf.nist.gov/4.21)和[双曲恒等式](https://dlmf.nist.gov/4.35)。当前标准草案不等于 C++20 的 constexpr 保证。
 
-本增量不包括 `atan2/hypot` 的 AD 重载、特殊函数 `erf/gamma`、取整/比较/分支、动态维数、反向/高阶 AD、热力学及闪蒸，也没有调用外部 AD 库做对比测试。
+本增量不包括 `atan2/hypot` 的公开 AD 重载、特殊函数 `erf/gamma`、取整/比较/分支、动态 Hessian、反向模式、热力学及闪蒸，也没有调用外部 AD 库做对比测试。固定宽度高阶能力通过递归嵌套 `Dual` 提供。

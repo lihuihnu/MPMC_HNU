@@ -1,10 +1,10 @@
-# 固定维数函数值与 Jacobian
+# 固定维数函数值、Jacobian 与 Hessian
 
 公共头：`<mpmc/ad/differentiate.hpp>`。接口 `mpmc::ad::value_and_jacobian(function, inputs)` 独立于原算术与初等函数实现；只包含本 AD 模块的 `dual.hpp` 与 C++20 标准库，不依赖其他项目模块、第三方 AD 或矩阵库。调用方需要初等函数时自行包含 `math.hpp`。
 
 ## 1. 本增量的边界与设计
 
-现有 `Dual<T, N>` 已能传播 N 个一阶方向，本接口只统一单位基播种、一次函数求值和导数提取。与让每个领域模块手写这些步骤相比，这样更容易固定索引和所有权契约；与新增动态梯度、求导图或矩阵库相比，不改变已验证的数值类型和依赖边界。
+现有 `Dual<T, N>` 能传播 N 个方向，并允许 `T` 递归为另一个 `Dual`。`value_and_jacobian` 继续只统一一阶单位基播种；本头同时提供 `value_gradient_hessian`，用一次显式嵌套播种取得标量函数的梯度与完整固定维 Hessian。与让每个领域模块手写这些步骤相比，这样更容易固定索引和所有权契约；与新增动态梯度、求导图或矩阵库相比，不改变已验证的数值类型和依赖边界。
 
 参考 autodiff 官方教程中同时返回向量函数值与 Jacobian 的接口分工，以及 Ceres 的多方向 Jet 思路；采用独立实现，没有复制、引入或运行这些库。标准调用规则参考 C++20 `std::invoke`，使用完美转发而非 `std::function` 类型擦除。原始入口见文末。
 
@@ -27,6 +27,20 @@
 回调以单位基播种的独立输入为参数，**一次调用同时传播所有 N 个方向**。输出长度通过编译期类型推导获得，不预先执行回调；不会为获取普通函数值再调用一次。支持函数指针、捕获 lambda、`std::ref`、不可复制及有左右值调用限定的函数对象，不复制或保留函数对象。空函数指针等不可调用的运行时状态由调用方保证不存在。
 
 回调必须保留 AD 运算链。普通浮点输出、错误的 Dual 精度/方向数、零长度输入/输出、单个标量输出、输出引用或视图、仅能接收可变输入引用的回调会在接口约束处被拒绝。常数输出应写成 `Number{constant}`；故意提取 `.value()` 后重建 Dual、自行篡改种子或使用过期缓存，无法只靠返回类型自动识别，不得将其当作有效求导。
+
+### 固定维 Hessian
+
+`value_gradient_hessian(function, inputs)` 接受 `std::array<T,N>`，内部构造 `Outer = Dual<Dual<T,N>,N>`。第 j 个输入同时在内层与外层第 j 个方向播种，回调必须返回一个 `Outer` 标量，并且只调用一次。
+
+返回 `ValueGradientHessian<T,N>`：
+
+| 成员 | 语义 |
+| --- | --- |
+| `value` | 标量函数值。 |
+| `gradient[j]` | 一阶偏导 `∂f/∂x_j`。 |
+| `hessian[i][j]` | 混合二阶偏导 `∂²f/(∂x_i∂x_j)`。 |
+
+对于满足连续二阶可微条件的表达式，Hessian 应在舍入误差内对称；API 不通过强制对称化掩盖错误。非有限输入在回调之前拒绝。该入口没有动态维度、稀疏存储或有限差分 fallback。
 
 ## 3. 可微域与异常
 
@@ -81,6 +95,7 @@ ctest --test-dir build/ad-jacobian -C Debug -R "^ad[.]jacobian[.]" --verbose --n
 | `exception_propagation` | 自定义异常的类型/载荷、数学域异常和输入不变。 |
 | `nonfinite_inputs` | 每个输入位置分别使用 NaN/±Inf；回调调用数必须为 0。 |
 | `output_passthrough` | 刻意构造非有限结果，确认提取不伪造有限输出；不是物理验证。 |
+| `nested_hessian` | 一次嵌套 forward 调用核对解析 value/gradient/Hessian、混合项对称性，以及非有限输入在回调前拒绝。 |
 | `header_odr` | 公共头首个/重复包含，两个翻译单元链接，独立消费 AD 目标。 |
 
 前九项覆盖 float/double/long double，公共头链接项使用 double。类型/维数/输出所有权约束另由 `static_assert` 编译检查。精确多项式和单位基使用精确比较；短无量纲数学表达式采用 `64*epsilon(T)*max(1,abs(expected))`，参考导数不是由待测 AD 结果回填。运行期测试不会被 NDEBUG 删除。不重做旧初等函数逐项测试，也不虚构未实现下游测试。

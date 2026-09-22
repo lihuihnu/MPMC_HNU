@@ -14,11 +14,9 @@
 
 namespace mpmc::ad {
 
-/// Owned result for F: R^N -> R^M. Rows are outputs; columns are inputs.
-/// jacobian[i][j] = d F_i / d x_j, in the caller's original input order.
-/// Nested arrays are indexed by row; no flat-buffer or binary ABI is promised.
 template <std::floating_point T, std::size_t N, std::size_t M>
-    requires(N > 0 && M > 0 && std::same_as<T, std::remove_cv_t<T>>)
+    requires(N > 0 && M > 0 &&
+             std::same_as<T, std::remove_cv_t<T>>)
 struct ValueAndJacobian {
     using Scalar = T;
     using Values = std::array<T, M>;
@@ -30,11 +28,22 @@ struct ValueAndJacobian {
     Jacobian jacobian{};
 };
 
+template <std::floating_point T, std::size_t N>
+    requires(N > 0 &&
+             std::same_as<T, std::remove_cv_t<T>>)
+struct ValueGradientHessian {
+    using Scalar = T;
+    using Gradient = std::array<T, N>;
+    using Hessian = std::array<std::array<T, N>, N>;
+    static constexpr std::size_t input_count = N;
+
+    T value{};
+    Gradient gradient{};
+    Hessian hessian{};
+};
+
 namespace detail {
 
-// Accept only an owning, nonempty array of the EXACT seeded scalar type.
-// In particular, ordinary floating-point outputs must not silently acquire
-// zero derivatives; reference/view outputs would introduce lifetime contracts.
 template <typename Output, typename Number>
 struct JacobianOutput {
     static constexpr bool valid = false;
@@ -48,56 +57,128 @@ struct JacobianOutput<std::array<Number, M>, Number> {
 
 } // namespace detail
 
-/// Evaluate a fixed-size vector function and its full first-order Jacobian.
-///
-/// The callback receives const std::array<Dual<T, N>, N>& (or its own copy)
-/// and returns std::array<Dual<T, N>, M> by value, M > 0. N and M are inferred.
-/// Constants in the output must be explicitly constructed as Dual constants.
-/// All N identity directions propagate in ONE callback invocation, not N calls.
-///
-/// Nonfinite inputs throw std::domain_error BEFORE invoking the callback.
-/// Callback exceptions propagate unchanged. Output values/derivatives are copied
-/// without clipping or finiteness repair; their validity remains the caller's
-/// responsibility. An AD result type cannot detect deliberate value() stripping.
-///
-/// Inputs and results own separate storage. No callback is copied or retained;
-/// forwarding preserves its value category. Callback side effects (including
-/// writes through captures) cannot be rolled back. Null callable pointers and
-/// callbacks retaining references into the temporary seed array are invalid use.
-///
-/// Only dual.hpp and the standard library are needed; include math.hpp in the
-/// caller when needed. Local fixed-size arrays avoid wrapper heap allocation,
-/// but occupy O(N*N + M*N) storage; intended for small/local dense problems.
-/// No domain-specific normalization, constraints, or variable scaling is added.
 template <typename Function, std::floating_point T, std::size_t N>
-    requires(N > 0 && std::same_as<T, std::remove_cv_t<T>> &&
-             std::invocable<Function, const std::array<Dual<T, N>, N>&> &&
+    requires(N > 0 &&
+             std::same_as<T, std::remove_cv_t<T>> &&
+             std::invocable<
+                 Function,
+                 const std::array<Dual<T, N>, N>&> &&
              detail::JacobianOutput<
-                 std::invoke_result_t<Function, const std::array<Dual<T, N>, N>&>,
+                 std::invoke_result_t<
+                     Function,
+                     const std::array<Dual<T, N>, N>&>,
                  Dual<T, N>>::valid)
-[[nodiscard]] auto value_and_jacobian(Function&& function, const std::array<T, N>& inputs) {
+[[nodiscard]] auto value_and_jacobian(
+    Function&& function,
+    const std::array<T, N>& inputs) {
     using Number = Dual<T, N>;
     using SeedArray = std::array<Number, N>;
-    using Output = std::invoke_result_t<Function, const SeedArray&>;
-    constexpr std::size_t output_count = detail::JacobianOutput<Output, Number>::size;
+    using Output =
+        std::invoke_result_t<
+            Function,
+            const SeedArray&>;
+    constexpr std::size_t output_count =
+        detail::JacobianOutput<
+            Output,
+            Number>::size;
 
     const SeedArray seeded = [&inputs] {
         SeedArray variables{};
         for (std::size_t j = 0; j < N; ++j) {
             if (!std::isfinite(inputs[j])) {
-                throw std::domain_error("mpmc::ad::value_and_jacobian: nonfinite input");
+                throw std::domain_error(
+                    "mpmc::ad::value_and_jacobian: nonfinite input");
             }
-            variables[j] = Number::variable(inputs[j], j);
+            variables[j] =
+                Number::variable(
+                    inputs[j],
+                    j);
         }
         return variables;
     }();
 
-    // Result type inspection above is unevaluated; this is the only invocation.
-    const auto outputs = std::invoke(std::forward<Function>(function), seeded);
-    ValueAndJacobian<T, N, output_count> result{};
-    for (std::size_t i = 0; i < output_count; ++i) {
-        result.values[i] = outputs[i].value();
-        result.jacobian[i] = outputs[i].derivatives();
+    const auto outputs =
+        std::invoke(
+            std::forward<Function>(function),
+            seeded);
+
+    ValueAndJacobian<T, N, output_count>
+        result{};
+    for (std::size_t i = 0;
+         i < output_count;
+         ++i) {
+        result.values[i] =
+            outputs[i].value();
+        result.jacobian[i] =
+            outputs[i].derivatives();
+    }
+    return result;
+}
+
+/// Evaluate one fixed-size scalar function, its gradient and full Hessian using
+/// nested forward AD. The callback is invoked exactly once.
+template <typename Function, std::floating_point T, std::size_t N>
+    requires(N > 0 &&
+             std::same_as<T, std::remove_cv_t<T>>)
+[[nodiscard]] ValueGradientHessian<T, N>
+value_gradient_hessian(
+    Function&& function,
+    const std::array<T, N>& inputs) {
+    using Inner = Dual<T, N>;
+    using Outer = Dual<Inner, N>;
+    using SeedArray = std::array<Outer, N>;
+
+    static_assert(
+        std::invocable<
+            Function,
+            const SeedArray&>,
+        "value_gradient_hessian callback must accept the nested seed array");
+    static_assert(
+        std::same_as<
+            std::invoke_result_t<
+                Function,
+                const SeedArray&>,
+            Outer>,
+        "value_gradient_hessian callback must return one nested Dual scalar");
+
+    SeedArray seeded{};
+    for (std::size_t j = 0;
+         j < N;
+         ++j) {
+        if (!std::isfinite(inputs[j])) {
+            throw std::domain_error(
+                "mpmc::ad::value_gradient_hessian: nonfinite input");
+        }
+        seeded[j] =
+            Outer::variable(
+                Inner::variable(
+                    inputs[j],
+                    j),
+                j);
+    }
+
+    const Outer output =
+        std::invoke(
+            std::forward<Function>(function),
+            seeded);
+
+    ValueGradientHessian<T, N> result{};
+    result.value =
+        output.value().value();
+    result.gradient =
+        output.value().derivatives();
+
+    for (std::size_t row = 0;
+         row < N;
+         ++row) {
+        const Inner first =
+            output.derivative(row);
+        for (std::size_t column = 0;
+             column < N;
+             ++column) {
+            result.hessian[row][column] =
+                first.derivative(column);
+        }
     }
     return result;
 }

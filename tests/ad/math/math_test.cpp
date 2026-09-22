@@ -17,6 +17,7 @@
 #include <type_traits>
 
 mpmc::ad::Dual<double, 2> evaluate_math_in_other_translation_unit();
+void test_nested_math();
 
 namespace {
 
@@ -412,6 +413,8 @@ int main(int argc, char** argv) {
         const std::string_view name{argv[1]};
         if (name == "header_odr") {
             check(evaluate_math_in_other_translation_unit(), 7.0, {1.0, 1.0 / 6.0});
+        } else if (name == "nested_second_order") {
+            test_nested_math();
         } else {
             run_case<float>(name);
             run_case<double>(name);

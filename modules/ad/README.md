@@ -1,6 +1,6 @@
 # 独立 AD 模块：数值类型与 Jacobian 接口
 
-`mpmc::ad::Dual<T, N>` 是提供给其他数值模块的一阶前向自动微分数值类型。实现只有标准库头文件依赖，**不依赖 `core`、其他项目模块、Eigen、Ceres、autodiff 或 CppAD**。CMake 目标为 `mpmc::ad`；也可只复制 `include/` 并启用 C++20 使用。
+`mpmc::ad::Dual<T, N>` 是提供给其他数值模块的固定宽度前向自动微分数值类型；`T` 可以是内建浮点数，也可以递归为另一个 `Dual`，因此同一类型族支持一阶方向导数以及显式嵌套得到的高阶/混合导数。实现只有标准库头文件依赖，**不依赖 `core`、其他项目模块、Eigen、Ceres、autodiff 或 CppAD**。CMake 目标为 `mpmc::ad`；也可只复制 `include/` 并启用 C++20 使用。
 
 已提供固定维数的值/导数语义、种子和算术，并在独立的 `<mpmc/ad/math.hpp>` 中增加常见初等函数；逐函数定义域、异常、导数与独立增量测试入口见 [初等函数契约](math.md)。另有固定维数 [value_and_jacobian 接口](differentiate.md)，负责自动播种和结果提取；同时提供 [运行期维数的分块 Jacobian](runtime_differentiate.md)，复用固定宽度 Dual 与工作区，不改变旧接口。不宣称已经完成全部 AD 能力。测试结果以对应提交的 GitHub Actions 日志为准；未做性能基准，也没有热力学或实验数据验证。
 
@@ -16,7 +16,7 @@
 
 | 接口或约束 | 语义 |
 | --- | --- |
-| `Dual<T, N>` | `T` 为无 cv 限定的内建浮点类型；`N > 0`，在编译期确定。常规使用 `float`、`double`、`long double`。默认 `N = 1`。 |
+| `Dual<T, N>` | `T` 为无 cv 内建浮点类型，或最终 `BaseScalar` 为内建浮点的另一个 `Dual`；`N > 0` 且编译期确定。`Dual<Dual<double,M>,N>` 可传播混合二阶导数。默认 `N = 1`。 |
 | `Dual{}` / `Dual{value}` | 常数，导数全部为零；标量构造为 `explicit`。 |
 | `Dual::variable(value, index)` | 第 `index` 个导数分量置 1，其余为 0。越界抛出 `std::out_of_range`，Release 中也检查。 |
 | `Dual{value, gradient}` | 显式提供任意方向种子。各输入使用同一方向基；类型不会自动识别物理变量。 |
@@ -28,6 +28,21 @@
 
 `N` 表示传播的方向数，不一定是物理输入数量。单位基种子给出梯度/Jacobian 各列；单方向种子可在一次计算中得到 `J*v`。所有读数、种子和合法算术可用于 `constexpr`；非法常量求值不能生成有效编译期结果。
 
+## 2.1 嵌套 forward AD 与固定 Hessian
+
+嵌套不是新的 tape 或动态模式，而是把一个已验证的 `Dual` 当成外层 `Dual` 的标量。例如：
+
+```cpp
+using Inner = mpmc::ad::Dual<double, 2>;
+using Outer = mpmc::ad::Dual<Inner, 2>;
+const auto x = Outer::variable(Inner::variable(1.2, 0), 0);
+const auto y = Outer::variable(Inner::variable(0.7, 1), 1);
+```
+
+外层导数表示一组一阶方向，内层导数继续对这些量求导；对光滑标量函数，`outer.derivative(i).derivative(j)` 给出对应 Hessian 元素。定义域与除零判断始终依据最深层 `BaseScalar` 的 primal，而算术和初等函数仍在完整嵌套标量上运算，因此不会为了做高阶求导而剥离中间 AD 依赖。
+
+固定维度的便捷入口 `value_gradient_hessian(function, inputs)` 位于 `<mpmc/ad/differentiate.hpp>`。它一次调用回调，返回 value、gradient 和完整 `N×N` Hessian。运行期分块 Jacobian 驱动仍只定义一阶 Jacobian；本增量没有动态 Hessian API。
+
 ### 算术与异常
 
 对 `q = u/v`，采用 `q' = (u' - q*v')/v`，而不形成 `v*v` 或 `1/v`；乘法使用 `u'*v + u*v'`。复合运算在覆盖数据前保留需要的原值，并只读写同一导数分量，因此不需要整份梯度的额外工作区。
@@ -36,7 +51,7 @@
 
 对 NaN、Inf、溢出和下溢，保留所用浮点运算的行为，不生成虚假的有限结果；不承诺非有限输入有有效导数。乘积、中间量和导数仍可能溢出，固定表达式也可能存在相消；上述除法安排不是对任意动态范围的稳定性证明。禁止用 `fast-math` 或默认 flush-to-zero 改写已测试的数值语义。
 
-比较/分支运算、每个标量的动态导数存储、高阶/嵌套 AD、反向模式、稀疏 Jacobian 容器或 Eigen 适配仍未提供；运行期变量数量由独立的分块驱动支持。`exp/log/sqrt/pow` 等初等函数须显式包含 `<mpmc/ad/math.hpp>`；不能把 `std::log(x.value())` 等剥离数值的计算冒充 AD。新增数学头的有限原值检查比基础算术更严格，详见 [初等函数契约](math.md)。
+比较/分支运算、每个标量的动态导数存储、反向模式、动态/稀疏 Hessian 容器、稀疏 Jacobian 容器或 Eigen 适配仍未提供；运行期变量数量由独立的分块驱动支持。`exp/log/sqrt/pow` 等初等函数须显式包含 `<mpmc/ad/math.hpp>`；不能把 `std::log(x.value())` 等剥离数值的计算冒充 AD。新增数学头的有限原值检查比基础算术更严格，详见 [初等函数契约](math.md)。
 
 ## 3. 用法
 
@@ -72,7 +87,7 @@ cmake --build --preset ad-debug
 ctest --preset ad-debug
 ```
 
-这些命令仍只运行原算术套件；新增初等函数使用 [独立 math 测试入口](math.md#5-独立增量测试入口)，不隐式混入旧 preset。这些命令供复现使用；本项目的正式执行证据必须来自 GitHub 官方托管 runner。`tests/ad/dual_test.cpp` 包含 12 个命名用例组，使用正常运行期检查而不是可能被 `NDEBUG` 删除的 `assert`。CTest 将其注册为 `ad.dual`，标签 `ad;unit`。
+这些命令仍只运行原算术套件；新增初等函数使用 [独立 math 测试入口](math.md#5-独立增量测试入口)，不隐式混入旧 preset。这些命令供复现使用；本项目的正式执行证据必须来自 GitHub 官方托管 runner。`tests/ad/dual_test.cpp` 与 `nested_arithmetic_test.cpp` 合计包含 13 个命名用例组，使用正常运行期检查而不是可能被 `NDEBUG` 删除的 `assert`。CTest 将其注册为 `ad.dual`，标签 `ad;unit`。
 
 | 验证范围 | 判据 |
 | --- | --- |

@@ -6,7 +6,7 @@ project(mpmc_ad_math_tests LANGUAGES CXX)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad" ad-library)
 enable_testing()
 
-add_executable(mpmc_ad_math_tests math_test.cpp header_self_contained.cpp)
+add_executable(mpmc_ad_math_tests math_test.cpp nested_math_test.cpp header_self_contained.cpp)
 target_link_libraries(mpmc_ad_math_tests PRIVATE mpmc::ad)
 set_target_properties(mpmc_ad_math_tests PROPERTIES CXX_EXTENSIONS OFF)
 if(MSVC)
@@ -32,7 +32,7 @@ set(math_cases
     exp exp2 expm1 log log2 log10 log1p sqrt cbrt
     sin cos tan asin acos atan sinh cosh tanh asinh acosh atanh abs
     pow_integer pow_real pow_dual pow_scalar_base composition range_regressions
-    overflow_policy header_odr)
+    overflow_policy nested_second_order header_odr)
 foreach(case IN LISTS math_cases)
     add_test(NAME ad.math.${case} COMMAND mpmc_ad_math_tests ${case})
     set_tests_properties(ad.math.${case} PROPERTIES LABELS "ad;ad.math;unit" TIMEOUT 30)
