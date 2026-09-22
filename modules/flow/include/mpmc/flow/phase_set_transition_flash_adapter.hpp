@@ -239,7 +239,9 @@ make_phase_set_transition_candidate_from_flash(
                 source.mole_phase_fraction,
                 source.composition,
                 target_phase_molar_density_mol_per_m3[
-                    phase]});
+                    phase],
+                source.activity.branch,
+                source.activity.smooth});
     }
 
     return candidate;

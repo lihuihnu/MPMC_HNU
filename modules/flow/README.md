@@ -4038,3 +4038,47 @@ The controlled 2P->3P proposal remains orchestration evidence only. This slice d
 not claim a real PR76 1->2 physical transition; it closes the software boundary from
 fixed handoff materialization through outer-controller proposal consumption and
 topology restart.
+
+### 47.8 PR76 resolved target-rebuild plan
+
+The PR76 PT-to-flow transition contract now preserves the accepted phase's opaque
+`activity.branch` alongside beta, composition, molar density and evidence. The
+branch token is thermodynamic provider provenance only; it is explicitly not a
+physical phase identity and is never interpreted as oil/gas/water or morphology.
+
+New `pr76_single_phase_transition_target_rebuild.hpp` converts local-owned resolved
+1P->2P/3P proposals into a distributed target-rebuild plan. For each owner proposal
+it:
+
+- reconstructs the current converged 1P q from the fixed SNES report;
+- re-evaluates the production cell closure and builds the current component
+  inventory used by the material-balance gate;
+- keeps previous component/energy accumulation as unchanged t_n history;
+- converts preserved activity.branch tokens into frozen PR76 selected-root
+  selections using the audited root-options snapshot;
+- requires an explicit phase-identity resolver; no slot/Z/density/root heuristic
+  is allowed;
+- validates source->target identity continuation; and
+- builds the per-transition selected-phase branch registry.
+
+Identity resolution may return unresolved without error. In that case the plan is
+not published, so production orchestration can classify the transition as
+indeterminate instead of inventing morphology.
+
+Resolved owner topology metadata is serialized and MPI-allgathered by stable cell
+ID. Every local ghost copy reconstructs the same target phase count, dependent
+composition pivots, explicit phase identities, selected PR76 root bindings and
+transition evidence. Owner target q/history remain owner-only; ghost target q and
+BE histories are deliberately absent.
+
+The two-rank controlled regression gives each owner one resolved 1P->2P proposal
+with explicit test identities. Each rank then observes both local copies as target
+2P, verifies its owned target q has width 7 while the ghost q remains empty, and
+checks both synchronized transition records retain the same evidence and selected
+root bindings. The identity resolver is test-only evidence and does not claim real
+PR76 morphology.
+
+This slice stops at the target-rebuild plan. The next step is to consume these
+per-cell selected-root/identity records in a cell-dispatch PR76 production evaluator
+and resolve the required frozen absent-phase coordinates before materializing the
+actual mixed-cardinality restarted SNES system.

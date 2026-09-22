@@ -40,6 +40,13 @@ struct PhaseSetTransitionPhaseCandidate {
     double mole_phase_fraction{};
     std::vector<double> composition;
     double molar_density_mol_per_m3{};
+
+    /// Opaque provider activity branch from the accepted PT phase. This is
+    /// thermodynamic branch provenance only; it is never a physical phase
+    /// identity and must not be used to infer oil/gas/water or morphology.
+    std::optional<std::size_t>
+        provider_activity_branch;
+    bool provider_activity_smooth{false};
 };
 
 struct PhaseSetTransitionCandidate {

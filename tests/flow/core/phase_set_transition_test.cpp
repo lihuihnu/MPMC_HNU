@@ -204,6 +204,7 @@ accepted_flash_two_phase() {
     flash::PtCandidatePhaseSet set;
     const auto candidate =
         appearance_candidate();
+    std::size_t accepted_phase_index = 0U;
     for (const auto& phase :
          candidate.target_phases) {
         flash::PtCandidatePhase projected;
@@ -213,10 +214,14 @@ accepted_flash_two_phase() {
             phase.composition;
         projected.activity.ln_phi =
             {0.0, 0.0, 0.0};
-        projected.activity.branch = 0U;
+        projected.activity.branch =
+            accepted_phase_index == 0U
+                ? 2U
+                : 5U;
         projected.activity.smooth = true;
         set.phases.push_back(
             std::move(projected));
+        ++accepted_phase_index;
     }
     result.solution.candidate_phase_set =
         std::move(set);
@@ -488,7 +493,19 @@ void phase_set_transition_contract() {
                 adapted->status ==
                     flow::
                         PhaseSetTransitionCandidateStatus::
-                            target_resolved,
+                            target_resolved &&
+                adapted->target_phases.size() ==
+                    2U &&
+                adapted->target_phases[0]
+                        .provider_activity_branch ==
+                    std::optional<std::size_t>{2U} &&
+                adapted->target_phases[1]
+                        .provider_activity_branch ==
+                    std::optional<std::size_t>{5U} &&
+                adapted->target_phases[0]
+                    .provider_activity_smooth &&
+                adapted->target_phases[1]
+                    .provider_activity_smooth,
             "accepted flash phase-set was not adapted into a fresh flow transition candidate");
 
         const auto projection =

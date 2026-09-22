@@ -43,6 +43,7 @@ void variable_cardinality_snes_assembly_test();
 bool mixed_cardinality_physical_snes_assembly_header();
 void mixed_cardinality_physical_snes_assembly_test();
 bool pr76_production_cell_evaluator_header();
+bool pr76_single_phase_transition_target_rebuild_header();
 void pr76_production_fully_implicit_transient_test();
 bool adaptive_timestep_controller_header();
 void adaptive_timestep_controller_test();
@@ -5388,6 +5389,9 @@ void headers() {
     require_collective(
         pr76_production_cell_evaluator_header(),
         "PR76 production cell evaluator header probe failed");
+    require_collective(
+        pr76_single_phase_transition_target_rebuild_header(),
+        "PR76 single-phase transition target rebuild header probe failed");
     require_collective(
         adaptive_timestep_controller_header(),
         "adaptive timestep controller header probe failed");

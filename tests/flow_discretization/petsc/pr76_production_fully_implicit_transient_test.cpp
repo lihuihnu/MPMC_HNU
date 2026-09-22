@@ -4,6 +4,7 @@
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
 #include <mpmc/flow_discretization_petsc/adaptive_timestep_controller.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_production_cell_evaluator.hpp>
+#include <mpmc/flow_discretization_petsc/pr76_single_phase_transition_target_rebuild.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_pt_flash_phase_transition_scanner.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_adaptive_timestep_attempt.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_handoff_initial_system.hpp>
@@ -1447,11 +1448,15 @@ PetscErrorCode real_controlled_transition_review(
             {
                 0.4,
                 std::move(first),
-                0.9 * density},
+                0.9 * density,
+                std::optional<std::size_t>{0U},
+                true},
             {
                 0.6,
                 std::move(second),
-                1.1 * density}
+                1.1 * density,
+                std::optional<std::size_t>{0U},
+                true}
         };
 
         (void)mpmc::flow::
@@ -1469,6 +1474,37 @@ PetscErrorCode real_controlled_transition_review(
     *outcome =
         fdp::AdaptiveTimestepAttemptOutcome3D::
             phase_transition_proposed;
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode controlled_pr76_target_identity_resolution(
+    mesh::GlobalEntityId,
+    const flow::PhaseSetTransitionCandidate& candidate,
+    const flow::FrozenActivePhaseIdentityMap&
+        source_active_phases,
+    std::span<
+        const th::Pr76SelectedPhase>
+        target_selected_phases,
+    void*,
+    std::optional<
+        flow::FrozenActivePhaseIdentityMap>*
+            output) {
+    if (output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    if (source_active_phases.phase_count() != 1U ||
+        candidate.source_phase_count != 1U ||
+        candidate.target_phase_count != 2U ||
+        target_selected_phases.size() != 2U) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    output->emplace(
+        std::vector<
+            flow::FrozenPhysicalPhaseIdentity>{
+            source_active_phases.identity(0U),
+            real_handoff_phase_identity(
+                "phase-1")});
     return PETSC_SUCCESS;
 }
 
@@ -2404,6 +2440,118 @@ void pr76_production_fully_implicit_transient_test() {
                     PETSC_SUCCESS,
             "initial outer source residual cleanup failed");
         initial_outer_system.reset();
+
+        std::optional<
+            fdp::
+                Pr76SinglePhaseTransitionTargetRebuildPlan3D>
+            target_plan;
+        error =
+            fdp::
+                make_pr76_single_phase_transition_target_rebuild_plan_3d(
+                    PETSC_COMM_WORLD,
+                    partition,
+                    accepted_cells,
+                    *handoff_solve_report,
+                    {
+                        &fdp::
+                            evaluate_pr76_single_phase_production_cell_3d<
+                                Closure>,
+                        &evaluator_context},
+                    source_phase_maps,
+                    handoff_proposals,
+                    pt_evaluator.root_options(),
+                    {
+                        &controlled_pr76_target_identity_resolution,
+                        nullptr},
+                    &target_plan);
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                target_plan.has_value() &&
+                target_plan->cells.size() ==
+                    accepted_cells.size() &&
+                target_plan
+                        ->local_transition_cells
+                        .size() ==
+                    2U,
+            "PR76 target rebuild plan did not synchronize both owner proposals");
+
+        for (std::size_t local = 0U;
+             local < target_plan->cells.size();
+             ++local) {
+            const auto& target =
+                target_plan->cells[local];
+            const bool owned =
+                partition.is_owned(
+                    mesh::EntityKind::cell,
+                    target.cell);
+            require_real_collective(
+                target.target_layout
+                        .phase_count() ==
+                    2U &&
+                    target.target_active_phases
+                        .phase_count() ==
+                    2U &&
+                    target.transition_evidence_profile ==
+                        "test/adaptive-transition-handoff/v1" &&
+                    (owned
+                         ? target
+                               .target_natural_variables
+                               .size() == 7U &&
+                               target
+                                   .previous_component_accumulation
+                                   .has_value() &&
+                               target
+                                   .previous_energy_accumulation
+                                   .has_value()
+                         : target
+                               .target_natural_variables
+                               .empty() &&
+                               !target
+                                    .previous_component_accumulation
+                                    .has_value() &&
+                               !target
+                                    .previous_energy_accumulation
+                                    .has_value()),
+                "PR76 target rebuild owner/ghost topology metadata mismatch");
+        }
+
+        for (const auto& transition :
+             target_plan->local_transition_cells) {
+            require_real_collective(
+                transition.continuation
+                        .source_phase_count() ==
+                    1U &&
+                transition.continuation
+                        .target_phase_count() ==
+                    2U &&
+                transition.branch_registry
+                        .bindings()
+                        .size() ==
+                    2U &&
+                transition.branch_registry
+                        .binding(
+                            transition
+                                .continuation
+                                .target()
+                                .identity(0U))
+                        .selection
+                        .root_index ==
+                    0U &&
+                transition.branch_registry
+                        .binding(
+                            transition
+                                .continuation
+                                .target()
+                                .identity(1U))
+                        .selection
+                        .root_index ==
+                    0U &&
+                transition.branch_registry
+                        .transition_evidence_profile() ==
+                    std::string_view{
+                        "test/adaptive-transition-handoff/v1"},
+                "PR76 target rebuild lost branch or identity provenance");
+        }
 
         const auto handoff_state_values =
             read_owned_real_state(
