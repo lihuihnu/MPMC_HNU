@@ -1534,6 +1534,19 @@ void pr76_production_fully_implicit_transient_test() {
                 static_cast<int>(
                     failure_diagnostics
                         ->ksp_reason)) +
+            " pc_failed_reason=" +
+            std::to_string(
+                failure_diagnostics
+                    ->pc_failed_reason) +
+            " asm_sub_ksp_reason=" +
+            std::to_string(
+                static_cast<int>(
+                    failure_diagnostics
+                        ->asm_sub_ksp_reason)) +
+            " asm_sub_pc_failed_reason=" +
+            std::to_string(
+                failure_diagnostics
+                    ->asm_sub_pc_failed_reason) +
             " nonlinear_iterations=" +
             std::to_string(
                 failure_diagnostics

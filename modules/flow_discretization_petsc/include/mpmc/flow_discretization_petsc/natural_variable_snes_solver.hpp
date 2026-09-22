@@ -71,6 +71,10 @@ struct NaturalVariableSnesFailureDiagnostics3D {
         SNES_CONVERGED_ITERATING};
     KSPConvergedReason ksp_reason{
         KSP_CONVERGED_ITERATING};
+    int pc_failed_reason{};
+    KSPConvergedReason asm_sub_ksp_reason{
+        KSP_CONVERGED_ITERATING};
+    int asm_sub_pc_failed_reason{};
     PetscInt nonlinear_iterations{};
     PetscInt function_evaluations{};
     PetscInt jacobian_evaluations{};
@@ -1510,17 +1514,81 @@ solve_natural_variable_snes_3d(
         if (failure_diagnostics != nullptr) {
             KSPConvergedReason ksp_reason{
                 KSP_CONVERGED_ITERATING};
+            PCFailedReason pc_reason{};
+            KSPConvergedReason sub_ksp_reason{
+                KSP_CONVERGED_ITERATING};
+            PCFailedReason sub_pc_reason{};
             PetscReal function_norm = 0.0;
+
             const PetscErrorCode ksp_reason_error =
                 KSPGetConvergedReason(
                     ksp,
                     &ksp_reason);
+            const PetscErrorCode pc_reason_error =
+                PCGetFailedReason(
+                    pc,
+                    &pc_reason);
             const PetscErrorCode norm_error =
                 SNESGetFunctionNorm(
                     snes,
                     &function_norm);
+
+            PetscErrorCode sub_reason_error =
+                PETSC_SUCCESS;
+            PetscInt sub_count = 0;
+            KSP* sub_ksp = nullptr;
+            if (pc_reason_error == PETSC_SUCCESS) {
+                sub_reason_error =
+                    PCASMGetSubKSP(
+                        pc,
+                        &sub_count,
+                        nullptr,
+                        &sub_ksp);
+            }
+            if (sub_reason_error == PETSC_SUCCESS &&
+                sub_count > 0 &&
+                sub_ksp != nullptr) {
+                for (PetscInt index = 0;
+                     index < sub_count;
+                     ++index) {
+                    KSPConvergedReason candidate_ksp{
+                        KSP_CONVERGED_ITERATING};
+                    PC sub_pc = nullptr;
+                    PCFailedReason candidate_pc{};
+                    if (KSPGetConvergedReason(
+                            sub_ksp[index],
+                            &candidate_ksp) !=
+                            PETSC_SUCCESS ||
+                        KSPGetPC(
+                            sub_ksp[index],
+                            &sub_pc) !=
+                            PETSC_SUCCESS ||
+                        sub_pc == nullptr ||
+                        PCGetFailedReason(
+                            sub_pc,
+                            &candidate_pc) !=
+                            PETSC_SUCCESS) {
+                        sub_reason_error =
+                            PETSC_ERR_LIB;
+                        break;
+                    }
+                    if (static_cast<int>(
+                            candidate_ksp) < 0) {
+                        sub_ksp_reason =
+                            candidate_ksp;
+                    }
+                    if (static_cast<int>(
+                            candidate_pc) != 0) {
+                        sub_pc_reason =
+                            candidate_pc;
+                    }
+                }
+            }
+
             if (ksp_reason_error == PETSC_SUCCESS &&
+                pc_reason_error == PETSC_SUCCESS &&
                 norm_error == PETSC_SUCCESS &&
+                sub_reason_error == PETSC_SUCCESS &&
                 std::isfinite(
                     static_cast<double>(
                         function_norm)) &&
@@ -1529,6 +1597,11 @@ solve_natural_variable_snes_3d(
                     NaturalVariableSnesFailureDiagnostics3D{
                         reason,
                         ksp_reason,
+                        static_cast<int>(
+                            pc_reason),
+                        sub_ksp_reason,
+                        static_cast<int>(
+                            sub_pc_reason),
                         nonlinear_iterations,
                         callback_context.function_evaluations,
                         callback_context.jacobian_evaluations,
