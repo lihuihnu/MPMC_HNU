@@ -2115,6 +2115,126 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
     review_context.rank =
         rank;
 
+    {
+        std::optional<
+            fdp::SinglePhaseSnesAssemblyContext3D>
+            preflight_context;
+        PetscErrorCode preflight_error =
+            fdp::SinglePhaseSnesAssemblyContext3D::
+                create(
+                    PETSC_COMM_WORLD,
+                    schedule,
+                    partition,
+                    dof_layout,
+                    dof_numbering,
+                    cell_bridge,
+                    cell_pattern,
+                    "real_pr76_natural_state_1p",
+                    1.0,
+                    source_cells,
+                    no_faces,
+                    {
+                        &fdp::
+                            evaluate_pr76_single_phase_production_cell_3d<
+                                Closure>,
+                        source_evaluator_context},
+                    &preflight_context);
+        if (preflight_error !=
+                PETSC_SUCCESS ||
+            !preflight_context.has_value()) {
+            throw std::runtime_error(
+                std::string{
+                    "real PR76 isolated source preflight failed at context create: petsc_error="} +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_error)));
+        }
+
+        std::optional<
+            fdp::CompleteNaturalVariableAssemblySnapshot3D>
+            preflight_assembly;
+        fdp::NaturalVariableSnesEvaluationStatus3D
+            preflight_status =
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success;
+        preflight_error =
+            preflight_context
+                ->evaluate_complete_assembly(
+                    accepted_state,
+                    &preflight_assembly,
+                    &preflight_status);
+        if (preflight_error !=
+                PETSC_SUCCESS ||
+            preflight_status !=
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success ||
+            !preflight_assembly.has_value()) {
+            throw std::runtime_error(
+                std::string{
+                    "real PR76 isolated source preflight failed at complete assembly: petsc_error="} +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_error)) +
+                " status=" +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_status)));
+        }
+
+        Vec preflight_scaling = nullptr;
+        preflight_error =
+            fdp::
+                make_natural_variable_initial_row_equilibration_3d(
+                    PETSC_COMM_WORLD,
+                    *preflight_assembly,
+                    &preflight_scaling);
+        if (preflight_error !=
+            PETSC_SUCCESS) {
+            throw std::runtime_error(
+                std::string{
+                    "real PR76 isolated source preflight failed at row equilibration: petsc_error="} +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_error)));
+        }
+
+        Vec preflight_residual = nullptr;
+        Mat preflight_jacobian = nullptr;
+        preflight_error =
+            fdp::
+                materialize_complete_natural_variable_petsc_system_3d(
+                    PETSC_COMM_WORLD,
+                    *preflight_assembly,
+                    cell_bridge,
+                    &preflight_residual,
+                    &preflight_jacobian);
+        if (preflight_error !=
+            PETSC_SUCCESS) {
+            (void)VecDestroy(
+                &preflight_scaling);
+            throw std::runtime_error(
+                std::string{
+                    "real PR76 isolated source preflight failed at PETSc materialization: petsc_error="} +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_error)));
+        }
+
+        require_real_collective(
+            VecDestroy(
+                &preflight_residual) ==
+                    PETSC_SUCCESS &&
+                MatDestroy(
+                    &preflight_jacobian) ==
+                    PETSC_SUCCESS &&
+                VecDestroy(
+                    &preflight_scaling) ==
+                    PETSC_SUCCESS,
+            "real PR76 isolated source preflight cleanup failed");
+    }
+
     std::optional<
         fdp::SinglePhaseAdaptiveTimestepAttemptContext3D>
         source_attempt;
