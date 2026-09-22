@@ -1384,11 +1384,22 @@ solve_natural_variable_snes_3d(
             error == PETSC_SUCCESS;
     }
     if (error == PETSC_SUCCESS) {
+        // With explicit frozen row equilibration, real-SI natural variables can
+        // leave a numerically tiny but nonzero diagonal after row scaling
+        // (notably pressure derivatives against composition/energy rows).
+        // PETSc's sparse LU does not perform numerical pivoting; allow its
+        // documented nonzero-diagonal reordering to treat values below the
+        // normalized 1e-10 threshold as weak pivots. Preserve the historical
+        // exact-zero-only behavior for unscaled callers.
+        const char* reorder_tolerance =
+            row_scaling != nullptr
+                ? "1.0e-10"
+                : "0.0";
         error =
             PetscOptionsSetValue(
                 nullptr,
                 asm_sub_pc_reorder_option,
-                "0.0");
+                reorder_tolerance);
         asm_sub_pc_reorder_option_installed =
             error == PETSC_SUCCESS;
     }
