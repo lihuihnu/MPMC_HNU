@@ -2201,13 +2201,22 @@ void pr76_production_fully_implicit_transient_test() {
                     real_owned_history_signature(
                         previous_cells,
                         rank) &&
-                read_owned_real_state(
-                    initial,
-                    rank) ==
-                    real_previous_state(
-                        rank == 0
-                            ? UINT64_C(10)
-                            : UINT64_C(20)),
+                [&] {
+                    const auto observed =
+                        read_owned_real_state(
+                            initial,
+                            rank);
+                    const auto expected_state =
+                        real_previous_state(
+                            rank == 0
+                                ? UINT64_C(10)
+                                : UINT64_C(20));
+                    return std::equal(
+                        observed.begin(),
+                        observed.end(),
+                        expected_state.begin(),
+                        expected_state.end());
+                }(),
             "transition handoff advanced accepted state/history");
     }
 
