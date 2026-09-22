@@ -2281,7 +2281,7 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 &cell_pattern,
                 "real_pr76_natural_state_1p",
                 &source_cells,
-                &no_faces,
+                &source_faces,
                 {
                     &fdp::
                         evaluate_pr76_single_phase_production_cell_3d<
