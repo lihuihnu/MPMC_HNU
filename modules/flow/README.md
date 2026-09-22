@@ -3789,3 +3789,71 @@ Acceptance requires:
 Phase appearance/disappearance and outer phase-set rebuild are intentionally not
 part of this regression. They remain independently validated by the existing
 post-SNES transition controller tests.
+
+
+### 47.3 Adaptive timestep retry / cutback / growth contract
+
+The PETSc flow orchestration layer now owns an explicit adaptive timestep state
+machine outside all SNES callbacks.
+
+One physical timestep is attempted with a frozen accepted history and a candidate
+`dt`. A rejected attempt never advances the accepted history. The attempt
+callback may retain a pending converged state/system internally, but the separate
+commit callback is invoked exactly once and only after a stable accepted attempt.
+
+Recoverable rejection outcomes are:
+
+- nonlinear solve divergence;
+- nonlinear function/Jacobian domain error;
+- indeterminate post-SNES phase-set scan;
+- phase-transition restart-budget exhaustion;
+- detected phase-set cycle.
+
+All of those outcomes request a cutback while retry budget and the minimum
+timestep permit it. PETSc/API/configuration errors are not converted into a
+smaller timestep: they propagate as hard errors.
+
+The timestep policy is explicit and versioned by
+`AdaptiveTimestepControllerOptions3D`:
+
+```text
+minimum_timestep_seconds
+maximum_timestep_seconds
+cutback_factor              0 < f < 1
+growth_factor               g > 1
+maximum_retries
+growth_nonlinear_iteration_limit
+growth_line_search_direction_change_limit
+growth_transition_restart_limit
+```
+
+On rejection:
+
+```text
+dt_retry = max(dt_min, cutback_factor * dt_current)
+```
+
+until either a stable attempt is accepted, the retry budget is exhausted, or
+`dt_min` has already been reached.
+
+On acceptance, growth is deliberately conservative. The next timestep grows only
+when the accepted attempt is below all configured effort thresholds and has no
+domain-error evidence. Otherwise the accepted `dt` is held. Growth is capped at
+`dt_max`.
+
+The contract provides adapters from:
+
+- fixed-cardinality SNES success reports;
+- fixed-cardinality SNES failure diagnostics, including domain-error evidence;
+- post-SNES phase-transition controller outcomes.
+
+The real CH4/C2H6/C3H8 PR76 transient regression feeds its actual converged SNES
+report through this same adaptive decision path. Scripted two-rank policy
+regressions independently verify cutback, retry-budget exhaustion, minimum-dt
+termination, conservative growth/hold behavior, hard-error propagation, and the
+rule that rejected attempts never commit history.
+
+This contract does not yet advance physical simulation time over multiple
+accepted steps, persist restart/checkpoint data, or choose model-specific
+phase-transition tolerances. It establishes the deterministic timestep-control
+boundary that those later features must consume.

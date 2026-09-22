@@ -1,6 +1,7 @@
 #include <mpmc/flow/pr76_methane_ethane_propane_properties.hpp>
 #include <mpmc/flow_discretization/single_phase_tpfa.hpp>
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
+#include <mpmc/flow_discretization_petsc/adaptive_timestep_controller.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_production_cell_evaluator.hpp>
 
 #include <petscsys.h>
@@ -1588,6 +1589,49 @@ void pr76_production_fully_implicit_transient_test() {
     require_real_collective(
         solve_ok,
         solve_message);
+
+    const auto adaptive_result =
+        fdp::make_adaptive_timestep_attempt_result(
+            *report);
+    fdp::AdaptiveTimestepControllerOptions3D
+        adaptive_options;
+    adaptive_options.minimum_timestep_seconds =
+        1.0e-4;
+    adaptive_options.maximum_timestep_seconds =
+        1.0;
+    adaptive_options.cutback_factor = 0.5;
+    adaptive_options.growth_factor = 2.0;
+    adaptive_options.maximum_retries = 4U;
+    adaptive_options.growth_nonlinear_iteration_limit =
+        8;
+    adaptive_options
+        .growth_line_search_direction_change_limit =
+        1;
+    adaptive_options.growth_transition_restart_limit =
+        0U;
+    const auto adaptive_decision =
+        fdp::decide_adaptive_timestep_3d(
+            dt_seconds,
+            0U,
+            adaptive_result,
+            adaptive_options);
+    require_real_collective(
+        adaptive_result.outcome ==
+                fdp::AdaptiveTimestepAttemptOutcome3D::
+                    stable_phase_set &&
+            (adaptive_decision.decision ==
+                 fdp::AdaptiveTimestepDecision3D::
+                     accept_and_grow ||
+             adaptive_decision.decision ==
+                 fdp::AdaptiveTimestepDecision3D::
+                     accept_and_hold) &&
+            adaptive_decision
+                .next_timestep_seconds
+                .has_value() &&
+            *adaptive_decision
+                 .next_timestep_seconds >=
+                dt_seconds,
+        "real PR76 converged SNES report was not accepted by adaptive timestep policy");
 
     const auto converged =
         read_owned_real_state(

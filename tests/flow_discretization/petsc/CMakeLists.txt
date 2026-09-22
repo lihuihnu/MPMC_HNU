@@ -16,6 +16,7 @@ add_executable(
     variable_cardinality_snes_assembly_test.cpp
     mixed_cardinality_physical_snes_assembly_test.cpp
     pr76_production_fully_implicit_transient_test.cpp
+    adaptive_timestep_controller_test.cpp
     post_snes_pt_flash_phase_transition_scanner_test.cpp
     distributed_component_conservation_header.cpp
     distributed_energy_conservation_header.cpp
@@ -31,6 +32,7 @@ add_executable(
     variable_cardinality_snes_assembly_header.cpp
     mixed_cardinality_physical_snes_assembly_header.cpp
     pr76_production_cell_evaluator_header.cpp
+    adaptive_timestep_controller_header.cpp
     cross_cardinality_tpfa_bridge_header.cpp
     thermodynamic_cross_cardinality_tpfa_adapter_header.cpp
     phase_transition_outer_rebuild_header.cpp
@@ -71,6 +73,6 @@ add_test(
 set_tests_properties(
     flow_discretization.petsc.distributed_owner_targeted_conservation
     PROPERTIES
-        LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;newton_linear_system;snes;gmres;asm;physical_assembly;owner_targeted"
+        LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;newton_linear_system;snes;gmres;asm;physical_assembly;owner_targeted;adaptive_timestep"
         TIMEOUT 60
         ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1;OMPI_MCA_btl_vader_single_copy_mechanism=none")
