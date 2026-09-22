@@ -203,21 +203,19 @@ real_previous_state(std::uint64_t stable) {
     q[layout.pressure_unknown_index()] =
         stable == UINT64_C(10)
             ? 8.0e6
-            : 7.0e6;
+            : 7.99e6;
     q[layout.temperature_unknown_index()] =
         stable == UINT64_C(10)
-            ? 460.0
-            : 440.0;
+            ? 450.0
+            : 449.0;
     q[*layout.independent_composition_unknown_index(
         0U)] =
         stable == UINT64_C(10)
-            ? 0.55
-            : 0.45;
+            ? 0.50
+            : 0.49;
     q[*layout.independent_composition_unknown_index(
         2U)] =
-        stable == UINT64_C(10)
-            ? 0.15
-            : 0.20;
+        0.20;
     return q;
 }
 
@@ -682,7 +680,7 @@ real_faces(int rank) {
         flow::OwnerToNeighbourDisplacement3D{
             0.0, 0.0, 1.0},
         fd::StaticThermalFaceConductance3D{
-            0.25}}};
+            0.05}}};
 }
 
 const fdp::CompleteNaturalVariableResidualEntry3D&
@@ -834,7 +832,7 @@ void check_real_face_flux(
             neighbour->transport,
             neighbour->caloric,
             {2.0, 5.0},
-            {0.25});
+            {0.05});
 
     require_real_collective(
         std::abs(full.volumetric_flux_m3_per_s) >
@@ -1218,7 +1216,7 @@ void pr76_production_fully_implicit_transient_test() {
     std::optional<
         fdp::SinglePhaseSnesAssemblyContext3D>
         context;
-    constexpr double dt_seconds = 10.0;
+    constexpr double dt_seconds = 0.1;
     PetscErrorCode error =
         fdp::SinglePhaseSnesAssemblyContext3D::
             create(
