@@ -3956,3 +3956,47 @@ This slice does not yet feed an accepted different-cardinality proposal into the
 outer `1 <-> 2 <-> 3` rebuild controller. It closes only the
 `SNES converged -> real PR76 PT scan -> equal-cardinality stable acceptance`
 path.
+
+### 47.6 Lossless adaptive phase-transition handoff
+
+A resolved different-cardinality post-SNES proposal is no longer collapsed into
+phase_set_scan_indeterminate or treated as a timestep cutback.
+
+The adaptive state machine now distinguishes stable_phase_set,
+phase_transition_proposed, and recoverable timestep rejection.
+phase_transition_proposed maps to phase_transition_handoff_required.
+
+That outcome does not commit accepted state/history, does not cut back dt,
+does not consume retry budget, and leaves the converged candidate owned by the
+attempt context for the outer topology controller.
+
+The single-phase production attempt review now returns the exact local-owned
+PostSnesPhaseTransitionProposal3D batch. A proposed transition retains the
+attempt request, converged PETSc Vec, fixed-cardinality SNES report and local
+resolved proposals. take_pending_transition() transfers that bundle exactly once.
+
+Proposal validation is ownership-aware: local proposals must refer to locally
+owned cells, preserve canonical component order, remain target_resolved, carry
+evidence provenance, and define a valid positive-support target phase set.
+MPI requires at least one proposal globally while allowing an empty local batch
+on ranks that do not own a transitioning cell.
+
+The production PR76 PT review now preserves scanner proposals directly. On the
+current equal-cardinality CH4/C2H6/C3H8 case the proposal vectors remain empty.
+A future resolved different-cardinality result stops at handoff instead of being
+reclassified as indeterminate.
+
+post_snes_phase_transition_handoff_scanner.hpp is the adapter to the existing
+outer controller. Its first scan replays the preserved local proposal batch;
+after the first topology rebuild, later generations delegate to the normal
+production scanner. The outer controller keeps ownership validation, global
+batch gathering, restart-budget and phase-set-cycle checks.
+
+A controlled regression uses a real PR76/PETSc converged single-phase solve and
+then publishes a synthetic test-provenance 1->2 proposal. It verifies no commit
+or cutback, one-shot Vec/report/proposal transfer, preserved evidence/material
+balance, and unchanged accepted component/energy history.
+
+The controlled proposal is software orchestration evidence, not physical PR76
+1->2 evidence. This slice does not yet construct the initial variable-cardinality
+PhaseTransitionRebuiltNaturalVariableSystem3D from the fixed-cardinality handoff.

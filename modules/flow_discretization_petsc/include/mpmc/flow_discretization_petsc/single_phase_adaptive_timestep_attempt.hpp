@@ -7,8 +7,10 @@
 
 #include <petscvec.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -28,7 +30,10 @@ using SinglePhaseAdaptiveTimestepPostSnesReview3D =
         const NaturalVariableSnesSolveReport3D& solve_report,
         void* user_context,
         AdaptiveTimestepAttemptOutcome3D* outcome,
-        std::size_t* phase_transition_restarts);
+        std::size_t* phase_transition_restarts,
+        std::vector<
+            PostSnesPhaseTransitionProposal3D>*
+                local_owned_proposals);
 
 struct SinglePhaseAdaptiveTimestepPostSnesReviewBinding3D {
     SinglePhaseAdaptiveTimestepPostSnesReview3D reviewer{};
@@ -83,10 +88,17 @@ public:
               std::move(other.pending_request_)),
           pending_solution_(other.pending_solution_),
           pending_report_(
-              std::move(other.pending_report_)) {
+              std::move(other.pending_report_)),
+          pending_phase_transition_(
+              other.pending_phase_transition_),
+          pending_local_owned_proposals_(
+              std::move(
+                  other.pending_local_owned_proposals_)) {
         other.pending_solution_ = nullptr;
         other.pending_request_.reset();
         other.pending_report_.reset();
+        other.pending_phase_transition_ = false;
+        other.pending_local_owned_proposals_.clear();
     }
 
     ~SinglePhaseAdaptiveTimestepAttemptContext3D() {
@@ -168,6 +180,12 @@ public:
             pending_report_.has_value();
     }
 
+    [[nodiscard]] bool
+    has_pending_transition() const noexcept {
+        return has_pending() &&
+            pending_phase_transition_;
+    }
+
     [[nodiscard]] PetscErrorCode
     discard_pending() noexcept {
         PetscErrorCode error = PETSC_SUCCESS;
@@ -178,6 +196,8 @@ public:
         }
         pending_request_.reset();
         pending_report_.reset();
+        pending_phase_transition_ = false;
+        pending_local_owned_proposals_.clear();
         return error;
     }
 
@@ -194,7 +214,8 @@ public:
             return PETSC_ERR_ARG_WRONGSTATE;
         }
         report->reset();
-        if (!has_pending()) {
+        if (!has_pending() ||
+            pending_phase_transition_) {
             return PETSC_ERR_ARG_WRONGSTATE;
         }
         if (pending_request_->attempt_index !=
@@ -212,6 +233,53 @@ public:
             std::move(*pending_report_));
         pending_report_.reset();
         pending_request_.reset();
+        pending_phase_transition_ = false;
+        pending_local_owned_proposals_.clear();
+        return PETSC_SUCCESS;
+    }
+
+    [[nodiscard]] PetscErrorCode
+    take_pending_transition(
+        const AdaptiveTimestepAttemptRequest3D& request,
+        Vec* solution,
+        std::optional<NaturalVariableSnesSolveReport3D>*
+            report,
+        std::vector<
+            PostSnesPhaseTransitionProposal3D>*
+                local_owned_proposals) {
+        if (solution == nullptr ||
+            report == nullptr ||
+            local_owned_proposals == nullptr) {
+            return PETSC_ERR_ARG_NULL;
+        }
+        if (*solution != nullptr) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+        report->reset();
+        local_owned_proposals->clear();
+        if (!has_pending_transition()) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+        if (pending_request_->attempt_index !=
+                request.attempt_index ||
+            pending_request_->retry_index !=
+                request.retry_index ||
+            pending_request_->timestep_seconds !=
+                request.timestep_seconds) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        *solution = pending_solution_;
+        pending_solution_ = nullptr;
+        report->emplace(
+            std::move(*pending_report_));
+        *local_owned_proposals =
+            std::move(
+                pending_local_owned_proposals_);
+        pending_report_.reset();
+        pending_request_.reset();
+        pending_phase_transition_ = false;
+        pending_local_owned_proposals_.clear();
         return PETSC_SUCCESS;
     }
 
@@ -397,6 +465,9 @@ public:
             AdaptiveTimestepAttemptOutcome3D::
                 stable_phase_set;
         std::size_t transition_restarts = 0U;
+        std::vector<
+            PostSnesPhaseTransitionProposal3D>
+            local_owned_proposals;
         error =
             post_snes_review_.reviewer(
                 request,
@@ -404,13 +475,17 @@ public:
                 *solve_report,
                 post_snes_review_.user_context,
                 &review_outcome,
-                &transition_restarts);
+                &transition_restarts,
+                &local_owned_proposals);
         if (error != PETSC_SUCCESS) {
             (void)VecDestroy(&solution);
             return error;
         }
         if (!valid_post_snes_review_outcome(
-                review_outcome)) {
+                review_outcome) ||
+            !valid_review_proposals_collective(
+                review_outcome,
+                local_owned_proposals)) {
             (void)VecDestroy(&solution);
             return PETSC_ERR_ARG_INCOMP;
         }
@@ -421,8 +496,11 @@ public:
         *result = reviewed;
 
         if (review_outcome !=
-            AdaptiveTimestepAttemptOutcome3D::
-                stable_phase_set) {
+                AdaptiveTimestepAttemptOutcome3D::
+                    stable_phase_set &&
+            review_outcome !=
+                AdaptiveTimestepAttemptOutcome3D::
+                    phase_transition_proposed) {
             return VecDestroy(&solution);
         }
 
@@ -430,6 +508,13 @@ public:
         pending_solution_ = solution;
         pending_report_.emplace(
             std::move(*solve_report));
+        pending_phase_transition_ =
+            review_outcome ==
+                AdaptiveTimestepAttemptOutcome3D::
+                    phase_transition_proposed;
+        pending_local_owned_proposals_ =
+            std::move(
+                local_owned_proposals);
         return PETSC_SUCCESS;
     }
 
@@ -475,6 +560,109 @@ private:
           accepted_state_(accepted_state),
           post_snes_review_(post_snes_review) {}
 
+    [[nodiscard]] bool
+    valid_review_proposals_collective(
+        AdaptiveTimestepAttemptOutcome3D outcome,
+        const std::vector<
+            PostSnesPhaseTransitionProposal3D>&
+                proposals) const {
+        int local_invalid = 0;
+        std::uint64_t local_count = 0U;
+
+        try {
+            if (outcome !=
+                    AdaptiveTimestepAttemptOutcome3D::
+                        phase_transition_proposed &&
+                !proposals.empty()) {
+                local_invalid = 1;
+            }
+
+            for (std::size_t index = 0U;
+                 local_invalid == 0 &&
+                 index < proposals.size();
+                 ++index) {
+                const auto& proposal =
+                    proposals[index];
+                const auto cell =
+                    std::find_if(
+                        accepted_cell_inputs_->begin(),
+                        accepted_cell_inputs_->end(),
+                        [&](const auto& input) {
+                            return input.cell_global ==
+                                proposal.cell_global;
+                        });
+                if (cell ==
+                        accepted_cell_inputs_->end() ||
+                    !partition_->is_owned(
+                        mpmc::mesh::EntityKind::cell,
+                        cell->cell) ||
+                    proposal.candidate.source_phase_count !=
+                        1U ||
+                    proposal.candidate.target_phase_count <=
+                        1U ||
+                    proposal.candidate.target_phase_count >
+                        mpmc::flow::
+                            fixed_three_phase_count ||
+                    proposal.candidate.status !=
+                        mpmc::flow::
+                            PhaseSetTransitionCandidateStatus::
+                                target_resolved ||
+                    proposal.candidate.component_ids !=
+                        cell->component_ids ||
+                    proposal.candidate.evidence_profile.empty() ||
+                    !std::isfinite(
+                        proposal.candidate.pressure_pa) ||
+                    !(proposal.candidate.pressure_pa > 0.0) ||
+                    !std::isfinite(
+                        proposal.candidate.temperature_k) ||
+                    !(proposal.candidate.temperature_k > 0.0) ||
+                    (index > 0U &&
+                     proposals[index - 1U]
+                             .cell_global ==
+                         proposal.cell_global)) {
+                    local_invalid = 1;
+                    break;
+                }
+                (void)mpmc::flow::
+                    phase_set_transition_overall_composition(
+                        proposal.candidate);
+            }
+            local_count =
+                static_cast<std::uint64_t>(
+                    proposals.size());
+        } catch (...) {
+            local_invalid = 1;
+        }
+
+        int global_invalid = 0;
+        std::uint64_t global_count = 0U;
+        if (MPI_Allreduce(
+                &local_invalid,
+                &global_invalid,
+                1,
+                MPI_INT,
+                MPI_MAX,
+                comm_) != MPI_SUCCESS ||
+            MPI_Allreduce(
+                &local_count,
+                &global_count,
+                1,
+                MPI_UINT64_T,
+                MPI_SUM,
+                comm_) != MPI_SUCCESS) {
+            return false;
+        }
+
+        if (global_invalid != 0) {
+            return false;
+        }
+        return outcome ==
+                   AdaptiveTimestepAttemptOutcome3D::
+                       phase_transition_proposed
+            ? global_count > 0U
+            : global_count == 0U;
+    }
+
     [[nodiscard]] static bool
     valid_post_snes_review_outcome(
         AdaptiveTimestepAttemptOutcome3D
@@ -482,6 +670,9 @@ private:
         return outcome ==
                    AdaptiveTimestepAttemptOutcome3D::
                        stable_phase_set ||
+            outcome ==
+                AdaptiveTimestepAttemptOutcome3D::
+                    phase_transition_proposed ||
             outcome ==
                 AdaptiveTimestepAttemptOutcome3D::
                     phase_set_scan_indeterminate ||
@@ -526,6 +717,10 @@ private:
     Vec pending_solution_{};
     std::optional<NaturalVariableSnesSolveReport3D>
         pending_report_;
+    bool pending_phase_transition_{};
+    std::vector<
+        PostSnesPhaseTransitionProposal3D>
+        pending_local_owned_proposals_;
 };
 
 inline PetscErrorCode

@@ -51,6 +51,7 @@ bool cross_cardinality_tpfa_bridge_header();
 bool thermodynamic_cross_cardinality_tpfa_adapter_header();
 bool phase_transition_outer_rebuild_header();
 bool post_snes_phase_transition_controller_header();
+bool post_snes_phase_transition_handoff_scanner_header();
 bool post_snes_pt_flash_phase_transition_scanner_header();
 void post_snes_pt_flash_phase_transition_scanner_test();
 bool global_component_assembly_mapping_header();
@@ -5404,6 +5405,9 @@ void headers() {
     require_collective(
         post_snes_phase_transition_controller_header(),
         "post-SNES phase-transition controller header probe failed");
+    require_collective(
+        post_snes_phase_transition_handoff_scanner_header(),
+        "post-SNES phase-transition handoff scanner header probe failed");
     require_collective(
         post_snes_pt_flash_phase_transition_scanner_header(),
         "post-SNES PT flash phase-transition scanner header probe failed");

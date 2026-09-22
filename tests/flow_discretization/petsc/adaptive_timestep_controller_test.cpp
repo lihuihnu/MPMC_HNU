@@ -161,6 +161,18 @@ nonlinear_domain() {
 }
 
 fdp::AdaptiveTimestepAttemptResult3D
+phase_transition_proposed() {
+    return {
+        fdp::AdaptiveTimestepAttemptOutcome3D::
+            phase_transition_proposed,
+        3,
+        0,
+        0,
+        0,
+        0U};
+}
+
+fdp::AdaptiveTimestepAttemptResult3D
 scan_indeterminate() {
     return {
         fdp::AdaptiveTimestepAttemptOutcome3D::
@@ -291,6 +303,51 @@ void accepted_hard_step_holds_contract() {
     near_adaptive_collective(
         *report->next_timestep_seconds,
         4.0);
+}
+
+void phase_transition_handoff_contract() {
+    auto options =
+        default_options();
+    ScriptedAdaptiveContext context;
+    context.scripted = {
+        phase_transition_proposed()};
+
+    std::optional<
+        fdp::AdaptiveTimestepControllerReport3D>
+        report;
+    const PetscErrorCode error =
+        fdp::solve_adaptive_timestep_3d(
+            8.0,
+            options,
+            {
+                &scripted_attempt,
+                &context,
+                &scripted_commit,
+                &context},
+            &report);
+
+    require_adaptive_collective(
+        error == PETSC_SUCCESS &&
+            report.has_value() &&
+            !report->accepted() &&
+            report->outcome ==
+                fdp::AdaptiveTimestepControllerOutcome3D::
+                    phase_transition_handoff_required &&
+            report->retries == 0U &&
+            report->attempts.size() == 1U &&
+            report->attempts.front().decision ==
+                fdp::AdaptiveTimestepDecision3D::
+                    handoff_phase_transition &&
+            !report->accepted_timestep_seconds
+                 .has_value() &&
+            !report->next_timestep_seconds
+                 .has_value() &&
+            context.commits == 0U &&
+            context.observed_dt.size() == 1U,
+        "phase-transition proposal was converted into retry or commit");
+    near_adaptive_collective(
+        context.observed_dt.front(),
+        8.0);
 }
 
 void retry_budget_contract() {
@@ -514,6 +571,7 @@ void outcome_adapter_contract() {
 void adaptive_timestep_controller_test() {
     retry_cutback_growth_contract();
     accepted_hard_step_holds_contract();
+    phase_transition_handoff_contract();
     retry_budget_contract();
     minimum_timestep_contract();
     fatal_callback_errors_propagate();

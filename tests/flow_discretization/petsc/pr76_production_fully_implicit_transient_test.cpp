@@ -1161,11 +1161,15 @@ PetscErrorCode real_pr76_post_snes_pt_review(
         solve_report,
     void* raw_context,
     fdp::AdaptiveTimestepAttemptOutcome3D* outcome,
-    std::size_t* phase_transition_restarts) {
+    std::size_t* phase_transition_restarts,
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>*
+            local_owned_proposals) {
     if (converged_state == nullptr ||
         raw_context == nullptr ||
         outcome == nullptr ||
-        phase_transition_restarts == nullptr) {
+        phase_transition_restarts == nullptr ||
+        local_owned_proposals == nullptr) {
         return PETSC_ERR_ARG_NULL;
     }
     if (static_cast<int>(
@@ -1175,6 +1179,7 @@ PetscErrorCode real_pr76_post_snes_pt_review(
         return PETSC_ERR_ARG_INCOMP;
     }
 
+    local_owned_proposals->clear();
     auto* context =
         static_cast<
             RealPr76PostSnesPtReviewContext<Closure>*>(
@@ -1239,30 +1244,55 @@ PetscErrorCode real_pr76_post_snes_pt_review(
         return scan_error;
     }
 
-    const int local_stable =
+    const int local_indeterminate =
         scan_status ==
                 fdp::
                     PostSnesPhaseTransitionScanStatus3D::
-                        complete &&
-            !proposal.has_value()
+                        indeterminate
         ? 1
         : 0;
-    int global_stable = 0;
+    int global_indeterminate = 0;
     if (MPI_Allreduce(
-            &local_stable,
-            &global_stable,
+            &local_indeterminate,
+            &global_indeterminate,
             1,
             MPI_INT,
-            MPI_MIN,
+            MPI_MAX,
+            PETSC_COMM_WORLD) != MPI_SUCCESS) {
+        return PETSC_ERR_MPI;
+    }
+
+    if (proposal.has_value()) {
+        local_owned_proposals->push_back(
+            std::move(*proposal));
+    }
+    const int local_transition =
+        local_owned_proposals->empty()
+        ? 0
+        : 1;
+    int global_transition = 0;
+    if (MPI_Allreduce(
+            &local_transition,
+            &global_transition,
+            1,
+            MPI_INT,
+            MPI_MAX,
             PETSC_COMM_WORLD) != MPI_SUCCESS) {
         return PETSC_ERR_MPI;
     }
 
     *phase_transition_restarts = 0U;
-    if (global_stable == 0) {
+    if (global_indeterminate != 0) {
+        local_owned_proposals->clear();
         *outcome =
             fdp::AdaptiveTimestepAttemptOutcome3D::
                 phase_set_scan_indeterminate;
+        return PETSC_SUCCESS;
+    }
+    if (global_transition != 0) {
+        *outcome =
+            fdp::AdaptiveTimestepAttemptOutcome3D::
+                phase_transition_proposed;
         return PETSC_SUCCESS;
     }
 
@@ -1277,6 +1307,152 @@ PetscErrorCode real_pr76_post_snes_pt_review(
         fdp::AdaptiveTimestepAttemptOutcome3D::
             stable_phase_set;
     return PETSC_SUCCESS;
+}
+
+template <typename Closure>
+struct RealControlledTransitionReviewContext {
+    fdp::Pr76SinglePhaseProductionCellEvaluatorContext3D<
+        Closure>* evaluator_context{};
+    int rank{-1};
+};
+
+template <typename Closure>
+PetscErrorCode real_controlled_transition_review(
+    const fdp::AdaptiveTimestepAttemptRequest3D&,
+    Vec converged_state,
+    const fdp::NaturalVariableSnesSolveReport3D&
+        solve_report,
+    void* raw_context,
+    fdp::AdaptiveTimestepAttemptOutcome3D* outcome,
+    std::size_t* phase_transition_restarts,
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>*
+            local_owned_proposals) {
+    if (converged_state == nullptr ||
+        raw_context == nullptr ||
+        outcome == nullptr ||
+        phase_transition_restarts == nullptr ||
+        local_owned_proposals == nullptr ||
+        static_cast<int>(
+            solve_report.converged_reason()) <= 0) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    local_owned_proposals->clear();
+
+    auto* context =
+        static_cast<
+            RealControlledTransitionReviewContext<
+                Closure>*>(raw_context);
+    if (context->evaluator_context == nullptr ||
+        context->rank < 0) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    try {
+        const std::uint64_t stable =
+            context->rank == 0
+                ? UINT64_C(10)
+                : UINT64_C(20);
+        const auto converged =
+            read_owned_real_state(
+                converged_state,
+                context->rank);
+        auto evaluated =
+            real_direct_cell_typed(
+                stable,
+                std::span<const double>{
+                    converged.data(),
+                    converged.size()},
+                context->evaluator_context);
+        const auto z =
+            evaluated->state.phase_composition();
+        if (z.size() != 3U) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        const double delta =
+            0.1 *
+            std::min(z[0], z[1]);
+        std::vector<double> first{
+            z.begin(), z.end()};
+        std::vector<double> second{
+            z.begin(), z.end()};
+        first[0] += delta;
+        first[1] -= delta;
+        second[0] -=
+            (2.0 / 3.0) * delta;
+        second[1] +=
+            (2.0 / 3.0) * delta;
+
+        mpmc::flow::
+            PhaseSetTransitionCandidate
+            candidate;
+        candidate.source_phase_count = 1U;
+        candidate.target_phase_count = 2U;
+        candidate.trigger =
+            mpmc::flow::
+                PhaseSetTransitionTrigger::
+                    stability_witness;
+        candidate.status =
+            mpmc::flow::
+                PhaseSetTransitionCandidateStatus::
+                    target_resolved;
+        candidate.pressure_pa =
+            evaluated->state
+                .reference_pressure_pa();
+        candidate.temperature_k =
+            evaluated->state.temperature_k();
+        candidate.component_ids.assign(
+            evaluated->state.component_ids().begin(),
+            evaluated->state.component_ids().end());
+        candidate.evidence_profile =
+            "test/adaptive-transition-handoff/v1";
+        candidate.diagnostic =
+            "controlled resolved two-phase handoff";
+        const double density =
+            evaluated->molar_density
+                .molar_density_mol_per_m3;
+        candidate.target_phases = {
+            {
+                0.4,
+                std::move(first),
+                0.9 * density},
+            {
+                0.6,
+                std::move(second),
+                1.1 * density}
+        };
+
+        (void)mpmc::flow::
+            phase_set_transition_overall_composition(
+                candidate);
+        local_owned_proposals->push_back(
+            {
+                mesh::GlobalEntityId{stable},
+                std::move(candidate)});
+    } catch (const std::exception&) {
+        return PETSC_ERR_LIB;
+    }
+
+    *phase_transition_restarts = 0U;
+    *outcome =
+        fdp::AdaptiveTimestepAttemptOutcome3D::
+            phase_transition_proposed;
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode real_unexpected_transition_commit(
+    const fdp::AdaptiveTimestepAttemptRequest3D&,
+    const fdp::AdaptiveTimestepAttemptResult3D&,
+    void* raw_context) {
+    if (raw_context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* count =
+        static_cast<std::size_t*>(
+            raw_context);
+    ++(*count);
+    return PETSC_ERR_PLIB;
 }
 
 template <typename Closure>
@@ -1870,6 +2046,169 @@ void pr76_production_fully_implicit_transient_test() {
                 VecDestroy(&minus) ==
                     PETSC_SUCCESS,
             "real PR76 finite-difference state cleanup failed");
+    }
+
+    {
+        RealControlledTransitionReviewContext<Closure>
+            controlled_review{
+                &evaluator_context,
+                rank};
+        std::optional<
+            fdp::SinglePhaseAdaptiveTimestepAttemptContext3D>
+            handoff_attempt;
+        error =
+            fdp::SinglePhaseAdaptiveTimestepAttemptContext3D::
+                create(
+                    PETSC_COMM_WORLD,
+                    &schedule,
+                    &partition,
+                    &dof_layout,
+                    &dof_numbering,
+                    &cell_bridge,
+                    &cell_pattern,
+                    "real_pr76_natural_state_1p",
+                    &accepted_cells,
+                    &faces,
+                    {
+                        &fdp::
+                            evaluate_pr76_single_phase_production_cell_3d<
+                                Closure>,
+                        &evaluator_context},
+                    initial,
+                    {
+                        &real_controlled_transition_review<
+                            Closure>,
+                        &controlled_review},
+                    &handoff_attempt);
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                handoff_attempt.has_value(),
+            "failed to create controlled transition handoff attempt");
+
+        fdp::AdaptiveTimestepControllerOptions3D
+            handoff_options;
+        handoff_options.minimum_timestep_seconds =
+            1.0e-4;
+        handoff_options.maximum_timestep_seconds =
+            1.0;
+        handoff_options.maximum_retries = 4U;
+
+        std::size_t unexpected_commits = 0U;
+        std::optional<
+            fdp::AdaptiveTimestepControllerReport3D>
+            handoff_report;
+        error =
+            fdp::solve_adaptive_timestep_3d(
+                0.1,
+                handoff_options,
+                {
+                    &fdp::
+                        evaluate_single_phase_adaptive_timestep_attempt_3d,
+                    &*handoff_attempt,
+                    &real_unexpected_transition_commit,
+                    &unexpected_commits},
+                &handoff_report);
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                handoff_report.has_value() &&
+                handoff_report->outcome ==
+                    fdp::
+                        AdaptiveTimestepControllerOutcome3D::
+                            phase_transition_handoff_required &&
+                handoff_report->attempts.size() == 1U &&
+                handoff_report->attempts.front()
+                        .decision ==
+                    fdp::AdaptiveTimestepDecision3D::
+                        handoff_phase_transition &&
+                unexpected_commits == 0U &&
+                handoff_attempt
+                    ->has_pending_transition(),
+            "controlled phase proposal was not preserved for outer handoff");
+
+        Vec handoff_state = nullptr;
+        std::optional<
+            fdp::NaturalVariableSnesSolveReport3D>
+            handoff_solve_report;
+        std::vector<
+            fdp::PostSnesPhaseTransitionProposal3D>
+            handoff_proposals;
+        error =
+            handoff_attempt
+                ->take_pending_transition(
+                    handoff_report->attempts.front()
+                        .request,
+                    &handoff_state,
+                    &handoff_solve_report,
+                    &handoff_proposals);
+        require_real_collective(
+            error == PETSC_SUCCESS &&
+                handoff_state != nullptr &&
+                handoff_solve_report.has_value() &&
+                static_cast<int>(
+                    handoff_solve_report
+                        ->converged_reason()) > 0 &&
+                handoff_proposals.size() == 1U &&
+                handoff_proposals.front()
+                        .candidate
+                        .source_phase_count == 1U &&
+                handoff_proposals.front()
+                        .candidate
+                        .target_phase_count == 2U &&
+                handoff_proposals.front()
+                        .candidate
+                        .evidence_profile ==
+                    "test/adaptive-transition-handoff/v1" &&
+                !handoff_attempt
+                    ->has_pending_transition(),
+            "controlled transition proposal/state/report handoff changed");
+
+        const auto handoff_state_values =
+            read_owned_real_state(
+                handoff_state,
+                rank);
+        const auto projected_feed =
+            mpmc::flow::
+                phase_set_transition_overall_composition(
+                    handoff_proposals.front()
+                        .candidate);
+        auto handoff_eval =
+            real_direct_cell_typed(
+                rank == 0
+                    ? UINT64_C(10)
+                    : UINT64_C(20),
+                std::span<const double>{
+                    handoff_state_values.data(),
+                    handoff_state_values.size()},
+                &evaluator_context);
+        for (std::size_t component = 0U;
+             component < projected_feed.size();
+             ++component) {
+            near_real_collective(
+                projected_feed[component],
+                handoff_eval->state
+                    .phase_composition()[component],
+                1.0e-14,
+                1.0e-14,
+                "transition handoff changed candidate material balance");
+        }
+        require_real_collective(
+            VecDestroy(
+                &handoff_state) ==
+                    PETSC_SUCCESS &&
+                real_owned_history_signature(
+                    accepted_cells,
+                    rank) ==
+                    real_owned_history_signature(
+                        previous_cells,
+                        rank) &&
+                read_owned_real_state(
+                    initial,
+                    rank) ==
+                    real_previous_state(
+                        rank == 0
+                            ? UINT64_C(10)
+                            : UINT64_C(20)),
+            "transition handoff advanced accepted state/history");
     }
 
     std::optional<

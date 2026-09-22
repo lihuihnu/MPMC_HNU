@@ -24,6 +24,7 @@ inline constexpr std::string_view
 
 enum class AdaptiveTimestepAttemptOutcome3D {
     stable_phase_set,
+    phase_transition_proposed,
     nonlinear_solve_diverged,
     nonlinear_domain_error,
     phase_set_scan_indeterminate,
@@ -33,6 +34,7 @@ enum class AdaptiveTimestepAttemptOutcome3D {
 
 enum class AdaptiveTimestepControllerOutcome3D {
     timestep_accepted,
+    phase_transition_handoff_required,
     retry_budget_exhausted,
     minimum_timestep_reached
 };
@@ -40,6 +42,7 @@ enum class AdaptiveTimestepControllerOutcome3D {
 enum class AdaptiveTimestepDecision3D {
     accept_and_grow,
     accept_and_hold,
+    handoff_phase_transition,
     reject_and_cutback,
     reject_retry_budget_exhausted,
     reject_minimum_timestep_reached
@@ -171,13 +174,16 @@ inline void validate_attempt_result(
             "mpmc::flow_discretization_petsc: adaptive timestep attempt metrics must be nonnegative");
     }
 
-    if (result.outcome ==
-            AdaptiveTimestepAttemptOutcome3D::
-                stable_phase_set &&
+    if ((result.outcome ==
+             AdaptiveTimestepAttemptOutcome3D::
+                 stable_phase_set ||
+         result.outcome ==
+             AdaptiveTimestepAttemptOutcome3D::
+                 phase_transition_proposed) &&
         (result.function_domain_errors != 0 ||
          result.jacobian_domain_errors != 0)) {
         throw std::invalid_argument(
-            "mpmc::flow_discretization_petsc: accepted timestep cannot contain nonlinear domain errors");
+            "mpmc::flow_discretization_petsc: converged timestep/transition handoff cannot contain nonlinear domain errors");
     }
 
     if (result.outcome ==
@@ -275,6 +281,15 @@ decide_adaptive_timestep_3d(
         options);
     adaptive_timestep_detail::
         validate_attempt_result(result);
+
+    if (result.outcome ==
+        AdaptiveTimestepAttemptOutcome3D::
+            phase_transition_proposed) {
+        return {
+            AdaptiveTimestepDecision3D::
+                handoff_phase_transition,
+            std::nullopt};
+    }
 
     if (result.outcome ==
         AdaptiveTimestepAttemptOutcome3D::
@@ -504,6 +519,19 @@ solve_adaptive_timestep_3d(
                 result,
                 decision.decision,
                 decision.next_timestep_seconds});
+
+        if (decision.decision ==
+            AdaptiveTimestepDecision3D::
+                handoff_phase_transition) {
+            completed.outcome =
+                AdaptiveTimestepControllerOutcome3D::
+                    phase_transition_handoff_required;
+            completed.retries =
+                retries;
+            report->emplace(
+                std::move(completed));
+            return PETSC_SUCCESS;
+        }
 
         if (decision.decision ==
                 AdaptiveTimestepDecision3D::
