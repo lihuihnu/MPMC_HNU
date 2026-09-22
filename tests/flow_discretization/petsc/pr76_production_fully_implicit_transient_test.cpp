@@ -840,6 +840,67 @@ real_cell_pattern(int rank) {
     };
 }
 
+dp::PetscMpiAijSymbolicPreallocation3D
+real_isolated_cell_bridge(
+    int rank) {
+    const PetscInt row =
+        static_cast<PetscInt>(rank);
+    return {
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    rank)},
+        2U,
+        row,
+        row + 1,
+        2,
+        {mesh::LocalIndex{0U}},
+        {
+            mesh::GlobalEntityId{
+                rank == 0
+                    ? UINT64_C(10)
+                    : UINT64_C(20)}
+        },
+        {row},
+        {1},
+        {0},
+        rank == 0
+            ? std::vector<PetscInt>{0, 1}
+            : std::vector<PetscInt>{1, 0}};
+}
+
+dp::OwnedCellStructuralColumnPatternSnapshot3D
+real_isolated_cell_pattern(
+    int rank) {
+    const PetscInt row =
+        static_cast<PetscInt>(rank);
+    return {
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    rank)},
+        2U,
+        2U,
+        row,
+        row + 1,
+        2,
+        {
+            dp::OwnedCellStructuralColumnPatternRow3D{
+                mesh::LocalIndex{0U},
+                mesh::GlobalEntityId{
+                    rank == 0
+                        ? UINT64_C(10)
+                        : UINT64_C(20)},
+                row,
+                0U,
+                1U,
+                0U,
+                0U}
+        },
+        {row},
+        {}};
+}
+
 disc::CombinedTransmissibilityAdmissibility3D
 real_admissibility() {
     return {
@@ -2005,9 +2066,11 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
             dof_layout,
             partition);
     auto cell_bridge =
-        real_cell_bridge(rank);
+        real_isolated_cell_bridge(
+            rank);
     auto cell_pattern =
-        real_cell_pattern(rank);
+        real_isolated_cell_pattern(
+            rank);
     auto source_cells =
         real_transition_source_cells(
             rank,
