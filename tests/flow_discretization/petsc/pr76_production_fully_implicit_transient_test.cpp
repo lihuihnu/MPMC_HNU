@@ -1455,6 +1455,17 @@ void pr76_production_fully_implicit_transient_test() {
             "real PR76 finite-difference state cleanup failed");
     }
 
+    Vec row_scaling = nullptr;
+    require_real_collective(
+        fdp::
+            make_natural_variable_initial_row_equilibration_3d(
+                PETSC_COMM_WORLD,
+                *initial_assembly,
+                &row_scaling) ==
+                PETSC_SUCCESS &&
+            row_scaling != nullptr,
+        "failed to build frozen analytic row equilibration for real PR76 solve");
+
     Vec unused_residual = nullptr;
     Mat jacobian_template = nullptr;
     error =
@@ -1483,7 +1494,8 @@ void pr76_production_fully_implicit_transient_test() {
             jacobian_template,
             context->snes_evaluator(),
             &solution,
-            &report);
+            &report,
+            row_scaling);
     require_real_collective(
         error == PETSC_SUCCESS &&
             solution != nullptr &&
@@ -1676,6 +1688,8 @@ void pr76_production_fully_implicit_transient_test() {
             VecDestroy(&unused_residual) ==
                 PETSC_SUCCESS &&
             MatDestroy(&jacobian_template) ==
+                PETSC_SUCCESS &&
+            VecDestroy(&row_scaling) ==
                 PETSC_SUCCESS &&
             VecDestroy(&initial) ==
                 PETSC_SUCCESS,

@@ -254,11 +254,13 @@ public:
         return line_search_direction_changes_;
     }
 
-    /// Native mixed-equation PETSc function norm.
+    /// PETSc function norm used by the nonlinear solve.
     ///
-    /// Component, energy and fugacity rows keep different physical units.
-    /// This is therefore the current SNES algebraic norm, not a final
-    /// physically scaled nonlinear convergence metric.
+    /// Without explicit row scaling this is the native mixed-equation norm and
+    /// component/energy/fugacity rows retain different physical units. When an
+    /// explicit frozen left row-scaling vector is supplied to the solver, this
+    /// is the norm of D*R. Physical acceptance must still be checked against an
+    /// independently reassembled unscaled residual.
     [[nodiscard]] double
     final_function_l2_norm() const noexcept {
         return final_function_l2_norm_;
@@ -372,6 +374,7 @@ namespace natural_variable_snes_detail {
 
 struct CallbackContext {
     NaturalVariableSnesEvaluator3D evaluator;
+    Vec row_scaling{};
     PetscInt function_evaluations{};
     PetscInt jacobian_evaluations{};
     PetscInt function_domain_errors{};
@@ -539,6 +542,153 @@ validate_linear_layout(
     return PETSC_SUCCESS;
 }
 
+[[nodiscard]] inline PetscErrorCode
+validate_row_scaling(
+    MPI_Comm comm,
+    const CompleteNaturalVariableAssemblySnapshot3D& numbering,
+    Vec row_scaling) {
+    if (row_scaling == nullptr) {
+        return PETSC_SUCCESS;
+    }
+    if (!communicators_are_compatible(
+            comm,
+            PetscObjectComm(
+                reinterpret_cast<PetscObject>(
+                    row_scaling)))) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    PetscInt local = -1;
+    PetscInt global = -1;
+    PetscInt start = -1;
+    PetscInt end = -1;
+    PetscErrorCode error =
+        VecGetLocalSize(row_scaling, &local);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecGetSize(row_scaling, &global);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecGetOwnershipRange(
+                row_scaling,
+                &start,
+                &end);
+    }
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    const PetscInt expected_local =
+        numbering.petsc_scalar_row_end() -
+        numbering.petsc_scalar_row_start();
+    if (local != expected_local ||
+        global != numbering.petsc_scalar_row_count() ||
+        start != numbering.petsc_scalar_row_start() ||
+        end != numbering.petsc_scalar_row_end()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    const PetscScalar* values = nullptr;
+    error =
+        VecGetArrayRead(
+            row_scaling,
+            &values);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    bool valid = true;
+    for (PetscInt index = 0;
+         index < local;
+         ++index) {
+        const double value =
+            static_cast<double>(
+                PetscRealPart(values[index]));
+        if (!std::isfinite(value) ||
+            !(value > 0.0)) {
+            valid = false;
+            break;
+        }
+    }
+    const PetscErrorCode restore =
+        VecRestoreArrayRead(
+            row_scaling,
+            &values);
+    if (restore != PETSC_SUCCESS) {
+        return restore;
+    }
+    return valid
+        ? PETSC_SUCCESS
+        : PETSC_ERR_ARG_OUTOFRANGE;
+}
+
+inline PetscErrorCode
+apply_row_scaling_to_residual(
+    Vec residual,
+    Vec row_scaling) {
+    if (row_scaling == nullptr) {
+        return PETSC_SUCCESS;
+    }
+    PetscInt residual_local = -1;
+    PetscInt scaling_local = -1;
+    PetscErrorCode error =
+        VecGetLocalSize(
+            residual,
+            &residual_local);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecGetLocalSize(
+                row_scaling,
+                &scaling_local);
+    }
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    if (residual_local != scaling_local) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    PetscScalar* residual_values = nullptr;
+    const PetscScalar* scaling_values = nullptr;
+    error =
+        VecGetArray(
+            residual,
+            &residual_values);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecGetArrayRead(
+                row_scaling,
+                &scaling_values);
+    }
+    if (error != PETSC_SUCCESS) {
+        if (residual_values != nullptr) {
+            (void)VecRestoreArray(
+                residual,
+                &residual_values);
+        }
+        return error;
+    }
+
+    for (PetscInt index = 0;
+         index < residual_local;
+         ++index) {
+        residual_values[index] *=
+            scaling_values[index];
+    }
+
+    const PetscErrorCode restore_scaling =
+        VecRestoreArrayRead(
+            row_scaling,
+            &scaling_values);
+    const PetscErrorCode restore_residual =
+        VecRestoreArray(
+            residual,
+            &residual_values);
+    return restore_scaling != PETSC_SUCCESS
+        ? restore_scaling
+        : restore_residual;
+}
+
 inline PetscErrorCode
 form_function(
     SNES snes,
@@ -614,6 +764,12 @@ form_function(
         error =
             VecAssemblyEnd(
                 residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            apply_row_scaling_to_residual(
+                residual,
+                context->row_scaling);
     }
     return error;
 }
@@ -750,10 +906,139 @@ form_jacobian(
                 jacobian,
                 MAT_FINAL_ASSEMBLY);
     }
+    if (error == PETSC_SUCCESS &&
+        context->row_scaling != nullptr) {
+        error =
+            MatDiagonalScale(
+                jacobian,
+                context->row_scaling,
+                nullptr);
+    }
     return error;
 }
 
 } // namespace natural_variable_snes_detail
+
+/// Construct a frozen positive left row-equilibration vector from one
+/// independently assembled analytic Jacobian.
+///
+/// For each owned equation row i:
+///   D_i = 1 / max_j |J_ij(q0)|.
+///
+/// This is algebraic solver scaling only. It does not mutate the physical
+/// residual/Jacobian snapshot and it is frozen for the subsequent nonlinear
+/// solve. Rows without a finite nonzero analytic coefficient are rejected.
+inline PetscErrorCode
+make_natural_variable_initial_row_equilibration_3d(
+    MPI_Comm comm,
+    const CompleteNaturalVariableAssemblySnapshot3D& snapshot,
+    Vec* row_scaling) {
+    if (row_scaling == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    if (*row_scaling != nullptr) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    const PetscInt start =
+        snapshot.petsc_scalar_row_start();
+    const PetscInt end =
+        snapshot.petsc_scalar_row_end();
+    const PetscInt local_count =
+        end - start;
+    if (local_count <= 0 ||
+        snapshot.petsc_scalar_row_count() <= 0) {
+        return PETSC_ERR_ARG_SIZ;
+    }
+
+    std::vector<double> row_max(
+        static_cast<std::size_t>(
+            local_count),
+        0.0);
+    for (const auto& entry :
+         snapshot.jacobian_entries()) {
+        if (entry.petsc_global_row < start ||
+            entry.petsc_global_row >= end) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        const std::size_t local =
+            static_cast<std::size_t>(
+                entry.petsc_global_row - start);
+        const double magnitude =
+            std::abs(entry.value);
+        if (!std::isfinite(magnitude)) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        row_max[local] =
+            std::max(
+                row_max[local],
+                magnitude);
+    }
+    for (const double value : row_max) {
+        if (!(value > 0.0) ||
+            !std::isfinite(value)) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+    }
+
+    Vec scaling = nullptr;
+    PetscErrorCode error =
+        VecCreateMPI(
+            comm,
+            local_count,
+            snapshot.petsc_scalar_row_count(),
+            &scaling);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    PetscInt actual_start = -1;
+    PetscInt actual_end = -1;
+    error =
+        VecGetOwnershipRange(
+            scaling,
+            &actual_start,
+            &actual_end);
+    if (error != PETSC_SUCCESS ||
+        actual_start != start ||
+        actual_end != end) {
+        (void)VecDestroy(&scaling);
+        return error != PETSC_SUCCESS
+            ? error
+            : PETSC_ERR_ARG_INCOMP;
+    }
+
+    PetscScalar* values = nullptr;
+    error =
+        VecGetArray(
+            scaling,
+            &values);
+    if (error != PETSC_SUCCESS) {
+        (void)VecDestroy(&scaling);
+        return error;
+    }
+    for (PetscInt index = 0;
+         index < local_count;
+         ++index) {
+        values[index] =
+            PetscScalar{
+                1.0 /
+                row_max[
+                    static_cast<std::size_t>(
+                        index)]};
+    }
+    const PetscErrorCode restore =
+        VecRestoreArray(
+            scaling,
+            &values);
+    if (restore != PETSC_SUCCESS) {
+        (void)VecDestroy(&scaling);
+        return restore;
+    }
+
+    *row_scaling = scaling;
+    return PETSC_SUCCESS;
+}
 
 /// Solve the nonlinear natural-variable system with PETSc-owned orchestration.
 ///
@@ -761,6 +1046,10 @@ form_jacobian(
 ///   SNESNEWTONLS + backtracking line search
 ///   KSPGMRES + PCASM(overlap=1, restricted)
 ///   ASM local solve: KSPPREONLY + PCLU, with exact-zero diagonal reordering
+///
+/// An optional frozen positive left row-scaling vector D may be supplied.
+/// PETSc then solves D*R=0 with D*J while the caller-owned physical evaluator
+/// continues to publish the unscaled R and J. No scaling is inferred by default.
 ///
 /// This first production contract deliberately does not call
 /// SNESSetFromOptions(): unrestricted PETSc options could replace the audited
@@ -787,7 +1076,8 @@ solve_natural_variable_snes_3d(
     NaturalVariableSnesEvaluator3D evaluator,
     Vec* solution,
     std::optional<NaturalVariableSnesSolveReport3D>*
-        report) {
+        report,
+    Vec row_scaling = nullptr) {
     using namespace natural_variable_snes_detail;
 
     int mpi_rank = -1;
@@ -843,6 +1133,13 @@ solve_natural_variable_snes_3d(
             numbering,
             initial_state,
             jacobian_structure_template);
+    if (local_error == PETSC_SUCCESS) {
+        local_error =
+            validate_row_scaling(
+                comm,
+                numbering,
+                row_scaling);
+    }
     error =
         detail::collective_error(
             comm,
@@ -944,7 +1241,8 @@ solve_natural_variable_snes_3d(
     }
 
     CallbackContext callback_context{
-        evaluator};
+        evaluator,
+        row_scaling};
 
     error =
         SNESSetFunction(
