@@ -33,6 +33,7 @@ add_executable(
     mixed_cardinality_physical_snes_assembly_header.cpp
     pr76_production_cell_evaluator_header.cpp
     adaptive_timestep_controller_header.cpp
+    single_phase_adaptive_timestep_attempt_header.cpp
     cross_cardinality_tpfa_bridge_header.cpp
     thermodynamic_cross_cardinality_tpfa_adapter_header.cpp
     phase_transition_outer_rebuild_header.cpp

@@ -3857,3 +3857,54 @@ This contract does not yet advance physical simulation time over multiple
 accepted steps, persist restart/checkpoint data, or choose model-specific
 phase-transition tolerances. It establishes the deterministic timestep-control
 boundary that those later features must consume.
+
+### 47.4 Production single-phase adaptive attempt bridge
+
+The fixed-cardinality single-phase production path now has a concrete adapter from
+AdaptiveTimestepControllerBindings3D::attempt to the existing physical
+backward-Euler/PETSc solve.
+
+For every candidate timestep it freshly constructs the
+SinglePhaseSnesAssemblyContext3D from the caller-owned accepted history, using the
+candidate dt in the accumulation terms. It then freshly builds:
+
+- the complete physical residual/Jacobian snapshot;
+- frozen initial row equilibration;
+- MPIAIJ structural materialization; and
+- the existing SNESNEWTONLS + BT / GMRES + ASM(1) nonlinear solve.
+
+SNES non-convergence and nonlinear function/Jacobian domain diagnostics are mapped
+back into the adaptive-timestep outcome. PETSc/API/configuration failures remain hard
+errors.
+
+A converged SNES solve is not automatically accepted. A mandatory post-SNES review
+callback owns the phase-set/stability decision. Only stable_phase_set retains a
+pending solution/report. Scan-indeterminate, transition-budget and cycle outcomes
+discard the trial state and request the normal adaptive cutback path. The adapter
+never mutates the caller-owned accepted state or previous component/energy
+accumulation snapshots.
+
+The adaptive controller's separate commit callback must explicitly take the pending
+stable result. A new attempt first destroys any still-uncommitted pending solution,
+so a rejected candidate cannot leak into the next retry.
+
+The real two-rank CH4/C2H6/C3H8 PR76 regression now runs the production adapter
+twice in one physical timestep. The first real dt=0.1 s solve is deliberately
+converted to a recoverable rejection by a test-only wrapper after the real solve;
+its pending state is discarded. The controller cuts back to dt=0.05 s, rebuilds
+the backward-Euler system, and runs a second real PR76/PETSc solve. Acceptance
+requires:
+
+- the state and previous component/energy history observed before both attempts to
+  be exactly the original accepted history;
+- exactly one commit, after the second stable solve;
+- the committed history to equal the independently re-evaluated accepted-state
+  component and energy accumulations;
+- independent final residual reassembly using the original previous-time history
+  and the accepted 0.05 s timestep;
+- the existing closed-domain component/energy conservation checks.
+
+The injected first rejection exists only in the regression harness; production code
+does not manufacture a nonlinear or physical failure. This bridge remains
+fixed-cardinality. Actual 1 <-> 2 <-> 3 topology rebuild continues to belong to
+the existing post-SNES transition controller.

@@ -3,6 +3,7 @@
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
 #include <mpmc/flow_discretization_petsc/adaptive_timestep_controller.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_production_cell_evaluator.hpp>
+#include <mpmc/flow_discretization_petsc/single_phase_adaptive_timestep_attempt.hpp>
 
 #include <petscsys.h>
 
@@ -1095,6 +1096,292 @@ read_owned_real_state(
     return result;
 }
 
+std::array<double, 4>
+real_owned_history_signature(
+    const std::vector<
+        fdp::SinglePhaseSnesCellInput3D>& cells,
+    int rank) {
+    const mesh::GlobalEntityId stable{
+        rank == 0
+            ? UINT64_C(10)
+            : UINT64_C(20)};
+    const auto it =
+        std::find_if(
+            cells.begin(),
+            cells.end(),
+            [&](const auto& cell) {
+                return cell.cell_global == stable;
+            });
+    require_real_collective(
+        it != cells.end() &&
+            it->previous_component_accumulation
+                .has_value() &&
+            it->previous_energy_accumulation
+                .has_value() &&
+            it->previous_component_accumulation
+                    ->component_accumulation_mol_per_bulk_m3
+                    .size() == 3U,
+        "real PR76 accepted history signature is incomplete");
+
+    std::array<double, 4> result{};
+    for (std::size_t component = 0U;
+         component < 3U;
+         ++component) {
+        result[component] =
+            it->previous_component_accumulation
+                ->component_accumulation_mol_per_bulk_m3[
+                    component];
+    }
+    result[3] =
+        it->previous_energy_accumulation
+            ->total_internal_energy_j_per_bulk_m3;
+    return result;
+}
+
+PetscErrorCode real_frozen_phase_post_snes_review(
+    const fdp::AdaptiveTimestepAttemptRequest3D&,
+    Vec converged_state,
+    const fdp::NaturalVariableSnesSolveReport3D&
+        solve_report,
+    void*,
+    fdp::AdaptiveTimestepAttemptOutcome3D* outcome,
+    std::size_t* phase_transition_restarts) {
+    if (converged_state == nullptr ||
+        outcome == nullptr ||
+        phase_transition_restarts == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    if (static_cast<int>(
+            solve_report.converged_reason()) <= 0 ||
+        solve_report.function_domain_errors() != 0 ||
+        solve_report.jacobian_domain_errors() != 0) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    *outcome =
+        fdp::AdaptiveTimestepAttemptOutcome3D::
+            stable_phase_set;
+    *phase_transition_restarts = 0U;
+    return PETSC_SUCCESS;
+}
+
+template <typename Closure>
+struct RealAdaptiveTimestepHarness {
+    fdp::SinglePhaseAdaptiveTimestepAttemptContext3D*
+        production{};
+    Vec accepted_state{};
+    std::vector<
+        fdp::SinglePhaseSnesCellInput3D>*
+            accepted_cells{};
+    fdp::Pr76SinglePhaseProductionCellEvaluatorContext3D<
+        Closure>* evaluator_context{};
+    int rank{-1};
+
+    std::array<double, 4>
+        initial_history{};
+    std::array<double, 4>
+        initial_state{};
+    std::vector<double>
+        attempted_dt;
+    std::vector<std::array<double, 4>>
+        history_before_attempt;
+    std::vector<std::array<double, 4>>
+        state_before_attempt;
+
+    bool forced_recoverable_rejection{};
+    std::size_t commits{};
+    std::optional<
+        fdp::NaturalVariableSnesSolveReport3D>
+        committed_report;
+};
+
+template <typename Closure>
+PetscErrorCode real_adaptive_attempt(
+    const fdp::AdaptiveTimestepAttemptRequest3D&
+        request,
+    void* raw_context,
+    fdp::AdaptiveTimestepAttemptResult3D* result) {
+    if (raw_context == nullptr || result == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<
+            RealAdaptiveTimestepHarness<Closure>*>(
+                raw_context);
+    if (context->production == nullptr ||
+        context->accepted_state == nullptr ||
+        context->accepted_cells == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    try {
+        context->attempted_dt.push_back(
+            request.timestep_seconds);
+        context->history_before_attempt.push_back(
+            real_owned_history_signature(
+                *context->accepted_cells,
+                context->rank));
+        context->state_before_attempt.push_back(
+            read_owned_real_state(
+                context->accepted_state,
+                context->rank));
+    } catch (const std::exception&) {
+        return PETSC_ERR_LIB;
+    }
+
+    PetscErrorCode error =
+        fdp::
+            evaluate_single_phase_adaptive_timestep_attempt_3d(
+                request,
+                context->production,
+                result);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    if (request.attempt_index == 0U) {
+        if (result->outcome !=
+                fdp::AdaptiveTimestepAttemptOutcome3D::
+                    stable_phase_set ||
+            !context->production->has_pending()) {
+            return PETSC_ERR_PLIB;
+        }
+        error =
+            context->production->discard_pending();
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+        result->outcome =
+            fdp::AdaptiveTimestepAttemptOutcome3D::
+                phase_set_scan_indeterminate;
+        result->phase_transition_restarts = 0U;
+        context->forced_recoverable_rejection =
+            true;
+    }
+    return PETSC_SUCCESS;
+}
+
+template <typename Closure>
+PetscErrorCode real_adaptive_commit(
+    const fdp::AdaptiveTimestepAttemptRequest3D&
+        request,
+    const fdp::AdaptiveTimestepAttemptResult3D&
+        result,
+    void* raw_context) {
+    if (raw_context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<
+            RealAdaptiveTimestepHarness<Closure>*>(
+                raw_context);
+    if (context->production == nullptr ||
+        context->accepted_state == nullptr ||
+        context->accepted_cells == nullptr ||
+        context->evaluator_context == nullptr ||
+        result.outcome !=
+            fdp::AdaptiveTimestepAttemptOutcome3D::
+                stable_phase_set) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    Vec pending_solution = nullptr;
+    std::optional<
+        fdp::NaturalVariableSnesSolveReport3D>
+        pending_report;
+    PetscErrorCode error =
+        context->production->take_pending(
+            request,
+            &pending_solution,
+            &pending_report);
+    if (error != PETSC_SUCCESS ||
+        pending_solution == nullptr ||
+        !pending_report.has_value()) {
+        if (pending_solution != nullptr) {
+            (void)VecDestroy(
+                &pending_solution);
+        }
+        return error != PETSC_SUCCESS
+            ? error
+            : PETSC_ERR_PLIB;
+    }
+
+    try {
+        const std::uint64_t stable =
+            context->rank == 0
+                ? UINT64_C(10)
+                : UINT64_C(20);
+        const auto converged =
+            read_owned_real_state(
+                pending_solution,
+                context->rank);
+        auto evaluated =
+            real_direct_cell_typed(
+                stable,
+                std::span<const double>{
+                    converged.data(),
+                    converged.size()},
+                context->evaluator_context);
+
+        auto it =
+            std::find_if(
+                context->accepted_cells->begin(),
+                context->accepted_cells->end(),
+                [&](const auto& cell) {
+                    return cell.cell_global ==
+                        mesh::GlobalEntityId{stable};
+                });
+        if (it ==
+                context->accepted_cells->end() ||
+            !it->previous_component_accumulation
+                .has_value() ||
+            !it->previous_energy_accumulation
+                .has_value()) {
+            (void)VecDestroy(
+                &pending_solution);
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        const auto next_component =
+            flow::
+                build_single_phase_component_accumulation(
+                    evaluated->state,
+                    it->porosity);
+        const auto next_energy =
+            flow::
+                build_single_phase_energy_accumulation_snapshot(
+                    evaluated->state,
+                    it->porosity,
+                    evaluated->transport,
+                    evaluated->caloric,
+                    evaluated->rock);
+
+        error =
+            VecCopy(
+                pending_solution,
+                context->accepted_state);
+        if (error != PETSC_SUCCESS) {
+            (void)VecDestroy(
+                &pending_solution);
+            return error;
+        }
+
+        it->previous_component_accumulation =
+            next_component;
+        it->previous_energy_accumulation =
+            next_energy;
+        context->committed_report =
+            std::move(pending_report);
+        ++context->commits;
+    } catch (const std::exception&) {
+        (void)VecDestroy(
+            &pending_solution);
+        return PETSC_ERR_LIB;
+    }
+
+    return VecDestroy(
+        &pending_solution);
+}
+
 } // namespace
 
 void pr76_production_fully_implicit_transient_test() {
@@ -1159,10 +1446,12 @@ void pr76_production_fully_implicit_transient_test() {
     auto cell_pattern =
         real_cell_pattern(rank);
 
-    auto cells =
+    auto previous_cells =
         real_cells(
             rank,
             &evaluator_context);
+    auto accepted_cells =
+        previous_cells;
     auto faces =
         real_faces(rank);
 
@@ -1230,8 +1519,8 @@ void pr76_production_fully_implicit_transient_test() {
                 cell_pattern,
                 "real_pr76_natural_state_1p",
                 dt_seconds,
-                std::move(cells),
-                std::move(faces),
+                previous_cells,
+                faces,
                 {
                     &fdp::
                         evaluate_pr76_single_phase_production_cell_3d<
@@ -1456,143 +1745,58 @@ void pr76_production_fully_implicit_transient_test() {
             "real PR76 finite-difference state cleanup failed");
     }
 
-    Vec row_scaling = nullptr;
-    require_real_collective(
-        fdp::
-            make_natural_variable_initial_row_equilibration_3d(
-                PETSC_COMM_WORLD,
-                *initial_assembly,
-                &row_scaling) ==
-                PETSC_SUCCESS &&
-            row_scaling != nullptr,
-        "failed to build frozen analytic row equilibration for real PR76 solve");
-
-    Vec unused_residual = nullptr;
-    Mat jacobian_template = nullptr;
+    std::optional<
+        fdp::SinglePhaseAdaptiveTimestepAttemptContext3D>
+        production_attempt;
     error =
-        fdp::
-            materialize_complete_natural_variable_petsc_system_3d(
+        fdp::SinglePhaseAdaptiveTimestepAttemptContext3D::
+            create(
                 PETSC_COMM_WORLD,
-                *initial_assembly,
-                cell_bridge,
-                &unused_residual,
-                &jacobian_template);
+                &schedule,
+                &partition,
+                &dof_layout,
+                &dof_numbering,
+                &cell_bridge,
+                &cell_pattern,
+                "real_pr76_natural_state_1p",
+                &accepted_cells,
+                &faces,
+                {
+                    &fdp::
+                        evaluate_pr76_single_phase_production_cell_3d<
+                            Closure>,
+                    &evaluator_context},
+                initial,
+                {
+                    &real_frozen_phase_post_snes_review,
+                    nullptr},
+                &production_attempt);
     require_real_collective(
         error == PETSC_SUCCESS &&
-            unused_residual != nullptr &&
-            jacobian_template != nullptr,
-        "failed to materialize real PR76 PETSc system");
+            production_attempt.has_value(),
+        "failed to create real PR76 adaptive production attempt bridge");
 
-    Vec solution = nullptr;
-    std::optional<
-        fdp::NaturalVariableSnesSolveReport3D>
-        report;
-    std::optional<
-        fdp::NaturalVariableSnesFailureDiagnostics3D>
-        failure_diagnostics;
-    error =
-        fdp::solve_natural_variable_snes_3d(
-            PETSC_COMM_WORLD,
-            *initial_assembly,
+    RealAdaptiveTimestepHarness<Closure>
+        harness;
+    harness.production =
+        &*production_attempt;
+    harness.accepted_state =
+        initial;
+    harness.accepted_cells =
+        &accepted_cells;
+    harness.evaluator_context =
+        &evaluator_context;
+    harness.rank =
+        rank;
+    harness.initial_history =
+        real_owned_history_signature(
+            accepted_cells,
+            rank);
+    harness.initial_state =
+        read_owned_real_state(
             initial,
-            jacobian_template,
-            context->snes_evaluator(),
-            &solution,
-            &report,
-            row_scaling,
-            &failure_diagnostics);
-    const bool solve_ok =
-        error == PETSC_SUCCESS &&
-        solution != nullptr &&
-        report.has_value() &&
-        static_cast<int>(
-            report->converged_reason()) >
-            0 &&
-        report->function_domain_errors() ==
-            0 &&
-        report->jacobian_domain_errors() ==
-            0 &&
-        report->snes_type() ==
-            std::string_view{SNESNEWTONLS} &&
-        report->line_search_type() ==
-            std::string_view{SNESLINESEARCHBT} &&
-        report->ksp_type() ==
-            std::string_view{KSPGMRES} &&
-        report->pc_type() ==
-            std::string_view{PCASM};
-    std::string solve_message =
-        "real PR76 fully implicit PETSc solve failed";
-    if (!solve_ok &&
-        failure_diagnostics.has_value()) {
-        solve_message +=
-            " snes_reason=" +
-            std::to_string(
-                static_cast<int>(
-                    failure_diagnostics
-                        ->snes_reason)) +
-            " ksp_reason=" +
-            std::to_string(
-                static_cast<int>(
-                    failure_diagnostics
-                        ->ksp_reason)) +
-            " pc_failed_reason=" +
-            std::to_string(
-                failure_diagnostics
-                    ->pc_failed_reason) +
-            " asm_sub_ksp_reason=" +
-            std::to_string(
-                static_cast<int>(
-                    failure_diagnostics
-                        ->asm_sub_ksp_reason)) +
-            " asm_sub_pc_failed_reason=" +
-            std::to_string(
-                failure_diagnostics
-                    ->asm_sub_pc_failed_reason) +
-            " nonlinear_iterations=" +
-            std::to_string(
-                failure_diagnostics
-                    ->nonlinear_iterations) +
-            " function_evaluations=" +
-            std::to_string(
-                failure_diagnostics
-                    ->function_evaluations) +
-            " jacobian_evaluations=" +
-            std::to_string(
-                failure_diagnostics
-                    ->jacobian_evaluations) +
-            " function_domain_errors=" +
-            std::to_string(
-                failure_diagnostics
-                    ->function_domain_errors) +
-            " jacobian_domain_errors=" +
-            std::to_string(
-                failure_diagnostics
-                    ->jacobian_domain_errors) +
-            " line_search_prechecks=" +
-            std::to_string(
-                failure_diagnostics
-                    ->line_search_prechecks) +
-            " line_search_direction_changes=" +
-            std::to_string(
-                failure_diagnostics
-                    ->line_search_direction_changes) +
-            " function_l2_norm=" +
-            std::to_string(
-                failure_diagnostics
-                    ->function_l2_norm);
-    } else if (!solve_ok) {
-        solve_message +=
-            " petsc_error=" +
-            std::to_string(
-                static_cast<int>(error));
-    }
-    require_real_collective(
-        solve_ok,
-        solve_message);
+            rank);
 
-    const auto adaptive_result =
-        fdp::make_adaptive_timestep_attempt_result(
-            *report);
     fdp::AdaptiveTimestepControllerOptions3D
         adaptive_options;
     adaptive_options.minimum_timestep_seconds =
@@ -1609,33 +1813,97 @@ void pr76_production_fully_implicit_transient_test() {
         1;
     adaptive_options.growth_transition_restart_limit =
         0U;
-    const auto adaptive_decision =
-        fdp::decide_adaptive_timestep_3d(
+
+    std::optional<
+        fdp::AdaptiveTimestepControllerReport3D>
+        adaptive_report;
+    error =
+        fdp::solve_adaptive_timestep_3d(
             dt_seconds,
-            0U,
-            adaptive_result,
-            adaptive_options);
+            adaptive_options,
+            {
+                &real_adaptive_attempt<Closure>,
+                &harness,
+                &real_adaptive_commit<Closure>,
+                &harness},
+            &adaptive_report);
     require_real_collective(
-        adaptive_result.outcome ==
-                fdp::AdaptiveTimestepAttemptOutcome3D::
-                    stable_phase_set &&
-            (adaptive_decision.decision ==
+        error == PETSC_SUCCESS &&
+            adaptive_report.has_value() &&
+            adaptive_report->accepted() &&
+            adaptive_report->retries == 1U &&
+            adaptive_report->attempts.size() == 2U &&
+            harness.forced_recoverable_rejection &&
+            harness.commits == 1U &&
+            harness.committed_report.has_value() &&
+            harness.attempted_dt.size() == 2U &&
+            harness.history_before_attempt.size() ==
+                2U &&
+            harness.state_before_attempt.size() ==
+                2U &&
+            harness.history_before_attempt[0] ==
+                harness.initial_history &&
+            harness.history_before_attempt[1] ==
+                harness.initial_history &&
+            harness.state_before_attempt[0] ==
+                harness.initial_state &&
+            harness.state_before_attempt[1] ==
+                harness.initial_state &&
+            adaptive_report->attempts[0].decision ==
+                fdp::AdaptiveTimestepDecision3D::
+                    reject_and_cutback &&
+            (adaptive_report->attempts[1].decision ==
                  fdp::AdaptiveTimestepDecision3D::
                      accept_and_grow ||
-             adaptive_decision.decision ==
+             adaptive_report->attempts[1].decision ==
                  fdp::AdaptiveTimestepDecision3D::
-                     accept_and_hold) &&
-            adaptive_decision
-                .next_timestep_seconds
-                .has_value() &&
-            *adaptive_decision
-                 .next_timestep_seconds >=
-                dt_seconds,
-        "real PR76 converged SNES report was not accepted by adaptive timestep policy");
+                     accept_and_hold),
+        "real PR76 adaptive retry/commit lifecycle failed");
+
+    near_real_collective(
+        harness.attempted_dt[0],
+        dt_seconds,
+        0.0,
+        0.0,
+        "real PR76 first adaptive attempt used wrong dt");
+    near_real_collective(
+        harness.attempted_dt[1],
+        0.5 * dt_seconds,
+        0.0,
+        0.0,
+        "real PR76 retry did not use cutback dt");
+    near_real_collective(
+        *adaptive_report->accepted_timestep_seconds,
+        0.5 * dt_seconds,
+        0.0,
+        0.0,
+        "real PR76 adaptive controller accepted wrong dt");
+
+    const auto& committed_report =
+        *harness.committed_report;
+    require_real_collective(
+        static_cast<int>(
+            committed_report.converged_reason()) > 0 &&
+            committed_report.function_domain_errors() ==
+                0 &&
+            committed_report.jacobian_domain_errors() ==
+                0 &&
+            committed_report.snes_type() ==
+                std::string_view{SNESNEWTONLS} &&
+            committed_report.line_search_type() ==
+                std::string_view{SNESLINESEARCHBT} &&
+            committed_report.ksp_type() ==
+                std::string_view{KSPGMRES} &&
+            committed_report.pc_type() ==
+                std::string_view{PCASM},
+        "real PR76 adaptive retry did not retain the production PETSc solver contract");
+
+    const double accepted_dt_seconds =
+        *adaptive_report->accepted_timestep_seconds;
 
     const auto converged =
         read_owned_real_state(
-            solution,
+            initial,
             rank);
     const auto previous =
         real_previous_state(
@@ -1666,6 +1934,34 @@ void pr76_production_fully_implicit_transient_test() {
         "real PR76 fully implicit timestep did not change state");
 
     std::optional<
+        fdp::SinglePhaseSnesAssemblyContext3D>
+        accepted_step_context;
+    error =
+        fdp::SinglePhaseSnesAssemblyContext3D::
+            create(
+                PETSC_COMM_WORLD,
+                schedule,
+                partition,
+                dof_layout,
+                dof_numbering,
+                cell_bridge,
+                cell_pattern,
+                "real_pr76_natural_state_1p",
+                accepted_dt_seconds,
+                previous_cells,
+                faces,
+                {
+                    &fdp::
+                        evaluate_pr76_single_phase_production_cell_3d<
+                            Closure>,
+                    &evaluator_context},
+                &accepted_step_context);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            accepted_step_context.has_value(),
+        "failed to rebuild accepted-dt real PR76 context");
+
+    std::optional<
         fdp::CompleteNaturalVariableAssemblySnapshot3D>
         final_assembly;
     fdp::NaturalVariableSnesEvaluationStatus3D
@@ -1673,8 +1969,8 @@ void pr76_production_fully_implicit_transient_test() {
             fdp::NaturalVariableSnesEvaluationStatus3D::
                 success;
     error =
-        context->evaluate_complete_assembly(
-            solution,
+        accepted_step_context->evaluate_complete_assembly(
+            initial,
             &final_assembly,
             &final_status);
     require_real_collective(
@@ -1706,7 +2002,7 @@ void pr76_production_fully_implicit_transient_test() {
     require_real_collective(
         std::sqrt(global_final_residual2) <=
             1.0e-6 &&
-            report->final_function_l2_norm() <=
+            committed_report.final_function_l2_norm() <=
                 1.0e-6,
         "real PR76 fully implicit timestep did not converge on independent reassembly");
 
@@ -1758,6 +2054,30 @@ void pr76_production_fully_implicit_transient_test() {
             .total_internal_energy_j_per_bulk_m3 *
         volume;
 
+    const auto committed_history =
+        real_owned_history_signature(
+            accepted_cells,
+            rank);
+    for (std::size_t component = 0U;
+         component < 3U;
+         ++component) {
+        near_real_collective(
+            committed_history[component],
+            final_component
+                .component_accumulation_mol_per_bulk_m3[
+                    component],
+            0.0,
+            0.0,
+            "real PR76 commit did not advance component history to the accepted state");
+    }
+    near_real_collective(
+        committed_history[3],
+        final_energy
+            .total_internal_energy_j_per_bulk_m3,
+        0.0,
+        0.0,
+        "real PR76 commit did not advance energy history to the accepted state");
+
     std::array<double, 4>
         global_previous_total{};
     std::array<double, 4>
@@ -1799,15 +2119,7 @@ void pr76_production_fully_implicit_transient_test() {
         "real PR76 fully implicit energy inventory is not conserved");
 
     require_real_collective(
-        VecDestroy(&solution) ==
-                PETSC_SUCCESS &&
-            VecDestroy(&unused_residual) ==
-                PETSC_SUCCESS &&
-            MatDestroy(&jacobian_template) ==
-                PETSC_SUCCESS &&
-            VecDestroy(&row_scaling) ==
-                PETSC_SUCCESS &&
-            VecDestroy(&initial) ==
+        VecDestroy(&initial) ==
                 PETSC_SUCCESS,
         "real PR76 transient fixture cleanup failed");
 }
