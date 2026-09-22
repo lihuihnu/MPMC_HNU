@@ -140,7 +140,7 @@ public:
     }
 
     template <typename Number>
-        requires detail::Pr76Number<Number, T>
+        requires detail::Pr76PhaseNumber<Number, T>
     [[nodiscard]] Pr76PhaseValues<Number, T> evaluate_full(
         const Number& pressure_pa, const Number& temperature_k,
         std::type_identity_t<std::span<const Number>> fractions, std::size_t root_index,
@@ -148,7 +148,7 @@ public:
         return evaluate_impl<false>(pressure_pa, temperature_k, fractions, root_index, workspace, options);
     }
     template <typename Number>
-        requires detail::Pr76Number<Number, T>
+        requires detail::Pr76PhaseNumber<Number, T>
     [[nodiscard]] Pr76PhaseValues<Number, T> evaluate_reduced(
         const Number& pressure_pa, const Number& temperature_k,
         std::type_identity_t<std::span<const Number>> fractions, std::size_t root_index,

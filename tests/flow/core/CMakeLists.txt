@@ -81,7 +81,9 @@ target_link_libraries(
 add_executable(
     mpmc_flow_pr76_selected_phase_property_tests
     pr76_selected_phase_property_closure_test.cpp
-    pr76_selected_phase_property_closure_header.cpp)
+    pr76_selected_phase_property_closure_header.cpp
+    pr76_methane_ethane_propane_properties_test.cpp
+    pr76_methane_ethane_propane_properties_header.cpp)
 target_link_libraries(
     mpmc_flow_pr76_selected_phase_property_tests
     PRIVATE

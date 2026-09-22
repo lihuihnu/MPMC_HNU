@@ -92,7 +92,7 @@ ln(X) = log1p((Z-1)-B)
 
 保留 Z 已舍入为 1 时仍非零的 O(p) 逸度项；其余区域使用保存的 X 的 log。两个分支表示同一数学函数，均保留 AD 依赖。
 
-根先用普通浮点数收敛，再在固定简单根上应用隐函数定理：`dy/dtheta=-H_theta/H_y`。缩放 s 在该局部线性化中固定，`dZ=s*dy+dB`。实现让 AD 求 H 对输入的偏导，只移除 H 的原值以保持收敛 Z 不变；不对二分分支／迭代次数求导，不使用有限差分。该局部修正只支持已有一阶 Dual，不声称高阶或嵌套 AD 正确。
+根先用普通浮点数收敛，再在固定简单根上应用隐函数定理：`dy/dtheta=-H_theta/H_y`。缩放 s 在该局部线性化中固定，`dZ=s*dy+dB`。实现让 AD 求 H 对输入的偏导，只移除 H 的原值以保持收敛 Z 不变；不对二分分支／迭代次数求导，不使用有限差分。该局部修正只支持普通浮点或一层 `Dual<T,K>`；`Pr76Phase` 公共相根接口在类型约束处显式拒绝嵌套 Dual，不声称二阶隐式根导数正确。纯组分/混合核可独立使用 nested Dual 计算显式代数的高阶导数，但这不会自动提升 PT 根求解器的导数阶数。
 
 若所选根 `derivative_valid=false`，普通浮点仍可读取通过残差检查的原值，但 AD 求值抛出 `ill_conditioned_derivative`，包括所有种子为零的 Dual。导数只在固定拓扑、固定根的局部光滑域有效，不是跨相边界的全局导数。
 
@@ -129,7 +129,7 @@ const auto candidate = model.evaluate_full(p_pa, t_k, w, candidates.count - 1, w
 
 ## 6. 必要验证与下一步
 
-新增独立 `tests/thermodynamics/pr76_pt`，18 个 CTest：可因式分解的精确根、拓扑／重根、尺度、相性质参考值、完整导数、约化导数、Gibbs–Duhem、纯组分退化、低压极限、log1p 比值、零／迹量组成、4 组分 24 种排列、运行期 1→4→2→3→1、输入域、所有权／失败恢复、零／负吸引项、病态导数拒绝、独立公共头。其中前 16 项各测试 float/double/long double；病态导数构造及公共头为 double。排列和标量类型属于子情形，不重复计入 CTest 数。`input_domains` 现明确验证：数学非法 T/p 仍拒绝，而声明范围外的有限正状态仍可计算，并保持 `outside_declared_bounds` advisory；闭区间端点继续视为声明范围内。
+新增独立 `tests/thermodynamics/pr76_pt`，19 个 CTest：可因式分解的精确根、拓扑／重根、尺度、相性质参考值、完整导数、约化导数、Gibbs–Duhem、纯组分退化、低压极限、log1p 比值、零／迹量组成、4 组分 24 种排列、运行期 1→4→2→3→1、输入域、所有权／失败恢复、零／负吸引项、病态导数拒绝、独立公共头。其中前 16 项各测试 float/double/long double；`nested_mixture_temperature` 额外验证显式 mixing kernel 的 `da_mix/dT`、`d²a/dT²` 与温度-组成混合导数，并编译期确认 nested Dual 不能进入 PR76 phase-root 接口；病态导数构造及公共头为 double。排列和标量类型属于子情形，不重复计入 CTest 数。`input_domains` 现明确验证：数学非法 T/p 仍拒绝，而声明范围外的有限正状态仍可计算，并保持 `outside_declared_bounds` advisory；闭区间端点继续视为声明范围内。
 
 独立判据包括原 Z 三次式的 Cardano／三角法（仅在远离退化的参考点使用）、原始参数的完整双重混合求和、原 Z 方程隐式导数与直接式 (19) 的手工解析导数；不复用生产 shifted solver 或生产预计算系数来构造期望值。另由 Python 标准库 Decimal(80)、原 Z Newton 和直接对数式再生成 12 个数值与 48 个约化导数锚点（直接对约化坐标应用解析链式法则），脚本仅读取测试中的锚点核对，不读取生产实现、不修改参考值。全部参数明确为 synthetic_test，不是实际流体或实验数据。
 

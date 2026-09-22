@@ -18,6 +18,20 @@ a_ij  = (1 - k_ij) sqrt(a_i(T)) sqrt(a_j(T))
 
 原文没有规定 C++ 输入接口、归一化容差或独立组成坐标。下述内容是本项目的明确接口约定，而非冒充论文原句。坐标转换同时参考 [NIST teqp 的 xN (in)dependent 说明](https://teqp.readthedocs.io/en/latest/derivs/compderivs.html#xn-in-dependent)，仅参考导数含义，不引入或运行该库。
 
+## 1.1 Nested AD scope for explicit mixing
+
+The pure and classical mixing kernels accept a recursively nested
+`mpmc::ad::Dual` as long as the deepest `BaseScalar` is the model scalar type.
+This is used by caloric property code to obtain `da_mix/dT` while retaining an
+outer first-order natural-variable derivative. The recursion is confined to the
+explicit algebraic alpha/mixing expressions; it does not imply that every PR76
+consumer supports second-order AD.
+
+The PT root kernel has a stricter scalar contract. `Pr76Phase::evaluate_*` remains
+limited to plain floating point or one forward-Dual layer because its compressibility
+root derivative is supplied by a first-order implicit-function correction. A caller
+must not interpret that correction as a second-order implicit-root solver.
+
 ## 2. 两个入口，两种导数含义
 
 ### 完整组成：evaluate_full

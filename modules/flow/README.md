@@ -3687,3 +3687,59 @@ as a software oracle. It verifies the production contract, PR76 kernel reuse and
 Jacobian plumbing; it is not a physical transport/caloric validation dataset. A real
 case must supply independently traceable viscosity and enthalpy models before the
 non-isothermal flow result can be called physically validated.
+
+
+### 47.1 Repository-curated methane/ethane/propane provider
+
+For the exact repository-curated PR76 ternary snapshot
+
+```text
+methane / ethane / propane
+dataset = DeitersBell-aic16730-PengRobinson1976-ternary
+```
+
+the flow module provides a narrow production transport/caloric provider. It is
+not a general hydrocarbon property database and rejects another dataset identity,
+component count or component order.
+
+The provider uses three independently attributed property layers:
+
+1. **Molar mass and ideal-gas heat capacity:** NIST Chemistry WebBook SRD 69
+   methane, ethane and propane species records. The common implemented temperature
+   interval is `298.15 <= T <= 1500 K`; values outside that interval are rejected,
+   not extrapolated.
+2. **Dense-fluid viscosity:** Lohrenz-Bray-Clark with Stiel-Thodos dilute
+   pure-component viscosity, Herning-Zipperer dilute-mixture blending and Kay
+   pseudo-critical mixing. The LBC polynomial uses the audited coefficient
+   `a5=0.0093324`. NIST critical molar-volume/density records supply the
+   methane/ethane/propane critical-volume inputs. No C7+ critical-volume
+   correlation and no tuning coefficient is enabled.
+3. **Caloric departure:** the standard Peng-Robinson residual-enthalpy expression,
+   using the same selected PR76 root as fugacity/density.
+
+The ideal-gas enthalpy reference is deliberately fixed to
+
+```text
+h_i^ig(298.15 K) = 0
+```
+
+for each component. This is a reference choice for nonreactive flow, not a claim
+that chemical formation enthalpies are zero. Any future boundary, well or coupled
+energy model must use the same reference before energy terms are combined.
+
+The PR residual enthalpy needs `da_mix/dT`. The implementation obtains it with one
+nested forward-AD temperature direction through the explicit PR pure/mixing kernel.
+The outer natural-variable AD dependence is therefore preserved. The selected
+compressibility root itself remains on the existing first-order PR76 implicit-root
+IFT path; nested AD is intentionally **not** applied to the root solver because that
+solver does not currently publish a second-order implicit-root contract.
+
+The convenience entry
+
+```cpp
+make_pr76_methane_ethane_propane_property_closure(model, selections)
+```
+
+binds this provider and its provenance to the existing P=1/2/3 selected-phase
+property closure. Unsupported datasets or missing/mismatched molar masses fail
+explicitly.

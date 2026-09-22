@@ -231,10 +231,21 @@ void repository_snapshot_bundle() {
                 pr76_omega[2] == 0.15308 &&
                 pr76_parameters.binary_records().size() == 3U,
             "PR76 repository parameter payload changed");
+    constexpr std::array<double, 3> pr76_molar_mass{
+        0.0160425, 0.0300690, 0.0440956};
+    std::size_t pr76_component_index = 0U;
     for (const auto& component : pr76_parameters.components().items()) {
         require(component.definition.kind ==
-                    mpmc::thermodynamics::SourceKind::literature,
-                "PR76 repository component lost literature provenance");
+                    mpmc::thermodynamics::SourceKind::literature &&
+                    component.molar_mass.has_value() &&
+                    component.molar_mass->unit ==
+                        mpmc::thermodynamics::Unit::kilogram_per_mole &&
+                    component.molar_mass->value ==
+                        pr76_molar_mass[pr76_component_index] &&
+                    component.molar_mass->source.kind ==
+                        mpmc::thermodynamics::SourceKind::literature,
+                "PR76 repository component lost literature molar-mass provenance");
+        ++pr76_component_index;
     }
     for (const auto& record : pr76_parameters.pure_records()) {
         require(record.critical_temperature.has_value() &&
@@ -355,7 +366,7 @@ void repository_snapshot_bundle() {
                 pr76.component_ids ==
                     std::vector<std::string>(
                         {"methane", "ethane", "propane"}) &&
-                pr76.sources.size() == 2U,
+                pr76.sources.size() == 3U,
             "PR76 repository snapshot identity or provenance changed");
     require(sw92.configured_backend_id ==
                 "sw92.carbon-dioxide-water.freshwater.literature-r1" &&

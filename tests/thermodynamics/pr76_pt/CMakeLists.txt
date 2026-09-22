@@ -38,7 +38,7 @@ if(MPMC_THERMO_ENABLE_SANITIZERS)
 endif()
 set(pr76_pt_cases roots_factored root_topology root_scale phase_values full_derivatives
     reduced_derivatives gibbs_duhem pure_limit low_pressure log_ratio zero_trace permutations
-    runtime_shapes input_domains ownership_recovery attraction_cancellation selected_phase_fugacity selected_phase_density derivative_guard headers)
+    runtime_shapes input_domains ownership_recovery attraction_cancellation nested_mixture_temperature selected_phase_fugacity selected_phase_density derivative_guard headers)
 foreach(case IN LISTS pr76_pt_cases)
     add_test(NAME thermo.pr76_pt.${case} COMMAND mpmc_thermodynamics_pr76_pt_tests ${case})
     set_tests_properties(thermo.pr76_pt.${case} PROPERTIES LABELS "thermo;thermo.pr76_pt;unit" TIMEOUT 30)

@@ -33,35 +33,56 @@ namespace detail {
 // Supported/tested numbers are T and mpmc::ad::Dual<T,N>. Other adapters are not
 // promised; they must also supply AD-preserving arithmetic, construction and sqrt.
 template <typename Number, typename T>
-concept Pr76Number = std::same_as<Number, T> || requires(const Number& number) {
-    typename Number::Scalar;
-    requires std::same_as<typename Number::Scalar, T>;
-    { number.value() } -> std::same_as<T>;
-    { std::span<const T>{number.derivatives()} };
-};
+concept Pr76Number =
+    std::same_as<Number, T> ||
+    requires(const Number& number) {
+        typename Number::BaseScalar;
+        requires std::same_as<
+            typename Number::BaseScalar,
+            T>;
+        number.value();
+        number.derivatives();
+    };
+
+/// PR76 phase-root implicit differentiation currently guarantees one forward
+/// derivative layer only. Pure/mixing kernels may use nested Duals, but the PT
+/// root IFT must not be silently treated as a second-order implicit solver.
+template <typename Number, typename T>
+concept Pr76PhaseNumber =
+    std::same_as<Number, T> ||
+    requires(const Number& number) {
+        typename Number::Scalar;
+        requires std::same_as<
+            typename Number::Scalar,
+            T>;
+        { number.value() } -> std::same_as<T>;
+        { std::span<const T>{number.derivatives()} };
+    };
 
 template <typename Number>
 [[nodiscard]] auto pr76_value(const Number& number) {
     if constexpr (std::floating_point<Number>) {
         return number;
     } else {
-        return number.value();
+        return pr76_value(number.value());
     }
 }
 
 template <typename Number>
 [[nodiscard]] bool pr76_finite(const Number& number) {
-    if (!std::isfinite(pr76_value(number))) {
-        return false;
-    }
-    if constexpr (!std::floating_point<Number>) {
-        for (const auto derivative : number.derivatives()) {
-            if (!std::isfinite(derivative)) {
+    if constexpr (std::floating_point<Number>) {
+        return std::isfinite(number);
+    } else {
+        if (!pr76_finite(number.value())) {
+            return false;
+        }
+        for (const auto& derivative : number.derivatives()) {
+            if (!pr76_finite(derivative)) {
                 return false;
             }
         }
+        return true;
     }
-    return true;
 }
 } // namespace detail
 

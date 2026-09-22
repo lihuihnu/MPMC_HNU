@@ -459,6 +459,140 @@ void derivative_guard() {
 }
 
 template <typename T>
+void nested_mixture_temperature_contract() {
+    using Outer = ad::Dual<T, 2>;
+    using Nested = ad::Dual<Outer, 1>;
+
+    const auto parameters =
+        Fixture{}.select({0, 1, 2});
+    auto mixture =
+        th::Pr76Mixture<T>::from_parameters(
+            parameters);
+
+    const Outer temperature =
+        Outer::variable(T{450}, 0);
+    const std::vector<Outer> outer_composition{
+        Outer{T{0.25}, {T{0}, T{1}}},
+        Outer{T{0.50}},
+        Outer{T{0.25}, {T{0}, T{-1}}}};
+
+    std::vector<Nested> nested_composition;
+    nested_composition.reserve(
+        outer_composition.size());
+    for (const auto& fraction :
+         outer_composition) {
+        nested_composition.emplace_back(
+            fraction);
+    }
+
+    th::Pr76MixtureWorkspace<Nested>
+        nested_workspace;
+    const auto nested =
+        mixture.evaluate_full(
+            Nested::variable(
+                temperature,
+                0U),
+            std::span<const Nested>{
+                nested_composition},
+            nested_workspace);
+
+    const Outer da_dtemperature =
+        nested.a.derivative(0U);
+
+    using First = ad::Dual<T, 1>;
+    const auto first_temperature_derivative =
+        [&](T temperature_value,
+            T x0,
+            T x2) {
+            const std::vector<First> composition{
+                First{x0},
+                First{T{0.50}},
+                First{x2}};
+            th::Pr76MixtureWorkspace<First>
+                workspace;
+            const auto value =
+                mixture.evaluate_full(
+                    First::variable(
+                        temperature_value,
+                        0U),
+                    std::span<const First>{
+                        composition},
+                    workspace);
+            return value.a.derivative(0U);
+        };
+
+    const T direct =
+        first_temperature_derivative(
+            T{450},
+            T{0.25},
+            T{0.25});
+    near(
+        da_dtemperature.value(),
+        static_cast<long double>(direct));
+
+    const T temperature_step =
+        T{1.0e-2};
+    const T d2a_dtemperature2 =
+        (first_temperature_derivative(
+             T{450} + temperature_step,
+             T{0.25},
+             T{0.25}) -
+         first_temperature_derivative(
+             T{450} - temperature_step,
+             T{0.25},
+             T{0.25})) /
+        (T{2} * temperature_step);
+
+    const T composition_step =
+        T{1.0e-5};
+    const T mixed_tangent =
+        (first_temperature_derivative(
+             T{450},
+             T{0.25} + composition_step,
+             T{0.25} - composition_step) -
+         first_temperature_derivative(
+             T{450},
+             T{0.25} - composition_step,
+             T{0.25} + composition_step)) /
+        (T{2} * composition_step);
+
+    const auto finite_difference_close =
+        [](T actual, T expected) {
+            const T scale =
+                std::max(
+                    {T{1},
+                     std::abs(actual),
+                     std::abs(expected)});
+            return std::isfinite(actual) &&
+                std::isfinite(expected) &&
+                std::abs(actual - expected) <=
+                    T{2.0e-5} * scale;
+        };
+
+    require(
+        finite_difference_close(
+            da_dtemperature.derivative(0U),
+            d2a_dtemperature2),
+        "nested PR76 mixture d2a/dT2 disagrees with fresh central perturbation");
+    require(
+        finite_difference_close(
+            da_dtemperature.derivative(1U),
+            mixed_tangent),
+        "nested PR76 mixture d(da/dT)/dx tangent disagrees with fresh central perturbation");
+
+    using InvalidNested =
+        ad::Dual<ad::Dual<T, 1>, 1>;
+    static_assert(
+        !th::detail::Pr76PhaseNumber<
+            InvalidNested,
+            T>);
+    static_assert(
+        th::detail::Pr76Number<
+            InvalidNested,
+            T>);
+}
+
+template <typename T>
 void selected_phase_fugacity_contract() {
     auto model = kernel<T>();
     th::Pr76PhaseWorkspace<T> direct_workspace;
@@ -605,6 +739,7 @@ void run_typed(std::string_view name) {
     else if(name=="input_domains") {input_domains<T>();}
     else if(name=="ownership_recovery") {ownership_recovery<T>();}
     else if(name=="attraction_cancellation") {attraction_cancellation<T>();}
+    else if(name=="nested_mixture_temperature") {nested_mixture_temperature_contract<T>();}
     else if(name=="selected_phase_fugacity") {selected_phase_fugacity_contract<T>();}
     else if(name=="selected_phase_density") {selected_phase_density_contract<T>();}
     else {throw std::invalid_argument("unknown case");}

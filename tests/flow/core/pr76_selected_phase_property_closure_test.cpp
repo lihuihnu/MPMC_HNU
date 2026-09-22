@@ -14,6 +14,8 @@
 #include <vector>
 
 bool pr76_selected_phase_property_closure_header();
+bool pr76_methane_ethane_propane_properties_header();
+void pr76_methane_ethane_propane_provider_regression();
 
 namespace {
 
@@ -740,6 +742,10 @@ int main() {
             "public header probe failed");
         cardinality_and_direct_eos();
         derivative_oracle();
+        pr76_methane_ethane_propane_provider_regression();
+        require(
+            pr76_methane_ethane_propane_properties_header(),
+            "real PR76 property public header probe failed");
         invalid_inputs();
         std::cout
             << "[PASS] PR76 selected-phase property closure"

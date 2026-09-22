@@ -84,6 +84,28 @@ th::PrParameterSet pr76_snapshot() {
         "coefficients were used, represented here as three explicit zeros",
         "Manually transcribed from the project-supplied 1976 PDF");
 
+    const std::array<th::Provenance, 3> molar_mass_sources{{
+        literature_source(
+            "https://webbook.nist.gov/cgi/cbook.cgi?ID=C74828",
+            "NIST Chemistry WebBook SRD 69; accessed 2026-09-22",
+            "Methane molecular weight 16.0425 g/mol",
+            "Molar mass only; converted to kg/mol for the flow property contract",
+            "Read from the public NIST Chemistry WebBook species record"),
+        literature_source(
+            "https://webbook.nist.gov/cgi/cbook.cgi?ID=C74840",
+            "NIST Chemistry WebBook SRD 69; accessed 2026-09-22",
+            "Ethane molecular weight 30.0690 g/mol",
+            "Molar mass only; converted to kg/mol for the flow property contract",
+            "Read from the public NIST Chemistry WebBook species record"),
+        literature_source(
+            "https://webbook.nist.gov/cgi/cbook.cgi?ID=C74986",
+            "NIST Chemistry WebBook SRD 69; accessed 2026-09-22",
+            "Propane molecular weight 44.0956 g/mol",
+            "Molar mass only; converted to kg/mol for the flow property contract",
+            "Read from the public NIST Chemistry WebBook species record")}};
+    constexpr std::array<double, 3> molar_mass_kg_per_mol{
+        0.0160425, 0.0300690, 0.0440956};
+
     constexpr std::array<std::string_view, 3> ids{
         "methane", "ethane", "propane"};
     constexpr std::array<std::array<double, 3>, 3> values{{
@@ -109,8 +131,17 @@ th::PrParameterSet pr76_snapshot() {
 
     for (std::size_t index = 0; index < ids.size(); ++index) {
         const std::string id(ids[index]);
-        catalog.push_back(
-            {id, id, th::ComponentKind::pure, pure_source, std::nullopt});
+        catalog.push_back({
+            id,
+            id,
+            th::ComponentKind::pure,
+            pure_source,
+            sourced_scalar(
+                molar_mass_kg_per_mol[index],
+                th::Unit::kilogram_per_mole,
+                molar_mass_sources[index],
+                "g/mol",
+                "g/mol * 1e-3 -> kg/mol")});
         input.pure.push_back({
             id,
             sourced_scalar(values[index][0], th::Unit::kelvin, pure_source,
@@ -500,7 +531,10 @@ load_repository_curated_pt_parameter_snapshots_v1() {
           "Table 1 pure-component Tc/Pc/omega"},
          {"https://doi.org/10.1021/i160057a011",
           "Industrial & Engineering Chemistry Fundamentals 15(1), 1976",
-          "Explicit zero binary interactions for the cited ternary example"}}));
+          "Explicit zero binary interactions for the cited ternary example"},
+         {"https://webbook.nist.gov/",
+          "NIST Chemistry WebBook SRD 69; methane/ethane/propane species records; accessed 2026-09-22",
+          "Molecular weights used by the selected-phase mass-density/property closure"}}));
     bundle.snapshots.push_back(descriptor(
         bundle.backends[1],
         "builtin://mpmc/pt/repository-curated-literature-snapshots/v1/sw92",
