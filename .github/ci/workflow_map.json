@@ -967,7 +967,12 @@
       },
       "jobs": {
         "distributed": {
-          "runner": "ubuntu-24.04",
+          "runner": [
+            "self-hosted",
+            "linux",
+            "x64",
+            "mpmc_hnu"
+          ],
           "strategy": null,
           "condition": null,
           "environment": null,
@@ -976,7 +981,7 @@
         }
       },
       "execution": "existing reusable/manual entry",
-      "retained_hash": "c2d982304393d96f35fe8c637245b3c594f0da6043b3b9f3e57b47a0b7c15bc9"
+      "retained_hash": "cf8e137642d4f01858ae2c80c4a0910af5570ef92c9919a62f1bff19e8507048"
     },
     ".github/workflows/frontend.yml": {
       "name": "Frontend",

@@ -39,9 +39,11 @@ def main():
         for job in spec.get('central_hashes', {}):
             assert job in root['jobs'], ('mapped central job missing', job)
     assert auto == [router_path], ('multiple automatic workflow entries', auto)
-    # Private Linux runners are reserved for audited long-running gates.
+    # Private Linux runners are reserved for audited long-running gates and
+    # explicitly authorized PETSc/MPI integration/solver gates.
     private_allowlist = {
         ('.github/workflows/cpa_performance_audit.yml', 'paired-baseline'),
+        ('.github/workflows/flow_discretization_petsc.yml', 'distributed'),
         (router_path, 'legacy_cpa_performance_audit__paired-baseline'),
     }
     private_seen = set()

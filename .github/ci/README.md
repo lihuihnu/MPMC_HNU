@@ -13,7 +13,7 @@
 
 `plan.py` 仅采用同 PR、同 base、祖先可达且中央新版本完整成功的 checkpoint。失败、取消或排队的提交不前移基线；无证据、首次运行、Ready-for-review 回退累计 PR 差异。删除/重命名按旧新路径共同选测。未知可执行路径明确失败，不能静默漏测。首次迁移没有新版本 checkpoint，会验证累计受影响范围，不能为节省本轮时间伪造成功基线。
 
-Linux 科学测试默认使用 GitHub 官方 `ubuntu-24.04`，Windows/macOS 保留官方平台。私有 `mpmc_hnu` 仅用于明确白名单中的长时 Gate；当前仅 CPA performance audit 使用私有 runner。新增私有 runner 消费必须同时更新治理白名单并给出运行时间或稳定硬件需求证据。`Required CI result` 汇总失败/取消，不将 skipped 当作已跑过测试。分支保护不在此次修改范围内。
+Linux 科学测试默认使用 GitHub 官方 `ubuntu-24.04`，Windows/macOS 保留官方平台。私有 `mpmc_hnu` 仅用于明确白名单中的长时 Gate，以及项目负责人已显式授权的 PETSc/MPI Linux 集成/求解 Gate；当前白名单包含 CPA performance audit 与 `flow_discretization_petsc`。新增私有 runner 消费必须同时更新治理白名单，并给出长时/稳定硬件需求或明确的项目负责人授权。`Required CI result` 汇总失败/取消，不将 skipped 当作已跑过测试。分支保护不在此次修改范围内。
 
 ## 后续编写
 
