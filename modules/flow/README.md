@@ -3616,3 +3616,74 @@ EOS/flash tolerances, and never infers oil/gas/water identity from phase slots,
 density, `Z`, or provider ordering. The physical SW92 Sample-6 PT backend remains
 the real 2->3 transition regression for this bridge; controlled flow fixtures test
 only orchestration and failure semantics.
+
+
+## 47. PR76 selected-phase property closure
+
+The first production property bridge from a fixed PR76 selected branch into the
+natural-variable flow chart is explicit about model ownership.
+
+PR76 supplies:
+
+- selected-root `ln(phi_i)`;
+- selected-root molar density `c [mol/m^3]`.
+
+The flow-facing closure additionally requires every ordered component to carry an
+explicit molar mass. It then derives
+
+```text
+rho_mass = c * sum_i x_i M_i
+```
+
+without a fitted conversion or phase-name heuristic.
+
+PR76 does **not** define a viscosity correlation or an absolute caloric reference.
+Therefore the closure requires an explicit scalar-generic transport/caloric provider
+for dynamic viscosity and total specific enthalpy. The provider must carry provenance
+and must preserve AD dependence. Missing molar mass, viscosity/enthalpy capability,
+invalid selected-root topology or non-finite property values are hard failures; no
+default constant property, clipping, finite-difference derivative or silent model
+substitution is permitted.
+
+Specific internal energy is derived from the supplied total specific enthalpy and the
+selected PR76 mass density by the thermodynamic identity
+
+```text
+u = h - p / rho_mass .
+```
+
+The v1 bridge is explicitly `pc=none`: all active phases are evaluated at the
+reference pressure. Capillary-pressure-resolved phase pressures remain a later
+extension.
+
+One topology-neutral chart evaluator now covers `P=1/2/3` with
+
+```text
+q = P*Nc + 1
+```
+
+and publishes, for each active selected phase:
+
+- molar density;
+- mass density;
+- dynamic viscosity;
+- specific enthalpy;
+- specific internal energy;
+- ordered `ln(phi_i)`;
+- full first-order derivatives with respect to the frozen natural-variable chart.
+
+For `P>1`, the same AD pass also publishes the local fugacity-equilibrium residual
+and Jacobian using phase0 as the reference. Saturation columns remain exactly zero in
+this `pc=none` property layer.
+
+The `P=3` convenience bridge converts this publication directly into the existing
+`NaturalVariableCellState3P`, molar-density, transport, caloric and fugacity
+linearization carriers consumed by the production assembly. Relative permeability,
+capillary pressure, stationary-rock thermal storage and mesh/PETSc assembly remain
+separate caller-owned models.
+
+Current validation uses a synthetic differentiable viscosity/enthalpy provider only
+as a software oracle. It verifies the production contract, PR76 kernel reuse and AD
+Jacobian plumbing; it is not a physical transport/caloric validation dataset. A real
+case must supply independently traceable viscosity and enthalpy models before the
+non-isothermal flow result can be called physically validated.
