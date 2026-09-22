@@ -321,7 +321,9 @@ private:
                 converged_reason_) <= 0 ||
             nonlinear_iterations_ < 0 ||
             function_evaluations_ <= 0 ||
-            jacobian_evaluations_ <= 0 ||
+            jacobian_evaluations_ < 0 ||
+            (nonlinear_iterations_ > 0 &&
+             jacobian_evaluations_ == 0) ||
             function_domain_errors_ < 0 ||
             jacobian_domain_errors_ < 0 ||
             line_search_prechecks_ < 0 ||

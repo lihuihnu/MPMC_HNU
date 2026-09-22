@@ -5099,6 +5099,104 @@ void natural_variable_snes_solver() {
                 PetscReal{0.0},
         "SNES adapter modified caller initial-state Vec");
 
+    Vec immediate_state = nullptr;
+    require_collective(
+        VecDuplicate(
+            unused_residual,
+            &immediate_state) ==
+                PETSC_SUCCESS,
+        "SNES immediate-convergence state allocation failed");
+    for (std::size_t slot = 0U;
+         slot < q;
+         ++slot) {
+        const PetscInt global =
+            start +
+            static_cast<PetscInt>(
+                slot);
+        const PetscScalar value =
+            static_cast<PetscScalar>(
+                snes_target_value(
+                    global));
+        require_collective(
+            VecSetValues(
+                immediate_state,
+                1,
+                &global,
+                &value,
+                INSERT_VALUES) ==
+                PETSC_SUCCESS,
+            "SNES immediate-convergence state insertion failed");
+    }
+    require_collective(
+        VecAssemblyBegin(
+            immediate_state) ==
+                PETSC_SUCCESS &&
+            VecAssemblyEnd(
+                immediate_state) ==
+                PETSC_SUCCESS,
+        "SNES immediate-convergence state assembly failed");
+
+    SnesManufacturedContext
+        immediate_context;
+    const fdp::NaturalVariableSnesEvaluator3D
+        immediate_evaluator{
+            snes_manufactured_function,
+            snes_manufactured_jacobian,
+            snes_manufactured_precheck,
+            &immediate_context};
+    Vec immediate_solution = nullptr;
+    std::optional<
+        fdp::NaturalVariableSnesSolveReport3D>
+        immediate_report;
+    error =
+        fdp::
+            solve_natural_variable_snes_3d(
+                PETSC_COMM_WORLD,
+                numbering,
+                immediate_state,
+                jacobian_template,
+                immediate_evaluator,
+                &immediate_solution,
+                &immediate_report);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            immediate_solution != nullptr &&
+            immediate_report.has_value() &&
+            static_cast<int>(
+                immediate_report
+                    ->converged_reason()) >
+                0 &&
+            immediate_report
+                    ->nonlinear_iterations() ==
+                0 &&
+            immediate_report
+                    ->jacobian_evaluations() ==
+                0 &&
+            immediate_report
+                    ->line_search_prechecks() ==
+                0 &&
+            immediate_context
+                    .jacobian_calls ==
+                0 &&
+            immediate_context
+                    .precheck_calls ==
+                0 &&
+            immediate_report
+                    ->function_evaluations() >=
+                1 &&
+            immediate_report
+                    ->final_function_l2_norm() <=
+                1.0e-14,
+        "SNES immediate convergence must publish a valid zero-iteration/zero-Jacobian report");
+    const PetscErrorCode
+        immediate_solution_destroy =
+            VecDestroy(
+                &immediate_solution);
+    const PetscErrorCode
+        immediate_state_destroy =
+            VecDestroy(
+                &immediate_state);
+
     const PetscErrorCode initial_difference_destroy =
         VecDestroy(
             &initial_difference);
@@ -5126,6 +5224,10 @@ void natural_variable_snes_solver() {
             independent_residual_destroy ==
                 PETSC_SUCCESS &&
             solution_destroy ==
+                PETSC_SUCCESS &&
+            immediate_solution_destroy ==
+                PETSC_SUCCESS &&
+            immediate_state_destroy ==
                 PETSC_SUCCESS &&
             initial_before_destroy ==
                 PETSC_SUCCESS &&
