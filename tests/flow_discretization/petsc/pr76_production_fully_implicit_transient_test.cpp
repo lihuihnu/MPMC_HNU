@@ -76,6 +76,132 @@ void near_real_collective(
         message);
 }
 
+struct RealSnesEvaluatorAudit {
+    fdp::NaturalVariableSnesEvaluator3D
+        underlying;
+    std::size_t function_calls{};
+    std::size_t jacobian_calls{};
+    std::size_t precheck_calls{};
+    PetscErrorCode last_function_error{
+        PETSC_SUCCESS};
+    PetscErrorCode last_jacobian_error{
+        PETSC_SUCCESS};
+    PetscErrorCode last_precheck_error{
+        PETSC_SUCCESS};
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        last_function_status{
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success};
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        last_jacobian_status{
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success};
+};
+
+PetscErrorCode audit_real_snes_function(
+    Vec state,
+    Vec residual,
+    void* raw_context,
+    fdp::NaturalVariableSnesEvaluationStatus3D*
+        status) {
+    if (raw_context == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* audit =
+        static_cast<
+            RealSnesEvaluatorAudit*>(
+                raw_context);
+    ++audit->function_calls;
+    const PetscErrorCode error =
+        audit->underlying.function(
+            state,
+            residual,
+            audit->underlying.user_context,
+            status);
+    audit->last_function_error =
+        error;
+    audit->last_function_status =
+        *status;
+    return error;
+}
+
+PetscErrorCode audit_real_snes_jacobian(
+    Vec state,
+    Mat jacobian,
+    void* raw_context,
+    fdp::NaturalVariableSnesEvaluationStatus3D*
+        status) {
+    if (raw_context == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* audit =
+        static_cast<
+            RealSnesEvaluatorAudit*>(
+                raw_context);
+    ++audit->jacobian_calls;
+    const PetscErrorCode error =
+        audit->underlying.jacobian(
+            state,
+            jacobian,
+            audit->underlying.user_context,
+            status);
+    audit->last_jacobian_error =
+        error;
+    audit->last_jacobian_status =
+        *status;
+    return error;
+}
+
+PetscErrorCode audit_real_snes_precheck(
+    Vec state,
+    Vec direction,
+    void* raw_context,
+    PetscBool* changed_direction) {
+    if (raw_context == nullptr ||
+        changed_direction == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* audit =
+        static_cast<
+            RealSnesEvaluatorAudit*>(
+                raw_context);
+    ++audit->precheck_calls;
+    if (audit->underlying.step_precheck ==
+        nullptr) {
+        *changed_direction =
+            PETSC_FALSE;
+        audit->last_precheck_error =
+            PETSC_SUCCESS;
+        return PETSC_SUCCESS;
+    }
+    const PetscErrorCode error =
+        audit->underlying.step_precheck(
+            state,
+            direction,
+            audit->underlying.user_context,
+            changed_direction);
+    audit->last_precheck_error =
+        error;
+    return error;
+}
+
+fdp::NaturalVariableSnesEvaluator3D
+audited_real_snes_evaluator(
+    RealSnesEvaluatorAudit* audit) {
+    return {
+        &audit_real_snes_function,
+        &audit_real_snes_jacobian,
+        audit->underlying.step_precheck !=
+                nullptr
+            ? &audit_real_snes_precheck
+            : nullptr,
+        audit};
+}
+
 th::Provenance real_fixture_source(
     std::string locator) {
     return {
@@ -2253,9 +2379,95 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 preflight_residual_norm) <=
                 1.0e-12,
             "real PR76 transition source is not a zero-flux zero-accumulation residual state");
+
+        RealSnesEvaluatorAudit
+            preflight_audit{
+                preflight_context
+                    ->snes_evaluator()};
+        Vec preflight_solution = nullptr;
+        std::optional<
+            fdp::NaturalVariableSnesSolveReport3D>
+            preflight_solve_report;
+        std::optional<
+            fdp::NaturalVariableSnesFailureDiagnostics3D>
+            preflight_failure;
+        const PetscErrorCode preflight_solve_error =
+            fdp::
+                solve_natural_variable_snes_3d(
+                    PETSC_COMM_WORLD,
+                    *preflight_assembly,
+                    accepted_state,
+                    preflight_jacobian,
+                    audited_real_snes_evaluator(
+                        &preflight_audit),
+                    &preflight_solution,
+                    &preflight_solve_report,
+                    preflight_scaling,
+                    &preflight_failure);
+        if (preflight_solve_error !=
+                PETSC_SUCCESS ||
+            preflight_solution == nullptr ||
+            !preflight_solve_report.has_value()) {
+            if (preflight_solution != nullptr) {
+                (void)VecDestroy(
+                    &preflight_solution);
+            }
+            (void)VecDestroy(
+                &preflight_residual);
+            (void)MatDestroy(
+                &preflight_jacobian);
+            (void)VecDestroy(
+                &preflight_scaling);
+            throw std::runtime_error(
+                std::string{
+                    "real PR76 transition source direct SNES audit failed: petsc_error="} +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_solve_error)) +
+                " function_calls=" +
+                std::to_string(
+                    preflight_audit
+                        .function_calls) +
+                " function_error=" +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_audit
+                            .last_function_error)) +
+                " function_status=" +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_audit
+                            .last_function_status)) +
+                " jacobian_calls=" +
+                std::to_string(
+                    preflight_audit
+                        .jacobian_calls) +
+                " jacobian_error=" +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_audit
+                            .last_jacobian_error)) +
+                " jacobian_status=" +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_audit
+                            .last_jacobian_status)) +
+                " precheck_calls=" +
+                std::to_string(
+                    preflight_audit
+                        .precheck_calls) +
+                " precheck_error=" +
+                std::to_string(
+                    static_cast<int>(
+                        preflight_audit
+                            .last_precheck_error)));
+        }
         require_real_collective(
             VecDestroy(
-                &preflight_residual) ==
+                &preflight_solution) ==
+                    PETSC_SUCCESS &&
+                VecDestroy(
+                    &preflight_residual) ==
                     PETSC_SUCCESS &&
                 MatDestroy(
                     &preflight_jacobian) ==
