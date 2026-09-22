@@ -45,6 +45,29 @@ template <AdScalar T>
         return primal_value(value.value());
     }
 }
+
+template <AdScalar Target, typename U>
+    requires std::constructible_from<Target, U>
+[[nodiscard]] constexpr Target scalar_from(U&& value)
+    noexcept(std::is_nothrow_constructible_v<Target, U>) {
+    if constexpr (std::floating_point<Target>) {
+        // Preserve the old scalar-path conversion semantics explicitly. A
+        // static_cast avoids list-initialization narrowing diagnostics for
+        // expressions such as 3*x when Target is float/double/long double.
+        return static_cast<Target>(
+            std::forward<U>(value));
+    } else if constexpr (
+        std::same_as<
+            std::remove_cvref_t<U>,
+            Target>) {
+        return std::forward<U>(value);
+    } else {
+        // Recurse through the nested Dual constructor until the built-in
+        // BaseScalar performs the explicit conversion above.
+        return Target{
+            std::forward<U>(value)};
+    }
+}
 } // namespace detail
 
 /// Fixed-width forward-mode dual number.
@@ -78,7 +101,7 @@ public:
                  std::constructible_from<Scalar, U>)
     explicit constexpr Dual(U&& value)
         noexcept(std::is_nothrow_constructible_v<Scalar, U>)
-        : value_(std::forward<U>(value)) {}
+        : value_(detail::scalar_from<Scalar>(std::forward<U>(value))) {}
 
     constexpr Dual(Scalar value, const Gradient& derivatives)
         noexcept(std::is_nothrow_move_constructible_v<Scalar> &&
@@ -88,7 +111,9 @@ public:
     template <typename U>
         requires std::constructible_from<Scalar, U>
     [[nodiscard]] static constexpr Dual variable(U&& value, std::size_t index) {
-        Dual result{Scalar{std::forward<U>(value)}};
+        Dual result{
+            detail::scalar_from<Scalar>(
+                std::forward<U>(value))};
         result.derivatives_.at(index) = Scalar{BaseScalar{1}};
         return result;
     }
@@ -161,7 +186,9 @@ public:
         requires(!std::same_as<std::remove_cvref_t<U>, Dual> &&
                  std::constructible_from<Scalar, U>)
     constexpr Dual& operator+=(U&& rhs) {
-        value_ += Scalar{std::forward<U>(rhs)};
+        value_ +=
+            detail::scalar_from<Scalar>(
+                std::forward<U>(rhs));
         return *this;
     }
 
@@ -169,7 +196,9 @@ public:
         requires(!std::same_as<std::remove_cvref_t<U>, Dual> &&
                  std::constructible_from<Scalar, U>)
     constexpr Dual& operator-=(U&& rhs) {
-        value_ -= Scalar{std::forward<U>(rhs)};
+        value_ -=
+            detail::scalar_from<Scalar>(
+                std::forward<U>(rhs));
         return *this;
     }
 
@@ -177,7 +206,9 @@ public:
         requires(!std::same_as<std::remove_cvref_t<U>, Dual> &&
                  std::constructible_from<Scalar, U>)
     constexpr Dual& operator*=(U&& rhs) {
-        const Scalar scalar{std::forward<U>(rhs)};
+        const Scalar scalar =
+            detail::scalar_from<Scalar>(
+                std::forward<U>(rhs));
         value_ *= scalar;
         for (auto& derivative : derivatives_) {
             derivative *= scalar;
@@ -189,7 +220,9 @@ public:
         requires(!std::same_as<std::remove_cvref_t<U>, Dual> &&
                  std::constructible_from<Scalar, U>)
     constexpr Dual& operator/=(U&& rhs) {
-        const Scalar scalar{std::forward<U>(rhs)};
+        const Scalar scalar =
+            detail::scalar_from<Scalar>(
+                std::forward<U>(rhs));
         require_nonzero(scalar);
         value_ /= scalar;
         for (auto& derivative : derivatives_) {
