@@ -4155,3 +4155,30 @@ This state is therefore the first fixed methane/ethane/propane operating point i
 the flow PR that is required to produce real PR76 thermodynamic `1P -> 2P` evidence.
 It is intentionally separate from the existing 450 K / approximately 8 MPa stable
 single-phase transient fixture.
+
+### 47.11 Real PR76-triggered fully implicit 1P->2P restart
+
+The fixed 250 K / 3 MPa / z=[0.50,0.30,0.20] state now drives an end-to-end
+two-rank restart regression. This path no longer injects a controlled transition
+proposal.
+
+The source is a closed two-cell MPI system with zero connection rows. Cell10 uses
+the real PR76 two-phase-trigger state; cell20 uses the already validated stable
+450 K / 8 MPa one-phase state. Accepted t_n component/energy history is built from
+exactly each initial one-phase state, so the fixed-cardinality source residual is
+zero and source SNES must converge without moving q.
+
+The normal adaptive post-SNES review then runs `Pr76PtFlashBackend` with selected-
+branch molar-density resolution. Exactly one proposal is permitted globally:
+cell10 1P->2P. Rank1 must publish no local proposal.
+
+The retained real proposal flows through target-rebuild planning, per-cell PR76
+selected-root closure construction, mixed 2P/1P ragged materialization and a
+restarted PETSc SNES solve. Physical phase identity remains an explicit opaque
+regression mapping because the current PR76 backend deliberately reports
+`morphology_resolved=false`; EOS root indices are not renamed liquid/vapor.
+
+The final restarted system must contain 11 global scalars (cell10 q=7, cell20 q=4),
+converge with finite final SNES residual <= 1e-6, leave cell10 on strict-positive
+two-phase saturation support, and pass a fresh production PT rescan with status
+`complete` and no further transition proposal.

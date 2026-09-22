@@ -202,6 +202,29 @@ flow::NaturalVariableLayout1P real_layout_1p() {
 }
 
 std::vector<double>
+real_transition_source_state(
+    std::uint64_t stable) {
+    const auto layout =
+        real_layout_1p();
+    std::vector<double> q(
+        layout.unknown_count(),
+        0.0);
+    q[layout.pressure_unknown_index()] =
+        stable == UINT64_C(10)
+            ? 3.0e6
+            : 8.0e6;
+    q[layout.temperature_unknown_index()] =
+        stable == UINT64_C(10)
+            ? 250.0
+            : 450.0;
+    q[*layout.independent_composition_unknown_index(
+        0U)] = 0.50;
+    q[*layout.independent_composition_unknown_index(
+        2U)] = 0.20;
+    return q;
+}
+
+std::vector<double>
 real_previous_state(std::uint64_t stable) {
     const auto layout =
         real_layout_1p();
@@ -690,6 +713,19 @@ real_schedule(int rank) {
         {row}};
 }
 
+dp::ParallelOwnedConnectionSchedule3D
+real_transition_source_schedule(
+    int rank) {
+    return {
+        mesh::PartitionRank{
+            static_cast<
+                mesh::PartitionRank::value_type>(
+                    rank)},
+        2U,
+        {},
+        {}};
+}
+
 mesh::DofLayout real_dof_layout(int rank) {
     return mesh::DofLayout::create(
         real_topology(rank),
@@ -948,6 +984,123 @@ real_cells(
             std::move(cell));
     }
     return cells;
+}
+
+template <typename Closure>
+std::vector<fdp::SinglePhaseSnesCellInput3D>
+real_transition_source_cells(
+    int rank,
+    fdp::Pr76SinglePhaseProductionCellEvaluatorContext3D<
+        Closure>* context) {
+    std::vector<fdp::SinglePhaseSnesCellInput3D>
+        cells;
+    cells.reserve(2U);
+
+    for (std::size_t local = 0U;
+         local < 2U;
+         ++local) {
+        const std::uint64_t stable =
+            rank == 0
+                ? (local == 0U
+                       ? UINT64_C(10)
+                       : UINT64_C(20))
+                : (local == 0U
+                       ? UINT64_C(20)
+                       : UINT64_C(10));
+        const bool owned =
+            (rank == 0 &&
+             stable == UINT64_C(10)) ||
+            (rank == 1 &&
+             stable == UINT64_C(20));
+
+        const auto source =
+            real_transition_source_state(
+                stable);
+        auto evaluated =
+            real_direct_cell_typed(
+                stable,
+                source,
+                context);
+
+        fdp::SinglePhaseSnesCellInput3D cell;
+        cell.cell =
+            mesh::LocalIndex{
+                static_cast<
+                    mesh::LocalIndex::value_type>(
+                        local)};
+        cell.cell_global =
+            mesh::GlobalEntityId{stable};
+        cell.bulk_volume_m3 =
+            stable == UINT64_C(10)
+                ? 2.0
+                : 5.0;
+        cell.porosity =
+            stable == UINT64_C(10)
+                ? 0.25
+                : 0.30;
+        cell.frozen_layout =
+            real_layout_1p();
+        cell.component_ids =
+            real_component_ids();
+
+        if (owned) {
+            cell.previous_component_accumulation =
+                flow::
+                    build_single_phase_component_accumulation(
+                        evaluated->state,
+                        cell.porosity);
+            cell.previous_energy_accumulation =
+                flow::
+                    build_single_phase_energy_accumulation_snapshot(
+                        evaluated->state,
+                        cell.porosity,
+                        evaluated->transport,
+                        evaluated->caloric,
+                        evaluated->rock);
+        }
+        cells.push_back(
+            std::move(cell));
+    }
+    return cells;
+}
+
+void set_real_transition_source_state(
+    Vec state,
+    int rank) {
+    const auto values =
+        real_transition_source_state(
+            rank == 0
+                ? UINT64_C(10)
+                : UINT64_C(20));
+    const PetscInt start =
+        static_cast<PetscInt>(
+            rank * 4);
+    for (std::size_t slot = 0U;
+         slot < values.size();
+         ++slot) {
+        const PetscInt index =
+            start +
+            static_cast<PetscInt>(
+                slot);
+        const PetscScalar value =
+            static_cast<PetscScalar>(
+                values[slot]);
+        require_real_collective(
+            VecSetValues(
+                state,
+                1,
+                &index,
+                &value,
+                INSERT_VALUES) ==
+                PETSC_SUCCESS,
+            "failed to seed real PR76 transition source state");
+    }
+    require_real_collective(
+        VecAssemblyBegin(state) ==
+                PETSC_SUCCESS &&
+            VecAssemblyEnd(state) ==
+                PETSC_SUCCESS,
+        "failed to assemble real PR76 transition source state");
 }
 
 std::vector<
@@ -1426,6 +1579,8 @@ struct RealPr76PostSnesPtReviewContext {
     fl::Pr76PtFlashBackend* backend{};
     fdp::Pr76SinglePhaseProductionCellEvaluatorContext3D<
         Closure>* evaluator_context{};
+    fdp::PostSnesPtFlashTargetPhaseMolarDensityBinding3D
+        target_density;
     int rank{-1};
     std::size_t equal_cardinality_stable_scans{};
     std::vector<
@@ -1517,7 +1672,7 @@ PetscErrorCode real_pr76_post_snes_pt_review(
         fdp::scan_post_snes_pt_flash_source_cell_3d(
             source,
             *context->backend,
-            {},
+            context->target_density,
             &proposal,
             &scan_status);
     if (scan_error != PETSC_SUCCESS) {
@@ -1790,6 +1945,526 @@ PetscErrorCode controlled_pr76_absent_branch_resolution(
     output->emplace(
         active_reference_selection);
     return PETSC_SUCCESS;
+}
+
+template <typename Closure>
+void check_real_pr76_one_to_two_fully_implicit_restart(
+    int rank,
+    const th::Pr76Phase<double>& model,
+    fdp::Pr76SinglePhaseProductionCellEvaluatorContext3D<
+        Closure>* source_evaluator_context) {
+    auto partition =
+        real_partition(rank);
+    auto schedule =
+        real_transition_source_schedule(
+            rank);
+    auto dof_layout =
+        real_dof_layout(rank);
+    auto dof_numbering =
+        real_numbering(
+            rank,
+            dof_layout,
+            partition);
+    auto cell_bridge =
+        real_cell_bridge(rank);
+    auto cell_pattern =
+        real_cell_pattern(rank);
+    auto source_cells =
+        real_transition_source_cells(
+            rank,
+            source_evaluator_context);
+    const std::vector<
+        fdp::SinglePhaseSnesAuthoritativeFaceInput3D>
+        no_faces;
+
+    Vec accepted_state = nullptr;
+    require_real_collective(
+        VecCreateMPI(
+            PETSC_COMM_WORLD,
+            4,
+            8,
+            &accepted_state) ==
+            PETSC_SUCCESS,
+        "failed to create real PR76 transition accepted state");
+    set_real_transition_source_state(
+        accepted_state,
+        rank);
+
+    fl::Pr76VleEvaluator
+        pt_evaluator(
+            model);
+    fl::Pr76PtFlashBackend
+        pt_backend(
+            pt_evaluator);
+    RealPr76FlashDensityContext
+        density_context{
+            &model,
+            pt_evaluator.root_options()};
+    RealPr76PostSnesPtReviewContext<
+        Closure>
+        review_context{
+            &pt_backend,
+            source_evaluator_context,
+            {
+                &resolve_real_pr76_flash_target_densities,
+                &density_context},
+            rank,
+            0U,
+            {}};
+
+    std::optional<
+        fdp::SinglePhaseAdaptiveTimestepAttemptContext3D>
+        source_attempt;
+    PetscErrorCode error =
+        fdp::SinglePhaseAdaptiveTimestepAttemptContext3D::
+            create(
+                PETSC_COMM_WORLD,
+                &schedule,
+                &partition,
+                &dof_layout,
+                &dof_numbering,
+                &cell_bridge,
+                &cell_pattern,
+                "real_pr76_natural_state_1p",
+                &source_cells,
+                &no_faces,
+                {
+                    &fdp::
+                        evaluate_pr76_single_phase_production_cell_3d<
+                            Closure>,
+                    source_evaluator_context},
+                accepted_state,
+                {
+                    &real_pr76_post_snes_pt_review<
+                        Closure>,
+                    &review_context},
+                &source_attempt);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            source_attempt.has_value(),
+        "failed to create real PR76 physical transition source attempt");
+
+    const fdp::AdaptiveTimestepAttemptRequest3D
+        request{
+            0U,
+            0U,
+            1.0};
+    fdp::AdaptiveTimestepAttemptResult3D
+        attempt_result;
+    error =
+        fdp::
+            evaluate_single_phase_adaptive_timestep_attempt_3d(
+                request,
+                &*source_attempt,
+                &attempt_result);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            attempt_result.outcome ==
+                fdp::
+                    AdaptiveTimestepAttemptOutcome3D::
+                        phase_transition_proposed &&
+            source_attempt
+                ->has_pending_transition(),
+        "real PR76 1P source solve did not trigger a physical transition handoff");
+
+    Vec converged_source = nullptr;
+    std::optional<
+        fdp::NaturalVariableSnesSolveReport3D>
+        source_report;
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>
+        local_proposals;
+    error =
+        source_attempt
+            ->take_pending_transition(
+                request,
+                &converged_source,
+                &source_report,
+                &local_proposals);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            converged_source != nullptr &&
+            source_report.has_value() &&
+            static_cast<int>(
+                source_report
+                    ->converged_reason()) >
+                0,
+        "real PR76 physical handoff did not retain the converged fixed-1P solve");
+
+    const auto expected_source =
+        real_transition_source_state(
+            rank == 0
+                ? UINT64_C(10)
+                : UINT64_C(20));
+    const auto observed_source =
+        read_owned_real_state(
+            converged_source,
+            rank);
+    for (std::size_t slot = 0U;
+         slot < observed_source.size();
+         ++slot) {
+        near_real_collective(
+            observed_source[slot],
+            expected_source[slot],
+            1.0e-12,
+            1.0e-12,
+            "real PR76 fixed source SNES changed the zero-residual source state");
+    }
+
+    const std::uint64_t local_proposal_count =
+        static_cast<std::uint64_t>(
+            local_proposals.size());
+    std::uint64_t global_proposal_count = 0U;
+    require_real_collective(
+        MPI_Allreduce(
+            &local_proposal_count,
+            &global_proposal_count,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            global_proposal_count ==
+                UINT64_C(1) &&
+            (rank == 0
+                 ? local_proposals.size() ==
+                       1U &&
+                       local_proposals.front()
+                               .cell_global ==
+                           mesh::GlobalEntityId{
+                               UINT64_C(10)}
+                 : local_proposals.empty()),
+        "real PR76 source scan did not produce exactly one cell10 1P->2P proposal");
+
+    std::vector<
+        flow::FrozenActivePhaseIdentityMap>
+        source_phase_maps;
+    source_phase_maps.reserve(
+        source_cells.size());
+    for (std::size_t local = 0U;
+         local < source_cells.size();
+         ++local) {
+        source_phase_maps.emplace_back(
+            std::vector<
+                flow::FrozenPhysicalPhaseIdentity>{
+                real_handoff_phase_identity(
+                    "phase-0")});
+    }
+
+    std::optional<
+        fdp::
+            Pr76SinglePhaseTransitionTargetRebuildPlan3D>
+        target_plan;
+    error =
+        fdp::
+            make_pr76_single_phase_transition_target_rebuild_plan_3d(
+                PETSC_COMM_WORLD,
+                partition,
+                source_cells,
+                *source_report,
+                {
+                    &fdp::
+                        evaluate_pr76_single_phase_production_cell_3d<
+                            Closure>,
+                    source_evaluator_context},
+                source_phase_maps,
+                local_proposals,
+                pt_evaluator.root_options(),
+                {
+                    &controlled_pr76_target_identity_resolution,
+                    nullptr},
+                &target_plan);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            target_plan.has_value() &&
+            target_plan
+                    ->local_transition_cells
+                    .size() ==
+                1U,
+        "real PR76 physical proposal did not form a distributed target rebuild plan");
+
+    const auto transition_cell =
+        std::find_if(
+            target_plan
+                ->local_transition_cells
+                .begin(),
+            target_plan
+                ->local_transition_cells
+                .end(),
+            [](const auto& entry) {
+                return entry.cell_global ==
+                    mesh::GlobalEntityId{
+                        UINT64_C(10)};
+            });
+    require_real_collective(
+        transition_cell !=
+                target_plan
+                    ->local_transition_cells
+                    .end() &&
+            transition_cell
+                    ->target_phases
+                    .size() ==
+                2U,
+        "real PR76 physical target plan lost cell10 two-phase roots");
+
+    std::vector<th::Pr76SelectedPhase>
+        two_phase_selections;
+    for (const auto& phase :
+         transition_cell
+             ->target_phases) {
+        two_phase_selections.push_back(
+            phase.selection);
+    }
+    auto two_phase_closure =
+        flow::
+            make_pr76_methane_ethane_propane_property_closure(
+                model,
+                two_phase_selections);
+    using TwoPhaseClosure =
+        decltype(two_phase_closure);
+    fdp::Pr76TwoPhaseProductionCellEvaluatorContext3D<
+        TwoPhaseClosure>
+        two_phase_context{
+            &two_phase_closure,
+            {&linear_two_phase_kr, nullptr},
+            {&disabled_rock_storage, nullptr},
+            {}};
+
+    fdp::
+        CellScopedMixedCardinalityEvaluatorDispatcher3D
+        dispatcher{
+            {
+                {
+                    mesh::GlobalEntityId{
+                        UINT64_C(20)},
+                    {
+                        &fdp::
+                            evaluate_pr76_single_phase_production_cell_3d<
+                                Closure>,
+                        source_evaluator_context}}
+            },
+            {
+                {
+                    mesh::GlobalEntityId{
+                        UINT64_C(10)},
+                    {
+                        &fdp::
+                            evaluate_pr76_two_phase_production_cell_3d<
+                                TwoPhaseClosure>,
+                        &two_phase_context}}
+            },
+            {}};
+
+    std::unique_ptr<
+        fdp::
+            Pr76TransitionRebuildMaterializedSystem3D>
+        materialized;
+    error =
+        fdp::
+            materialize_pr76_single_phase_transition_target_rebuild_3d(
+                PETSC_COMM_WORLD,
+                schedule,
+                partition,
+                cell_bridge,
+                cell_pattern,
+                1.0,
+                std::move(
+                    *target_plan),
+                no_faces,
+                std::move(
+                    dispatcher),
+                model,
+                {
+                    &controlled_pr76_absent_branch_resolution,
+                    nullptr},
+                &materialized);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            materialized != nullptr &&
+            materialized->system != nullptr &&
+            materialized
+                    ->system
+                    ->numbering()
+                    .petsc_global_scalar_count() ==
+                11U,
+        "real PR76 physical target did not materialize the 2P/1P ragged system");
+
+    Vec restarted_state = nullptr;
+    std::optional<
+        fdp::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        restarted_report;
+    error =
+        materialized
+            ->system
+            ->solve(
+                &restarted_state,
+                &restarted_report);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            restarted_state != nullptr &&
+            restarted_report.has_value() &&
+            static_cast<int>(
+                restarted_report
+                    ->converged_reason) >
+                0 &&
+            std::isfinite(
+                restarted_report
+                    ->final_function_l2_norm) &&
+            restarted_report
+                    ->final_function_l2_norm <=
+                1.0e-6,
+        "real PR76 restarted mixed-cardinality SNES did not converge");
+
+    bool local_two_phase_ok = true;
+    if (rank == 0) {
+        try {
+            const auto cell10 =
+                partition.local_index(
+                    mesh::EntityKind::cell,
+                    mesh::GlobalEntityId{
+                        UINT64_C(10)});
+            const auto& record =
+                materialized
+                    ->system
+                    ->numbering()
+                    .cell(
+                        cell10);
+            std::vector<PetscInt>
+                indices(
+                    record.scalar_count);
+            std::vector<PetscScalar>
+                petsc_values(
+                    record.scalar_count);
+            for (std::size_t slot = 0U;
+                 slot < record.scalar_count;
+                 ++slot) {
+                indices[slot] =
+                    record
+                        .petsc_global_scalar_start +
+                    static_cast<PetscInt>(
+                        slot);
+            }
+            if (VecGetValues(
+                    restarted_state,
+                    static_cast<PetscInt>(
+                        indices.size()),
+                    indices.data(),
+                    petsc_values.data()) !=
+                PETSC_SUCCESS) {
+                local_two_phase_ok =
+                    false;
+            } else {
+                std::vector<double> q(
+                    record.scalar_count,
+                    0.0);
+                for (std::size_t slot = 0U;
+                     slot < q.size();
+                     ++slot) {
+                    q[slot] =
+                        static_cast<double>(
+                            PetscRealPart(
+                                petsc_values[slot]));
+                }
+                std::optional<
+                    fdp::
+                        MixedCardinalityPhysicalCurrentCellLinearization3D>
+                    current;
+                double porosity = 0.0;
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D
+                    status =
+                        fdp::
+                            NaturalVariableSnesEvaluationStatus3D::
+                                success;
+                if (materialized
+                        ->system
+                        ->evaluate_current_cell_for_phase_transition(
+                            cell10,
+                            q,
+                            &current,
+                            &porosity,
+                            &status) !=
+                        PETSC_SUCCESS ||
+                    status !=
+                        fdp::
+                            NaturalVariableSnesEvaluationStatus3D::
+                                success ||
+                    !current.has_value()) {
+                    local_two_phase_ok =
+                        false;
+                } else {
+                    const auto* two =
+                        std::get_if<
+                            fdp::
+                                TwoPhaseCurrentCellLinearization3D>(
+                                    &*current);
+                    local_two_phase_ok =
+                        two != nullptr &&
+                        porosity > 0.0 &&
+                        two->state
+                                .phase_saturation(
+                                    0U) >
+                            1.0e-8 &&
+                        two->state
+                                .phase_saturation(
+                                    1U) >
+                            1.0e-8;
+                }
+            }
+        } catch (...) {
+            local_two_phase_ok =
+                false;
+        }
+    }
+    require_real_collective(
+        local_two_phase_ok,
+        "real PR76 restarted cell10 is not a strict-positive two-phase production state");
+
+    fdp::
+        PostSnesPtFlashPhaseTransitionScannerContext3D
+        final_scanner{
+            &pt_backend,
+            {
+                &resolve_real_pr76_flash_target_densities,
+                &density_context}};
+    fdp::PostSnesPhaseTransitionScanStatus3D
+        final_scan_status =
+            fdp::
+                PostSnesPhaseTransitionScanStatus3D::
+                    indeterminate;
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>
+        final_proposals;
+    error =
+        fdp::
+            scan_post_snes_pt_flash_phase_transitions_3d(
+                *materialized->system,
+                restarted_state,
+                *restarted_report,
+                &final_scanner,
+                &final_scan_status,
+                &final_proposals);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            final_scan_status ==
+                fdp::
+                    PostSnesPhaseTransitionScanStatus3D::
+                        complete &&
+            final_proposals.empty(),
+        "real PR76 restarted 2P/1P state failed the production post-SNES stability rescan");
+
+    require_real_collective(
+        VecDestroy(
+            &restarted_state) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &converged_source) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &accepted_state) ==
+                PETSC_SUCCESS,
+        "real PR76 physical restart state cleanup failed");
 }
 
 PetscErrorCode real_unexpected_transition_commit(
@@ -2116,11 +2791,16 @@ void pr76_production_fully_implicit_transient_test() {
         pt_review_context{
             &pt_backend,
             &evaluator_context,
+            {},
             rank,
             0U,
             {}};
 
     check_real_face_flux(
+        &evaluator_context);
+    check_real_pr76_one_to_two_fully_implicit_restart(
+        rank,
+        model,
         &evaluator_context);
 
     auto partition =
