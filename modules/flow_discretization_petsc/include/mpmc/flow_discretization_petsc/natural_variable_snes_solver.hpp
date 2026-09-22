@@ -1361,17 +1361,24 @@ solve_natural_variable_snes_3d(
     // setup before GMRES performs an iteration. Keep the audited top-level
     // GMRES+ASM contract, but use an exact PETSc LU solve inside each ASM block
     // for this correctness baseline. Before local factorization, PETSc reorders
-    // exact-zero diagonal entries onto usable pivots; no Jacobian value is
-    // shifted or regularized. The private prefix prevents these internal
-    // sub-solver options from replacing the top-level KSP/PC or analytic J.
+    // weak diagonal entries onto usable pivots. When the caller explicitly
+    // supplies frozen row equilibration, the sub-PC also uses PETSc's documented
+    // MAT_SHIFT_NONZERO factorization stabilization. That shift belongs only to
+    // the private LU preconditioner matrix: the caller-owned physical J, R and
+    // nonlinear root are never modified. The private prefix prevents these
+    // internal sub-solver options from replacing the top-level KSP/PC or
+    // analytic J.
     constexpr const char* asm_options_prefix =
         "mpmc_natural_variable_";
     constexpr const char* asm_sub_pc_option =
         "-mpmc_natural_variable_sub_pc_type";
     constexpr const char* asm_sub_pc_reorder_option =
         "-mpmc_natural_variable_sub_pc_factor_nonzeros_along_diagonal";
+    constexpr const char* asm_sub_pc_shift_type_option =
+        "-mpmc_natural_variable_sub_pc_factor_shift_type";
     bool asm_sub_pc_option_installed = false;
     bool asm_sub_pc_reorder_option_installed = false;
+    bool asm_sub_pc_shift_type_option_installed = false;
     if (error == PETSC_SUCCESS) {
         error =
             PCSetOptionsPrefix(
@@ -1407,6 +1414,16 @@ solve_natural_variable_snes_3d(
         asm_sub_pc_reorder_option_installed =
             error == PETSC_SUCCESS;
     }
+    if (error == PETSC_SUCCESS &&
+        row_scaling != nullptr) {
+        error =
+            PetscOptionsSetValue(
+                nullptr,
+                asm_sub_pc_shift_type_option,
+                "nonzero");
+        asm_sub_pc_shift_type_option_installed =
+            error == PETSC_SUCCESS;
+    }
     if (error == PETSC_SUCCESS) {
         error =
             KSPSetTolerances(
@@ -1439,6 +1456,11 @@ solve_natural_variable_snes_3d(
                 PETSC_TRUE);
     }
     if (error != PETSC_SUCCESS) {
+        if (asm_sub_pc_shift_type_option_installed) {
+            (void)PetscOptionsClearValue(
+                nullptr,
+                asm_sub_pc_shift_type_option);
+        }
         if (asm_sub_pc_reorder_option_installed) {
             (void)PetscOptionsClearValue(
                 nullptr,
@@ -1461,13 +1483,26 @@ solve_natural_variable_snes_3d(
 
     PetscErrorCode options_clear_error =
         PETSC_SUCCESS;
-    if (asm_sub_pc_reorder_option_installed) {
+    if (asm_sub_pc_shift_type_option_installed) {
         options_clear_error =
+            PetscOptionsClearValue(
+                nullptr,
+                asm_sub_pc_shift_type_option);
+        asm_sub_pc_shift_type_option_installed =
+            false;
+    }
+    if (asm_sub_pc_reorder_option_installed) {
+        const PetscErrorCode clear_reorder_error =
             PetscOptionsClearValue(
                 nullptr,
                 asm_sub_pc_reorder_option);
         asm_sub_pc_reorder_option_installed =
             false;
+        if (options_clear_error == PETSC_SUCCESS &&
+            clear_reorder_error != PETSC_SUCCESS) {
+            options_clear_error =
+                clear_reorder_error;
+        }
     }
     if (asm_sub_pc_option_installed) {
         const PetscErrorCode clear_pc_type_error =
