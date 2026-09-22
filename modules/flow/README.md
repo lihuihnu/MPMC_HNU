@@ -4162,7 +4162,7 @@ The fixed 300 K / 2 MPa / z=[0.20,0.15,0.65] state now drives an end-to-end
 two-rank restart regression. This path no longer injects a controlled transition
 proposal.
 
-The source is a closed two-cell MPI system with zero connection rows. Cell10 uses
+The source is a closed two-cell MPI system with one structural connection whose physical flux is exactly zero. Cell10 uses
 the real PR76 two-phase-trigger state; cell20 uses the already validated stable
 450 K / 8 MPa one-phase state. Accepted t_n component/energy history is built from
 exactly each initial one-phase state, so the fixed-cardinality source residual is
@@ -4195,3 +4195,22 @@ z=[0.20,0.15,0.65] state. This point lies inside the caloric provider temperatur
 range and retains an explicit metastable one-phase PR76 root for the frozen source
 chart. The repository backend/scanner still decides whether it is accepted as the
 real 1P->2P trigger; no external phase fraction is used as an oracle.
+
+### 47.11.2 Preserve production ASM graph while freezing source flux
+
+The source restart regression no longer removes the inter-cell connection. That
+isolated algebraic graph was rejected by the audited GMRES+ASM solve contract before
+SNES callbacks were entered (`PETSC_ERR_ARG_INCOMP`).
+
+The source now retains the normal two-cell structural stencil and preallocation.
+Both cells use 2.0 MPa reference pressure, the transition face uses zero gravity
+and zero thermal conductance, so Darcy/component/energy face contributions are
+exactly zero at the accepted source state while the off-diagonal Jacobian graph
+remains present for ASM. The preflight independently requires the materialized
+physical residual L2 norm to be <= 1e-12 before the source SNES is invoked.
+
+For the restarted 2P/1P face, the absent-side PR76 branch is no longer a controlled
+`root=0` fixture. A resolver evaluates `roots_full` at the absent host p/T and
+hypothetical target composition and publishes a selection only when exactly one
+positive-slope derivative-valid PR76 branch exists. Ambiguous root topology remains
+unresolved instead of being guessed.

@@ -210,9 +210,7 @@ real_transition_source_state(
         layout.unknown_count(),
         0.0);
     q[layout.pressure_unknown_index()] =
-        stable == UINT64_C(10)
-            ? 2.0e6
-            : 8.0e6;
+        2.0e6;
     q[layout.temperature_unknown_index()] =
         stable == UINT64_C(10)
             ? 300.0
@@ -719,19 +717,6 @@ real_schedule(int rank) {
         {row}};
 }
 
-dp::ParallelOwnedConnectionSchedule3D
-real_transition_source_schedule(
-    int rank) {
-    return {
-        mesh::PartitionRank{
-            static_cast<
-                mesh::PartitionRank::value_type>(
-                    rank)},
-        2U,
-        {},
-        {}};
-}
-
 mesh::DofLayout real_dof_layout(int rank) {
     return mesh::DofLayout::create(
         real_topology(rank),
@@ -838,67 +823,6 @@ real_cell_pattern(int rank) {
             static_cast<PetscInt>(
                 rank == 0 ? 1 : 0)}
     };
-}
-
-dp::PetscMpiAijSymbolicPreallocation3D
-real_isolated_cell_bridge(
-    int rank) {
-    const PetscInt row =
-        static_cast<PetscInt>(rank);
-    return {
-        mesh::PartitionRank{
-            static_cast<
-                mesh::PartitionRank::value_type>(
-                    rank)},
-        2U,
-        row,
-        row + 1,
-        2,
-        {mesh::LocalIndex{0U}},
-        {
-            mesh::GlobalEntityId{
-                rank == 0
-                    ? UINT64_C(10)
-                    : UINT64_C(20)}
-        },
-        {row},
-        {1},
-        {0},
-        rank == 0
-            ? std::vector<PetscInt>{0, 1}
-            : std::vector<PetscInt>{1, 0}};
-}
-
-dp::OwnedCellStructuralColumnPatternSnapshot3D
-real_isolated_cell_pattern(
-    int rank) {
-    const PetscInt row =
-        static_cast<PetscInt>(rank);
-    return {
-        mesh::PartitionRank{
-            static_cast<
-                mesh::PartitionRank::value_type>(
-                    rank)},
-        2U,
-        2U,
-        row,
-        row + 1,
-        2,
-        {
-            dp::OwnedCellStructuralColumnPatternRow3D{
-                mesh::LocalIndex{0U},
-                mesh::GlobalEntityId{
-                    rank == 0
-                        ? UINT64_C(10)
-                        : UINT64_C(20)},
-                row,
-                0U,
-                1U,
-                0U,
-                0U}
-        },
-        {row},
-        {}};
 }
 
 disc::CombinedTransmissibilityAdmissibility3D
@@ -1176,6 +1100,25 @@ void set_real_transition_source_state(
             VecAssemblyEnd(state) ==
                 PETSC_SUCCESS,
         "failed to assemble real PR76 transition source state");
+}
+
+std::vector<
+    fdp::SinglePhaseSnesAuthoritativeFaceInput3D>
+real_transition_source_faces(
+    int rank) {
+    if (rank != 0) {
+        return {};
+    }
+    return {{
+        mesh::LocalIndex{0U},
+        mesh::GlobalEntityId{UINT64_C(100)},
+        real_transmissibility(),
+        flow::GravityVector3D{
+            0.0, 0.0, 0.0},
+        flow::OwnerToNeighbourDisplacement3D{
+            0.0, 0.0, 1.0},
+        fd::StaticThermalFaceConductance3D{
+            0.0}}};
 }
 
 std::vector<
@@ -2047,6 +1990,83 @@ PetscErrorCode controlled_pr76_absent_branch_resolution(
     return PETSC_SUCCESS;
 }
 
+struct RealPr76UniqueAbsentBranchContext {
+    const th::Pr76Phase<double>* model{};
+    th::Pr76RootOptions root_options;
+};
+
+PetscErrorCode resolve_unique_pr76_absent_branch(
+    mesh::GlobalEntityId,
+    const flow::FrozenPhysicalPhaseIdentity&,
+    const flow::NaturalVariableStateIdentity3P&
+        absent_host_state,
+    std::span<const double>
+        active_reference_composition,
+    const th::Pr76SelectedPhase&,
+    void* raw_context,
+    std::optional<
+        th::Pr76SelectedPhase>* output) {
+    if (raw_context == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    auto* context =
+        static_cast<
+            RealPr76UniqueAbsentBranchContext*>(
+                raw_context);
+    if (context->model == nullptr ||
+        active_reference_composition.size() !=
+            context->model->size()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    try {
+        th::Pr76PhaseWorkspace<double>
+            workspace;
+        const auto roots =
+            context->model->roots_full(
+                absent_host_state
+                    .reference_pressure_pa,
+                absent_host_state
+                    .temperature_k,
+                active_reference_composition,
+                workspace,
+                context->root_options);
+        if (roots.status !=
+            th::Pr76RootStatus::success) {
+            return PETSC_SUCCESS;
+        }
+
+        std::optional<std::size_t>
+            unique;
+        for (std::size_t root = 0U;
+             root < roots.count;
+             ++root) {
+            if (roots.roots[root]
+                        .slope_sign <= 0 ||
+                !roots.roots[root]
+                     .derivative_valid) {
+                continue;
+            }
+            if (unique.has_value()) {
+                output->reset();
+                return PETSC_SUCCESS;
+            }
+            unique = root;
+        }
+        if (unique.has_value()) {
+            output->emplace(
+                th::Pr76SelectedPhase{
+                    *unique,
+                    context->root_options});
+        }
+        return PETSC_SUCCESS;
+    } catch (const std::exception&) {
+        return PETSC_ERR_LIB;
+    }
+}
+
 template <typename Closure>
 void check_real_pr76_one_to_two_fully_implicit_restart(
     int rank,
@@ -2056,7 +2076,7 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
     auto partition =
         real_partition(rank);
     auto schedule =
-        real_transition_source_schedule(
+        real_schedule(
             rank);
     auto dof_layout =
         real_dof_layout(rank);
@@ -2066,18 +2086,18 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
             dof_layout,
             partition);
     auto cell_bridge =
-        real_isolated_cell_bridge(
+        real_cell_bridge(
             rank);
     auto cell_pattern =
-        real_isolated_cell_pattern(
+        real_cell_pattern(
             rank);
     auto source_cells =
         real_transition_source_cells(
             rank,
             source_evaluator_context);
-    const std::vector<
-        fdp::SinglePhaseSnesAuthoritativeFaceInput3D>
-        no_faces;
+    auto source_faces =
+        real_transition_source_faces(
+            rank);
 
     Vec accepted_state = nullptr;
     require_real_collective(
@@ -2132,7 +2152,7 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                     "real_pr76_natural_state_1p",
                     1.0,
                     source_cells,
-                    no_faces,
+                    source_faces,
                     {
                         &fdp::
                             evaluate_pr76_single_phase_production_cell_3d<
@@ -2222,6 +2242,17 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                         preflight_error)));
         }
 
+        PetscReal preflight_residual_norm = 0.0;
+        require_real_collective(
+            VecNorm(
+                preflight_residual,
+                NORM_2,
+                &preflight_residual_norm) ==
+                PETSC_SUCCESS &&
+            static_cast<double>(
+                preflight_residual_norm) <=
+                1.0e-12,
+            "real PR76 transition source is not a zero-flux zero-accumulation residual state");
         require_real_collective(
             VecDestroy(
                 &preflight_residual) ==
@@ -2232,7 +2263,7 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 VecDestroy(
                     &preflight_scaling) ==
                     PETSC_SUCCESS,
-            "real PR76 isolated source preflight cleanup failed");
+            "real PR76 transition source preflight cleanup failed");
     }
 
     std::optional<
@@ -2534,6 +2565,10 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
             },
             {}};
 
+    RealPr76UniqueAbsentBranchContext
+        absent_branch_context{
+            &model,
+            pt_evaluator.root_options()};
     std::unique_ptr<
         fdp::
             Pr76TransitionRebuildMaterializedSystem3D>
@@ -2549,13 +2584,13 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 1.0,
                 std::move(
                     *target_plan),
-                no_faces,
+                source_faces,
                 std::move(
                     dispatcher),
                 model,
                 {
-                    &controlled_pr76_absent_branch_resolution,
-                    nullptr},
+                    &resolve_unique_pr76_absent_branch,
+                    &absent_branch_context},
                 &materialized);
     require_real_collective(
         error == PETSC_SUCCESS &&
