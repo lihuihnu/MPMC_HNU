@@ -3743,3 +3743,49 @@ make_pr76_methane_ethane_propane_property_closure(model, selections)
 binds this provider and its provenance to the existing P=1/2/3 selected-phase
 property closure. Unsupported datasets or missing/mismatched molar masses fail
 explicitly.
+
+
+### 47.2 PR76 production cell evaluator bridge and first real transient step
+
+The selected-phase property publication now has symmetric conversion helpers for
+`P=1/2/3`. They convert the PR76 property chart into the existing single-, two-
+and fixed-three-phase flow carriers without copying EOS, NIST or LBC equations
+into the discretization layer.
+
+The PETSc adapter `pr76_production_cell_evaluator.hpp` consumes those carriers
+and adds only caller-owned constitutive pieces:
+
+- stationary-rock thermal storage;
+- two-phase relative permeability;
+- three-phase relative permeability/capillary-pressure linearization.
+
+The PR76 property backend remains responsible for density, viscosity, enthalpy,
+internal energy and fugacity. The PETSc adapter does not infer phase roles, choose
+a transport correlation, repivot compositions, or mutate phase cardinality inside
+SNES callbacks.
+
+The first end-to-end physical regression deliberately freezes a single-phase
+topology on two distributed cells. It uses the repository-curated
+methane/ethane/propane PR76 + NIST + LBC property provider, a positive internal
+TPFA transmissibility, nonzero gravity, positive thermal conductance and a
+positive backward-Euler timestep. The previous-state inventories are evaluated
+with the same production property closure; the nonlinear state is not constructed
+from a manufactured zero-residual target.
+
+Acceptance requires:
+
+- nonzero Darcy volumetric flux;
+- nonzero component molar face flux;
+- nonzero advective enthalpy flux;
+- nonzero conductive heat flux;
+- exact volume-weighted internal-face component/energy conservation to numerical
+  roundoff;
+- fresh central-perturbation agreement of the complete distributed residual
+  Jacobian in pressure, temperature and one independent-composition direction;
+- PETSc `SNESNEWTONLS + BT / GMRES / ASM(1)` convergence;
+- independent final residual reassembly;
+- closed-domain total component and energy inventory conservation.
+
+Phase appearance/disappearance and outer phase-set rebuild are intentionally not
+part of this regression. They remain independently validated by the existing
+post-SNES transition controller tests.

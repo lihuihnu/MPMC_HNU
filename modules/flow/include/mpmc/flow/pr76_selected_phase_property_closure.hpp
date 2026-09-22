@@ -4,6 +4,8 @@
 #include <mpmc/ad/runtime_differentiate.hpp>
 #include <mpmc/flow/energy_accumulation.hpp>
 #include <mpmc/flow/fugacity_equilibrium_linearization.hpp>
+#include <mpmc/flow/single_phase_natural_variable.hpp>
+#include <mpmc/flow/two_phase_natural_variable.hpp>
 #include <mpmc/thermodynamics/selected_phase_density.hpp>
 #include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
 
@@ -751,6 +753,284 @@ evaluate_pr76_selected_phase_property_chart(
                 property_outputs * q),
         derived.jacobian.end());
     return result;
+}
+
+/// Direct bridge from the PR76 P=1 property publication into the existing
+/// single-phase flow carriers. Relative permeability and rock thermal storage
+/// remain explicit caller-owned constitutive models.
+struct Pr76SelectedPhaseFlowLinearization1P {
+    NaturalVariableCellState1P state;
+    SinglePhaseMolarDensityNaturalVariableLinearization
+        molar_density;
+    SinglePhaseTransportNaturalVariableLinearization
+        transport;
+    SinglePhaseCaloricNaturalVariableLinearization
+        caloric;
+};
+
+[[nodiscard]] inline
+Pr76SelectedPhaseFlowLinearization1P
+make_pr76_selected_phase_flow_linearization_1p(
+    const Pr76SelectedPhasePropertyChartLinearization&
+        properties,
+    std::span<const double> natural_variables,
+    double relative_permeability,
+    std::vector<double>
+        relative_permeability_gradient) {
+    using namespace
+        pr76_selected_phase_property_detail;
+
+    if (properties.layout.phase_count() != 1U ||
+        properties.phase_properties.size() != 1U ||
+        properties.phase_compositions.size() != 1U ||
+        properties.molar_density_gradient.size() != 1U ||
+        properties.mass_density_gradient.size() != 1U ||
+        properties.viscosity_gradient.size() != 1U ||
+        properties.enthalpy_gradient.size() != 1U ||
+        properties.internal_energy_gradient.size() != 1U ||
+        !properties.equilibrium_residual.empty() ||
+        !properties.equilibrium_jacobian.empty() ||
+        natural_variables.size() !=
+            properties.layout.unknown_count()) {
+        throw std::invalid_argument(
+            "mpmc::flow: PR76 single-phase property bridge shape mismatch");
+    }
+
+    const std::size_t n =
+        properties.layout.component_count();
+    const std::size_t dependent =
+        properties.layout.dependent_composition_component(
+            PhaseSlot3::phase0);
+    NaturalVariableLayout1P layout{
+        NaturalVariableCompositionPivot1P::
+            from_dependent_component(
+                n,
+                dependent)};
+    if (layout.unknown_count() !=
+        properties.layout.unknown_count()) {
+        throw std::logic_error(
+            "mpmc::flow: PR76 single-phase descriptor/layout mismatch");
+    }
+
+    NaturalVariableCellStateInput1P input;
+    input.component_ids =
+        properties.component_ids;
+    input.reference_pressure_pa =
+        natural_variables[
+            layout.pressure_unknown_index()];
+    input.temperature_k =
+        natural_variables[
+            layout.temperature_unknown_index()];
+    input.composition_pivot =
+        layout.composition_pivot();
+    input.independent_composition =
+        independent_composition_values(
+            properties.layout,
+            0U,
+            natural_variables);
+
+    const auto& property =
+        properties.phase_properties.front();
+    input.phase_properties = {
+        property.molar_density_mol_per_m3,
+        property.mass_density_kg_per_m3,
+        property.dynamic_viscosity_pa_s,
+        property.specific_enthalpy_j_per_kg,
+        property.specific_internal_energy_j_per_kg};
+
+    auto state =
+        NaturalVariableCellState1P::create(
+            std::move(input));
+    auto density =
+        make_single_phase_molar_density_linearization(
+            state,
+            properties.molar_density_gradient.front());
+    auto transport =
+        make_single_phase_transport_linearization(
+            state,
+            properties.mass_density_gradient.front(),
+            properties.viscosity_gradient.front(),
+            relative_permeability,
+            std::move(
+                relative_permeability_gradient),
+            properties.provenance.mass_density,
+            properties.provenance.viscosity);
+    auto caloric =
+        make_single_phase_caloric_linearization(
+            state,
+            properties.enthalpy_gradient.front(),
+            properties.internal_energy_gradient.front(),
+            properties.provenance.enthalpy,
+            properties.provenance.internal_energy);
+
+    return {
+        std::move(state),
+        std::move(density),
+        std::move(transport),
+        std::move(caloric)};
+}
+
+/// Direct bridge from the PR76 P=2 property publication into the existing
+/// two-phase flow carriers. The relative-permeability law remains caller-owned;
+/// this pc=none property layer keeps both phase pressures on the reference p.
+struct Pr76SelectedPhaseFlowLinearization2P {
+    NaturalVariableCellState2P state;
+    TwoPhaseMolarDensityNaturalVariableLinearization
+        molar_density;
+    TwoPhaseTransportNaturalVariableLinearization
+        transport;
+    TwoPhaseCaloricNaturalVariableLinearization
+        caloric;
+    TwoPhaseFugacityEquilibriumLinearization
+        fugacity;
+};
+
+[[nodiscard]] inline
+Pr76SelectedPhaseFlowLinearization2P
+make_pr76_selected_phase_flow_linearization_2p(
+    const Pr76SelectedPhasePropertyChartLinearization&
+        properties,
+    std::span<const double> natural_variables,
+    std::array<double, 2>
+        relative_permeability,
+    std::array<std::vector<double>, 2>
+        relative_permeability_gradient) {
+    using namespace
+        pr76_selected_phase_property_detail;
+
+    const std::size_t n =
+        properties.layout.component_count();
+    const std::size_t q =
+        properties.layout.unknown_count();
+    if (properties.layout.phase_count() != 2U ||
+        properties.phase_properties.size() != 2U ||
+        properties.phase_compositions.size() != 2U ||
+        properties.molar_density_gradient.size() != 2U ||
+        properties.mass_density_gradient.size() != 2U ||
+        properties.viscosity_gradient.size() != 2U ||
+        properties.enthalpy_gradient.size() != 2U ||
+        properties.internal_energy_gradient.size() != 2U ||
+        properties.equilibrium_residual.size() != n ||
+        properties.equilibrium_jacobian.size() != n * q ||
+        natural_variables.size() != q) {
+        throw std::invalid_argument(
+            "mpmc::flow: PR76 two-phase property bridge shape mismatch");
+    }
+
+    const std::array<std::size_t, 2>
+        dependent{
+            properties.layout
+                .dependent_composition_component(
+                    PhaseSlot3::phase0),
+            properties.layout
+                .dependent_composition_component(
+                    PhaseSlot3::phase1)};
+    NaturalVariableLayout2P layout{
+        NaturalVariableCompositionPivot2P::
+            from_dependent_components(
+                n,
+                dependent)};
+    if (layout.unknown_count() != q) {
+        throw std::logic_error(
+            "mpmc::flow: PR76 two-phase descriptor/layout mismatch");
+    }
+
+    NaturalVariableCellStateInput2P input;
+    input.component_ids =
+        properties.component_ids;
+    input.reference_pressure_pa =
+        natural_variables[
+            layout.pressure_unknown_index()];
+    input.temperature_k =
+        natural_variables[
+            layout.temperature_unknown_index()];
+    input.independent_saturation =
+        natural_variables[
+            layout.independent_saturation_unknown_index()];
+    input.composition_pivot =
+        layout.composition_pivot();
+
+    for (std::size_t phase = 0U;
+         phase < 2U;
+         ++phase) {
+        input.independent_phase_compositions[phase] =
+            independent_composition_values(
+                properties.layout,
+                phase,
+                natural_variables);
+        const auto& property =
+            properties.phase_properties[phase];
+        input.phase_properties[phase] = {
+            property.molar_density_mol_per_m3,
+            property.mass_density_kg_per_m3,
+            property.dynamic_viscosity_pa_s,
+            property.specific_enthalpy_j_per_kg,
+            property.specific_internal_energy_j_per_kg};
+    }
+
+    auto state =
+        NaturalVariableCellState2P::create(
+            std::move(input));
+
+    std::array<std::vector<double>, 2>
+        molar_density_gradient{
+            properties.molar_density_gradient[0],
+            properties.molar_density_gradient[1]};
+    std::array<std::vector<double>, 2>
+        mass_density_gradient{
+            properties.mass_density_gradient[0],
+            properties.mass_density_gradient[1]};
+    std::array<std::vector<double>, 2>
+        viscosity_gradient{
+            properties.viscosity_gradient[0],
+            properties.viscosity_gradient[1]};
+    std::array<std::vector<double>, 2>
+        enthalpy_gradient{
+            properties.enthalpy_gradient[0],
+            properties.enthalpy_gradient[1]};
+    std::array<std::vector<double>, 2>
+        internal_energy_gradient{
+            properties.internal_energy_gradient[0],
+            properties.internal_energy_gradient[1]};
+
+    auto density =
+        make_two_phase_molar_density_linearization(
+            state,
+            std::move(
+                molar_density_gradient));
+    auto transport =
+        make_two_phase_transport_linearization(
+            state,
+            std::move(
+                mass_density_gradient),
+            std::move(
+                viscosity_gradient),
+            relative_permeability,
+            std::move(
+                relative_permeability_gradient),
+            properties.provenance.mass_density,
+            properties.provenance.viscosity);
+    auto caloric =
+        make_two_phase_caloric_linearization(
+            state,
+            std::move(
+                enthalpy_gradient),
+            std::move(
+                internal_energy_gradient),
+            properties.provenance.enthalpy,
+            properties.provenance.internal_energy);
+    auto fugacity =
+        make_two_phase_fugacity_equilibrium_linearization(
+            state,
+            properties.equilibrium_residual,
+            properties.equilibrium_jacobian);
+
+    return {
+        std::move(state),
+        std::move(density),
+        std::move(transport),
+        std::move(caloric),
+        std::move(fugacity)};
 }
 
 /// Direct bridge from the PR76 P=3 property publication into the existing
