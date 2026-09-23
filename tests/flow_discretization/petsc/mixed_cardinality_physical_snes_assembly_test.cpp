@@ -2,6 +2,7 @@
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_controller.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_handoff_scanner.hpp>
 #include <mpmc/well_discretization_petsc/fixed_bhp_well_source_evaluator.hpp>
+#include <mpmc/well_discretization_petsc/fixed_total_molar_rate_control.hpp>
 #include <mpmc/thermodynamics/pr_parameters.hpp>
 
 #include <petscmat.h>
