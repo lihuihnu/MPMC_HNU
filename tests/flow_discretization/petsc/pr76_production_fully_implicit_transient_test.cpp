@@ -2662,11 +2662,11 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                        std::to_string(
                            static_cast<int>(
                                restarted_failure
-                                   ->sub_ksp_reason)) +
+                                   ->asm_sub_ksp_reason)) +
                        " sub_pc_reason=" +
                        std::to_string(
                            restarted_failure
-                               ->sub_pc_failed_reason) +
+                               ->asm_sub_pc_failed_reason) +
                        " nonlinear_iterations=" +
                        std::to_string(
                            static_cast<long long>(
