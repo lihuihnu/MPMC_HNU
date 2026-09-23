@@ -5,6 +5,7 @@
 #include <mpmc/well_discretization/energy_rate.hpp>
 #include <mpmc/well_discretization/fixed_bhp_connection_source.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <span>
@@ -591,13 +592,20 @@ build_fixed_bhp_peaceman_well_source_3d(
             },
             current);
 
+    const std::size_t phase_count =
+        source_input.state_identity.layout
+            .phase_count();
     if (context.injection_enthalpy()
             .specific_enthalpy_j_per_kg
             .size() !=
-        source_input.state_identity.layout
-            .phase_count()) {
+            phase_count ||
+        (context.active_phase_identities()
+             .has_value() &&
+         context.active_phase_identities()
+                 ->phase_count() !=
+             phase_count)) {
         throw std::invalid_argument(
-            "mpmc::well_discretization_petsc: fixed-BHP injection enthalpy cardinality does not match the frozen target chart");
+            "mpmc::well_discretization_petsc: fixed-BHP phase-identity/enthalpy binding does not match the frozen target chart");
     }
 
     return mpmc::well_discretization::
