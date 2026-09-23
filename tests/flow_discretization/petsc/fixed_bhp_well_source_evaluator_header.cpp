@@ -11,17 +11,23 @@ bool fixed_bhp_well_source_evaluator_header() {
         std::is_same_v<
             decltype(
                 &mpmc::well_discretization_petsc::
-                    evaluate_fixed_bhp_three_phase_peaceman_well_source_3d),
+                    evaluate_fixed_bhp_peaceman_well_source_3d),
             Callback>);
     static_assert(
         mpmc::well_discretization_petsc::
-            FixedBhpThreePhasePeacemanWellSourceEvaluatorContext3D::
+            FixedBhpPeacemanWellSourceEvaluatorContext3D::
                 convention ==
         mpmc::well_discretization_petsc::
-            fixed_bhp_three_phase_peaceman_well_source_evaluator_convention);
+            fixed_bhp_peaceman_well_source_evaluator_convention);
+    static_assert(
+        std::is_same_v<
+            mpmc::well_discretization_petsc::
+                FixedBhpThreePhasePeacemanWellSourceEvaluatorContext3D,
+            mpmc::well_discretization_petsc::
+                FixedBhpPeacemanWellSourceEvaluatorContext3D>);
     return
         mpmc::well_discretization_petsc::
-            fixed_bhp_three_phase_peaceman_well_source_evaluator_convention ==
+            fixed_bhp_peaceman_well_source_evaluator_convention ==
         std::string_view{
-            "well-discretization-petsc/fixed-bhp-single-connection/three-phase-peaceman/v1"};
+            "well-discretization-petsc/fixed-bhp-single-connection/variable-cardinality-peaceman/v2"};
 }
