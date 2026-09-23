@@ -613,13 +613,25 @@ public:
                 old_cells.size());
 
             for (std::size_t local = 0U;
-                 local < old_cells.size();
+                 local < current.size();
                  ++local) {
                 if (!current[local]
                         .has_value()) {
                     throw std::invalid_argument(
                         "accepted host cell is not evaluable");
                 }
+                const auto cell =
+                    mpmc::mesh::LocalIndex{
+                        static_cast<
+                            mpmc::mesh::
+                                LocalIndex::value_type>(
+                                    local)};
+                const auto& record =
+                    numbering_->cell(
+                        cell);
+                const auto& old =
+                    coordinate_registry_->cell(
+                        record.cell_global);
                 const auto& host =
                     std::visit(
                         [](const auto& typed)
@@ -630,16 +642,10 @@ public:
                                 .state_identity;
                         },
                         *current[local]);
-                const auto& old =
-                    old_cells[local];
                 if (old.cell !=
-                        numbering_->cell(
-                            mpmc::mesh::LocalIndex{
-                                static_cast<
-                                    mpmc::mesh::
-                                        LocalIndex::value_type>(
-                                            local)})
-                            .cell ||
+                        cell ||
+                    old.cell_global !=
+                        record.cell_global ||
                     old.active_phases
                             .phase_count() !=
                         host.layout
