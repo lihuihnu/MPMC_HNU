@@ -331,7 +331,7 @@ PetscErrorCode evaluate_explicit_cell_source(
 
 struct FixedBhpWellSourceAudit {
     wdp::
-        FixedBhpThreePhasePeacemanWellSourceEvaluatorContext3D*
+        FixedBhpPeacemanWellSourceEvaluatorContext3D*
             context{};
     std::uint64_t evaluator_calls{};
     std::uint64_t target_calls{};
@@ -363,7 +363,7 @@ evaluate_audited_fixed_bhp_well_source(
         ++audit->target_calls;
     }
     return wdp::
-        evaluate_fixed_bhp_three_phase_peaceman_well_source_3d(
+        evaluate_fixed_bhp_peaceman_well_source_3d(
             cell,
             cell_global,
             natural_variables,
@@ -3309,6 +3309,12 @@ local_solution_matches_target(
 
 
 struct FrozenWellTimestepControlAudit {
+    mesh::LocalIndex target_cell{
+        mesh::LocalIndex::value_type{0}};
+    mesh::GlobalEntityId target_cell_global{
+        mesh::GlobalEntityId::value_type{0}};
+    std::size_t expected_phase_count{};
+    std::size_t expected_scalar_count{};
     std::size_t scans{};
     std::size_t rebuild_calls{};
 };
@@ -3350,12 +3356,13 @@ frozen_well_timestep_scan(
 
     const auto& well_cell =
         system.numbering().cell(
-            mesh::LocalIndex{5U});
+            audit->target_cell);
     if (well_cell.cell_global !=
-            mesh::GlobalEntityId{
-                UINT64_C(60)} ||
-        well_cell.phase_count != 3U ||
-        well_cell.scalar_count != 10U) {
+            audit->target_cell_global ||
+        well_cell.phase_count !=
+            audit->expected_phase_count ||
+        well_cell.scalar_count !=
+            audit->expected_scalar_count) {
         return PETSC_ERR_ARG_INCOMP;
     }
 
