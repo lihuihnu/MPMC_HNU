@@ -4960,18 +4960,19 @@ void run_phase_transition_rebound_fixed_bhp_case(
 
     std::array<double, 4>
         local_well_production_rate{};
+    bool local_final_source_shape_ok =
+        true;
     if (rank == 0) {
         const auto final_well =
             wdp::
                 build_fixed_bhp_peaceman_well_source_3d(
                     *fixture.well_context,
                     *final_current[2U]);
-        require_collective(
+        local_final_source_shape_ok =
             final_well
                     .cell_source
                     .input_count ==
-                10U,
-            "accepted rebound fixed-BHP source lost its 3P Jacobian cardinality");
+                10U;
         for (std::size_t component = 0U;
              component < 3U;
              ++component) {
@@ -4987,6 +4988,9 @@ void run_phase_transition_rebound_fixed_bhp_case(
                  .cell_source
                  .energy_rate_w;
     }
+    require_collective(
+        local_final_source_shape_ok,
+        "accepted rebound fixed-BHP source lost its 3P Jacobian cardinality");
 
     std::array<double, 4>
         global_well_production_rate{};
