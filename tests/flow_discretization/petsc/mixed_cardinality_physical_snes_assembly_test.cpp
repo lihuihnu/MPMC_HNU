@@ -4044,6 +4044,82 @@ make_frozen_multi_connection_fixed_bhp_timestep_system(
     return system;
 }
 
+std::unique_ptr<
+    fdp::PhaseTransitionRebuiltNaturalVariableSystem3D>
+make_fixed_total_molar_rate_reservoir_system(
+    int rank,
+    const dp::
+        ParallelOwnedConnectionSchedule3D&
+            schedule,
+    const mesh::PartitionSnapshot&
+        partition,
+    const dp::
+        PetscMpiAijSymbolicPreallocation3D&
+            bridge,
+    const dp::
+        OwnedCellStructuralColumnPatternSnapshot3D&
+            pattern,
+    DispatchAudit* dispatch_audit,
+    wdp::
+        FixedTotalMolarRateWellSourceEvaluatorContext3D*
+            source_context,
+    flow::
+        Pr76AbsentPhasePotentialExtensionProvider<
+            double>* provider) {
+    if (dispatch_audit == nullptr ||
+        source_context == nullptr ||
+        provider == nullptr) {
+        throw std::invalid_argument(
+            "invalid fixed-total-molar-rate reservoir fixture context");
+    }
+
+    auto cells =
+        make_controller_cells(
+            rank,
+            false,
+            dispatch_audit);
+    auto faces =
+        make_face_inputs(
+            rank,
+            false);
+
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        system;
+    const PetscErrorCode error =
+        fdp::
+            rebuild_phase_transition_natural_variable_system_3d(
+                PETSC_COMM_WORLD,
+                schedule,
+                partition,
+                bridge,
+                pattern,
+                1.0,
+                std::move(cells),
+                std::move(faces),
+                {
+                    {&evaluate_1p, dispatch_audit},
+                    {&evaluate_2p, dispatch_audit},
+                    {&evaluate_3p, dispatch_audit}},
+                wdp::
+                    fixed_total_molar_rate_well_source_binding_3d(
+                        source_context),
+                &fdp::
+                    evaluate_absent_phase_thermodynamic_provider_3d<
+                        flow::
+                            Pr76AbsentPhasePotentialExtensionProvider<
+                                double>>,
+                provider,
+                &system);
+    if (error != PETSC_SUCCESS ||
+        system == nullptr) {
+        throw std::runtime_error(
+            "failed to build fixed-total-molar-rate reservoir system");
+    }
+    return system;
+}
+
 std::array<double, 4>
 owned_conserved_totals(
     const fdp::
