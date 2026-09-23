@@ -61,18 +61,29 @@ The adapter is intentionally compatible with the existing
 change, a production-positive well rate becomes a positive outward
 conservation residual. This prevents a hidden double-negation convention.
 
-The first PETSc bridge lives under `well/discretization/petsc`. It binds one
+The PETSc bridge lives under `well/discretization/petsc`. It binds one
 explicit Peaceman connection with frozen BHP to the existing owner-only
-mixed-cardinality cell-source callback. The global reservoir may remain
-1P/2P/3P mixed, but this first bridge intentionally requires its configured
-target cell to stay on a frozen 3P chart; non-target cells publish no source and
-a 1P/2P target is explicitly unsupported rather than padded with fictitious
-inactive phases.
+mixed-cardinality cell-source callback. The target may now be a frozen 1P, 2P
+or 3P natural-variable cell. The bridge consumes exactly the active phases in
+that chart; it does not pad inactive phases with fictitious mobility, density,
+composition or enthalpy.
 
-The bridge reuses the full validated chain through
-`CellSourceLinearization3D`, so component/energy well terms enter the existing
+The cardinality-neutral well-discretization layer evaluates
+
+`q_alpha = WI * lambda_alpha * (p_alpha - p_bhp)`
+
+over the current active phase set, then forms component molar and directional
+advective-energy rates with the same production-positive convention used by
+the original 3P chain. The well-side injection-enthalpy payload must contain
+exactly one value per active phase. Reservoir natural-variable derivatives and
+explicit BHP derivatives are retained for every supported cardinality.
+
+The bridge reuses the validated `CellSourceLinearization3D` sign/normalization
+contract, so component/energy well terms enter the existing
 bulk-volume-normalized fully implicit residual and diagonal reservoir Jacobian.
-BHP remains a frozen parameter and is not globally numbered.
+BHP remains a frozen parameter and is not globally numbered. The former
+three-phase evaluator names remain compatibility entry points, while the
+production path uses the variable-cardinality evaluator.
 
 The well module still does not define conductive well/reservoir heat exchange,
 wellbore heat loss, multi-connection aggregation, rate-control equations,
