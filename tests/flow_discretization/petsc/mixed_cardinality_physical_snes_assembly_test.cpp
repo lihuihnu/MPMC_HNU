@@ -1,3 +1,4 @@
+#include <mpmc/flow_discretization_petsc/physical_timestep_driver.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_controller.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_handoff_scanner.hpp>
 #include <mpmc/well_discretization_petsc/fixed_bhp_well_source_evaluator.hpp>
@@ -16,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -3288,6 +3290,323 @@ local_solution_matches_target(
     return true;
 }
 
+
+struct FrozenWellTimestepControlAudit {
+    std::size_t scans{};
+    std::size_t rebuild_calls{};
+};
+
+PetscErrorCode
+frozen_well_timestep_scan(
+    const fdp::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&
+            system,
+    Vec,
+    const fdp::
+        VariableCardinalityNaturalVariableSnesSolveReport3D&
+            solve_report,
+    void* raw_context,
+    fdp::PostSnesPhaseTransitionScanStatus3D*
+        scan_status,
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>*
+            output) {
+    if (raw_context == nullptr ||
+        scan_status == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* audit =
+        static_cast<
+            FrozenWellTimestepControlAudit*>(
+                raw_context);
+    *scan_status =
+        fdp::PostSnesPhaseTransitionScanStatus3D::
+            complete;
+    output->clear();
+
+    if (static_cast<int>(
+            solve_report.converged_reason) <=
+        0) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    const auto& well_cell =
+        system.numbering().cell(
+            mesh::LocalIndex{5U});
+    if (well_cell.cell_global !=
+            mesh::GlobalEntityId{
+                UINT64_C(60)} ||
+        well_cell.phase_count != 3U ||
+        well_cell.scalar_count != 10U) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    ++audit->scans;
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode
+unexpected_frozen_well_timestep_rebuild(
+    const fdp::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&,
+    Vec,
+    const fdp::
+        VariableCardinalityNaturalVariableSnesSolveReport3D&,
+    std::span<
+        const fdp::
+            PostSnesPhaseTransitionProposal3D>,
+    std::span<
+        const fdp::
+            AcceptedPhaseTransitionSummary3D>,
+    void* raw_context,
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>*
+                output) {
+    if (raw_context == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    auto* audit =
+        static_cast<
+            FrozenWellTimestepControlAudit*>(
+                raw_context);
+    ++audit->rebuild_calls;
+    return PETSC_ERR_PLIB;
+}
+
+std::unique_ptr<
+    fdp::PhaseTransitionRebuiltNaturalVariableSystem3D>
+make_frozen_fixed_bhp_timestep_system(
+    int rank,
+    const dp::
+        ParallelOwnedConnectionSchedule3D&
+            schedule,
+    const mesh::PartitionSnapshot&
+        partition,
+    const dp::
+        PetscMpiAijSymbolicPreallocation3D&
+            bridge,
+    const dp::
+        OwnedCellStructuralColumnPatternSnapshot3D&
+            pattern,
+    DispatchAudit* dispatch_audit,
+    FixedBhpWellSourceAudit* source_audit,
+    flow::
+        Pr76AbsentPhasePotentialExtensionProvider<
+            double>* provider) {
+    if (dispatch_audit == nullptr ||
+        source_audit == nullptr ||
+        source_audit->context == nullptr ||
+        provider == nullptr) {
+        throw std::invalid_argument(
+            "invalid frozen fixed-BHP timestep fixture context");
+    }
+
+    auto cells =
+        make_controller_cells(
+            rank,
+            false,
+            dispatch_audit);
+    auto faces =
+        make_face_inputs(
+            rank,
+            false);
+
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        system;
+    const PetscErrorCode error =
+        fdp::
+            rebuild_phase_transition_natural_variable_system_3d(
+                PETSC_COMM_WORLD,
+                schedule,
+                partition,
+                bridge,
+                pattern,
+                1.0,
+                std::move(cells),
+                std::move(faces),
+                {
+                    {&evaluate_1p, dispatch_audit},
+                    {&evaluate_2p, dispatch_audit},
+                    {&evaluate_3p, dispatch_audit}},
+                {
+                    &evaluate_audited_fixed_bhp_well_source,
+                    source_audit},
+                &fdp::
+                    evaluate_absent_phase_thermodynamic_provider_3d<
+                        flow::
+                            Pr76AbsentPhasePotentialExtensionProvider<
+                                double>>,
+                provider,
+                &system);
+    if (error != PETSC_SUCCESS ||
+        system == nullptr) {
+        throw std::runtime_error(
+            "failed to build frozen fixed-BHP physical timestep system");
+    }
+    return system;
+}
+
+std::array<double, 4>
+owned_conserved_totals(
+    const fdp::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&
+            system,
+    Vec state) {
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        current;
+    std::vector<double>
+        porosities;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    const PetscErrorCode error =
+        system.evaluate_local_cells_for_phase_transition(
+            state,
+            &current,
+            &porosities,
+            &status);
+    if (error != PETSC_SUCCESS ||
+        status !=
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success ||
+        current.size() != porosities.size()) {
+        throw std::runtime_error(
+            "failed to evaluate conserved totals for frozen well timestep");
+    }
+
+    std::array<double, 4>
+        totals{};
+    for (std::size_t local = 0U;
+         local < current.size();
+         ++local) {
+        const auto& record =
+            system.numbering().cell(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            local)});
+        if (record.owner_rank !=
+            system.numbering().local_rank()) {
+            continue;
+        }
+        if (!current[local].has_value()) {
+            throw std::runtime_error(
+                "owned frozen well timestep cell has no current state");
+        }
+
+        const double bulk_volume_m3 =
+            2.0 +
+            static_cast<double>(local);
+        std::visit(
+            [&](const auto& typed) {
+                using Typed =
+                    std::remove_cvref_t<
+                        decltype(typed)>;
+
+                if constexpr (
+                    std::is_same_v<
+                        Typed,
+                        fdp::
+                            SinglePhaseCurrentCellLinearization3D>) {
+                    const auto component =
+                        flow::
+                            build_single_phase_component_accumulation(
+                                typed.state,
+                                porosities[local]);
+                    const auto energy =
+                        flow::
+                            build_single_phase_energy_accumulation_snapshot(
+                                typed.state,
+                                porosities[local],
+                                typed.transport,
+                                typed.caloric,
+                                typed.rock);
+                    for (std::size_t i = 0U;
+                         i < 3U;
+                         ++i) {
+                        totals[i] +=
+                            component
+                                .component_accumulation_mol_per_bulk_m3[i] *
+                            bulk_volume_m3;
+                    }
+                    totals[3] +=
+                        energy
+                            .total_internal_energy_j_per_bulk_m3 *
+                        bulk_volume_m3;
+                } else if constexpr (
+                    std::is_same_v<
+                        Typed,
+                        fdp::
+                            TwoPhaseCurrentCellLinearization3D>) {
+                    const auto component =
+                        flow::
+                            build_two_phase_component_accumulation(
+                                typed.state,
+                                porosities[local]);
+                    const auto energy =
+                        flow::
+                            build_two_phase_energy_accumulation_snapshot(
+                                typed.state,
+                                porosities[local],
+                                typed.transport,
+                                typed.caloric,
+                                typed.rock);
+                    for (std::size_t i = 0U;
+                         i < 3U;
+                         ++i) {
+                        totals[i] +=
+                            component
+                                .component_accumulation_mol_per_bulk_m3[i] *
+                            bulk_volume_m3;
+                    }
+                    totals[3] +=
+                        energy
+                            .total_internal_energy_j_per_bulk_m3 *
+                        bulk_volume_m3;
+                } else {
+                    const auto component =
+                        flow::
+                            build_pore_volume_component_accumulation(
+                                typed.state,
+                                porosities[local]);
+                    const auto energy =
+                        flow::
+                            build_pore_volume_energy_accumulation_snapshot(
+                                typed.state,
+                                porosities[local],
+                                typed.transport,
+                                typed.caloric,
+                                typed.rock);
+                    for (std::size_t i = 0U;
+                         i < 3U;
+                         ++i) {
+                        totals[i] +=
+                            component
+                                .component_accumulation_mol_per_bulk_m3[i] *
+                            bulk_volume_m3;
+                    }
+                    totals[3] +=
+                        energy
+                            .total_internal_energy_j_per_bulk_m3 *
+                        bulk_volume_m3;
+                }
+            },
+            *current[local]);
+    }
+    return totals;
+}
+
 } // namespace
 
 void mixed_cardinality_physical_snes_assembly_test() {
@@ -4107,6 +4426,473 @@ void mixed_cardinality_physical_snes_assembly_test() {
         "fixed-BHP well source assembly cleanup failed");
 
     audit.source_enabled = false;
+
+
+    // Close the first production fixed-BHP well through an actual accepted
+    // physical timestep.  Reservoir properties remain the manufactured
+    // mixed-cardinality fixture used by this structural regression, but the
+    // well source itself is the production Peaceman -> mobility -> phase-rate
+    // -> component/energy-rate -> CellSource chain.  The configured completion
+    // is stable cell60 and must remain on its frozen 3P natural-variable chart.
+    {
+        auto timestep_well_context =
+            wdp::
+                FixedBhpThreePhasePeacemanWellSourceEvaluatorContext3D::
+                    create(
+                        mesh::GlobalEntityId{
+                            UINT64_C(60)},
+                        well::make_peaceman_well_index_3d(
+                            {10.0, 10.0, 5.0},
+                            {
+                                1.0e-4,
+                                1.0e-4,
+                                1.0e-4},
+                            well::
+                                AxisAlignedWellDirection3D::z,
+                            0.10,
+                            0.0),
+                        25.0,
+                        wd::InjectionPhaseSpecificEnthalpy3P{
+                            "fixture/fixed-bhp-timestep-injection-enthalpy/v1",
+                            {1000.0, 2000.0, 3000.0}},
+                        "fixture/fixed-bhp-timestep-cell60-source/v1");
+
+        const auto timestep_pr_parameters =
+            thermodynamic_adapter_pr_parameters();
+        const auto timestep_pr_model =
+            th::Pr76Phase<double>::
+                from_parameters(
+                    timestep_pr_parameters);
+        auto timestep_provider =
+            make_outer_rebuild_pr_provider(
+                timestep_pr_model);
+
+        FixedBhpWellSourceAudit
+            timestep_source_audit{
+                &timestep_well_context};
+        FixedBhpWellSourceAudit
+            verification_source_audit{
+                &timestep_well_context};
+
+        auto timestep_system =
+            make_frozen_fixed_bhp_timestep_system(
+                rank,
+                schedule,
+                partition,
+                bridge,
+                pattern,
+                &audit,
+                &timestep_source_audit,
+                &timestep_provider);
+        auto verification_system =
+            make_frozen_fixed_bhp_timestep_system(
+                rank,
+                schedule,
+                partition,
+                bridge,
+                pattern,
+                &audit,
+                &verification_source_audit,
+                &timestep_provider);
+
+        require_collective(
+            timestep_system
+                    ->numbering()
+                    .petsc_global_scalar_count() ==
+                42 &&
+                timestep_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .cell_global ==
+                    mesh::GlobalEntityId{
+                        UINT64_C(60)} &&
+                timestep_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .phase_count ==
+                3U &&
+                timestep_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .scalar_count ==
+                10U,
+            "fixed-BHP timestep fixture changed reservoir numbering or the frozen 3P completion chart");
+
+        const auto local_previous_total =
+            owned_conserved_totals(
+                *timestep_system,
+                timestep_system
+                    ->initial_state());
+        std::array<double, 4>
+            global_previous_total{};
+        require_collective(
+            MPI_Allreduce(
+                local_previous_total.data(),
+                global_previous_total.data(),
+                4,
+                MPI_DOUBLE,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS,
+            "failed to reduce fixed-BHP previous conserved totals");
+
+        Vec previous_state = nullptr;
+        require_collective(
+            VecDuplicate(
+                timestep_system
+                    ->initial_state(),
+                &previous_state) ==
+                    PETSC_SUCCESS &&
+                VecCopy(
+                    timestep_system
+                        ->initial_state(),
+                    previous_state) ==
+                    PETSC_SUCCESS,
+            "failed to preserve fixed-BHP timestep initial state");
+
+        fdp::PhysicalTimestepDriverOptions3D
+            timestep_options;
+        timestep_options.adaptive
+            .minimum_timestep_seconds =
+            0.125;
+        timestep_options.adaptive
+            .maximum_timestep_seconds =
+            1.0;
+        timestep_options.adaptive
+            .cutback_factor =
+            0.5;
+        timestep_options.adaptive
+            .growth_factor =
+            2.0;
+        timestep_options.adaptive
+            .maximum_retries =
+            4U;
+        timestep_options.adaptive
+            .growth_nonlinear_iteration_limit =
+            20;
+        timestep_options.adaptive
+            .growth_line_search_direction_change_limit =
+            4;
+        timestep_options.adaptive
+            .growth_transition_restart_limit =
+            0U;
+        timestep_options.phase_transition
+            .max_transition_restarts =
+            0U;
+
+        fdp::AcceptedPhysicalTimeClock3D
+            timestep_clock{
+                0.0,
+                1.0};
+        FrozenWellTimestepControlAudit
+            timestep_control_audit;
+        std::optional<
+            fdp::PhysicalTimestepDriverReport3D>
+            timestep_report;
+        error =
+            fdp::advance_one_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                &timestep_system,
+                0U,
+                {
+                    &frozen_well_timestep_scan,
+                    &timestep_control_audit,
+                    &unexpected_frozen_well_timestep_rebuild,
+                    &timestep_control_audit},
+                timestep_options,
+                &timestep_clock,
+                &timestep_report);
+
+        require_collective(
+            error == PETSC_SUCCESS &&
+                timestep_report.has_value() &&
+                timestep_report->accepted() &&
+                timestep_report
+                    ->adaptive
+                    .accepted_timestep_seconds
+                    .has_value() &&
+                timestep_report
+                    ->accepted_record
+                    .has_value() &&
+                timestep_report
+                    ->accepted_record
+                    ->phase_transition_restarts ==
+                0U &&
+                timestep_clock
+                    .accepted_step_count() ==
+                1U &&
+                timestep_control_audit.scans >
+                0U &&
+                timestep_control_audit
+                    .rebuild_calls ==
+                0U &&
+                timestep_system
+                    ->numbering()
+                    .petsc_global_scalar_count() ==
+                42 &&
+                timestep_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .phase_count ==
+                3U &&
+                (rank == 0
+                     ? timestep_source_audit
+                           .target_calls ==
+                       0U
+                     : timestep_source_audit
+                           .target_calls >
+                       0U),
+            "production PhysicalTimestepDriver did not accept the frozen-3P fixed-BHP well step owner-only");
+
+        const double accepted_dt =
+            *timestep_report
+                 ->adaptive
+                 .accepted_timestep_seconds;
+
+        bool history_matches = false;
+        require_collective(
+            timestep_system
+                    ->accepted_history_matches_state(
+                        timestep_system
+                            ->initial_state(),
+                        &history_matches) ==
+                PETSC_SUCCESS &&
+                history_matches,
+            "fixed-BHP accepted physical timestep did not rebase component/energy history");
+
+        Vec state_delta = nullptr;
+        PetscReal state_delta_norm = 0.0;
+        require_collective(
+            VecDuplicate(
+                timestep_system
+                    ->initial_state(),
+                &state_delta) ==
+                    PETSC_SUCCESS &&
+                VecCopy(
+                    timestep_system
+                        ->initial_state(),
+                    state_delta) ==
+                    PETSC_SUCCESS &&
+                VecAXPY(
+                    state_delta,
+                    PetscScalar{-1.0},
+                    previous_state) ==
+                    PETSC_SUCCESS &&
+                VecNorm(
+                    state_delta,
+                    NORM_2,
+                    &state_delta_norm) ==
+                    PETSC_SUCCESS &&
+                static_cast<double>(
+                    state_delta_norm) >
+                    1.0e-8,
+            "fixed-BHP well did not change the accepted fully implicit reservoir state");
+
+        require_collective(
+            verification_system
+                    ->set_trial_timestep_seconds(
+                        accepted_dt) ==
+                PETSC_SUCCESS,
+            "failed to align independent fixed-BHP verification timestep");
+
+        Vec verification_residual = nullptr;
+        require_collective(
+            VecDuplicate(
+                timestep_system
+                    ->initial_state(),
+                &verification_residual) ==
+                    PETSC_SUCCESS &&
+                VecSet(
+                    verification_residual,
+                    PetscScalar{0.0}) ==
+                    PETSC_SUCCESS,
+            "failed to allocate independent fixed-BHP residual");
+        auto verification_evaluator =
+            verification_system
+                ->snes_evaluator();
+        fdp::NaturalVariableSnesEvaluationStatus3D
+            verification_status =
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success;
+        if (error == PETSC_SUCCESS) {
+            error =
+                verification_evaluator.function(
+                    timestep_system
+                        ->initial_state(),
+                    verification_residual,
+                    verification_evaluator
+                        .user_context,
+                    &verification_status);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecAssemblyBegin(
+                    verification_residual);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecAssemblyEnd(
+                    verification_residual);
+        }
+        PetscReal verification_residual_norm =
+            0.0;
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecNorm(
+                    verification_residual,
+                    NORM_2,
+                    &verification_residual_norm);
+        }
+        require_collective(
+            error == PETSC_SUCCESS &&
+                verification_status ==
+                    fdp::
+                        NaturalVariableSnesEvaluationStatus3D::
+                            success &&
+                static_cast<double>(
+                    verification_residual_norm) <=
+                    1.0e-6,
+            "accepted fixed-BHP timestep failed independent pre-commit residual reassembly");
+
+        const auto local_final_total =
+            owned_conserved_totals(
+                *verification_system,
+                timestep_system
+                    ->initial_state());
+        std::array<double, 4>
+            global_final_total{};
+        require_collective(
+            MPI_Allreduce(
+                local_final_total.data(),
+                global_final_total.data(),
+                4,
+                MPI_DOUBLE,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS,
+            "failed to reduce fixed-BHP final conserved totals");
+
+        std::array<double, 4>
+            local_well_production_rate{};
+        if (rank == 1) {
+            std::vector<std::optional<
+                fdp::
+                    MixedCardinalityPhysicalCurrentCellLinearization3D>>
+                current;
+            std::vector<double>
+                porosities;
+            fdp::NaturalVariableSnesEvaluationStatus3D
+                final_status =
+                    fdp::
+                        NaturalVariableSnesEvaluationStatus3D::
+                            success;
+            const PetscErrorCode final_error =
+                verification_system
+                    ->evaluate_local_cells_for_phase_transition(
+                        timestep_system
+                            ->initial_state(),
+                        &current,
+                        &porosities,
+                        &final_status);
+            if (final_error != PETSC_SUCCESS ||
+                final_status !=
+                    fdp::
+                        NaturalVariableSnesEvaluationStatus3D::
+                            success ||
+                current.size() <= 5U ||
+                !current[5U].has_value()) {
+                throw std::runtime_error(
+                    "failed to recover accepted well-cell state");
+            }
+            const auto* well_cell =
+                std::get_if<
+                    fdp::
+                        FixedThreePhaseCurrentCellLinearization3D>(
+                            &*current[5U]);
+            if (well_cell == nullptr) {
+                throw std::runtime_error(
+                    "accepted fixed-BHP completion left its frozen 3P chart");
+            }
+            const auto final_well =
+                wdp::
+                    build_fixed_bhp_three_phase_peaceman_well_source_3d(
+                        timestep_well_context,
+                        *well_cell);
+            for (std::size_t component = 0U;
+                 component < 3U;
+                 ++component) {
+                local_well_production_rate[
+                    component] =
+                    -final_well
+                         .cell_source
+                         .component_molar_rate_mol_per_s[
+                             component];
+            }
+            local_well_production_rate[3] =
+                -final_well
+                     .cell_source
+                     .energy_rate_w;
+        }
+
+        std::array<double, 4>
+            global_well_production_rate{};
+        require_collective(
+            MPI_Allreduce(
+                local_well_production_rate.data(),
+                global_well_production_rate.data(),
+                4,
+                MPI_DOUBLE,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS,
+            "failed to reduce fixed-BHP production rates");
+
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            require_collective(
+                global_well_production_rate[
+                    component] >
+                    0.0,
+                "fixed-BHP regression did not remain production-positive");
+            near_collective(
+                global_final_total[component],
+                global_previous_total[component] -
+                    accepted_dt *
+                        global_well_production_rate[
+                            component],
+                2.0e-7,
+                2.0e-8);
+        }
+        require_collective(
+            global_well_production_rate[3] >
+                0.0,
+            "fixed-BHP energy rate did not remain production-positive");
+        near_collective(
+            global_final_total[3],
+            global_previous_total[3] -
+                accepted_dt *
+                    global_well_production_rate[3],
+            2.0e-7,
+            2.0e-7);
+
+        require_collective(
+            VecDestroy(
+                &verification_residual) ==
+                    PETSC_SUCCESS &&
+                VecDestroy(
+                    &state_delta) ==
+                    PETSC_SUCCESS &&
+                VecDestroy(
+                    &previous_state) ==
+                    PETSC_SUCCESS,
+            "fixed-BHP physical timestep regression cleanup failed");
+    }
 
     Vec solution = nullptr;
     std::optional<
