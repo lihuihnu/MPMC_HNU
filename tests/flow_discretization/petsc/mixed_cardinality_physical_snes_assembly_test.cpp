@@ -4401,6 +4401,657 @@ void run_frozen_fixed_bhp_timestep_case(
         false;
 }
 
+void run_phase_transition_rebound_fixed_bhp_case(
+    int rank,
+    const dp::
+        ParallelOwnedConnectionSchedule3D&
+            schedule,
+    const mesh::PartitionSnapshot&
+        partition,
+    const dp::
+        PetscMpiAijSymbolicPreallocation3D&
+            bridge,
+    const dp::
+        OwnedCellStructuralColumnPatternSnapshot3D&
+            pattern,
+    DispatchAudit* audit,
+    flow::
+        Pr76AbsentPhasePotentialExtensionProvider<
+            double>* provider) {
+    if (audit == nullptr ||
+        provider == nullptr) {
+        throw std::invalid_argument(
+            "invalid phase-transition fixed-BHP well fixture");
+    }
+
+    audit->well_timestep_compressibility =
+        true;
+
+    const auto aqueous =
+        mixed_physical_phase_identity(
+            "aqueous");
+    const auto hydrocarbon0 =
+        mixed_physical_phase_identity(
+            "hydrocarbon-0");
+    const auto hydrocarbon1 =
+        mixed_physical_phase_identity(
+            "hydrocarbon-1");
+
+    wdp::FixedBhpPhaseIdentityInjectionEnthalpy3D
+        phase_enthalpy_registry{
+            "fixture/fixed-bhp-phase-identity-enthalpy/v1",
+            {
+                {aqueous, 1100.0},
+                {hydrocarbon0, 2200.0},
+                {hydrocarbon1, 3300.0}}};
+
+    // Prove the registry is identity-driven rather than slot-driven before it
+    // enters the nonlinear system: a deliberately reordered active map must
+    // reorder the resolved enthalpy payload accordingly.
+    const auto reordered_enthalpy =
+        wdp::
+            resolve_fixed_bhp_injection_enthalpy_by_phase_identity_3d(
+                phase_enthalpy_registry,
+                flow::FrozenActivePhaseIdentityMap{
+                    {hydrocarbon0, aqueous}});
+    require_collective(
+        reordered_enthalpy
+                .specific_enthalpy_j_per_kg
+                .size() ==
+            2U &&
+            reordered_enthalpy
+                    .specific_enthalpy_j_per_kg[
+                        0U] ==
+                2200.0 &&
+            reordered_enthalpy
+                    .specific_enthalpy_j_per_kg[
+                        1U] ==
+                1100.0,
+        "fixed-BHP injection enthalpy followed slot order instead of stable phase identity");
+
+    auto well_context =
+        wdp::
+            FixedBhpPeacemanWellSourceEvaluatorContext3D::
+                create_phase_identity_bound(
+                    mesh::GlobalEntityId{
+                        UINT64_C(30)},
+                    well::make_peaceman_well_index_3d(
+                        {10.0, 10.0, 5.0},
+                        {
+                            1.0e-8,
+                            1.0e-8,
+                            1.0e-8},
+                        well::
+                            AxisAlignedWellDirection3D::z,
+                        0.10,
+                        0.0),
+                    15.0,
+                    phase_enthalpy_registry,
+                    phase_identity_map_for_stable(
+                        UINT64_C(30)),
+                    "fixture/fixed-bhp-transition-cell30/v1");
+
+    require_collective(
+        well_context.phase_identity_rebindable() &&
+            well_context
+                    .active_phase_identities()
+                    .has_value() &&
+            well_context
+                    .active_phase_identities()
+                    ->phase_count() ==
+                2U &&
+            well_context
+                    .injection_enthalpy()
+                    .specific_enthalpy_j_per_kg ==
+                std::vector<double>{
+                    1100.0,
+                    2200.0},
+        "fixed-BHP initial 2P phase-identity binding is malformed");
+
+    const double initial_well_index =
+        well_context.connection()
+            .well_index_m3;
+    const double initial_bhp =
+        well_context
+            .bottom_hole_pressure_pa();
+
+    ControllerFixture fixture{
+        rank,
+        &schedule,
+        &partition,
+        &bridge,
+        &pattern,
+        audit,
+        nullptr,
+        provider,
+        false,
+        0U,
+        false};
+    fixture.well_context =
+        &well_context;
+
+    auto initial_system =
+        make_controller_initial_system(
+            &fixture);
+    require_collective(
+        initial_system != nullptr &&
+            initial_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .cell_global ==
+                mesh::GlobalEntityId{
+                    UINT64_C(30)} &&
+            initial_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                2U &&
+            initial_system
+                    ->coordinate_registry()
+                    .cell(
+                        mesh::GlobalEntityId{
+                            UINT64_C(30)})
+                    .active_phases
+                    .phase_count() ==
+                2U,
+        "fixed-BHP transition fixture did not start on the stable 2P completion");
+
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        stable_system;
+    Vec stable_state = nullptr;
+    std::optional<
+        fdp::
+            PostSnesPhaseTransitionControllerReport3D>
+        transition_report;
+    PetscErrorCode error =
+        fdp::
+            solve_nonlinear_timestep_with_phase_transitions_3d(
+                PETSC_COMM_WORLD,
+                std::move(initial_system),
+                {
+                    &controller_scan,
+                    &fixture,
+                    &controller_rebuild,
+                    &fixture},
+                {4U},
+                &stable_system,
+                &stable_state,
+                &transition_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            stable_system != nullptr &&
+            stable_state != nullptr &&
+            transition_report.has_value() &&
+            transition_report->outcome ==
+                fdp::
+                    PostSnesPhaseTransitionOutcome3D::
+                        stable_phase_set &&
+            transition_report
+                    ->transition_restarts ==
+                1U &&
+            transition_report
+                    ->generations.size() ==
+                2U &&
+            fixture.rebuild_calls ==
+                1U &&
+            fixture.well_rebound &&
+            fixture.well_context !=
+                nullptr &&
+            stable_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                3U &&
+            stable_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .scalar_count ==
+                10U,
+        "fixed-BHP completion did not survive the accepted 2P-to-3P rebuild and SNES restart");
+
+    const auto& rebound_context =
+        *fixture.well_context;
+    const auto& rebuilt_phase_map =
+        stable_system
+            ->coordinate_registry()
+            .cell(
+                mesh::GlobalEntityId{
+                    UINT64_C(30)})
+            .active_phases;
+    bool rebound_identity_matches =
+        rebound_context
+                .active_phase_identities()
+                .has_value() &&
+        rebound_context
+                .active_phase_identities()
+                ->phase_count() ==
+            rebuilt_phase_map.phase_count();
+    if (rebound_identity_matches) {
+        for (std::size_t phase = 0U;
+             phase < rebuilt_phase_map.phase_count();
+             ++phase) {
+            rebound_identity_matches =
+                rebound_identity_matches &&
+                rebound_context
+                        .active_phase_identities()
+                        ->identity(phase) ==
+                    rebuilt_phase_map.identity(
+                        phase);
+        }
+    }
+
+    require_collective(
+        rebound_identity_matches &&
+            rebound_context
+                    .target_cell_global() ==
+                mesh::GlobalEntityId{
+                    UINT64_C(30)} &&
+            std::abs(
+                rebound_context
+                        .connection()
+                        .well_index_m3 -
+                    initial_well_index) <=
+                1.0e-14 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            initial_well_index)) &&
+            rebound_context
+                    .bottom_hole_pressure_pa() ==
+                initial_bhp &&
+            rebound_context
+                    .injection_enthalpy()
+                    .specific_enthalpy_j_per_kg ==
+                std::vector<double>{
+                    1100.0,
+                    2200.0,
+                    3300.0},
+        "fixed-BHP completion rebinding changed stable cell/WI/BHP or failed stable phase-identity enthalpy mapping");
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        rebound_current;
+    std::vector<double>
+        rebound_porosity;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        rebound_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    require_collective(
+        stable_system
+                ->evaluate_local_cells_for_phase_transition(
+                    stable_state,
+                    &rebound_current,
+                    &rebound_porosity,
+                    &rebound_status) ==
+            PETSC_SUCCESS &&
+            rebound_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            rebound_current.size() >
+                2U &&
+            rebound_current[2U]
+                .has_value(),
+        "failed to evaluate rebuilt fixed-BHP completion state");
+
+    const auto rebound_well =
+        wdp::
+            build_fixed_bhp_peaceman_well_source_3d(
+                rebound_context,
+                *rebound_current[2U]);
+    require_collective(
+        rebound_well
+                .cell_source
+                .input_count ==
+            10U,
+        "fixed-BHP rebound source did not rebuild its Jacobian on q=3Nc+1");
+
+    // The controller fixture is structural: once the restarted 3P solve is
+    // stable, explicitly rebase that state as the next physical-step history.
+    // Conservation below therefore covers a real post-rebuild physical
+    // timestep rather than pretending the controller's topology projection is
+    // itself a reservoir time integration scheme.
+    require_collective(
+        stable_system
+                ->rebase_accepted_timestep(
+                    stable_state,
+                    1.0) ==
+            PETSC_SUCCESS &&
+            VecDestroy(
+                &stable_state) ==
+            PETSC_SUCCESS,
+        "failed to rebase the stable 3P completion before the post-rebuild physical timestep");
+
+    bool rebased_history_matches = false;
+    require_collective(
+        stable_system
+                ->accepted_history_matches_state(
+                    stable_system
+                        ->initial_state(),
+                    &rebased_history_matches) ==
+            PETSC_SUCCESS &&
+            rebased_history_matches,
+        "post-rebuild fixed-BHP completion history did not match its stable 3P state");
+
+    const auto local_previous_total =
+        owned_conserved_totals(
+            *stable_system,
+            stable_system
+                ->initial_state());
+    std::array<double, 4>
+        global_previous_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_previous_total.data(),
+            global_previous_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce post-rebuild fixed-BHP previous conserved totals");
+
+    Vec previous_state = nullptr;
+    require_collective(
+        VecDuplicate(
+            stable_system
+                ->initial_state(),
+            &previous_state) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                stable_system
+                    ->initial_state(),
+                previous_state) ==
+                PETSC_SUCCESS,
+        "failed to preserve post-rebuild fixed-BHP state");
+
+    fixture.well_source_audit.evaluator_calls =
+        0U;
+    fixture.well_source_audit.target_calls =
+        0U;
+
+    fdp::PhysicalTimestepDriverOptions3D
+        timestep_options;
+    timestep_options.adaptive
+        .minimum_timestep_seconds =
+        0.125;
+    timestep_options.adaptive
+        .maximum_timestep_seconds =
+        1.0;
+    timestep_options.adaptive
+        .cutback_factor =
+        0.5;
+    timestep_options.adaptive
+        .growth_factor =
+        2.0;
+    timestep_options.adaptive
+        .maximum_retries =
+        4U;
+    timestep_options.adaptive
+        .growth_nonlinear_iteration_limit =
+        20;
+    timestep_options.adaptive
+        .growth_line_search_direction_change_limit =
+        4;
+    timestep_options.adaptive
+        .growth_transition_restart_limit =
+        0U;
+    timestep_options.phase_transition
+        .max_transition_restarts =
+        0U;
+
+    fdp::AcceptedPhysicalTimeClock3D
+        timestep_clock{
+            0.0,
+            1.0};
+    FrozenWellTimestepControlAudit
+        frozen_scan{
+            mesh::LocalIndex{2U},
+            mesh::GlobalEntityId{
+                UINT64_C(30)},
+            3U,
+            10U,
+            0U,
+            0U};
+    std::optional<
+        fdp::PhysicalTimestepDriverReport3D>
+        timestep_report;
+    error =
+        fdp::advance_one_physical_timestep_3d(
+            PETSC_COMM_WORLD,
+            &stable_system,
+            0U,
+            {
+                &frozen_well_timestep_scan,
+                &frozen_scan,
+                &unexpected_frozen_well_timestep_rebuild,
+                &frozen_scan},
+            timestep_options,
+            &timestep_clock,
+            &timestep_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            timestep_report.has_value() &&
+            timestep_report->accepted() &&
+            timestep_report
+                    ->adaptive
+                    .accepted_timestep_seconds
+                    .has_value() &&
+            timestep_report
+                    ->accepted_record
+                    .has_value() &&
+            timestep_report
+                    ->accepted_record
+                    ->phase_transition_restarts ==
+                0U &&
+            timestep_clock
+                    .accepted_step_count() ==
+                1U &&
+            frozen_scan.scans > 0U &&
+            frozen_scan.rebuild_calls == 0U &&
+            stable_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                3U &&
+            (rank == 0
+                 ? fixture
+                           .well_source_audit
+                           .target_calls >
+                       0U
+                 : fixture
+                           .well_source_audit
+                           .target_calls ==
+                       0U),
+        "post-rebuild fixed-BHP completion did not complete an owner-only accepted physical timestep");
+
+    const double accepted_dt =
+        *timestep_report
+             ->adaptive
+             .accepted_timestep_seconds;
+
+    Vec state_delta = nullptr;
+    PetscReal state_delta_norm = 0.0;
+    require_collective(
+        VecDuplicate(
+            stable_system
+                ->initial_state(),
+            &state_delta) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                stable_system
+                    ->initial_state(),
+                state_delta) ==
+                PETSC_SUCCESS &&
+            VecAXPY(
+                state_delta,
+                PetscScalar{-1.0},
+                previous_state) ==
+                PETSC_SUCCESS &&
+            VecNorm(
+                state_delta,
+                NORM_2,
+                &state_delta_norm) ==
+                PETSC_SUCCESS &&
+            static_cast<double>(
+                state_delta_norm) >
+                1.0e-10,
+        "post-rebuild fixed-BHP physical timestep did not change the reservoir state");
+
+    const auto local_final_total =
+        owned_conserved_totals(
+            *stable_system,
+            stable_system
+                ->initial_state());
+    std::array<double, 4>
+        global_final_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_final_total.data(),
+            global_final_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce post-rebuild fixed-BHP final conserved totals");
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        final_current;
+    std::vector<double>
+        final_porosity;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        final_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    require_collective(
+        stable_system
+                ->evaluate_local_cells_for_phase_transition(
+                    stable_system
+                        ->initial_state(),
+                    &final_current,
+                    &final_porosity,
+                    &final_status) ==
+            PETSC_SUCCESS &&
+            final_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            final_current.size() >
+                2U &&
+            final_current[2U]
+                .has_value(),
+        "failed to evaluate accepted post-rebuild fixed-BHP well state");
+
+    std::array<double, 4>
+        local_well_production_rate{};
+    if (rank == 0) {
+        const auto final_well =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    *fixture.well_context,
+                    *final_current[2U]);
+        require_collective(
+            final_well
+                    .cell_source
+                    .input_count ==
+                10U,
+            "accepted rebound fixed-BHP source lost its 3P Jacobian cardinality");
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            local_well_production_rate[
+                component] =
+                -final_well
+                     .cell_source
+                     .component_molar_rate_mol_per_s[
+                         component];
+        }
+        local_well_production_rate[3] =
+            -final_well
+                 .cell_source
+                 .energy_rate_w;
+    }
+
+    std::array<double, 4>
+        global_well_production_rate{};
+    require_collective(
+        MPI_Allreduce(
+            local_well_production_rate.data(),
+            global_well_production_rate.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce accepted rebound fixed-BHP well rates");
+
+    for (std::size_t component = 0U;
+         component < 3U;
+         ++component) {
+        require_collective(
+            std::isfinite(
+                global_well_production_rate[
+                    component]) &&
+                std::abs(
+                    global_well_production_rate[
+                        component]) >
+                    0.0,
+            "accepted rebound fixed-BHP component rate vanished or became non-finite");
+        near_collective(
+            global_final_total[
+                component],
+            global_previous_total[
+                component] -
+                accepted_dt *
+                    global_well_production_rate[
+                        component],
+            2.0e-7,
+            2.0e-8);
+    }
+    require_collective(
+        std::isfinite(
+            global_well_production_rate[3]) &&
+            std::abs(
+                global_well_production_rate[3]) >
+                0.0,
+        "accepted rebound fixed-BHP energy rate vanished or became non-finite");
+    near_collective(
+        global_final_total[3],
+        global_previous_total[3] -
+            accepted_dt *
+                global_well_production_rate[3],
+        2.0e-7,
+        2.0e-7);
+
+    require_collective(
+        VecDestroy(
+            &state_delta) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &previous_state) ==
+                PETSC_SUCCESS,
+        "phase-transition rebound fixed-BHP fixture cleanup failed");
+
+    audit->well_timestep_compressibility =
+        false;
+}
+
 } // namespace
 
 void mixed_cardinality_physical_snes_assembly_test() {
