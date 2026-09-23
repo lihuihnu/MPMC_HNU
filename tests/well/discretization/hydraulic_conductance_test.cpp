@@ -77,13 +77,23 @@ flow::LocalPhaseMobilityLinearization3P
 mobility_fixture() {
     flow::LocalPhaseMobilityLinearization3P
         result{};
-    result.state_identity =
-        flow::NaturalVariableStateIdentity3P{
-            flow::NaturalVariableLayoutDescriptor{
-                2U,
-                3U,
-                {1U, 1U, 1U}},
-            {"A", "B"}};
+    result.state_identity.layout =
+        flow::NaturalVariableLayoutDescriptor{
+            2U,
+            3U,
+            {1U, 1U, 1U}};
+    result.state_identity.component_ids =
+        {"A", "B"};
+    result.state_identity.reference_pressure_pa =
+        1.0e6;
+    result.state_identity.temperature_k =
+        350.0;
+    result.state_identity.saturation =
+        {0.2, 0.3, 0.5};
+    result.state_identity.phase_composition = {
+        std::vector<double>{0.7, 0.3},
+        std::vector<double>{0.5, 0.5},
+        std::vector<double>{0.2, 0.8}};
 
     const std::size_t q =
         result.state_identity.layout
@@ -282,13 +292,11 @@ void invalid_inputs() {
     {
         auto mobility =
             mobility_fixture();
-        mobility.state_identity =
-            flow::NaturalVariableStateIdentity3P{
-                flow::NaturalVariableLayoutDescriptor{
-                    2U,
-                    2U,
-                    {1U, 1U}},
-                {"A", "B"}};
+        mobility.state_identity.layout =
+            flow::NaturalVariableLayoutDescriptor{
+                2U,
+                2U,
+                {1U, 1U}};
         expect_invalid(
             [&] {
                 (void)wd::
