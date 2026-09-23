@@ -14,6 +14,12 @@ bool fixed_bhp_well_source_evaluator_header() {
                     evaluate_fixed_bhp_peaceman_well_source_3d),
             Callback>);
     static_assert(
+        std::is_same_v<
+            decltype(
+                &mpmc::well_discretization_petsc::
+                    evaluate_fixed_bhp_multi_connection_well_source_3d),
+            Callback>);
+    static_assert(
         mpmc::well_discretization_petsc::
             FixedBhpPeacemanWellSourceEvaluatorContext3D::
                 convention ==
@@ -28,6 +34,10 @@ bool fixed_bhp_well_source_evaluator_header() {
     return
         mpmc::well_discretization_petsc::
             fixed_bhp_peaceman_well_source_evaluator_convention ==
-        std::string_view{
-            "well-discretization-petsc/fixed-bhp-single-connection/phase-identity-rebindable-peaceman/v3"};
+            std::string_view{
+                "well-discretization-petsc/fixed-bhp-single-connection/phase-identity-rebindable-peaceman/v3"} &&
+        mpmc::well_discretization_petsc::
+            fixed_bhp_multi_connection_well_source_evaluator_convention ==
+            std::string_view{
+                "well-discretization-petsc/fixed-bhp-single-well/multi-connection-owner-only/v1"};
 }
