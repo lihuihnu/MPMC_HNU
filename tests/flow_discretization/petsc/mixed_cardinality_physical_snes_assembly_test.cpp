@@ -3679,9 +3679,9 @@ void run_frozen_fixed_bhp_timestep_case(
                     well::make_peaceman_well_index_3d(
                         {10.0, 10.0, 5.0},
                         {
-                            1.0e-4,
-                            1.0e-4,
-                            1.0e-4},
+                            1.0e-8,
+                            1.0e-8,
+                            1.0e-8},
                         well::
                             AxisAlignedWellDirection3D::z,
                         0.10,
