@@ -246,6 +246,33 @@ public:
 
     [[nodiscard]]
     FixedBhpPeacemanWellSourceEvaluatorContext3D
+    with_bottom_hole_pressure(
+        double bottom_hole_pressure_pa) const {
+        if (phase_identity_injection_enthalpy_
+                .has_value()) {
+            if (!active_phase_identities_
+                     .has_value()) {
+                throw std::logic_error(
+                    "mpmc::well_discretization_petsc: phase-identity fixed-BHP context lost its active phase map");
+            }
+            return create_phase_identity_bound(
+                target_cell_global_,
+                connection_,
+                bottom_hole_pressure_pa,
+                *phase_identity_injection_enthalpy_,
+                *active_phase_identities_,
+                source_provenance_);
+        }
+        return create(
+            target_cell_global_,
+            connection_,
+            bottom_hole_pressure_pa,
+            injection_enthalpy_,
+            source_provenance_);
+    }
+
+    [[nodiscard]]
+    FixedBhpPeacemanWellSourceEvaluatorContext3D
     rebind(
         mpmc::mesh::GlobalEntityId target_cell_global,
         const mpmc::flow::
