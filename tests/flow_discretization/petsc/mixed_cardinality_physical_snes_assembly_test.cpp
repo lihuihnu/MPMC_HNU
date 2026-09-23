@@ -4796,41 +4796,43 @@ void mixed_cardinality_physical_snes_assembly_test() {
 
         std::array<double, 4>
             local_well_production_rate{};
-        if (rank == 1) {
-            std::vector<std::optional<
+        std::vector<std::optional<
+            fdp::
+                MixedCardinalityPhysicalCurrentCellLinearization3D>>
+            final_current;
+        std::vector<double>
+            final_porosities;
+        fdp::NaturalVariableSnesEvaluationStatus3D
+            final_status =
                 fdp::
-                    MixedCardinalityPhysicalCurrentCellLinearization3D>>
-                current;
-            std::vector<double>
-                porosities;
-            fdp::NaturalVariableSnesEvaluationStatus3D
-                final_status =
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success;
+        const PetscErrorCode final_error =
+            verification_system
+                ->evaluate_local_cells_for_phase_transition(
+                    timestep_system
+                        ->initial_state(),
+                    &final_current,
+                    &final_porosities,
+                    &final_status);
+        require_collective(
+            final_error == PETSC_SUCCESS &&
+                final_status ==
                     fdp::
                         NaturalVariableSnesEvaluationStatus3D::
-                            success;
-            const PetscErrorCode final_error =
-                verification_system
-                    ->evaluate_local_cells_for_phase_transition(
-                        timestep_system
-                            ->initial_state(),
-                        &current,
-                        &porosities,
-                        &final_status);
-            if (final_error != PETSC_SUCCESS ||
-                final_status !=
-                    fdp::
-                        NaturalVariableSnesEvaluationStatus3D::
-                            success ||
-                current.size() <= 5U ||
-                !current[5U].has_value()) {
-                throw std::runtime_error(
-                    "failed to recover accepted well-cell state");
-            }
+                            success &&
+                final_current.size() > 5U &&
+                final_porosities.size() ==
+                    final_current.size() &&
+                final_current[5U].has_value(),
+            "failed to collectively recover accepted well-cell state");
+
+        if (rank == 1) {
             const auto* well_cell =
                 std::get_if<
                     fdp::
                         FixedThreePhaseCurrentCellLinearization3D>(
-                            &*current[5U]);
+                            &*final_current[5U]);
             if (well_cell == nullptr) {
                 throw std::runtime_error(
                     "accepted fixed-BHP completion left its frozen 3P chart");
