@@ -3898,6 +3898,396 @@ owned_conserved_totals(
     return totals;
 }
 
+void run_rebound_fixed_bhp_physical_timestep(
+    int rank,
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>*
+                system,
+    Vec* stable_state,
+    ControllerFixture* fixture,
+    std::size_t expected_phase_count,
+    std::size_t expected_scalar_count) {
+    if (system == nullptr ||
+        *system == nullptr ||
+        stable_state == nullptr ||
+        *stable_state == nullptr ||
+        fixture == nullptr ||
+        fixture->well_context == nullptr ||
+        expected_phase_count == 0U ||
+        expected_phase_count > 3U) {
+        throw std::invalid_argument(
+            "invalid rebound fixed-BHP physical timestep fixture");
+    }
+
+    const auto& target_record =
+        (*system)
+            ->numbering()
+            .cell(
+                mesh::LocalIndex{2U});
+    require_collective(
+        target_record.cell_global ==
+                mesh::GlobalEntityId{
+                    UINT64_C(30)} &&
+            target_record.phase_count ==
+                expected_phase_count &&
+            target_record.scalar_count ==
+                expected_scalar_count,
+        "rebound fixed-BHP target chart does not match expected cardinality");
+
+    const bool local_target_owner =
+        target_record.owner_rank ==
+        (*system)
+            ->numbering()
+            .local_rank();
+
+    require_collective(
+        (*system)
+                ->rebase_accepted_timestep(
+                    *stable_state,
+                    1.0) ==
+            PETSC_SUCCESS,
+        "failed to rebase stable rebound fixed-BHP state");
+    require_collective(
+        VecDestroy(
+            stable_state) ==
+            PETSC_SUCCESS,
+        "failed to destroy stable rebound fixed-BHP controller state");
+
+    bool rebased_history_matches = false;
+    require_collective(
+        (*system)
+                ->accepted_history_matches_state(
+                    (*system)
+                        ->initial_state(),
+                    &rebased_history_matches) ==
+            PETSC_SUCCESS &&
+            rebased_history_matches,
+        "rebound fixed-BHP accepted history did not match stable state");
+
+    const auto local_previous_total =
+        owned_conserved_totals(
+            **system,
+            (*system)
+                ->initial_state());
+    std::array<double, 4>
+        global_previous_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_previous_total.data(),
+            global_previous_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce rebound fixed-BHP previous conserved totals");
+
+    Vec previous_state = nullptr;
+    require_collective(
+        VecDuplicate(
+            (*system)
+                ->initial_state(),
+            &previous_state) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                (*system)
+                    ->initial_state(),
+                previous_state) ==
+                PETSC_SUCCESS,
+        "failed to preserve rebound fixed-BHP previous state");
+
+    fixture->well_source_audit.evaluator_calls =
+        0U;
+    fixture->well_source_audit.target_calls =
+        0U;
+
+    fdp::PhysicalTimestepDriverOptions3D
+        timestep_options;
+    timestep_options.adaptive
+        .minimum_timestep_seconds =
+        0.125;
+    timestep_options.adaptive
+        .maximum_timestep_seconds =
+        1.0;
+    timestep_options.adaptive
+        .cutback_factor =
+        0.5;
+    timestep_options.adaptive
+        .growth_factor =
+        2.0;
+    timestep_options.adaptive
+        .maximum_retries =
+        4U;
+    timestep_options.adaptive
+        .growth_nonlinear_iteration_limit =
+        20;
+    timestep_options.adaptive
+        .growth_line_search_direction_change_limit =
+        4;
+    timestep_options.adaptive
+        .growth_transition_restart_limit =
+        0U;
+    timestep_options.phase_transition
+        .max_transition_restarts =
+        0U;
+
+    fdp::AcceptedPhysicalTimeClock3D
+        timestep_clock{
+            0.0,
+            1.0};
+    FrozenWellTimestepControlAudit
+        frozen_scan{
+            mesh::LocalIndex{2U},
+            mesh::GlobalEntityId{
+                UINT64_C(30)},
+            expected_phase_count,
+            expected_scalar_count,
+            0U,
+            0U};
+    std::optional<
+        fdp::PhysicalTimestepDriverReport3D>
+        timestep_report;
+    const PetscErrorCode error =
+        fdp::advance_one_physical_timestep_3d(
+            PETSC_COMM_WORLD,
+            system,
+            0U,
+            {
+                &frozen_well_timestep_scan,
+                &frozen_scan,
+                &unexpected_frozen_well_timestep_rebuild,
+                &frozen_scan},
+            timestep_options,
+            &timestep_clock,
+            &timestep_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            timestep_report.has_value() &&
+            timestep_report->accepted() &&
+            timestep_report
+                    ->adaptive
+                    .accepted_timestep_seconds
+                    .has_value() &&
+            timestep_report
+                    ->accepted_record
+                    .has_value() &&
+            timestep_report
+                    ->accepted_record
+                    ->phase_transition_restarts ==
+                0U &&
+            timestep_clock
+                    .accepted_step_count() ==
+                1U &&
+            frozen_scan.scans > 0U &&
+            frozen_scan.rebuild_calls == 0U &&
+            (*system)
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                expected_phase_count &&
+            (local_target_owner
+                 ? fixture
+                           ->well_source_audit
+                           .target_calls >
+                       0U
+                 : fixture
+                           ->well_source_audit
+                           .target_calls ==
+                       0U),
+        "rebound fixed-BHP completion did not complete an owner-only accepted physical timestep");
+
+    const double accepted_dt =
+        *timestep_report
+             ->adaptive
+             .accepted_timestep_seconds;
+
+    Vec state_delta = nullptr;
+    PetscReal state_delta_norm = 0.0;
+    require_collective(
+        VecDuplicate(
+            (*system)
+                ->initial_state(),
+            &state_delta) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                (*system)
+                    ->initial_state(),
+                state_delta) ==
+                PETSC_SUCCESS &&
+            VecAXPY(
+                state_delta,
+                PetscScalar{-1.0},
+                previous_state) ==
+                PETSC_SUCCESS &&
+            VecNorm(
+                state_delta,
+                NORM_2,
+                &state_delta_norm) ==
+                PETSC_SUCCESS &&
+            static_cast<double>(
+                state_delta_norm) >
+                1.0e-10,
+        "rebound fixed-BHP physical timestep did not change reservoir state");
+
+    const auto local_final_total =
+        owned_conserved_totals(
+            **system,
+            (*system)
+                ->initial_state());
+    std::array<double, 4>
+        global_final_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_final_total.data(),
+            global_final_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce rebound fixed-BHP final conserved totals");
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        final_current;
+    std::vector<double>
+        final_porosity;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        final_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    require_collective(
+        (*system)
+                ->evaluate_local_cells_for_phase_transition(
+                    (*system)
+                        ->initial_state(),
+                    &final_current,
+                    &final_porosity,
+                    &final_status) ==
+            PETSC_SUCCESS &&
+            final_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            final_current.size() >
+                2U &&
+            final_current[2U]
+                .has_value(),
+        "failed to evaluate accepted rebound fixed-BHP well state");
+
+    std::array<double, 4>
+        local_well_production_rate{};
+    bool local_final_source_shape_ok =
+        true;
+    if (local_target_owner) {
+        const auto final_well =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    *fixture->well_context,
+                    *final_current[2U]);
+        local_final_source_shape_ok =
+            final_well
+                    .cell_source
+                    .input_count ==
+                expected_scalar_count;
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            local_well_production_rate[
+                component] =
+                -final_well
+                     .cell_source
+                     .component_molar_rate_mol_per_s[
+                         component];
+        }
+        local_well_production_rate[3] =
+            -final_well
+                 .cell_source
+                 .energy_rate_w;
+    }
+    require_collective(
+        local_final_source_shape_ok,
+        "accepted rebound fixed-BHP source lost expected Jacobian cardinality");
+
+    std::array<double, 4>
+        global_well_production_rate{};
+    require_collective(
+        MPI_Allreduce(
+            local_well_production_rate.data(),
+            global_well_production_rate.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce accepted rebound fixed-BHP well rates");
+
+    for (std::size_t component = 0U;
+         component < 3U;
+         ++component) {
+        require_collective(
+            std::isfinite(
+                global_well_production_rate[
+                    component]) &&
+                std::abs(
+                    global_well_production_rate[
+                        component]) >
+                    0.0,
+            "accepted rebound fixed-BHP component rate vanished or became non-finite");
+        near_collective(
+            global_final_total[
+                component],
+            global_previous_total[
+                component] -
+                accepted_dt *
+                    global_well_production_rate[
+                        component],
+            2.0e-7,
+            2.0e-8);
+    }
+    require_collective(
+        std::isfinite(
+            global_well_production_rate[3]) &&
+            std::abs(
+                global_well_production_rate[3]) >
+                0.0,
+        "accepted rebound fixed-BHP energy rate vanished or became non-finite");
+    near_collective(
+        global_final_total[3],
+        global_previous_total[3] -
+            accepted_dt *
+                global_well_production_rate[3],
+        2.0e-7,
+        2.0e-7);
+
+    bool accepted_history_matches = false;
+    require_collective(
+        (*system)
+                ->accepted_history_matches_state(
+                    (*system)
+                        ->initial_state(),
+                    &accepted_history_matches) ==
+            PETSC_SUCCESS &&
+            accepted_history_matches,
+        "rebound fixed-BHP accepted timestep did not rebase history");
+
+    require_collective(
+        VecDestroy(
+            &state_delta) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &previous_state) ==
+                PETSC_SUCCESS,
+        "rebound fixed-BHP physical timestep cleanup failed");
+
+    (void)rank;
+}
+
 void run_frozen_fixed_bhp_timestep_case(
     int rank,
     std::uint64_t target_stable,
