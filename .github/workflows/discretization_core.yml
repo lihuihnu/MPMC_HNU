@@ -9,7 +9,7 @@ jobs:
     name: Incremental path gate
     uses: ./.github/workflows/_incremental_path_gate.yml
     with:
-      paths_json: '["modules/mesh/include/**","modules/mesh/CMakeLists.txt","modules/discretization/include/**","modules/discretization/CMakeLists.txt","modules/well/**","tests/discretization/core/**","tests/well/core/**",".github/workflows/discretization_core.yml"]'
+      paths_json: '["modules/mesh/include/**","modules/mesh/CMakeLists.txt","modules/discretization/include/**","modules/discretization/CMakeLists.txt","modules/well/include/**","modules/well/CMakeLists.txt","tests/discretization/core/**","tests/well/core/**",".github/workflows/discretization_core.yml"]'
   core:
     needs: incremental-path-gate
     if: needs.incremental-path-gate.outputs.affected == 'true'

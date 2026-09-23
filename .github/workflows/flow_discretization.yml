@@ -62,7 +62,7 @@ jobs:
       - name: Build flow-discretization contract
         run: |
           cmake --build build/flow-discretization \
-            --target mpmc_flow_discretization_tests mpmc_flow_discretization_component_flux_tests mpmc_flow_discretization_scatter_tests mpmc_flow_discretization_normalized_spatial_tests mpmc_flow_discretization_local_conservation_tests mpmc_flow_discretization_multi_cell_conservation_tests mpmc_flow_discretization_energy_tests \
+            --target mpmc_flow_discretization_tests mpmc_flow_discretization_component_flux_tests mpmc_flow_discretization_scatter_tests mpmc_flow_discretization_normalized_spatial_tests mpmc_flow_discretization_local_conservation_tests mpmc_flow_discretization_multi_cell_conservation_tests mpmc_flow_discretization_energy_tests mpmc_well_discretization_tests mpmc_well_discretization_header_self_contained \
             --config ${{ matrix.config }} \
             --parallel 2
 
@@ -70,6 +70,6 @@ jobs:
         run: |
           ctest --test-dir build/flow-discretization \
             -C ${{ matrix.config }} \
-            -R '^flow_discretization[.](tpfa_phase_flux|component_flux|scatter|normalized_spatial|local_conservation|multi_cell_conservation|energy_conservation)[.]' \
+            -R '^flow_discretization[.](tpfa_phase_flux|component_flux|scatter|normalized_spatial|local_conservation|multi_cell_conservation|energy_conservation|well)[.]' \
             --verbose \
             --no-tests=error

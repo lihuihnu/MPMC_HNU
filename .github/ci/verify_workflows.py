@@ -80,6 +80,10 @@ def main():
     assert results['legacy_mesh_petsc'] and results['flow_discretization_petsc'] and not results['legacy_discretization_core']
     results, _, _ = select(['modules/well/include/mpmc/well/peaceman_well_index_3d.hpp'])
     assert results['legacy_discretization_core'] and not results['legacy_mesh_petsc']
+    results, _, _ = select(['modules/well/discretization/include/mpmc/well_discretization/hydraulic_conductance.hpp'])
+    assert results['flow_discretization'] and not results['legacy_discretization_core'] and not results['flow_core']
+    results, _, _ = select(['tests/well/discretization/hydraulic_conductance_test.cpp'])
+    assert results['flow_discretization'] and not results['legacy_discretization_core']
     # Deleted/renamed files are represented by both paths (--no-renames).
     left, _, _ = select(['tests/flow_discretization/petsc/old.cpp'])
     right, _, _ = select(['frontend/src/new.ts'])

@@ -11,6 +11,13 @@ option(
     "Enable ASan/UBSan for flow-discretization tests"
     OFF)
 
+set(
+    MPMC_WELL_DISCRETIZATION_ENABLE_SANITIZERS
+    "${MPMC_FLOW_DISCRETIZATION_ENABLE_SANITIZERS}")
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../well/discretization"
+    well-discretization-tests)
+
 add_executable(
     mpmc_flow_discretization_tests
     tpfa_phase_darcy_flux_test.cpp
