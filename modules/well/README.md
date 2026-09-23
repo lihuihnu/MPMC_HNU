@@ -38,6 +38,18 @@ composition derivatives from the frozen natural-variable composition pivot. It
 also propagates the explicit BHP derivative and verifies component-to-total
 molar closure for primal values and derivatives.
 
-The well module still does not define mass-rate conversion, enthalpy/energy
-well rates, multi-connection aggregation, rate-control equations, global well
-unknowns, source assembly, PETSc objects or scheduling.
+The connection energy layer now defines directional advective energy rate:
+
+`E_dot_alpha = q_alpha rho_alpha h_selected`, summed over phases.
+
+For production and exact-zero ties, `h_selected` is reservoir phase enthalpy.
+For injection, `h_selected` is explicit well-side injection enthalpy supplied
+by the caller; reservoir enthalpy is deliberately not reused for injected
+fluid. Reservoir mass density remains the volume-to-mass conversion because
+the phase rate is reservoir-volume based. The reservoir and BHP derivatives
+follow the same directional enthalpy selection.
+
+The well module still does not define conductive well/reservoir heat exchange,
+wellbore heat loss, mass-rate conversion, multi-connection aggregation,
+rate-control equations, global well unknowns, source assembly, PETSc objects or
+scheduling.

@@ -15,6 +15,9 @@
 bool run_component_molar_rate_case(
     std::string_view name);
 
+bool run_energy_rate_case(
+    std::string_view name);
+
 namespace {
 
 namespace flow = mpmc::flow;
@@ -630,6 +633,8 @@ int main(int argc, char** argv) {
             }
         }
         if (run_component_molar_rate_case(
+                name) ||
+            run_energy_rate_case(
                 name)) {
             std::cout
                 << "[PASS] "
