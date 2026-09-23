@@ -494,11 +494,24 @@ evaluate_fixed_bhp_three_phase_peaceman_well_source_3d(
     mpmc::flow_discretization_petsc::
         NaturalVariableSnesEvaluationStatus3D*
             status) {
+    if (raw_context == nullptr ||
+        output == nullptr ||
+        status == nullptr) {
+        return evaluate_fixed_bhp_peaceman_well_source_3d(
+            cell,
+            cell_global,
+            natural_variables,
+            current,
+            raw_context,
+            output,
+            status);
+    }
+    auto* context =
+        static_cast<
+            FixedBhpPeacemanWellSourceEvaluatorContext3D*>(
+                raw_context);
     if (cell_global !=
-            static_cast<
-                FixedBhpPeacemanWellSourceEvaluatorContext3D*>(
-                    raw_context)
-                ->target_cell_global()) {
+        context->target_cell_global()) {
         return evaluate_fixed_bhp_peaceman_well_source_3d(
             cell,
             cell_global,
@@ -512,9 +525,11 @@ evaluate_fixed_bhp_three_phase_peaceman_well_source_3d(
             mpmc::flow_discretization_petsc::
                 FixedThreePhaseCurrentCellLinearization3D>(
                     current)) {
-        if (output != nullptr) {
-            output->reset();
-        }
+        output->reset();
+        *status =
+            mpmc::flow_discretization_petsc::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
         return PETSC_ERR_SUP;
     }
     return evaluate_fixed_bhp_peaceman_well_source_3d(
