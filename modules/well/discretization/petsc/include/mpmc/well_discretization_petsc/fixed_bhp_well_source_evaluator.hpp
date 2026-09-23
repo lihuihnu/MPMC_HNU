@@ -1,7 +1,8 @@
 #ifndef MPMC_WELL_DISCRETIZATION_PETSC_FIXED_BHP_WELL_SOURCE_EVALUATOR_HPP
 #define MPMC_WELL_DISCRETIZATION_PETSC_FIXED_BHP_WELL_SOURCE_EVALUATOR_HPP
 
-#include <mpmc/flow/cross_cardinality_phase_identity.hpp>\n#include <mpmc/flow_discretization_petsc/mixed_cardinality_physical_snes_assembly.hpp>
+#include <mpmc/flow/cross_cardinality_phase_identity.hpp>
+#include <mpmc/flow_discretization_petsc/mixed_cardinality_physical_snes_assembly.hpp>
 #include <mpmc/well_discretization/energy_rate.hpp>
 #include <mpmc/well_discretization/fixed_bhp_connection_source.hpp>
 
