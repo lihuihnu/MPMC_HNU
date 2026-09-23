@@ -3631,6 +3631,522 @@ owned_conserved_totals(
     return totals;
 }
 
+void run_frozen_fixed_bhp_timestep_case(
+    int rank,
+    std::uint64_t target_stable,
+    std::size_t target_local,
+    std::size_t expected_phase_count,
+    double bottom_hole_pressure_pa,
+    const dp::
+        ParallelOwnedConnectionSchedule3D&
+            schedule,
+    const mesh::PartitionSnapshot&
+        partition,
+    const dp::
+        PetscMpiAijSymbolicPreallocation3D&
+            bridge,
+    const dp::
+        OwnedCellStructuralColumnPatternSnapshot3D&
+            pattern,
+    DispatchAudit* audit) {
+    if (audit == nullptr ||
+        expected_phase_count == 0U ||
+        expected_phase_count > 3U ||
+        target_local >= 6U) {
+        throw std::invalid_argument(
+            "invalid fixed-BHP cardinality timestep case");
+    }
+
+    std::vector<double>
+        injection_enthalpy;
+    injection_enthalpy.reserve(
+        expected_phase_count);
+    for (std::size_t phase = 0U;
+         phase < expected_phase_count;
+         ++phase) {
+        injection_enthalpy.push_back(
+            1000.0 *
+            static_cast<double>(
+                phase + 1U));
+    }
+
+    auto timestep_well_context =
+        wdp::
+            FixedBhpPeacemanWellSourceEvaluatorContext3D::
+                create(
+                    mesh::GlobalEntityId{
+                        target_stable},
+                    well::make_peaceman_well_index_3d(
+                        {10.0, 10.0, 5.0},
+                        {
+                            1.0e-4,
+                            1.0e-4,
+                            1.0e-4},
+                        well::
+                            AxisAlignedWellDirection3D::z,
+                        0.10,
+                        0.0),
+                    bottom_hole_pressure_pa,
+                    wd::FixedBhpInjectionEnthalpy3D{
+                        "fixture/fixed-bhp-variable-cardinality-injection-enthalpy/v1",
+                        std::move(
+                            injection_enthalpy)},
+                    "fixture/fixed-bhp-variable-cardinality-source/v1");
+
+    const auto timestep_pr_parameters =
+        thermodynamic_adapter_pr_parameters();
+    const auto timestep_pr_model =
+        th::Pr76Phase<double>::
+            from_parameters(
+                timestep_pr_parameters);
+    auto timestep_provider =
+        make_outer_rebuild_pr_provider(
+            timestep_pr_model);
+
+    FixedBhpWellSourceAudit
+        timestep_source_audit{
+            &timestep_well_context};
+    FixedBhpWellSourceAudit
+        verification_source_audit{
+            &timestep_well_context};
+
+    auto timestep_system =
+        make_frozen_fixed_bhp_timestep_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &timestep_source_audit,
+            &timestep_provider);
+    auto verification_system =
+        make_frozen_fixed_bhp_timestep_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &verification_source_audit,
+            &timestep_provider);
+
+    const auto target_cell =
+        mesh::LocalIndex{
+            static_cast<
+                mesh::LocalIndex::value_type>(
+                    target_local)};
+    const auto& target_record =
+        timestep_system
+            ->numbering()
+            .cell(target_cell);
+    const std::size_t expected_scalar_count =
+        expected_phase_count * 3U +
+        1U;
+    require_collective(
+        timestep_system
+                ->numbering()
+                .petsc_global_scalar_count() ==
+            42 &&
+            target_record.cell_global ==
+                mesh::GlobalEntityId{
+                    target_stable} &&
+            target_record.phase_count ==
+                expected_phase_count &&
+            target_record.scalar_count ==
+                expected_scalar_count,
+        "fixed-BHP timestep fixture changed variable-cardinality reservoir numbering");
+
+    const bool local_target_owner =
+        target_record.owner_rank ==
+        timestep_system
+            ->numbering()
+            .local_rank();
+
+    const auto local_previous_total =
+        owned_conserved_totals(
+            *timestep_system,
+            timestep_system
+                ->initial_state());
+    std::array<double, 4>
+        global_previous_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_previous_total.data(),
+            global_previous_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce variable-cardinality fixed-BHP previous conserved totals");
+
+    Vec previous_state = nullptr;
+    require_collective(
+        VecDuplicate(
+            timestep_system
+                ->initial_state(),
+            &previous_state) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                timestep_system
+                    ->initial_state(),
+                previous_state) ==
+                PETSC_SUCCESS,
+        "failed to preserve variable-cardinality fixed-BHP initial state");
+
+    fdp::PhysicalTimestepDriverOptions3D
+        timestep_options;
+    timestep_options.adaptive
+        .minimum_timestep_seconds =
+        0.125;
+    timestep_options.adaptive
+        .maximum_timestep_seconds =
+        1.0;
+    timestep_options.adaptive
+        .cutback_factor =
+        0.5;
+    timestep_options.adaptive
+        .growth_factor =
+        2.0;
+    timestep_options.adaptive
+        .maximum_retries =
+        4U;
+    timestep_options.adaptive
+        .growth_nonlinear_iteration_limit =
+        20;
+    timestep_options.adaptive
+        .growth_line_search_direction_change_limit =
+        4;
+    timestep_options.adaptive
+        .growth_transition_restart_limit =
+        0U;
+    timestep_options.phase_transition
+        .max_transition_restarts =
+        0U;
+
+    fdp::AcceptedPhysicalTimeClock3D
+        timestep_clock{
+            0.0,
+            1.0};
+    FrozenWellTimestepControlAudit
+        timestep_control_audit{
+            target_cell,
+            mesh::GlobalEntityId{
+                target_stable},
+            expected_phase_count,
+            expected_scalar_count,
+            0U,
+            0U};
+    std::optional<
+        fdp::PhysicalTimestepDriverReport3D>
+        timestep_report;
+    PetscErrorCode error =
+        fdp::advance_one_physical_timestep_3d(
+            PETSC_COMM_WORLD,
+            &timestep_system,
+            0U,
+            {
+                &frozen_well_timestep_scan,
+                &timestep_control_audit,
+                &unexpected_frozen_well_timestep_rebuild,
+                &timestep_control_audit},
+            timestep_options,
+            &timestep_clock,
+            &timestep_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            timestep_report.has_value() &&
+            timestep_report->accepted() &&
+            timestep_report
+                ->adaptive
+                .accepted_timestep_seconds
+                .has_value() &&
+            timestep_report
+                ->accepted_record
+                .has_value() &&
+            timestep_report
+                ->accepted_record
+                ->phase_transition_restarts ==
+            0U &&
+            timestep_clock
+                .accepted_step_count() ==
+            1U &&
+            timestep_control_audit.scans >
+            0U &&
+            timestep_control_audit
+                .rebuild_calls ==
+            0U &&
+            timestep_system
+                ->numbering()
+                .cell(target_cell)
+                .phase_count ==
+            expected_phase_count &&
+            (local_target_owner
+                 ? timestep_source_audit
+                       .target_calls >
+                   0U
+                 : timestep_source_audit
+                       .target_calls ==
+                   0U),
+        "PhysicalTimestepDriver did not accept the frozen variable-cardinality fixed-BHP well step owner-only");
+
+    const double accepted_dt =
+        *timestep_report
+             ->adaptive
+             .accepted_timestep_seconds;
+
+    bool history_matches = false;
+    require_collective(
+        timestep_system
+                ->accepted_history_matches_state(
+                    timestep_system
+                        ->initial_state(),
+                    &history_matches) ==
+            PETSC_SUCCESS &&
+            history_matches,
+        "variable-cardinality fixed-BHP accepted timestep did not rebase component/energy history");
+
+    Vec state_delta = nullptr;
+    PetscReal state_delta_norm = 0.0;
+    require_collective(
+        VecDuplicate(
+            timestep_system
+                ->initial_state(),
+            &state_delta) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                timestep_system
+                    ->initial_state(),
+                state_delta) ==
+                PETSC_SUCCESS &&
+            VecAXPY(
+                state_delta,
+                PetscScalar{-1.0},
+                previous_state) ==
+                PETSC_SUCCESS &&
+            VecNorm(
+                state_delta,
+                NORM_2,
+                &state_delta_norm) ==
+                PETSC_SUCCESS &&
+            static_cast<double>(
+                state_delta_norm) >
+                1.0e-8,
+        "variable-cardinality fixed-BHP well did not change the accepted reservoir state");
+
+    require_collective(
+        verification_system
+                ->set_trial_timestep_seconds(
+                    accepted_dt) ==
+            PETSC_SUCCESS,
+        "failed to align independent variable-cardinality fixed-BHP verification timestep");
+
+    Vec verification_residual = nullptr;
+    require_collective(
+        VecDuplicate(
+            timestep_system
+                ->initial_state(),
+            &verification_residual) ==
+                PETSC_SUCCESS &&
+            VecSet(
+                verification_residual,
+                PetscScalar{0.0}) ==
+                PETSC_SUCCESS,
+        "failed to allocate independent variable-cardinality fixed-BHP residual");
+
+    auto verification_evaluator =
+        verification_system
+            ->snes_evaluator();
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        verification_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    error =
+        verification_evaluator.function(
+            timestep_system
+                ->initial_state(),
+            verification_residual,
+            verification_evaluator
+                .user_context,
+            &verification_status);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyBegin(
+                verification_residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyEnd(
+                verification_residual);
+    }
+    PetscReal verification_residual_norm =
+        0.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                verification_residual,
+                NORM_2,
+                &verification_residual_norm);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            verification_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            static_cast<double>(
+                verification_residual_norm) <=
+                1.0e-6,
+        "accepted variable-cardinality fixed-BHP timestep failed independent residual reassembly");
+
+    const auto local_final_total =
+        owned_conserved_totals(
+            *verification_system,
+            timestep_system
+                ->initial_state());
+    std::array<double, 4>
+        global_final_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_final_total.data(),
+            global_final_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce variable-cardinality fixed-BHP final conserved totals");
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        final_current;
+    std::vector<double>
+        final_porosities;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        final_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    const PetscErrorCode final_error =
+        verification_system
+            ->evaluate_local_cells_for_phase_transition(
+                timestep_system
+                    ->initial_state(),
+                &final_current,
+                &final_porosities,
+                &final_status);
+    require_collective(
+        final_error == PETSC_SUCCESS &&
+            final_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            final_current.size() >
+                target_local &&
+            final_porosities.size() ==
+                final_current.size() &&
+            final_current[target_local]
+                .has_value() &&
+            std::visit(
+                [](const auto& typed) {
+                    return typed
+                        .transport
+                        .state_identity
+                        .layout
+                        .phase_count();
+                },
+                *final_current[
+                    target_local]) ==
+                expected_phase_count,
+        "failed to collectively recover accepted variable-cardinality well-cell state");
+
+    std::array<double, 4>
+        local_well_production_rate{};
+    if (local_target_owner) {
+        const auto final_well =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    timestep_well_context,
+                    *final_current[
+                        target_local]);
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            local_well_production_rate[
+                component] =
+                -final_well
+                     .cell_source
+                     .component_molar_rate_mol_per_s[
+                         component];
+        }
+        local_well_production_rate[3] =
+            -final_well
+                 .cell_source
+                 .energy_rate_w;
+    }
+
+    std::array<double, 4>
+        global_well_production_rate{};
+    require_collective(
+        MPI_Allreduce(
+            local_well_production_rate.data(),
+            global_well_production_rate.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce variable-cardinality fixed-BHP production rates");
+
+    for (std::size_t component = 0U;
+         component < 3U;
+         ++component) {
+        require_collective(
+            global_well_production_rate[
+                component] >
+                0.0,
+            "variable-cardinality fixed-BHP regression did not remain production-positive");
+        near_collective(
+            global_final_total[
+                component],
+            global_previous_total[
+                component] -
+                accepted_dt *
+                    global_well_production_rate[
+                        component],
+            2.0e-7,
+            2.0e-8);
+    }
+    require_collective(
+        global_well_production_rate[3] >
+            0.0,
+        "variable-cardinality fixed-BHP energy rate did not remain production-positive");
+    near_collective(
+        global_final_total[3],
+        global_previous_total[3] -
+            accepted_dt *
+                global_well_production_rate[
+                    3],
+        2.0e-7,
+        2.0e-7);
+
+    require_collective(
+        VecDestroy(
+            &verification_residual) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &state_delta) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &previous_state) ==
+                PETSC_SUCCESS,
+        "variable-cardinality fixed-BHP timestep regression cleanup failed");
+}
+
 } // namespace
 
 void mixed_cardinality_physical_snes_assembly_test() {
