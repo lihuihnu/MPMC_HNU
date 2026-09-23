@@ -632,11 +632,9 @@ public:
                 const auto& old =
                     coordinate_registry_->cell(
                         record.cell_global);
-                const auto& host =
+                const auto host =
                     std::visit(
-                        [](const auto& typed)
-                            -> const mpmc::flow::
-                                NaturalVariableStateIdentity3P& {
+                        [](const auto& typed) {
                             return typed
                                 .transport
                                 .state_identity;
