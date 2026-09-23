@@ -245,7 +245,7 @@ struct DispatchAudit {
     std::uint64_t two_calls{};
     std::uint64_t three_calls{};
     bool source_enabled{};
-    bool well_timestep_single_phase_compressibility{};
+    bool well_timestep_compressibility{};
     std::uint64_t source_evaluator_calls{};
     std::uint64_t source_cell20_calls{};
 };
@@ -453,7 +453,7 @@ evaluate_1p(
         }
         const bool synthetic_compressibility =
             audit
-                ->well_timestep_single_phase_compressibility;
+                ->well_timestep_compressibility;
         const double pressure_delta =
             p - 10.0;
         const double molar_density =
@@ -678,17 +678,53 @@ evaluate_2p(
             }
         }
 
+        const bool synthetic_compressibility =
+            audit->well_timestep_compressibility;
+        const double pressure_delta =
+            p - 20.0;
+        const std::array<double, 2>
+            molar_density{
+                6.0 +
+                    (synthetic_compressibility
+                         ? 0.06 * pressure_delta
+                         : 0.0),
+                3.0 +
+                    (synthetic_compressibility
+                         ? 0.03 * pressure_delta
+                         : 0.0)};
+        const std::array<double, 2>
+            mass_density{
+                2.0 +
+                    (synthetic_compressibility
+                         ? 0.02 * pressure_delta
+                         : 0.0),
+                1.5 +
+                    (synthetic_compressibility
+                         ? 0.015 * pressure_delta
+                         : 0.0)};
+        for (std::size_t phase = 0U;
+             phase < 2U;
+             ++phase) {
+            if (!(molar_density[phase] > 0.0) ||
+                !(mass_density[phase] > 0.0)) {
+                *status =
+                    fdp::NaturalVariableSnesEvaluationStatus3D::
+                        domain_error;
+                return PETSC_SUCCESS;
+            }
+        }
+
         input.phase_properties[0] =
             flow::PhasePropertyPrerequisiteInput{
-                6.0,
-                2.0,
+                molar_density[0],
+                mass_density[0],
                 1.0,
                 temperature,
                 0.5 * temperature};
         input.phase_properties[1] =
             flow::PhasePropertyPrerequisiteInput{
-                3.0,
-                1.5,
+                molar_density[1],
+                mass_density[1],
                 1.0,
                 1.2 * temperature,
                 0.8 * temperature};
@@ -702,11 +738,32 @@ evaluate_2p(
             zero{
                 std::vector<double>(q, 0.0),
                 std::vector<double>(q, 0.0)};
+        std::array<std::vector<double>, 2>
+            molar_density_gradient = zero;
+        std::array<std::vector<double>, 2>
+            mass_density_gradient = zero;
+        if (synthetic_compressibility) {
+            const auto pressure_column =
+                frozen_layout
+                    .pressure_unknown_index();
+            molar_density_gradient[0][
+                pressure_column] =
+                0.06;
+            molar_density_gradient[1][
+                pressure_column] =
+                0.03;
+            mass_density_gradient[0][
+                pressure_column] =
+                0.02;
+            mass_density_gradient[1][
+                pressure_column] =
+                0.015;
+        }
         auto molar =
             flow::
                 make_two_phase_molar_density_linearization(
                     state,
-                    zero);
+                    molar_density_gradient);
         const flow::TransportPropertyProvenance
             provenance{
                 "mixed-physical-dispatch",
@@ -716,7 +773,7 @@ evaluate_2p(
             flow::
                 make_two_phase_transport_linearization(
                     state,
-                    zero,
+                    mass_density_gradient,
                     zero,
                     {0.60, 0.40},
                     zero,
@@ -930,15 +987,52 @@ evaluate_3p(
             }
         }
 
+        const bool synthetic_compressibility =
+            audit->well_timestep_compressibility;
+        const double pressure_delta =
+            p - 30.0;
         const std::array<double, 3>
             molar_density{
-                2.0, 4.0, 7.0};
+                2.0 +
+                    (synthetic_compressibility
+                         ? 0.02 * pressure_delta
+                         : 0.0),
+                4.0 +
+                    (synthetic_compressibility
+                         ? 0.04 * pressure_delta
+                         : 0.0),
+                7.0 +
+                    (synthetic_compressibility
+                         ? 0.07 * pressure_delta
+                         : 0.0)};
         const std::array<double, 3>
             mass_density{
-                1.0, 2.0, 3.0};
+                1.0 +
+                    (synthetic_compressibility
+                         ? 0.01 * pressure_delta
+                         : 0.0),
+                2.0 +
+                    (synthetic_compressibility
+                         ? 0.02 * pressure_delta
+                         : 0.0),
+                3.0 +
+                    (synthetic_compressibility
+                         ? 0.03 * pressure_delta
+                         : 0.0)};
         const std::array<double, 3>
             viscosity{
                 1.0, 1.2, 1.4};
+        for (std::size_t phase = 0U;
+             phase < 3U;
+             ++phase) {
+            if (!(molar_density[phase] > 0.0) ||
+                !(mass_density[phase] > 0.0)) {
+                *status =
+                    fdp::NaturalVariableSnesEvaluationStatus3D::
+                        domain_error;
+                return PETSC_SUCCESS;
+            }
+        }
         for (std::size_t phase = 0U;
              phase < 3U;
              ++phase) {
@@ -964,6 +1058,10 @@ evaluate_3p(
         std::array<std::vector<double>, 3>
             zero;
         std::array<std::vector<double>, 3>
+            molar_density_gradient;
+        std::array<std::vector<double>, 3>
+            mass_density_gradient;
+        std::array<std::vector<double>, 3>
             dh;
         std::array<std::vector<double>, 3>
             du;
@@ -973,6 +1071,26 @@ evaluate_3p(
             zero[phase].assign(
                 q,
                 0.0);
+            molar_density_gradient[phase].assign(
+                q,
+                0.0);
+            mass_density_gradient[phase].assign(
+                q,
+                0.0);
+            if (synthetic_compressibility) {
+                const auto pressure_column =
+                    frozen_layout
+                        .pressure_unknown_index();
+                const double phase_scale =
+                    static_cast<double>(
+                        phase + 1U);
+                molar_density_gradient[phase][
+                    pressure_column] =
+                    0.02 * phase_scale;
+                mass_density_gradient[phase][
+                    pressure_column] =
+                    0.01 * phase_scale;
+            }
             dh[phase].assign(
                 q,
                 0.0);
@@ -997,7 +1115,7 @@ evaluate_3p(
             molar{
                 frozen_layout,
                 molar_density,
-                zero};
+                molar_density_gradient};
         const flow::TransportPropertyProvenance
             provenance{
                 "mixed-physical-dispatch",
@@ -1007,7 +1125,7 @@ evaluate_3p(
             flow::
                 make_phase_transport_property_linearization(
                     state,
-                    zero,
+                    mass_density_gradient,
                     zero,
                     provenance,
                     provenance);
@@ -3696,8 +3814,8 @@ void run_frozen_fixed_bhp_timestep_case(
             "invalid fixed-BHP cardinality timestep case");
     }
 
-    audit->well_timestep_single_phase_compressibility =
-        expected_phase_count == 1U;
+    audit->well_timestep_compressibility =
+        true;
 
     std::vector<double>
         injection_enthalpy;
@@ -4218,7 +4336,7 @@ void run_frozen_fixed_bhp_timestep_case(
                 PETSC_SUCCESS,
         "variable-cardinality fixed-BHP timestep regression cleanup failed");
 
-    audit->well_timestep_single_phase_compressibility =
+    audit->well_timestep_compressibility =
         false;
 }
 
