@@ -928,6 +928,21 @@ public:
             this};
     }
 
+    [[nodiscard]] double
+    cell_bulk_volume_m3(
+        mpmc::mesh::LocalIndex cell) const {
+        const std::size_t local =
+            static_cast<std::size_t>(
+                cell.value());
+        if (local >= cell_inputs_.size()) {
+            throw std::out_of_range(
+                "mpmc::flow_discretization_petsc: cell bulk-volume query out of range");
+        }
+        return mixed_cardinality_physical_detail::
+            bulk_volume(
+                cell_inputs_[local]);
+    }
+
     [[nodiscard]] PetscErrorCode
     create_jacobian_structure(
         Mat* output) const {
