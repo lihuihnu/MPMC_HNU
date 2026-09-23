@@ -6299,6 +6299,503 @@ void run_multi_connection_fixed_bhp_timestep_case(
         false;
 }
 
+void run_multi_connection_local_transition_rebind_case(
+    int rank,
+    const dp::
+        ParallelOwnedConnectionSchedule3D&
+            schedule,
+    const mesh::PartitionSnapshot&
+        partition,
+    const dp::
+        PetscMpiAijSymbolicPreallocation3D&
+            bridge,
+    const dp::
+        OwnedCellStructuralColumnPatternSnapshot3D&
+            pattern,
+    DispatchAudit* audit,
+    flow::
+        Pr76AbsentPhasePotentialExtensionProvider<
+            double>* provider) {
+    if (audit == nullptr ||
+        provider == nullptr) {
+        throw std::invalid_argument(
+            "invalid local-transition multi-connection fixed-BHP fixture");
+    }
+
+    audit->well_timestep_compressibility =
+        true;
+
+    const auto aqueous =
+        mixed_physical_phase_identity(
+            "aqueous");
+    const auto hydrocarbon0 =
+        mixed_physical_phase_identity(
+            "hydrocarbon-0");
+    const auto hydrocarbon1 =
+        mixed_physical_phase_identity(
+            "hydrocarbon-1");
+
+    wdp::FixedBhpPhaseIdentityInjectionEnthalpy3D
+        cell30_phase_registry{
+            "fixture/multi-transition-cell30-phase-enthalpy/v1",
+            {
+                {aqueous, 1000.0},
+                {hydrocarbon0, 2000.0},
+                {hydrocarbon1, 3000.0}}};
+
+    constexpr double shared_bhp_pa =
+        5.0;
+    auto connection30 =
+        wdp::
+            FixedBhpPeacemanWellSourceEvaluatorContext3D::
+                create_phase_identity_bound(
+                    mesh::GlobalEntityId{
+                        UINT64_C(30)},
+                    well::make_peaceman_well_index_3d(
+                        {10.0, 10.0, 5.0},
+                        {
+                            1.0e-8,
+                            1.0e-8,
+                            1.0e-8},
+                        well::
+                            AxisAlignedWellDirection3D::z,
+                        0.10,
+                        0.0),
+                    shared_bhp_pa,
+                    cell30_phase_registry,
+                    phase_identity_map_for_stable(
+                        UINT64_C(30)),
+                    "fixture/multi-transition-cell30-source/v1");
+
+    auto connection60 =
+        wdp::
+            FixedBhpPeacemanWellSourceEvaluatorContext3D::
+                create(
+                    mesh::GlobalEntityId{
+                        UINT64_C(60)},
+                    well::make_peaceman_well_index_3d(
+                        {12.0, 9.0, 4.0},
+                        {
+                            2.0e-8,
+                            1.5e-8,
+                            2.5e-8},
+                        well::
+                            AxisAlignedWellDirection3D::z,
+                        0.12,
+                        0.1),
+                    shared_bhp_pa,
+                    wd::FixedBhpInjectionEnthalpy3D{
+                        "fixture/multi-transition-cell60-enthalpy/v1",
+                        {1100.0, 2200.0, 3300.0}},
+                    "fixture/multi-transition-cell60-source/v1");
+
+    const double frozen60_wi =
+        connection60.connection()
+            .well_index_m3;
+    const auto frozen60_enthalpy =
+        connection60
+            .injection_enthalpy()
+            .specific_enthalpy_j_per_kg;
+    const std::string frozen60_source =
+        connection60.source_provenance();
+
+    auto multi_context =
+        wdp::
+            FixedBhpMultiConnectionWellSourceEvaluatorContext3D::
+                create(
+                    "fixture/multi-transition-single-well/v1",
+                    {
+                        connection60,
+                        connection30});
+
+    ControllerFixture fixture{
+        rank,
+        &schedule,
+        &partition,
+        &bridge,
+        &pattern,
+        audit,
+        nullptr,
+        provider,
+        false,
+        0U,
+        false,
+        false};
+    fixture.multi_well_context =
+        &multi_context;
+
+    auto initial_system =
+        make_controller_initial_system(
+            &fixture);
+    require_collective(
+        initial_system != nullptr &&
+            initial_system
+                    ->numbering()
+                    .petsc_global_scalar_count() ==
+                42 &&
+            initial_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                2U &&
+            initial_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .scalar_count ==
+                7U &&
+            initial_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .phase_count ==
+                3U &&
+            initial_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .scalar_count ==
+                10U,
+        "local-transition multi-well fixture did not start on 2P(cell30)+3P(cell60)");
+
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        appeared_system;
+    Vec appeared_state = nullptr;
+    std::optional<
+        fdp::
+            PostSnesPhaseTransitionControllerReport3D>
+        appearance_report;
+    PetscErrorCode error =
+        fdp::
+            solve_nonlinear_timestep_with_phase_transitions_3d(
+                PETSC_COMM_WORLD,
+                std::move(initial_system),
+                {
+                    &controller_scan,
+                    &fixture,
+                    &controller_rebuild,
+                    &fixture},
+                {4U},
+                &appeared_system,
+                &appeared_state,
+                &appearance_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            appeared_system != nullptr &&
+            appeared_state != nullptr &&
+            appearance_report.has_value() &&
+            appearance_report->outcome ==
+                fdp::
+                    PostSnesPhaseTransitionOutcome3D::
+                        stable_phase_set &&
+            appearance_report
+                    ->transition_restarts ==
+                1U &&
+            fixture.rebuild_calls ==
+                1U &&
+            fixture.multi_well_rebound &&
+            fixture.multi_well_context !=
+                nullptr &&
+            appeared_system
+                    ->numbering()
+                    .petsc_global_scalar_count() ==
+                45 &&
+            appeared_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                3U &&
+            appeared_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .scalar_count ==
+                10U &&
+            appeared_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .phase_count ==
+                3U &&
+            appeared_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .scalar_count ==
+                10U,
+        "multi-connection well did not survive local cell30 2P-to-3P restart");
+
+    const auto* appeared30 =
+        fixture.multi_well_context
+            ->find_connection(
+                mesh::GlobalEntityId{
+                    UINT64_C(30)});
+    const auto* frozen60 =
+        fixture.multi_well_context
+            ->find_connection(
+                mesh::GlobalEntityId{
+                    UINT64_C(60)});
+    require_collective(
+        appeared30 != nullptr &&
+            frozen60 != nullptr &&
+            appeared30
+                    ->active_phase_identities()
+                    .has_value() &&
+            appeared30
+                    ->active_phase_identities()
+                    ->phase_count() ==
+                3U &&
+            appeared30
+                    ->injection_enthalpy()
+                    .specific_enthalpy_j_per_kg ==
+                std::vector<double>{
+                    1000.0,
+                    2000.0,
+                    3000.0} &&
+            frozen60
+                    ->target_cell_global() ==
+                mesh::GlobalEntityId{
+                    UINT64_C(60)} &&
+            std::abs(
+                frozen60
+                        ->connection()
+                        .well_index_m3 -
+                    frozen60_wi) <=
+                1.0e-14 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            frozen60_wi)) &&
+            frozen60
+                    ->bottom_hole_pressure_pa() ==
+                shared_bhp_pa &&
+            frozen60
+                    ->injection_enthalpy()
+                    .specific_enthalpy_j_per_kg ==
+                frozen60_enthalpy &&
+            frozen60
+                    ->source_provenance() ==
+                frozen60_source &&
+            !frozen60
+                 ->phase_identity_rebindable(),
+        "cell30 local appearance incorrectly mutated frozen cell60 connection");
+
+    run_rebound_multi_connection_fixed_bhp_physical_timestep(
+        rank,
+        &appeared_system,
+        &appeared_state,
+        &fixture,
+        3U,
+        10U,
+        45);
+
+    // A second independent controller session removes only cell30's third
+    // phase. Cell60 remains a frozen 3P connection throughout the round trip.
+    fixture.phase_disappearance_only =
+        true;
+    fixture.oscillate_after_restart =
+        false;
+    fixture.rebuild_calls =
+        0U;
+    fixture.multi_well_rebound =
+        false;
+    fixture
+        .multi_well_source_audit
+        .evaluator_calls = 0U;
+    fixture
+        .multi_well_source_audit
+        .cell30_calls = 0U;
+    fixture
+        .multi_well_source_audit
+        .cell60_calls = 0U;
+
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        disappeared_system;
+    Vec disappeared_state = nullptr;
+    std::optional<
+        fdp::
+            PostSnesPhaseTransitionControllerReport3D>
+        disappearance_report;
+    error =
+        fdp::
+            solve_nonlinear_timestep_with_phase_transitions_3d(
+                PETSC_COMM_WORLD,
+                std::move(appeared_system),
+                {
+                    &controller_scan,
+                    &fixture,
+                    &controller_rebuild,
+                    &fixture},
+                {4U},
+                &disappeared_system,
+                &disappeared_state,
+                &disappearance_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            disappeared_system != nullptr &&
+            disappeared_state != nullptr &&
+            disappearance_report.has_value() &&
+            disappearance_report->outcome ==
+                fdp::
+                    PostSnesPhaseTransitionOutcome3D::
+                        stable_phase_set &&
+            disappearance_report
+                    ->transition_restarts ==
+                1U &&
+            fixture.rebuild_calls ==
+                1U &&
+            fixture.multi_well_rebound &&
+            fixture.multi_well_context !=
+                nullptr &&
+            disappeared_system
+                    ->numbering()
+                    .petsc_global_scalar_count() ==
+                42 &&
+            disappeared_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                2U &&
+            disappeared_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .scalar_count ==
+                7U &&
+            disappeared_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .phase_count ==
+                3U &&
+            disappeared_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .scalar_count ==
+                10U,
+        "multi-connection well did not survive local cell30 3P-to-2P restart");
+
+    const auto* disappeared30 =
+        fixture.multi_well_context
+            ->find_connection(
+                mesh::GlobalEntityId{
+                    UINT64_C(30)});
+    frozen60 =
+        fixture.multi_well_context
+            ->find_connection(
+                mesh::GlobalEntityId{
+                    UINT64_C(60)});
+    const auto initial30_map =
+        phase_identity_map_for_stable(
+            UINT64_C(30));
+    bool cell30_roundtrip_identity_ok =
+        disappeared30 != nullptr &&
+        disappeared30
+                ->active_phase_identities()
+                .has_value() &&
+        disappeared30
+                ->active_phase_identities()
+                ->phase_count() ==
+            initial30_map.phase_count();
+    if (cell30_roundtrip_identity_ok) {
+        for (std::size_t phase = 0U;
+             phase < initial30_map.phase_count();
+             ++phase) {
+            cell30_roundtrip_identity_ok =
+                cell30_roundtrip_identity_ok &&
+                disappeared30
+                        ->active_phase_identities()
+                        ->identity(phase) ==
+                    initial30_map.identity(
+                        phase);
+        }
+    }
+
+    const auto& retained_registry =
+        disappeared30 != nullptr
+            ? disappeared30
+                  ->phase_identity_injection_enthalpy()
+            : std::optional<
+                  wdp::
+                      FixedBhpPhaseIdentityInjectionEnthalpy3D>{};
+    const bool disappeared_phase_retained =
+        retained_registry.has_value() &&
+        retained_registry->phases.size() ==
+            3U &&
+        std::any_of(
+            retained_registry
+                ->phases.begin(),
+            retained_registry
+                ->phases.end(),
+            [&](const auto& entry) {
+                return entry.identity ==
+                           hydrocarbon1 &&
+                    entry
+                            .specific_enthalpy_j_per_kg ==
+                        3000.0;
+            });
+
+    require_collective(
+        cell30_roundtrip_identity_ok &&
+            disappeared_phase_retained &&
+            disappeared30
+                    ->injection_enthalpy()
+                    .specific_enthalpy_j_per_kg ==
+                std::vector<double>{
+                    1000.0,
+                    2000.0} &&
+            frozen60 != nullptr &&
+            frozen60
+                    ->target_cell_global() ==
+                mesh::GlobalEntityId{
+                    UINT64_C(60)} &&
+            std::abs(
+                frozen60
+                        ->connection()
+                        .well_index_m3 -
+                    frozen60_wi) <=
+                1.0e-14 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            frozen60_wi)) &&
+            frozen60
+                    ->bottom_hole_pressure_pa() ==
+                shared_bhp_pa &&
+            frozen60
+                    ->injection_enthalpy()
+                    .specific_enthalpy_j_per_kg ==
+                frozen60_enthalpy &&
+            frozen60
+                    ->source_provenance() ==
+                frozen60_source &&
+            !frozen60
+                 ->phase_identity_rebindable(),
+        "cell30 local disappearance drifted identity or mutated frozen cell60 connection");
+
+    run_rebound_multi_connection_fixed_bhp_physical_timestep(
+        rank,
+        &disappeared_system,
+        &disappeared_state,
+        &fixture,
+        2U,
+        7U,
+        42);
+
+    audit->well_timestep_compressibility =
+        false;
+}
+
 void run_phase_transition_rebound_fixed_bhp_case(
     int rank,
     const dp::
