@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -665,6 +666,117 @@ make_fixed_bhp_connection_cell_source_3d(
             source,
             source.component_ids,
             q);
+    return result;
+}
+
+/// Production-positive primal total for one logical fixed-BHP well.
+///
+/// This aggregate deliberately contains no reservoir Jacobian: connections may
+/// live on different cells and therefore have different natural-variable
+/// columns. Each connection source remains assembled into its own cell block.
+/// The well total is only the authoritative sum of connection-level primal
+/// rates at one evaluated state.
+struct FixedBhpWellProductionRateAggregation3D {
+    double bottom_hole_pressure_pa{};
+    std::vector<std::string>
+        component_ids;
+    std::vector<double>
+        component_molar_rate_mol_per_s;
+    double energy_rate_w{};
+    std::size_t authoritative_connection_count{};
+};
+
+/// Sum already-authoritative connection sources into one logical well total.
+///
+/// CellSourceLinearization3D is injection-positive, while this returned
+/// aggregate is production-positive, so each primal source receives exactly
+/// one sign reversal. Callers are responsible for supplying each physical
+/// connection exactly once; distributed callers should aggregate only
+/// owner-side connection evaluations before their MPI reduction.
+[[nodiscard]] inline
+FixedBhpWellProductionRateAggregation3D
+aggregate_fixed_bhp_connection_production_rates_3d(
+    std::span<
+        const FixedBhpConnectionCellSourceLinearization3D>
+        authoritative_connections) {
+    if (authoritative_connections.empty()) {
+        throw std::invalid_argument(
+            "mpmc::well_discretization: fixed-BHP well aggregation requires at least one authoritative connection");
+    }
+
+    const auto& first =
+        authoritative_connections.front();
+    FixedBhpWellProductionRateAggregation3D
+        result;
+    result.bottom_hole_pressure_pa =
+        first.bottom_hole_pressure_pa;
+    result.component_ids =
+        first.cell_source.component_ids;
+    result.component_molar_rate_mol_per_s.assign(
+        result.component_ids.size(),
+        0.0);
+    result.authoritative_connection_count =
+        authoritative_connections.size();
+
+    if (!std::isfinite(
+            result.bottom_hole_pressure_pa) ||
+        !(result.bottom_hole_pressure_pa > 0.0) ||
+        result.component_ids.empty()) {
+        throw std::invalid_argument(
+            "mpmc::well_discretization: malformed fixed-BHP authoritative connection aggregate");
+    }
+
+    for (const auto& connection :
+         authoritative_connections) {
+        if (connection.bottom_hole_pressure_pa !=
+                result.bottom_hole_pressure_pa ||
+            connection.cell_source.component_ids !=
+                result.component_ids ||
+            connection
+                    .cell_source
+                    .component_molar_rate_mol_per_s
+                    .size() !=
+                result.component_ids.size() ||
+            !std::isfinite(
+                connection
+                    .cell_source
+                    .energy_rate_w)) {
+            throw std::invalid_argument(
+                "mpmc::well_discretization: fixed-BHP authoritative connections do not share BHP/component ordering");
+        }
+
+        for (std::size_t component = 0U;
+             component < result.component_ids.size();
+             ++component) {
+            const double source_rate =
+                connection
+                    .cell_source
+                    .component_molar_rate_mol_per_s[
+                        component];
+            if (!std::isfinite(source_rate)) {
+                throw std::invalid_argument(
+                    "mpmc::well_discretization: fixed-BHP authoritative connection contains non-finite component rate");
+            }
+            result.component_molar_rate_mol_per_s[
+                component] -=
+                source_rate;
+            if (!std::isfinite(
+                    result
+                        .component_molar_rate_mol_per_s[
+                            component])) {
+                throw std::range_error(
+                    "mpmc::well_discretization: fixed-BHP aggregated component production rate is outside representable range");
+            }
+        }
+
+        result.energy_rate_w -=
+            connection.cell_source.energy_rate_w;
+        if (!std::isfinite(
+                result.energy_rate_w)) {
+            throw std::range_error(
+                "mpmc::well_discretization: fixed-BHP aggregated energy production rate is outside representable range");
+        }
+    }
     return result;
 }
 
