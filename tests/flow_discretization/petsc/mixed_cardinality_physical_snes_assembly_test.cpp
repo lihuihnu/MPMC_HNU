@@ -6873,6 +6873,734 @@ void run_multi_connection_local_transition_rebind_case(
         false;
 }
 
+void run_fixed_total_molar_rate_control_case(
+    int rank,
+    const dp::
+        ParallelOwnedConnectionSchedule3D&
+            schedule,
+    const mesh::PartitionSnapshot&
+        partition,
+    const dp::
+        PetscMpiAijSymbolicPreallocation3D&
+            bridge,
+    const dp::
+        OwnedCellStructuralColumnPatternSnapshot3D&
+            pattern,
+    DispatchAudit* audit) {
+    if (audit == nullptr) {
+        throw std::invalid_argument(
+            "invalid fixed-total-molar-rate control fixture");
+    }
+
+    audit->well_timestep_compressibility =
+        true;
+
+    constexpr double initial_bhp_pa = 5.0;
+    constexpr double target_reference_bhp_pa = 4.0;
+
+    auto connection30 =
+        wdp::
+            FixedBhpPeacemanWellSourceEvaluatorContext3D::
+                create(
+                    mesh::GlobalEntityId{
+                        UINT64_C(30)},
+                    well::make_peaceman_well_index_3d(
+                        {10.0, 10.0, 5.0},
+                        {
+                            1.0e-8,
+                            1.0e-8,
+                            1.0e-8},
+                        well::
+                            AxisAlignedWellDirection3D::z,
+                        0.10,
+                        0.0),
+                    initial_bhp_pa,
+                    wd::FixedBhpInjectionEnthalpy3D{
+                        "fixture/rate-control-cell30-enthalpy/v1",
+                        {1000.0, 2000.0}},
+                    "fixture/rate-control-cell30-source/v1");
+    auto connection60 =
+        wdp::
+            FixedBhpPeacemanWellSourceEvaluatorContext3D::
+                create(
+                    mesh::GlobalEntityId{
+                        UINT64_C(60)},
+                    well::make_peaceman_well_index_3d(
+                        {12.0, 9.0, 4.0},
+                        {
+                            2.0e-8,
+                            1.5e-8,
+                            2.5e-8},
+                        well::
+                            AxisAlignedWellDirection3D::z,
+                        0.12,
+                        0.1),
+                    initial_bhp_pa,
+                    wd::FixedBhpInjectionEnthalpy3D{
+                        "fixture/rate-control-cell60-enthalpy/v1",
+                        {1100.0, 2200.0, 3300.0}},
+                    "fixture/rate-control-cell60-source/v1");
+
+    auto multi_context =
+        wdp::
+            FixedBhpMultiConnectionWellSourceEvaluatorContext3D::
+                create(
+                    "fixture/rate-controlled-two-connection-well/v1",
+                    {
+                        connection60,
+                        connection30});
+
+    auto initial30 =
+        evaluate_target(
+            UINT64_C(30),
+            audit);
+    auto initial60 =
+        evaluate_target(
+            UINT64_C(60),
+            audit);
+
+    const auto target_source30 =
+        wdp::
+            build_fixed_bhp_peaceman_well_source_3d(
+                multi_context
+                    .find_connection(
+                        mesh::GlobalEntityId{
+                            UINT64_C(30)})
+                    ->with_bottom_hole_pressure(
+                        target_reference_bhp_pa),
+                initial30);
+    const auto target_source60 =
+        wdp::
+            build_fixed_bhp_peaceman_well_source_3d(
+                multi_context
+                    .find_connection(
+                        mesh::GlobalEntityId{
+                            UINT64_C(60)})
+                    ->with_bottom_hole_pressure(
+                        target_reference_bhp_pa),
+                initial60);
+
+    const auto initial_source30 =
+        wdp::
+            build_fixed_bhp_peaceman_well_source_3d(
+                *multi_context.find_connection(
+                    mesh::GlobalEntityId{
+                        UINT64_C(30)}),
+                initial30);
+    const auto initial_source60 =
+        wdp::
+            build_fixed_bhp_peaceman_well_source_3d(
+                *multi_context.find_connection(
+                    mesh::GlobalEntityId{
+                        UINT64_C(60)}),
+                initial60);
+
+    auto total_molar_production =
+        [](const auto& first,
+           const auto& second) {
+            double total = 0.0;
+            for (double value :
+                 first
+                     .cell_source
+                     .component_molar_rate_mol_per_s) {
+                total -= value;
+            }
+            for (double value :
+                 second
+                     .cell_source
+                     .component_molar_rate_mol_per_s) {
+                total -= value;
+            }
+            return total;
+        };
+
+    const double target_rate =
+        total_molar_production(
+            target_source30,
+            target_source60);
+    const double initial_rate =
+        total_molar_production(
+            initial_source30,
+            initial_source60);
+    require_collective(
+        std::isfinite(target_rate) &&
+            target_rate > 0.0 &&
+            std::isfinite(initial_rate) &&
+            initial_rate > 0.0 &&
+            std::abs(
+                target_rate -
+                initial_rate) >
+                1.0e-8 *
+                    std::max(
+                        target_rate,
+                        initial_rate),
+        "fixed-total-molar-rate target does not require a nontrivial BHP correction");
+
+    auto source_context =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    multi_context,
+                    initial_bhp_pa);
+
+    const auto pr_parameters =
+        thermodynamic_adapter_pr_parameters();
+    const auto pr_model =
+        th::Pr76Phase<double>::
+            from_parameters(
+                pr_parameters);
+    auto provider =
+        make_outer_rebuild_pr_provider(
+            pr_model);
+
+    auto reservoir_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &source_context,
+            &provider);
+
+    require_collective(
+        reservoir_system != nullptr &&
+            reservoir_system
+                    ->numbering()
+                    .petsc_global_scalar_count() ==
+                42 &&
+            reservoir_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                2U &&
+            reservoir_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .phase_count ==
+                3U,
+        "rate-control reservoir system changed frozen phase cardinality");
+
+    const auto local_previous_total =
+        owned_conserved_totals(
+            *reservoir_system,
+            reservoir_system
+                ->initial_state());
+    std::array<double, 4>
+        global_previous_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_previous_total.data(),
+            global_previous_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce rate-control previous conserved totals");
+
+    std::unique_ptr<
+        wdp::
+            FixedTotalMolarRateWellControlSystem3D>
+        control_system;
+    PetscErrorCode error =
+        wdp::
+            FixedTotalMolarRateWellControlSystem3D::
+                create(
+                    PETSC_COMM_WORLD,
+                    reservoir_system.get(),
+                    &source_context,
+                    initial_bhp_pa,
+                    target_rate,
+                    &control_system);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            control_system != nullptr &&
+            control_system
+                    ->reservoir_global_scalar_count() ==
+                42 &&
+            control_system
+                    ->global_scalar_count() ==
+                43 &&
+            control_system
+                    ->well_global_scalar() ==
+                42 &&
+            control_system
+                    ->well_owner_rank() ==
+                1,
+        "rate-control augmented numbering did not add exactly one authoritative BHP scalar");
+
+    Vec solution = nullptr;
+    std::optional<
+        wdp::
+            FixedTotalMolarRateWellControlSolveReport3D>
+        report;
+    error =
+        control_system->solve(
+            &solution,
+            &report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            solution != nullptr &&
+            report.has_value() &&
+            report->converged() &&
+            report->global_scalar_count ==
+                43 &&
+            report->well_global_scalar ==
+                42 &&
+            report->well_owner_rank ==
+                1 &&
+            report->snes_type ==
+                SNESNEWTONLS &&
+            report->ksp_type ==
+                KSPGMRES &&
+            report->pc_type ==
+                PCASM &&
+            std::isfinite(
+                report
+                    ->bottom_hole_pressure_pa) &&
+            report->bottom_hole_pressure_pa >
+                0.0 &&
+            std::abs(
+                report
+                    ->bottom_hole_pressure_pa -
+                initial_bhp_pa) >
+                1.0e-7 &&
+            std::isfinite(
+                report
+                    ->achieved_total_molar_rate_mol_per_s) &&
+            std::abs(
+                report
+                    ->total_molar_rate_residual_mol_per_s()) <=
+                1.0e-8 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            target_rate)),
+        "fixed-total-molar-rate SNES did not converge to a nontrivial BHP/control root");
+
+    Mat controlled_jacobian = nullptr;
+    error =
+        MatDuplicate(
+            control_system
+                ->jacobian_structure(),
+            MAT_DO_NOT_COPY_VALUES,
+            &controlled_jacobian);
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        controlled_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    auto controlled_evaluator =
+        control_system
+            ->snes_evaluator();
+    if (error == PETSC_SUCCESS) {
+        error =
+            controlled_evaluator.jacobian(
+                solution,
+                controlled_jacobian,
+                controlled_evaluator
+                    .user_context,
+                &controlled_status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyBegin(
+                controlled_jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyEnd(
+                controlled_jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+
+    bool local_four_blocks_ok =
+        error == PETSC_SUCCESS &&
+        controlled_status ==
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    const PetscInt well_row =
+        control_system
+            ->well_global_scalar();
+
+    if (local_four_blocks_ok &&
+        rank == 0) {
+        const auto& cell30 =
+            reservoir_system
+                ->numbering()
+                .cell(
+                    mesh::LocalIndex{2U});
+        const PetscInt row =
+            cell30
+                .petsc_global_scalar_start;
+        const PetscInt column =
+            row;
+        PetscScalar jrr = 0.0;
+        PetscScalar jrw = 0.0;
+        if (MatGetValues(
+                controlled_jacobian,
+                1,
+                &row,
+                1,
+                &column,
+                &jrr) !=
+                PETSC_SUCCESS ||
+            MatGetValues(
+                controlled_jacobian,
+                1,
+                &row,
+                1,
+                &well_row,
+                &jrw) !=
+                PETSC_SUCCESS ||
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        jrr))) <=
+                0.0 ||
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        jrw))) <=
+                0.0) {
+            local_four_blocks_ok =
+                false;
+        }
+    }
+
+    if (local_four_blocks_ok &&
+        rank == 1) {
+        const auto& cell30 =
+            reservoir_system
+                ->numbering()
+                .cell(
+                    mesh::LocalIndex{2U});
+        const auto& cell60 =
+            reservoir_system
+                ->numbering()
+                .cell(
+                    mesh::LocalIndex{5U});
+        const PetscInt cell30_column =
+            cell30
+                .petsc_global_scalar_start;
+        const PetscInt cell60_column =
+            cell60
+                .petsc_global_scalar_start;
+        const PetscInt cell60_row =
+            cell60
+                .petsc_global_scalar_start;
+        PetscScalar jrr = 0.0;
+        PetscScalar jrw = 0.0;
+        PetscScalar jwr30 = 0.0;
+        PetscScalar jwr60 = 0.0;
+        PetscScalar jww = 0.0;
+        if (MatGetValues(
+                controlled_jacobian,
+                1,
+                &cell60_row,
+                1,
+                &cell60_column,
+                &jrr) !=
+                PETSC_SUCCESS ||
+            MatGetValues(
+                controlled_jacobian,
+                1,
+                &cell60_row,
+                1,
+                &well_row,
+                &jrw) !=
+                PETSC_SUCCESS ||
+            MatGetValues(
+                controlled_jacobian,
+                1,
+                &well_row,
+                1,
+                &cell30_column,
+                &jwr30) !=
+                PETSC_SUCCESS ||
+            MatGetValues(
+                controlled_jacobian,
+                1,
+                &well_row,
+                1,
+                &cell60_column,
+                &jwr60) !=
+                PETSC_SUCCESS ||
+            MatGetValues(
+                controlled_jacobian,
+                1,
+                &well_row,
+                1,
+                &well_row,
+                &jww) !=
+                PETSC_SUCCESS ||
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        jrr))) <=
+                0.0 ||
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        jrw))) <=
+                0.0 ||
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        jwr30))) <=
+                0.0 ||
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        jwr60))) <=
+                0.0 ||
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        jww))) <=
+                0.0) {
+            local_four_blocks_ok =
+                false;
+        }
+    }
+    require_collective(
+        local_four_blocks_ok,
+        "rate-control Jacobian did not materialize analytic Jrr/Jrw/Jwr/Jww blocks");
+
+    Vec reservoir_solution = nullptr;
+    error =
+        control_system
+            ->copy_reservoir_state(
+                solution,
+                &reservoir_solution);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            reservoir_solution != nullptr,
+        "failed to extract reservoir state from rate-controlled solution");
+
+    const auto local_final_total =
+        owned_conserved_totals(
+            *reservoir_system,
+            reservoir_solution);
+    std::array<double, 4>
+        global_final_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_final_total.data(),
+            global_final_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce rate-control final conserved totals");
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        final_current;
+    std::vector<double>
+        final_porosity;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        final_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    require_collective(
+        reservoir_system
+                ->evaluate_local_cells_for_phase_transition(
+                    reservoir_solution,
+                    &final_current,
+                    &final_porosity,
+                    &final_status) ==
+            PETSC_SUCCESS &&
+            final_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            final_current.size() > 5U &&
+            final_current[2U]
+                .has_value() &&
+            final_current[5U]
+                .has_value(),
+        "failed to evaluate rate-controlled reservoir solution");
+
+    std::array<double, 4>
+        local_well_rate{};
+    std::uint64_t
+        local_authoritative_count = 0U;
+
+    const auto& record30 =
+        reservoir_system
+            ->numbering()
+            .cell(
+                mesh::LocalIndex{2U});
+    if (record30.owner_rank ==
+        reservoir_system
+            ->numbering()
+            .local_rank()) {
+        const auto source =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    multi_context
+                        .find_connection(
+                            record30
+                                .cell_global)
+                        ->with_bottom_hole_pressure(
+                            report
+                                ->bottom_hole_pressure_pa),
+                    *final_current[2U]);
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            local_well_rate[
+                component] -=
+                source
+                    .cell_source
+                    .component_molar_rate_mol_per_s[
+                        component];
+        }
+        local_well_rate[3] -=
+            source
+                .cell_source
+                .energy_rate_w;
+        ++local_authoritative_count;
+    }
+
+    const auto& record60 =
+        reservoir_system
+            ->numbering()
+            .cell(
+                mesh::LocalIndex{5U});
+    if (record60.owner_rank ==
+        reservoir_system
+            ->numbering()
+            .local_rank()) {
+        const auto source =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    multi_context
+                        .find_connection(
+                            record60
+                                .cell_global)
+                        ->with_bottom_hole_pressure(
+                            report
+                                ->bottom_hole_pressure_pa),
+                    *final_current[5U]);
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            local_well_rate[
+                component] -=
+                source
+                    .cell_source
+                    .component_molar_rate_mol_per_s[
+                        component];
+        }
+        local_well_rate[3] -=
+            source
+                .cell_source
+                .energy_rate_w;
+        ++local_authoritative_count;
+    }
+
+    std::array<double, 4>
+        global_well_rate{};
+    std::uint64_t
+        global_authoritative_count = 0U;
+    require_collective(
+        MPI_Allreduce(
+            local_well_rate.data(),
+            global_well_rate.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            MPI_Allreduce(
+                &local_authoritative_count,
+                &global_authoritative_count,
+                1,
+                MPI_UINT64_T,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            global_authoritative_count ==
+                2U,
+        "rate-controlled well did not retain two unique authoritative connections");
+
+    const double summed_molar_rate =
+        global_well_rate[0] +
+        global_well_rate[1] +
+        global_well_rate[2];
+    near_collective(
+        summed_molar_rate,
+        target_rate,
+        1.0e-8,
+        1.0e-10);
+
+    const double dt =
+        reservoir_system
+            ->time_step_seconds();
+    for (std::size_t quantity = 0U;
+         quantity < 4U;
+         ++quantity) {
+        near_collective(
+            global_final_total[
+                quantity],
+            global_previous_total[
+                quantity] -
+                dt *
+                    global_well_rate[
+                        quantity],
+            3.0e-7,
+            quantity < 3U
+                ? 3.0e-8
+                : 3.0e-7);
+    }
+
+    require_collective(
+        reservoir_system
+                ->rebase_accepted_timestep(
+                    reservoir_solution,
+                    1.0) ==
+            PETSC_SUCCESS,
+        "failed to accept rate-controlled reservoir state");
+
+    bool history_matches = false;
+    require_collective(
+        reservoir_system
+                ->accepted_history_matches_state(
+                    reservoir_system
+                        ->initial_state(),
+                    &history_matches) ==
+            PETSC_SUCCESS &&
+            history_matches,
+        "rate-controlled accepted reservoir history did not rebase");
+
+    require_collective(
+        MatDestroy(
+            &controlled_jacobian) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &reservoir_solution) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &solution) ==
+                PETSC_SUCCESS,
+        "rate-control regression cleanup failed");
+
+    audit->well_timestep_compressibility =
+        false;
+}
+
 void run_phase_transition_rebound_fixed_bhp_case(
     int rank,
     const dp::
