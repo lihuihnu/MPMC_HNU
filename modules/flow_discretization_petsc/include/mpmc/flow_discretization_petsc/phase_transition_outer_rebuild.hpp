@@ -492,6 +492,19 @@ public:
             : 0.0;
     }
 
+    [[nodiscard]] PetscErrorCode
+    accepted_history_matches_state(
+        Vec accepted_state,
+        bool* matches) {
+        if (physical_context_ == nullptr) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+        return physical_context_
+            ->accepted_history_matches_state(
+                accepted_state,
+                matches);
+    }
+
     [[nodiscard]] NaturalVariableSnesEvaluator3D
     snes_evaluator() noexcept {
         return physical_context_

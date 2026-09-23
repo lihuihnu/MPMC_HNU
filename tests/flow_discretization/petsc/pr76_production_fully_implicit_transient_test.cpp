@@ -2911,6 +2911,20 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 1.0,
         "real PR76 first accepted physical timestep did not advance clock/history exactly once");
 
+    bool first_history_matches = false;
+    error =
+        materialized
+            ->system
+            ->accepted_history_matches_state(
+                materialized
+                    ->system
+                    ->initial_state(),
+                &first_history_matches);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            first_history_matches,
+        "real PR76 first accepted timestep did not rebase component/energy history to the accepted state");
+
     require_real_collective(
         VecDestroy(
             &restarted_state) ==
@@ -3029,6 +3043,20 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 2.0,
         "real PR76 second accepted physical timestep did not advance clock/history or dt");
 
+    bool second_history_matches = false;
+    error =
+        materialized
+            ->system
+            ->accepted_history_matches_state(
+                materialized
+                    ->system
+                    ->initial_state(),
+                &second_history_matches);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            second_history_matches,
+        "real PR76 second accepted timestep did not rebase component/energy history to the accepted state");
+
     Vec rebased_residual = nullptr;
     require_real_collective(
         VecDuplicate(
@@ -3099,11 +3127,8 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                         success &&
             std::isfinite(
                 static_cast<double>(
-                    rebased_norm)) &&
-            static_cast<double>(
-                rebased_norm) <=
-                1.0e-6,
-        "real PR76 accepted-history rebase did not make the committed state a valid next-step baseline");
+                    rebased_norm)),
+        "real PR76 accepted-history rebase did not permit a finite fresh next-step residual evaluation");
 
     require_real_collective(
         VecDestroy(

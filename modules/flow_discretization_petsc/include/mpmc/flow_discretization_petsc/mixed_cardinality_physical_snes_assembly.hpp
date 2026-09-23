@@ -1045,6 +1045,190 @@ public:
             next_time_step_seconds;
     }
 
+    /// Verify that the frozen backward-Euler history is exactly the history
+    /// implied by the supplied accepted state, to roundoff. This deliberately
+    /// does not require the full next-step residual to be zero: spatial/source
+    /// terms may be nonzero at a valid next-step initial guess.
+    [[nodiscard]] PetscErrorCode
+    accepted_history_matches_state(
+        Vec global_state,
+        bool* matches) {
+        using namespace
+            mixed_cardinality_physical_detail;
+
+        if (global_state == nullptr ||
+            matches == nullptr) {
+            return PETSC_ERR_ARG_NULL;
+        }
+        *matches = false;
+
+        std::vector<std::optional<
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+            current;
+        std::vector<double> porosities;
+        NaturalVariableSnesEvaluationStatus3D
+            status =
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+        PetscErrorCode error =
+            evaluate_local_cells_for_phase_transition(
+                global_state,
+                &current,
+                &porosities,
+                &status);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+        if (status !=
+                NaturalVariableSnesEvaluationStatus3D::
+                    success ||
+            current.size() !=
+                cell_inputs_.size() ||
+            porosities.size() !=
+                cell_inputs_.size()) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+
+        std::vector<
+            MixedCardinalityPhysicalSnesCellInput3D>
+            expected;
+        PetscErrorCode local_error =
+            prepare_accepted_history_rebase(
+                current,
+                time_step_seconds_,
+                &expected);
+        error =
+            collective_error(
+                comm_,
+                local_error);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+
+        int local_matches = 1;
+        try {
+            for (std::size_t local = 0U;
+                 local < cell_inputs_.size();
+                 ++local) {
+                const auto cell_index =
+                    mpmc::mesh::LocalIndex{
+                        static_cast<
+                            mpmc::mesh::LocalIndex::
+                                value_type>(
+                                    local)};
+                if (!numbering_
+                        ->is_owned_cell(
+                            cell_index)) {
+                    continue;
+                }
+
+                const auto& actual_component =
+                    previous_component(
+                        cell_inputs_[local]);
+                const auto& expected_component =
+                    previous_component(
+                        expected[local]);
+                const auto& actual_energy =
+                    previous_energy(
+                        cell_inputs_[local]);
+                const auto& expected_energy =
+                    previous_energy(
+                        expected[local]);
+                if (!actual_component.has_value() ||
+                    !expected_component.has_value() ||
+                    !actual_energy.has_value() ||
+                    !expected_energy.has_value()) {
+                    local_matches = 0;
+                    break;
+                }
+
+                const auto& actual_values =
+                    actual_component
+                        ->component_accumulation_mol_per_bulk_m3;
+                const auto& expected_values =
+                    expected_component
+                        ->component_accumulation_mol_per_bulk_m3;
+                bool component_matches =
+                    actual_component->component_ids ==
+                        expected_component->component_ids &&
+                    near_roundoff(
+                        actual_component->porosity,
+                        expected_component->porosity) &&
+                    near_roundoff(
+                        actual_component
+                            ->total_accumulation_mol_per_bulk_m3,
+                        expected_component
+                            ->total_accumulation_mol_per_bulk_m3) &&
+                    actual_values.size() ==
+                        expected_values.size();
+                if (component_matches) {
+                    for (std::size_t component = 0U;
+                         component <
+                             actual_values.size();
+                         ++component) {
+                        if (!near_roundoff(
+                                actual_values[component],
+                                expected_values[component])) {
+                            component_matches =
+                                false;
+                            break;
+                        }
+                    }
+                }
+
+                const bool energy_matches =
+                    near_roundoff(
+                        actual_energy->porosity,
+                        expected_energy->porosity) &&
+                    near_roundoff(
+                        actual_energy
+                            ->fluid_internal_energy_j_per_bulk_m3,
+                        expected_energy
+                            ->fluid_internal_energy_j_per_bulk_m3) &&
+                    near_roundoff(
+                        actual_energy
+                            ->rock_internal_energy_j_per_bulk_m3,
+                        expected_energy
+                            ->rock_internal_energy_j_per_bulk_m3) &&
+                    near_roundoff(
+                        actual_energy
+                            ->total_internal_energy_j_per_bulk_m3,
+                        expected_energy
+                            ->total_internal_energy_j_per_bulk_m3);
+
+                if (!component_matches ||
+                    !energy_matches) {
+                    local_matches = 0;
+                    break;
+                }
+            }
+        } catch (const std::exception&) {
+            local_error =
+                PETSC_ERR_ARG_INCOMP;
+        }
+        error =
+            collective_error(
+                comm_,
+                local_error);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+
+        int global_matches = 0;
+        if (MPI_Allreduce(
+                &local_matches,
+                &global_matches,
+                1,
+                MPI_INT,
+                MPI_MIN,
+                comm_) != MPI_SUCCESS) {
+            return PETSC_ERR_MPI;
+        }
+        *matches =
+            global_matches != 0;
+        return PETSC_SUCCESS;
+    }
+
     [[nodiscard]] PetscErrorCode
     evaluate_local_cells_for_phase_transition(
         Vec global_state,
