@@ -4236,3 +4236,18 @@ unchanged.
 `PhaseTransitionRebuiltNaturalVariableSystem3D::solve()` now creates and destroys
 this frozen scaling automatically. The generic 1P/2P/3P ragged manufactured solver
 regression also runs through the scaled path, so this is not a PR76 special case.
+
+### 47.11.3 Ragged ASM stabilization and failure diagnostics
+
+After frozen row scaling, the real restart still did not converge. Audit found the
+variable-cardinality ASM sub-block policy had not yet mirrored the fixed solver's
+scaled-real-SI safeguards. With D enabled it now uses the same `1e-10` weak-diagonal
+reordering threshold and PETSc `MAT_SHIFT_NONZERO` stabilization on the private
+ASM LU preconditioner matrix. The physical analytic Jacobian and nonlinear root are
+unchanged.
+
+The variable-cardinality solver also accepts optional
+`NaturalVariableSnesFailureDiagnostics3D`. On a non-converged solve it records
+SNES/KSP/top-level PC/ASM-sub-KSP/sub-PC reasons, iteration/evaluation/domain-error
+counts and the PETSc function norm before returning `PETSC_ERR_NOT_CONVERGED`.
+This is diagnostic evidence only and does not convert divergence into success.

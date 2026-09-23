@@ -537,7 +537,10 @@ public:
         Vec* solution,
         std::optional<
             VariableCardinalityNaturalVariableSnesSolveReport3D>*
-                report) {
+                report,
+        std::optional<
+            NaturalVariableSnesFailureDiagnostics3D>*
+                failure_diagnostics = nullptr) {
         Vec row_scaling =
             nullptr;
         PetscErrorCode error =
@@ -563,7 +566,8 @@ public:
                     ->snes_evaluator(),
                 solution,
                 report,
-                row_scaling);
+                row_scaling,
+                failure_diagnostics);
         const PetscErrorCode destroy =
             VecDestroy(
                 &row_scaling);

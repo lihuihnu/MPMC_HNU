@@ -2609,27 +2609,85 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
         fdp::
             VariableCardinalityNaturalVariableSnesSolveReport3D>
         restarted_report;
+    std::optional<
+        fdp::NaturalVariableSnesFailureDiagnostics3D>
+        restarted_failure;
     error =
         materialized
             ->system
             ->solve(
                 &restarted_state,
-                &restarted_report);
-    require_real_collective(
-        error == PETSC_SUCCESS &&
-            restarted_state != nullptr &&
-            restarted_report.has_value() &&
-            static_cast<int>(
-                restarted_report
-                    ->converged_reason) >
-                0 &&
-            std::isfinite(
-                restarted_report
-                    ->final_function_l2_norm) &&
-            restarted_report
-                    ->final_function_l2_norm <=
-                1.0e-6,
-        "real PR76 restarted mixed-cardinality SNES did not converge");
+                &restarted_report,
+                &restarted_failure);
+    if (!(error == PETSC_SUCCESS &&
+          restarted_state != nullptr &&
+          restarted_report.has_value() &&
+          static_cast<int>(
+              restarted_report
+                  ->converged_reason) >
+              0 &&
+          std::isfinite(
+              restarted_report
+                  ->final_function_l2_norm) &&
+          restarted_report
+                  ->final_function_l2_norm <=
+              1.0e-6)) {
+        throw std::runtime_error(
+            std::string{
+                "real PR76 restarted mixed-cardinality SNES did not converge: petsc_error="} +
+            std::to_string(
+                static_cast<int>(error)) +
+            " failure_present=" +
+            std::to_string(
+                restarted_failure.has_value()
+                    ? 1
+                    : 0) +
+            (restarted_failure.has_value()
+                 ? std::string{
+                       " snes_reason="} +
+                       std::to_string(
+                           static_cast<int>(
+                               restarted_failure
+                                   ->snes_reason)) +
+                       " ksp_reason=" +
+                       std::to_string(
+                           static_cast<int>(
+                               restarted_failure
+                                   ->ksp_reason)) +
+                       " pc_reason=" +
+                       std::to_string(
+                           restarted_failure
+                               ->pc_failed_reason) +
+                       " sub_ksp_reason=" +
+                       std::to_string(
+                           static_cast<int>(
+                               restarted_failure
+                                   ->sub_ksp_reason)) +
+                       " sub_pc_reason=" +
+                       std::to_string(
+                           restarted_failure
+                               ->sub_pc_failed_reason) +
+                       " nonlinear_iterations=" +
+                       std::to_string(
+                           static_cast<long long>(
+                               restarted_failure
+                                   ->nonlinear_iterations)) +
+                       " function_domain_errors=" +
+                       std::to_string(
+                           static_cast<long long>(
+                               restarted_failure
+                                   ->function_domain_errors)) +
+                       " jacobian_domain_errors=" +
+                       std::to_string(
+                           static_cast<long long>(
+                               restarted_failure
+                                   ->jacobian_domain_errors)) +
+                       " function_norm=" +
+                       std::to_string(
+                           restarted_failure
+                               ->function_l2_norm)
+                 : std::string{}));
+    }
 
     bool local_two_phase_ok = true;
     if (rank == 0) {

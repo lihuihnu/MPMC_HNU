@@ -2046,6 +2046,10 @@ make_variable_cardinality_initial_row_equilibration_3d(
 /// An optional frozen positive left row-scaling vector D applies the same
 /// audited contract as the fixed-cardinality solver: PETSc solves D*R=0 with
 /// D*J while the physical evaluator continues to publish native R and J.
+/// With D enabled, ASM sub-block LU uses the same weak-diagonal reordering and
+/// MAT_SHIFT_NONZERO stabilization as the fixed-cardinality correctness path.
+/// Optional failure diagnostics preserve SNES/KSP/PC reasons without changing
+/// non-convergence semantics.
 inline PetscErrorCode
 solve_variable_cardinality_natural_variable_snes_3d(
     MPI_Comm comm,
@@ -2058,7 +2062,10 @@ solve_variable_cardinality_natural_variable_snes_3d(
     std::optional<
         VariableCardinalityNaturalVariableSnesSolveReport3D>*
         report,
-    Vec row_scaling = nullptr) {
+    Vec row_scaling = nullptr,
+    std::optional<
+        NaturalVariableSnesFailureDiagnostics3D>*
+            failure_diagnostics = nullptr) {
     using namespace
         variable_cardinality_snes_solver_detail;
     using namespace natural_variable_snes_detail;
@@ -2111,6 +2118,9 @@ solve_variable_cardinality_natural_variable_snes_3d(
 
     *solution = nullptr;
     report->reset();
+    if (failure_diagnostics != nullptr) {
+        failure_diagnostics->reset();
+    }
 
     local_error =
         validate_layout(
@@ -2292,8 +2302,11 @@ solve_variable_cardinality_natural_variable_snes_3d(
         "-mpmc_variable_cardinality_sub_pc_type";
     constexpr const char* sub_pc_reorder_option =
         "-mpmc_variable_cardinality_sub_pc_factor_nonzeros_along_diagonal";
+    constexpr const char* sub_pc_shift_type_option =
+        "-mpmc_variable_cardinality_sub_pc_factor_shift_type";
     bool sub_pc_option_installed = false;
     bool sub_pc_reorder_installed = false;
+    bool sub_pc_shift_type_installed = false;
 
     if (error == PETSC_SUCCESS) {
         error =
@@ -2311,12 +2324,26 @@ solve_variable_cardinality_natural_variable_snes_3d(
             error == PETSC_SUCCESS;
     }
     if (error == PETSC_SUCCESS) {
+        const char* reorder_tolerance =
+            row_scaling != nullptr
+                ? "1.0e-10"
+                : "0.0";
         error =
             PetscOptionsSetValue(
                 nullptr,
                 sub_pc_reorder_option,
-                "0.0");
+                reorder_tolerance);
         sub_pc_reorder_installed =
+            error == PETSC_SUCCESS;
+    }
+    if (error == PETSC_SUCCESS &&
+        row_scaling != nullptr) {
+        error =
+            PetscOptionsSetValue(
+                nullptr,
+                sub_pc_shift_type_option,
+                "nonzero");
+        sub_pc_shift_type_installed =
             error == PETSC_SUCCESS;
     }
     if (error == PETSC_SUCCESS) {
@@ -2355,7 +2382,201 @@ solve_variable_cardinality_natural_variable_snes_3d(
         [&]() {
             PetscErrorCode first =
                 PETSC_SUCCESS;
+            if (sub_pc_shift_type_installed) {
+                first =
+                    PetscOptionsClearValue(
+                        nullptr,
+                        sub_pc_shift_type_option);
+                sub_pc_shift_type_installed =
+                    false;
+            }
             if (sub_pc_reorder_installed) {
+                const PetscErrorCode current =
+                    PetscOptionsClearValue(
+                        nullptr,
+                        sub_pc_reorder_option);
+                sub_pc_reorder_installed =
+                    false;
+                if (first == PETSC_SUCCESS &&
+                    current != PETSC_SUCCESS) {
+                    first = current;
+                }
+            }
+            if (sub_pc_option_installed) {
+                const PetscErrorCode current =
+                    PetscOptionsClearValue(
+                        nullptr,
+                        sub_pc_option);
+                sub_pc_option_installed =
+                    false;
+                if (first == PETSC_SUCCESS &&
+                    current != PETSC_SUCCESS) {
+                    first = current;
+                }
+            }
+            return first;
+        };
+
+    if (error != PETSC_SUCCESS) {
+        (void)clear_options();
+        cleanup();
+        return error;
+    }
+
+    error =
+        SNESSolve(
+            snes,
+            nullptr,
+            solved_state);
+    const PetscErrorCode clear_error =
+        clear_options();
+    if (error == PETSC_SUCCESS &&
+        clear_error != PETSC_SUCCESS) {
+        error =
+            clear_error;
+    }
+    if (error != PETSC_SUCCESS) {
+        cleanup();
+        return error;
+    }
+
+    SNESConvergedReason reason{
+        SNES_CONVERGED_ITERATING};
+    PetscInt nonlinear_iterations = -1;
+    error =
+        SNESGetConvergedReason(
+            snes,
+            &reason);
+    if (error == PETSC_SUCCESS) {
+        error =
+            SNESGetIterationNumber(
+                snes,
+                &nonlinear_iterations);
+    }
+    if (error != PETSC_SUCCESS) {
+        cleanup();
+        return error;
+    }
+    if (static_cast<int>(reason) <= 0) {
+        if (failure_diagnostics != nullptr) {
+            KSPConvergedReason ksp_reason{
+                KSP_CONVERGED_ITERATING};
+            PCFailedReason pc_reason{};
+            KSPConvergedReason sub_ksp_reason{
+                KSP_CONVERGED_ITERATING};
+            PCFailedReason sub_pc_reason{};
+            PetscReal function_norm = 0.0;
+
+            const PetscErrorCode ksp_reason_error =
+                KSPGetConvergedReason(
+                    ksp,
+                    &ksp_reason);
+            const PetscErrorCode pc_reason_error =
+                PCGetFailedReason(
+                    pc,
+                    &pc_reason);
+            const PetscErrorCode norm_error =
+                SNESGetFunctionNorm(
+                    snes,
+                    &function_norm);
+
+            PetscErrorCode sub_reason_error =
+                PETSC_SUCCESS;
+            PetscInt sub_count = 0;
+            KSP* sub_ksp = nullptr;
+            if (pc_reason_error == PETSC_SUCCESS) {
+                sub_reason_error =
+                    PCASMGetSubKSP(
+                        pc,
+                        &sub_count,
+                        nullptr,
+                        &sub_ksp);
+            }
+            if (sub_reason_error == PETSC_SUCCESS &&
+                sub_count > 0 &&
+                sub_ksp != nullptr) {
+                for (PetscInt index = 0;
+                     index < sub_count;
+                     ++index) {
+                    KSPConvergedReason candidate_ksp{
+                        KSP_CONVERGED_ITERATING};
+                    PC sub_pc = nullptr;
+                    PCFailedReason candidate_pc{};
+                    if (KSPGetConvergedReason(
+                            sub_ksp[index],
+                            &candidate_ksp) !=
+                            PETSC_SUCCESS ||
+                        KSPGetPC(
+                            sub_ksp[index],
+                            &sub_pc) !=
+                            PETSC_SUCCESS ||
+                        sub_pc == nullptr ||
+                        PCGetFailedReason(
+                            sub_pc,
+                            &candidate_pc) !=
+                            PETSC_SUCCESS) {
+                        sub_reason_error =
+                            PETSC_ERR_LIB;
+                        break;
+                    }
+                    if (static_cast<int>(
+                            candidate_ksp) < 0) {
+                        sub_ksp_reason =
+                            candidate_ksp;
+                    }
+                    if (static_cast<int>(
+                            candidate_pc) != 0) {
+                        sub_pc_reason =
+                            candidate_pc;
+                    }
+                }
+            }
+
+            if (ksp_reason_error == PETSC_SUCCESS &&
+                pc_reason_error == PETSC_SUCCESS &&
+                norm_error == PETSC_SUCCESS &&
+                sub_reason_error == PETSC_SUCCESS &&
+                std::isfinite(
+                    static_cast<double>(
+                        function_norm)) &&
+                function_norm >= 0.0) {
+                failure_diagnostics->emplace(
+                    NaturalVariableSnesFailureDiagnostics3D{
+                        reason,
+                        ksp_reason,
+                        static_cast<int>(
+                            pc_reason),
+                        sub_ksp_reason,
+                        static_cast<int>(
+                            sub_pc_reason),
+                        nonlinear_iterations,
+                        callback_context.function_evaluations,
+                        callback_context.jacobian_evaluations,
+                        callback_context.function_domain_errors,
+                        callback_context.jacobian_domain_errors,
+                        callback_context.line_search_prechecks,
+                        callback_context.line_search_direction_changes,
+                        static_cast<double>(
+                            function_norm)});
+            }
+        }
+        cleanup();
+        return PETSC_ERR_NOT_CONVERGED;
+    }
+
+    error =
+        SNESComputeFunction(
+            snes,
+            solved_state,
+            residual);
+    PetscReal final_norm = 0.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                residual,
+                NORM_2,
+                &final_norm);
+    }
                 first =
                     PetscOptionsClearValue(
                         nullptr,
