@@ -3048,15 +3048,43 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 NaturalVariableSnesEvaluationStatus3D::
                     success;
     error =
-        rebased_evaluator.function(
-            materialized
-                ->system
-                ->initial_state(),
+        VecSet(
             rebased_residual,
-            rebased_evaluator.user_context,
-            &rebased_status);
-    PetscReal rebased_norm = 0.0;
+            PetscScalar{0.0});
     if (error == PETSC_SUCCESS) {
+        error =
+            rebased_evaluator.function(
+                materialized
+                    ->system
+                    ->initial_state(),
+                rebased_residual,
+                rebased_evaluator.user_context,
+                &rebased_status);
+    }
+    if (error == PETSC_SUCCESS &&
+        rebased_status ==
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success) {
+        error =
+            VecAssemblyBegin(
+                rebased_residual);
+    }
+    if (error == PETSC_SUCCESS &&
+        rebased_status ==
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success) {
+        error =
+            VecAssemblyEnd(
+                rebased_residual);
+    }
+    PetscReal rebased_norm = 0.0;
+    if (error == PETSC_SUCCESS &&
+        rebased_status ==
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success) {
         error =
             VecNorm(
                 rebased_residual,
