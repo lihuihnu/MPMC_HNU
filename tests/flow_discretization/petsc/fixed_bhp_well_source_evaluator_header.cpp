@@ -1,4 +1,5 @@
 #include <mpmc/well_discretization_petsc/fixed_bhp_well_source_evaluator.hpp>
+#include <mpmc/well_discretization_petsc/fixed_total_molar_rate_control.hpp>
 
 #include <string_view>
 #include <type_traits>
@@ -39,5 +40,10 @@ bool fixed_bhp_well_source_evaluator_header() {
         mpmc::well_discretization_petsc::
             fixed_bhp_multi_connection_well_source_evaluator_convention ==
             std::string_view{
-                "well-discretization-petsc/fixed-bhp-single-well/multi-connection-owner-only/v1"};
+                "well-discretization-petsc/fixed-bhp-single-well/multi-connection-owner-only/v1"} &&
+        mpmc::well_discretization_petsc::
+            FixedTotalMolarRateWellControlSystem3D::
+                convention ==
+            std::string_view{
+                "well-discretization-petsc/single-well/fixed-total-molar-rate-control/v1"};
 }
