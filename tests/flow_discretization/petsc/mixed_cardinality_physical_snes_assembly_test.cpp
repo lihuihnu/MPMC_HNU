@@ -3022,6 +3022,17 @@ struct ControllerFixture {
     bool oscillate_after_restart{};
     std::size_t rebuild_calls{};
     bool scan_indeterminate{};
+
+    wdp::
+        FixedBhpPeacemanWellSourceEvaluatorContext3D*
+            well_context{};
+    std::optional<
+        wdp::
+            FixedBhpPeacemanWellSourceEvaluatorContext3D>
+        rebound_well_context;
+    FixedBhpWellSourceAudit
+        well_source_audit{};
+    bool well_rebound{};
 };
 
 fdp::PostSnesPhaseTransitionProposal3D
@@ -3234,6 +3245,43 @@ controller_rebuild(
             fixture->rank,
             false);
 
+    fdp::
+        MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
+        source_binding{};
+    if (fixture->well_context != nullptr) {
+        const auto target =
+            std::find_if(
+                cells.begin(),
+                cells.end(),
+                [&](const auto& cell) {
+                    return cell.cell_global ==
+                        fixture
+                            ->well_context
+                            ->target_cell_global();
+                });
+        if (target == cells.end()) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        try {
+            fixture->rebound_well_context.emplace(
+                wdp::
+                    rebind_fixed_bhp_peaceman_well_source_context_3d(
+                        *fixture->well_context,
+                        target->cell_global,
+                        target->target_active_phases));
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        fixture->well_context =
+            &*fixture->rebound_well_context;
+        fixture->well_source_audit.context =
+            fixture->well_context;
+        fixture->well_rebound = true;
+        source_binding = {
+            &evaluate_audited_fixed_bhp_well_source,
+            &fixture->well_source_audit};
+    }
+
     return fdp::
         rebuild_phase_transition_natural_variable_system_3d(
             PETSC_COMM_WORLD,
@@ -3248,6 +3296,7 @@ controller_rebuild(
                 {&evaluate_1p, fixture->audit},
                 {&evaluate_2p, fixture->audit},
                 {&evaluate_3p, fixture->audit}},
+            source_binding,
             &fdp::
                 evaluate_absent_phase_thermodynamic_provider_3d<
                     flow::
@@ -3270,6 +3319,17 @@ make_controller_initial_system(
         make_face_inputs(
             fixture->rank,
             false);
+    fdp::
+        MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
+        source_binding{};
+    if (fixture->well_context != nullptr) {
+        fixture->well_source_audit.context =
+            fixture->well_context;
+        source_binding = {
+            &evaluate_audited_fixed_bhp_well_source,
+            &fixture->well_source_audit};
+    }
+
     std::unique_ptr<
         fdp::
             PhaseTransitionRebuiltNaturalVariableSystem3D>
@@ -3289,6 +3349,7 @@ make_controller_initial_system(
                     {&evaluate_1p, fixture->audit},
                     {&evaluate_2p, fixture->audit},
                     {&evaluate_3p, fixture->audit}},
+                source_binding,
                 &fdp::
                     evaluate_absent_phase_thermodynamic_provider_3d<
                         flow::
