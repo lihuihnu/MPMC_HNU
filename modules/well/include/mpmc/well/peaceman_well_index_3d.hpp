@@ -1,5 +1,5 @@
-#ifndef MPMC_DISCRETIZATION_PEACEMAN_WELL_INDEX_3D_HPP
-#define MPMC_DISCRETIZATION_PEACEMAN_WELL_INDEX_3D_HPP
+#ifndef MPMC_WELL_PEACEMAN_WELL_INDEX_3D_HPP
+#define MPMC_WELL_PEACEMAN_WELL_INDEX_3D_HPP
 
 #include <mpmc/mesh/permeability_tensor_3d.hpp>
 
@@ -11,11 +11,11 @@
 #include <stdexcept>
 #include <string_view>
 
-namespace mpmc::discretization {
+namespace mpmc::well {
 
 inline constexpr std::string_view
     peaceman_well_index_3d_convention =
-        "discretization/peaceman-well-index/axis-aligned-cartesian-diagonal-k/v1";
+        "well/peaceman-well-index/axis-aligned-cartesian-diagonal-k/v1";
 
 /// Axis of one straight well segment that fully penetrates one Cartesian cell.
 ///
@@ -101,7 +101,7 @@ inline void validate_dimensions(
         !(dimensions.dy_m > 0.0) ||
         !(dimensions.dz_m > 0.0)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: Cartesian cell dimensions must be finite and strictly positive [m]");
+            "mpmc::well::make_peaceman_well_index_3d: Cartesian cell dimensions must be finite and strictly positive [m]");
     }
 }
 
@@ -116,7 +116,7 @@ inline void validate_permeability(
         permeability.kyy_m2 < 0.0 ||
         permeability.kzz_m2 < 0.0) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: Cartesian diagonal permeability must be finite and non-negative [m2]");
+            "mpmc::well::make_peaceman_well_index_3d: Cartesian diagonal permeability must be finite and non-negative [m2]");
     }
 }
 
@@ -151,7 +151,7 @@ transverse_plane(
             permeability.kyy_m2};
     }
     throw std::invalid_argument(
-        "mpmc::discretization::make_peaceman_well_index_3d: unsupported well direction");
+        "mpmc::well::make_peaceman_well_index_3d: unsupported well direction");
 }
 
 } // namespace peaceman_well_index_3d_detail
@@ -182,11 +182,11 @@ make_peaceman_well_index_3d(
     if (!std::isfinite(wellbore_radius_m) ||
         !(wellbore_radius_m > 0.0)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: wellbore radius must be finite and strictly positive [m]");
+            "mpmc::well::make_peaceman_well_index_3d: wellbore radius must be finite and strictly positive [m]");
     }
     if (!std::isfinite(skin_factor)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: skin factor must be finite");
+            "mpmc::well::make_peaceman_well_index_3d: skin factor must be finite");
     }
 
     const auto plane =
@@ -199,7 +199,7 @@ make_peaceman_well_index_3d(
         !(plane.permeability_i_m2 > 0.0) ||
         !(plane.permeability_j_m2 > 0.0)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: both transverse permeabilities must be strictly positive [m2]");
+            "mpmc::well::make_peaceman_well_index_3d: both transverse permeabilities must be strictly positive [m2]");
     }
 
     const double sqrt_ki =
@@ -214,7 +214,7 @@ make_peaceman_well_index_3d(
             effective_radial_permeability_m2) ||
         !(effective_radial_permeability_m2 > 0.0)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: effective transverse permeability is outside representable positive range");
+            "mpmc::well::make_peaceman_well_index_3d: effective transverse permeability is outside representable positive range");
     }
 
     // Compute fourth-root anisotropy weights through sqrt(K) ratios. This is
@@ -231,7 +231,7 @@ make_peaceman_well_index_3d(
         !(fourth_root_kj_over_ki > 0.0) ||
         !(fourth_root_ki_over_kj > 0.0)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: anisotropy ratio is outside representable positive range");
+            "mpmc::well::make_peaceman_well_index_3d: anisotropy ratio is outside representable positive range");
     }
 
     const double weighted_radius_numerator_m =
@@ -250,7 +250,7 @@ make_peaceman_well_index_3d(
     if (!std::isfinite(equivalent_radius_m) ||
         !(equivalent_radius_m > 0.0)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: equivalent well-block radius is not finite and positive");
+            "mpmc::well::make_peaceman_well_index_3d: equivalent well-block radius is not finite and positive");
     }
 
     const double logarithmic_denominator =
@@ -260,7 +260,7 @@ make_peaceman_well_index_3d(
     if (!std::isfinite(logarithmic_denominator) ||
         !(logarithmic_denominator > 0.0)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: ln(r0/rw)+skin must be finite and strictly positive");
+            "mpmc::well::make_peaceman_well_index_3d: ln(r0/rw)+skin must be finite and strictly positive");
     }
 
     const double well_index_m3 =
@@ -272,7 +272,7 @@ make_peaceman_well_index_3d(
     if (!std::isfinite(well_index_m3) ||
         !(well_index_m3 > 0.0)) {
         throw std::invalid_argument(
-            "mpmc::discretization::make_peaceman_well_index_3d: well index must be finite and strictly positive [m3]");
+            "mpmc::well::make_peaceman_well_index_3d: well index must be finite and strictly positive [m3]");
     }
 
     return PeacemanWellIndex3D{
@@ -312,6 +312,6 @@ make_cell_peaceman_well_index_3d(
             skin_factor)};
 }
 
-} // namespace mpmc::discretization
+} // namespace mpmc::well
 
-#endif // MPMC_DISCRETIZATION_PEACEMAN_WELL_INDEX_3D_HPP
+#endif // MPMC_WELL_PEACEMAN_WELL_INDEX_3D_HPP

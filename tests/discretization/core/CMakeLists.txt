@@ -14,6 +14,13 @@ option(
     "Use AddressSanitizer and UndefinedBehaviorSanitizer for discretization core tests"
     OFF)
 
+set(
+    MPMC_WELL_ENABLE_SANITIZERS
+    "${MPMC_DISCRETIZATION_ENABLE_SANITIZERS}")
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../well/core"
+    well-core-tests)
+
 function(configure_discretization_test_target target)
     target_link_libraries(
         ${target}
@@ -67,24 +74,12 @@ add_executable(mpmc_discretization_admissibility_tests
 configure_discretization_test_target(
     mpmc_discretization_admissibility_tests)
 
-add_executable(mpmc_discretization_peaceman_tests
-    peaceman_well_index_3d_test.cpp)
-configure_discretization_test_target(
-    mpmc_discretization_peaceman_tests)
-
-add_executable(
-    mpmc_discretization_peaceman_header_self_contained
-    peaceman_well_index_3d_header_self_contained.cpp)
-configure_discretization_test_target(
-    mpmc_discretization_peaceman_header_self_contained)
-
 add_custom_target(
     mpmc_discretization_core_all
     DEPENDS
         mpmc_discretization_core_tests
         mpmc_discretization_admissibility_tests
-        mpmc_discretization_peaceman_tests
-        mpmc_discretization_peaceman_header_self_contained)
+        mpmc_well_core_all)
 
 foreach(case IN ITEMS
     tpfa_half_connection_3d
@@ -121,27 +116,3 @@ foreach(case IN ITEMS
             TIMEOUT 30)
 endforeach()
 
-foreach(case IN ITEMS
-    isotropic_square_limit
-    anisotropic_rectangular_z
-    axis_permutation_and_cell_binding
-    skin_factor
-    invalid_inputs)
-    add_test(
-        NAME discretization.core.peaceman_well_index_3d.${case}
-        COMMAND mpmc_discretization_peaceman_tests ${case})
-    set_tests_properties(
-        discretization.core.peaceman_well_index_3d.${case}
-        PROPERTIES
-            LABELS "discretization;discretization.core;peaceman;well_index;unit"
-            TIMEOUT 30)
-endforeach()
-
-add_test(
-    NAME discretization.core.peaceman_well_index_3d.header_self_contained
-    COMMAND mpmc_discretization_peaceman_header_self_contained)
-set_tests_properties(
-    discretization.core.peaceman_well_index_3d.header_self_contained
-    PROPERTIES
-        LABELS "discretization;discretization.core;peaceman;header"
-        TIMEOUT 30)

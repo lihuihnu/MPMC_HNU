@@ -4,12 +4,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 if(NOT TARGET mpmc_mesh_petsc)
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../mesh_petsc" mesh-petsc)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../mesh/petsc" mesh-petsc)
 endif()
 
 if(NOT TARGET mpmc_discretization)
     add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/../discretization"
+        "${CMAKE_CURRENT_SOURCE_DIR}/.."
         discretization-core)
 endif()
 

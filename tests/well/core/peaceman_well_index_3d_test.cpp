@@ -1,4 +1,4 @@
-#include <mpmc/discretization/peaceman_well_index_3d.hpp>
+#include <mpmc/well/peaceman_well_index_3d.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +13,7 @@
 
 namespace {
 
-namespace discretization = mpmc::discretization;
+namespace well = mpmc::well;
 namespace mesh = mpmc::mesh;
 
 void require(
@@ -71,10 +71,10 @@ void expect_invalid(Function&& function) {
 void isotropic_square_limit() {
     constexpr double k = 100.0e-15;
     const auto result =
-        discretization::make_peaceman_well_index_3d(
+        well::make_peaceman_well_index_3d(
             {10.0, 10.0, 5.0},
             {k, k, 7.0e-15},
-            discretization::
+            well::
                 AxisAlignedWellDirection3D::z,
             0.10,
             0.0);
@@ -118,10 +118,10 @@ void isotropic_square_limit() {
 
 void anisotropic_rectangular_z() {
     const auto result =
-        discretization::make_peaceman_well_index_3d(
+        well::make_peaceman_well_index_3d(
             {20.0, 10.0, 5.0},
             {4.0e-13, 1.0e-13, 8.0e-14},
-            discretization::
+            well::
                 AxisAlignedWellDirection3D::z,
             0.10,
             0.0);
@@ -173,20 +173,20 @@ void axis_permutation_and_cell_binding() {
             }};
 
     const auto x_connection =
-        discretization::make_cell_peaceman_well_index_3d(
+        well::make_cell_peaceman_well_index_3d(
             permeability,
             mesh::LocalIndex{0U},
             {5.0, 20.0, 10.0},
-            discretization::
+            well::
                 AxisAlignedWellDirection3D::x,
             0.10,
             0.0);
 
     const auto z_reference =
-        discretization::make_peaceman_well_index_3d(
+        well::make_peaceman_well_index_3d(
             {20.0, 10.0, 5.0},
             {4.0e-13, 1.0e-13, 8.0e-14},
-            discretization::
+            well::
                 AxisAlignedWellDirection3D::z,
             0.10,
             0.0);
@@ -225,18 +225,18 @@ void axis_permutation_and_cell_binding() {
 
 void skin_factor() {
     const auto zero_skin =
-        discretization::make_peaceman_well_index_3d(
+        well::make_peaceman_well_index_3d(
             {20.0, 10.0, 5.0},
             {4.0e-13, 1.0e-13, 8.0e-14},
-            discretization::
+            well::
                 AxisAlignedWellDirection3D::z,
             0.10,
             0.0);
     const auto positive_skin =
-        discretization::make_peaceman_well_index_3d(
+        well::make_peaceman_well_index_3d(
             {20.0, 10.0, 5.0},
             {4.0e-13, 1.0e-13, 8.0e-14},
-            discretization::
+            well::
                 AxisAlignedWellDirection3D::z,
             0.10,
             2.0);
@@ -262,73 +262,73 @@ void invalid_inputs() {
 
     expect_invalid(
         [&] {
-            (void)discretization::
+            (void)well::
                 make_peaceman_well_index_3d(
                     {0.0, 10.0, 5.0},
                     valid_k,
-                    discretization::
+                    well::
                         AxisAlignedWellDirection3D::z,
                     0.1);
         });
     expect_invalid(
         [&] {
-            (void)discretization::
+            (void)well::
                 make_peaceman_well_index_3d(
                     {20.0, 10.0, 5.0},
                     {4.0e-13, 0.0, 8.0e-14},
-                    discretization::
+                    well::
                         AxisAlignedWellDirection3D::z,
                     0.1);
         });
     expect_invalid(
         [&] {
-            (void)discretization::
+            (void)well::
                 make_peaceman_well_index_3d(
                     {20.0, 10.0, 5.0},
                     {-4.0e-13, 1.0e-13, 8.0e-14},
-                    discretization::
+                    well::
                         AxisAlignedWellDirection3D::z,
                     0.1);
         });
     expect_invalid(
         [&] {
-            (void)discretization::
+            (void)well::
                 make_peaceman_well_index_3d(
                     {20.0, 10.0, 5.0},
                     valid_k,
-                    discretization::
+                    well::
                         AxisAlignedWellDirection3D::z,
                     0.0);
         });
     expect_invalid(
         [&] {
-            (void)discretization::
+            (void)well::
                 make_peaceman_well_index_3d(
                     {10.0, 10.0, 5.0},
                     {
                         100.0e-15,
                         100.0e-15,
                         10.0e-15},
-                    discretization::
+                    well::
                         AxisAlignedWellDirection3D::z,
                     10.0,
                     0.0);
         });
     expect_invalid(
         [&] {
-            (void)discretization::
+            (void)well::
                 make_peaceman_well_index_3d(
                     {20.0, 10.0, 5.0},
                     valid_k,
                     static_cast<
-                        discretization::
+                        well::
                             AxisAlignedWellDirection3D>(
                                 99),
                     0.1);
         });
     expect_invalid(
         [&] {
-            (void)discretization::
+            (void)well::
                 make_peaceman_well_index_3d(
                     {
                         std::numeric_limits<double>::
@@ -336,7 +336,7 @@ void invalid_inputs() {
                         10.0,
                         5.0},
                     valid_k,
-                    discretization::
+                    well::
                         AxisAlignedWellDirection3D::z,
                     0.1);
         });

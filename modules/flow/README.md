@@ -1369,7 +1369,7 @@ assemble a residual, add source/well terms or insert PETSc values.
 The first actual spatial phase-flow quantity is isolated in a cross-module adapter:
 
 ```text
-modules/flow_discretization
+modules/flow/discretization
 target: mpmc::flow_discretization
 ```
 
@@ -2007,7 +2007,7 @@ The first distributed finite-volume component-row exchange is isolated in a PETS
 adapter module:
 
 ```text
-modules/flow_discretization_petsc
+modules/flow/discretization/petsc
 target: mpmc::flow_discretization_petsc
 ```
 

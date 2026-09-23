@@ -5,19 +5,19 @@ endif()
 
 if(NOT TARGET mpmc_flow_discretization)
     add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/../flow_discretization"
+        "${CMAKE_CURRENT_SOURCE_DIR}/.."
         flow-discretization-core)
 endif()
 
 if(NOT TARGET mpmc_discretization_petsc)
     add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/../discretization_petsc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../discretization/petsc"
         discretization-petsc)
 endif()
 
 if(NOT TARGET mpmc_flash)
     add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/../flash"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../../flash"
         flow-discretization-flash)
 endif()
 

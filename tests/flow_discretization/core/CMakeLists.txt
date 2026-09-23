@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 project(mpmc_flow_discretization_tests LANGUAGES CXX)
 
 add_subdirectory(
-    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow_discretization"
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow/discretization"
     flow-discretization-library)
 enable_testing()
 

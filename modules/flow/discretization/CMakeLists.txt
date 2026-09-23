@@ -5,13 +5,13 @@ endif()
 
 if(NOT TARGET mpmc_flow)
     add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/../flow"
+        "${CMAKE_CURRENT_SOURCE_DIR}/.."
         flow-core)
 endif()
 
 if(NOT TARGET mpmc_discretization)
     add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/../discretization"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../discretization"
         discretization-core)
 endif()
 

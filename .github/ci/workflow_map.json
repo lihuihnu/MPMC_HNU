@@ -744,8 +744,11 @@
           "paths": [
             "modules/mesh/include/**",
             "modules/mesh/CMakeLists.txt",
-            "modules/discretization/**",
+            "modules/discretization/include/**",
+            "modules/discretization/CMakeLists.txt",
+            "modules/well/**",
             "tests/discretization/core/**",
+            "tests/well/core/**",
             ".github/workflows/discretization_core.yml"
           ]
         },
@@ -817,19 +820,22 @@
         "paths": [
           "modules/mesh/include/**",
           "modules/mesh/CMakeLists.txt",
-          "modules/discretization/**",
+          "modules/discretization/include/**",
+          "modules/discretization/CMakeLists.txt",
+          "modules/well/**",
           "tests/discretization/core/**",
+          "tests/well/core/**",
           ".github/workflows/discretization_core.yml"
         ]
       },
-      "retained_hash": "1f7fda1ad8d9aa8ddc050a0555b2a743a6aca385e28046ef1f6ffb85c0896cab",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "core": "legacy_discretization_core__core"
       },
       "central_hashes": {
         "legacy_discretization_core__core": "9956c4a50c943768dcc0507d489d8f603f7a5d90040116b537a4b8b8b64846a7"
-      }
+      },
+      "retained_blob_sha": "4213e8ca03c2dea8adf92e2f2543242fbc372027"
     },
     ".github/workflows/flow_core.yml": {
       "name": "Flow natural-variable core contract",
@@ -1410,9 +1416,13 @@
           "paths": [
             "modules/mesh/include/**",
             "modules/mesh_petsc/**",
-            "modules/discretization/**",
+            "modules/mesh/petsc/**",
+            "modules/discretization/include/**",
+            "modules/discretization/CMakeLists.txt",
             "modules/discretization_petsc/**",
+            "modules/discretization/petsc/**",
             "modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp",
+            "modules/flow/discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp",
             "tests/mesh/petsc/**",
             ".github/workflows/mesh_petsc.yml"
           ]
@@ -1455,21 +1465,25 @@
         "paths": [
           "modules/mesh/include/**",
           "modules/mesh_petsc/**",
-          "modules/discretization/**",
+          "modules/mesh/petsc/**",
+          "modules/discretization/include/**",
+          "modules/discretization/CMakeLists.txt",
           "modules/discretization_petsc/**",
+          "modules/discretization/petsc/**",
           "modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp",
+          "modules/flow/discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp",
           "tests/mesh/petsc/**",
           ".github/workflows/mesh_petsc.yml"
         ]
       },
-      "retained_hash": "a55c5c8582bab277fd15be3e69897bc0e9dff1e6c8d4da007f5a58aa5d32768b",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "petsc": "legacy_mesh_petsc__petsc"
       },
       "central_hashes": {
         "legacy_mesh_petsc__petsc": "d80d430eede357c1c1660719e59b7709ed48c70595b9bd25fc93f086392368f2"
-      }
+      },
+      "retained_blob_sha": "bc58b12540759be00814a0e61980c2d8a5740305"
     },
     ".github/workflows/model_configuration.yml": {
       "name": "Public thermodynamic model configuration",

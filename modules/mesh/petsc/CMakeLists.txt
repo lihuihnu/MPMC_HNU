@@ -4,7 +4,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 if(NOT TARGET mpmc_mesh)
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../mesh" mesh-core)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/.." mesh-core)
 endif()
 
 find_package(MPI REQUIRED COMPONENTS CXX)

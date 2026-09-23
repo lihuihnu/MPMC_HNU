@@ -32,7 +32,8 @@ thermo_targets = {
 
 ownership = {
     "flow_core": [
-        "modules/flow/**",
+        "modules/flow/include/**",
+        "modules/flow/CMakeLists.txt",
         "modules/thermodynamics/CMakeLists.txt",
         "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_fugacity.hpp",
         "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp",
@@ -49,6 +50,8 @@ ownership = {
     ],
     "flow_discretization": [
         "modules/flow_discretization/**",
+        "modules/flow/discretization/include/**",
+        "modules/flow/discretization/CMakeLists.txt",
         "modules/flow/include/mpmc/flow/phase_potential_upwind.hpp",
         "modules/flow/include/mpmc/flow/phase_transport.hpp",
         "modules/flow/include/mpmc/flow/saturation_constitutive.hpp",
@@ -69,16 +72,23 @@ ownership = {
     ],
     "flow_discretization_petsc": [
         "modules/flow_discretization_petsc/**",
+        "modules/flow/discretization/petsc/**",
         "modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp",
         "modules/flow/include/mpmc/flow/fugacity_equilibrium_linearization.hpp",
         "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp",
         "modules/flow_discretization/include/mpmc/flow_discretization/local_energy_conservation_residual.hpp",
+        "modules/flow/discretization/include/mpmc/flow_discretization/local_energy_conservation_residual.hpp",
         "modules/flow_discretization/include/mpmc/flow_discretization/energy_face_flux.hpp",
+        "modules/flow/discretization/include/mpmc/flow_discretization/energy_face_flux.hpp",
         "modules/flow/include/mpmc/flow/energy_accumulation.hpp",
         "modules/flow_discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp",
+        "modules/flow/discretization/include/mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp",
         "modules/flow_discretization/include/mpmc/flow_discretization/local_component_conservation_residual.hpp",
+        "modules/flow/discretization/include/mpmc/flow_discretization/local_component_conservation_residual.hpp",
         "modules/flow_discretization/include/mpmc/flow_discretization/normalized_component_face_contribution.hpp",
+        "modules/flow/discretization/include/mpmc/flow_discretization/normalized_component_face_contribution.hpp",
         "modules/discretization_petsc/**",
+        "modules/discretization/petsc/**",
         "modules/mesh/include/mpmc/mesh/partition_snapshot.hpp",
         "tests/flow_discretization/petsc/**",
         "tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp",
@@ -638,6 +648,11 @@ def thermo_matrix(selected):
 
 checks = [
     (["tests/flow_discretization/petsc/scanner.cpp"], expected_route(flow_discretization_petsc=True)),
+    (["modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp"], expected_route(flow_discretization=True)),
+    (["modules/flow/discretization/petsc/include/mpmc/flow_discretization_petsc/physical_timestep_driver.hpp"], expected_route(flow_discretization_petsc=True)),
+    (["modules/flow_discretization/include/mpmc/flow_discretization/cell_source.hpp"], expected_route(flow_discretization=True)),
+    (["modules/flow_discretization_petsc/include/mpmc/flow_discretization_petsc/physical_timestep_driver.hpp"], expected_route(flow_discretization_petsc=True)),
+    (["modules/discretization/petsc/include/mpmc/discretization_petsc/adapter.hpp"], expected_route(flow_discretization_petsc=True)),
     (["modules/flow/include/mpmc/flow/phase_transport.hpp"], expected_route(flow_core=True, flow_discretization=True)),
     (["modules/flash/include/mpmc/flash/pt_flash_backend.hpp"], expected_route(flow_core=True, pt_flash_backend=True, pr76_max3=True, cpa_split=True, cpa_max3=True, cpa_physical_validation=True, model_configuration=True)),
     (["tests/flash/stability/stability_test.cpp"], expected_route(pt_stability=True)),

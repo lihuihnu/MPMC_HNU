@@ -70,6 +70,16 @@ def main():
     assert results['legacy_frontend']
     results, _, _ = select(['tests/flow_discretization/petsc/changed.cpp'])
     assert results['flow_discretization_petsc'] and not results['legacy_frontend']
+    results, _, _ = select(['modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp'])
+    assert results['flow_discretization'] and not results['flow_core'] and not results['flow_discretization_petsc']
+    results, _, _ = select(['modules/flow/discretization/petsc/include/mpmc/flow_discretization_petsc/physical_timestep_driver.hpp'])
+    assert results['flow_discretization_petsc'] and not results['flow_core'] and not results['flow_discretization']
+    results, _, _ = select(['modules/mesh/petsc/include/mpmc/mesh_petsc/adapter.hpp'])
+    assert results['legacy_mesh_petsc'] and not results['legacy_mesh_core']
+    results, _, _ = select(['modules/discretization/petsc/include/mpmc/discretization_petsc/adapter.hpp'])
+    assert results['legacy_mesh_petsc'] and results['flow_discretization_petsc'] and not results['legacy_discretization_core']
+    results, _, _ = select(['modules/well/include/mpmc/well/peaceman_well_index_3d.hpp'])
+    assert results['legacy_discretization_core'] and not results['legacy_mesh_petsc']
     # Deleted/renamed files are represented by both paths (--no-renames).
     left, _, _ = select(['tests/flow_discretization/petsc/old.cpp'])
     right, _, _ = select(['frontend/src/new.ts'])

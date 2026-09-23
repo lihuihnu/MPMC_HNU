@@ -2,12 +2,12 @@ cmake_minimum_required(VERSION 3.21)
 project(mpmc_mesh_discretization_petsc_tests LANGUAGES CXX)
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/mesh" mesh-core)
-add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/mesh_petsc" mesh-petsc)
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/mesh/petsc" mesh-petsc)
 add_subdirectory(
-    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/discretization_petsc"
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/discretization/petsc"
     discretization-petsc)
 add_subdirectory(
-    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow_discretization"
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow/discretization"
     flow-discretization-library)
 enable_testing()
 
