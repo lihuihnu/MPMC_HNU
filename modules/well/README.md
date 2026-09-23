@@ -85,7 +85,17 @@ BHP remains a frozen parameter and is not globally numbered. The former
 three-phase evaluator names remain compatibility entry points, while the
 production path uses the variable-cardinality evaluator.
 
+Phase-transition-aware rebinding is now explicit rather than slot based. A
+rebindable fixed-BHP context retains a stable physical-phase ->
+well-side-injection-enthalpy registry. After an accepted outer phase-set
+rebuild, orchestration locates the same completion by stable cell
+`GlobalEntityId` and resolves the rebuilt `FrozenActivePhaseIdentityMap`
+back to the new active slots. Peaceman connection data, frozen BHP and source
+provenance are preserved; the reservoir Jacobian cardinality is rebuilt from
+the new natural-variable chart. The first regression covers a stable-cell
+`2P -> 3P` restart followed by a separate accepted physical timestep.
+
 The well module still does not define conductive well/reservoir heat exchange,
 wellbore heat loss, multi-connection aggregation, rate-control equations,
-global well unknowns, control switching, phase-transition-aware completion
-remapping or scheduling.
+global well unknowns, control switching, completion creation/deletion,
+cross-cell well migration or scheduling.
