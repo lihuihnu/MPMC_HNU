@@ -3024,6 +3024,8 @@ struct ControllerFixture {
         bool input_oscillate_after_restart,
         std::size_t input_rebuild_calls,
         bool input_scan_indeterminate =
+            false,
+        bool input_phase_disappearance_only =
             false)
         : rank(input_rank),
           schedule(input_schedule),
@@ -3038,7 +3040,9 @@ struct ControllerFixture {
           rebuild_calls(
               input_rebuild_calls),
           scan_indeterminate(
-              input_scan_indeterminate) {}
+              input_scan_indeterminate),
+          phase_disappearance_only(
+              input_phase_disappearance_only) {}
 
     int rank{};
     const dp::
@@ -3061,6 +3065,7 @@ struct ControllerFixture {
     bool oscillate_after_restart{};
     std::size_t rebuild_calls{};
     bool scan_indeterminate{};
+    bool phase_disappearance_only{};
 
     wdp::
         FixedBhpPeacemanWellSourceEvaluatorContext3D*
@@ -3155,14 +3160,19 @@ controller_scan(
     }
 
     if (record.phase_count == 2U) {
-        output->push_back(
-            controller_two_to_three_proposal());
+        if (!fixture
+                 ->phase_disappearance_only) {
+            output->push_back(
+                controller_two_to_three_proposal());
+        }
         return PETSC_SUCCESS;
     }
 
     if (record.phase_count == 3U &&
-        fixture
-            ->oscillate_after_restart) {
+        (fixture
+             ->oscillate_after_restart ||
+         fixture
+             ->phase_disappearance_only)) {
         flow::PhaseSetTransitionCandidate
             candidate;
         candidate.status =
