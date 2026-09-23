@@ -140,3 +140,32 @@ physical timestep closes component/energy conservation against their sum.
 Rate control, global well unknowns, control switching, wellbore pressure drop,
 crossflow control, multi-well networks and scheduling remain outside this
 contract.
+
+
+## Fixed-total-molar-rate control
+
+The first monolithic rate-control bridge adds exactly one well unknown to the
+frozen multi-connection reservoir system: bottom-hole pressure. Reservoir
+scalar indices remain unchanged and the BHP scalar is appended as the final
+PETSc global scalar, with one authoritative owner. The control residual is
+production-positive total molar rate:
+
+`R_w = sum_connections sum_components n_dot_i - n_dot_target`.
+
+Each Newton evaluation injects the current global BHP into the existing
+connection-local Peaceman source calculation. The reservoir block therefore
+continues to use the validated variable-cardinality source physics, while the
+augmented Jacobian contains all four analytic blocks: the existing reservoir
+`J_rr`, reservoir-source derivatives with respect to BHP `J_rw`, the
+whole-well total-rate derivatives with respect to every authoritative
+completion's reservoir variables `J_wr`, and the summed explicit BHP
+derivative `J_ww`. Component/energy source terms remain owner-only; the well
+row is assembled from the same authoritative connection evaluations, so ghost
+connections do not double count.
+
+This baseline uses PETSc SNES Newton line search with GMRES + restricted ASM,
+with a frozen row-equilibration vector built from the initial augmented
+analytic Jacobian. The controlled solve freezes every cell phase set. BHP/rate
+switching, BHP limits, surface-rate conversions, phase transitions during the
+controlled solve, multi-well networks and wellbore pressure-drop models remain
+outside this contract.
