@@ -309,7 +309,7 @@ advance_one_physical_timestep_3d(
             if (error != PETSC_SUCCESS) {
                 return restore_trial_timestep(
                     accepted_system,
-                    initial_timestep_seconds,
+                    entry_timestep_seconds,
                     error);
             }
         } else {
@@ -343,7 +343,7 @@ advance_one_physical_timestep_3d(
                     &solved);
                 return restore_trial_timestep(
                     accepted_system,
-                    initial_timestep_seconds,
+                    entry_timestep_seconds,
                     error);
             }
 
@@ -365,7 +365,7 @@ advance_one_physical_timestep_3d(
                     &solved);
                 return restore_trial_timestep(
                     accepted_system,
-                    initial_timestep_seconds,
+                    entry_timestep_seconds,
                     PETSC_ERR_MPI);
             }
 
@@ -379,7 +379,7 @@ advance_one_physical_timestep_3d(
                 if (error != PETSC_SUCCESS) {
                     return restore_trial_timestep(
                         accepted_system,
-                        initial_timestep_seconds,
+                        entry_timestep_seconds,
                         error);
                 }
             } else {
@@ -397,7 +397,7 @@ advance_one_physical_timestep_3d(
                         &solved);
                     return restore_trial_timestep(
                         accepted_system,
-                        initial_timestep_seconds,
+                        entry_timestep_seconds,
                         error);
                 }
 
@@ -416,7 +416,7 @@ advance_one_physical_timestep_3d(
                         &solved);
                     return restore_trial_timestep(
                         accepted_system,
-                        initial_timestep_seconds,
+                        entry_timestep_seconds,
                         error);
                 }
 
@@ -437,7 +437,7 @@ advance_one_physical_timestep_3d(
                     if (error != PETSC_SUCCESS) {
                         return restore_trial_timestep(
                             accepted_system,
-                            initial_timestep_seconds,
+                            entry_timestep_seconds,
                             error);
                     }
                 } else {
@@ -472,13 +472,13 @@ advance_one_physical_timestep_3d(
                     if (error != PETSC_SUCCESS) {
                         return restore_trial_timestep(
                             accepted_system,
-                            initial_timestep_seconds,
+                            entry_timestep_seconds,
                             error);
                     }
                     if (first_rebuilt == nullptr) {
                         return restore_trial_timestep(
                             accepted_system,
-                            initial_timestep_seconds,
+                            entry_timestep_seconds,
                             PETSC_ERR_PLIB);
                     }
 
@@ -510,7 +510,7 @@ advance_one_physical_timestep_3d(
                     if (error != PETSC_SUCCESS) {
                         return restore_trial_timestep(
                             accepted_system,
-                            initial_timestep_seconds,
+                            entry_timestep_seconds,
                             error);
                     }
 
@@ -543,7 +543,7 @@ advance_one_physical_timestep_3d(
                             &final_state);
                         return restore_trial_timestep(
                             accepted_system,
-                            initial_timestep_seconds,
+                            entry_timestep_seconds,
                             error);
                     }
                     if (!transition_report.has_value() ||
@@ -554,7 +554,7 @@ advance_one_physical_timestep_3d(
                             &final_state);
                         return restore_trial_timestep(
                             accepted_system,
-                            initial_timestep_seconds,
+                            entry_timestep_seconds,
                             PETSC_ERR_PLIB);
                     }
 
@@ -574,7 +574,7 @@ advance_one_physical_timestep_3d(
                             &final_state);
                         return restore_trial_timestep(
                             accepted_system,
-                            initial_timestep_seconds,
+                            entry_timestep_seconds,
                             PETSC_ERR_PLIB);
                     }
                     attempt_result
@@ -596,7 +596,7 @@ advance_one_physical_timestep_3d(
                         if (error != PETSC_SUCCESS) {
                             return restore_trial_timestep(
                                 accepted_system,
-                                initial_timestep_seconds,
+                                entry_timestep_seconds,
                                 error);
                         }
                     }
@@ -639,7 +639,7 @@ advance_one_physical_timestep_3d(
             if (candidate_state == nullptr) {
                 return restore_trial_timestep(
                     accepted_system,
-                    initial_timestep_seconds,
+                    entry_timestep_seconds,
                     PETSC_ERR_PLIB);
             }
 
@@ -717,7 +717,7 @@ advance_one_physical_timestep_3d(
             const PetscErrorCode restore_error =
                 restore_trial_timestep(
                     accepted_system,
-                    initial_timestep_seconds,
+                    entry_timestep_seconds,
                     PETSC_SUCCESS);
             if (restore_error != PETSC_SUCCESS) {
                 return restore_error;
@@ -742,7 +742,7 @@ advance_one_physical_timestep_3d(
             const PetscErrorCode restore_error =
                 restore_trial_timestep(
                     accepted_system,
-                    initial_timestep_seconds,
+                    entry_timestep_seconds,
                     PETSC_SUCCESS);
             if (restore_error != PETSC_SUCCESS) {
                 return restore_error;
