@@ -6347,6 +6347,19 @@ void mixed_cardinality_physical_snes_assembly_test() {
     auto outer_provider =
         make_outer_rebuild_pr_provider(
             pr_model);
+
+    // A real fixed-BHP completion now follows stable cell30 through the
+    // existing 2P->3P outer restart, resolves its well-side enthalpy by stable
+    // phase identity, and then advances one post-rebuild physical timestep.
+    run_phase_transition_rebound_fixed_bhp_case(
+        rank,
+        schedule,
+        partition,
+        bridge,
+        pattern,
+        &audit,
+        &outer_provider);
+
     std::unique_ptr<
         fdp::
             PhaseTransitionRebuiltNaturalVariableSystem3D>
