@@ -8662,6 +8662,15 @@ void mixed_cardinality_physical_snes_assembly_test() {
         &audit,
         &outer_provider);
 
+    run_multi_connection_local_transition_rebind_case(
+        rank,
+        schedule,
+        partition,
+        bridge,
+        pattern,
+        &audit,
+        &outer_provider);
+
     std::unique_ptr<
         fdp::
             PhaseTransitionRebuiltNaturalVariableSystem3D>
