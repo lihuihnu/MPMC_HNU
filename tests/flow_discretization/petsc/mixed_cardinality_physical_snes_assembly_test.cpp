@@ -9018,6 +9018,14 @@ void mixed_cardinality_physical_snes_assembly_test() {
         pattern,
         &audit);
 
+    run_fixed_total_molar_rate_control_case(
+        rank,
+        schedule,
+        partition,
+        bridge,
+        pattern,
+        &audit);
+
     Vec solution = nullptr;
     std::optional<
         fdp::
