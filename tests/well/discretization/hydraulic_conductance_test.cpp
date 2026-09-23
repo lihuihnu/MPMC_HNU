@@ -12,6 +12,9 @@
 #include <utility>
 #include <vector>
 
+bool run_component_molar_rate_case(
+    std::string_view name);
+
 namespace {
 
 namespace flow = mpmc::flow;
@@ -625,6 +628,14 @@ int main(int argc, char** argv) {
                     << '\n';
                 return 0;
             }
+        }
+        if (run_component_molar_rate_case(
+                name)) {
+            std::cout
+                << "[PASS] "
+                << name
+                << '\n';
+            return 0;
         }
         throw std::invalid_argument(
             "unknown test");

@@ -28,6 +28,16 @@ It carries the full reservoir natural-variable product-rule derivative and the
 explicit derivative `dq_alpha/dp_bhp = -C_alpha`. In this layer `p_bhp` is
 still a supplied scalar, not a globally numbered unknown.
 
-The well module still does not define rate-control equations, component
-splitting, mass/molar conversion, multi-connection aggregation, wellbore
-hydrostatics/friction, source assembly, PETSc objects or scheduling.
+The connection component layer now converts the three phase rates to canonical
+component molar rates:
+
+`n_dot_i = sum_alpha q_alpha c_alpha x_alpha,i [mol/s]`.
+
+It consumes the existing phase molar-density primal/Jacobian and reconstructs
+composition derivatives from the frozen natural-variable composition pivot. It
+also propagates the explicit BHP derivative and verifies component-to-total
+molar closure for primal values and derivatives.
+
+The well module still does not define mass-rate conversion, enthalpy/energy
+well rates, multi-connection aggregation, rate-control equations, global well
+unknowns, source assembly, PETSc objects or scheduling.
