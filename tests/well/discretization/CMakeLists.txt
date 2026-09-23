@@ -62,7 +62,8 @@ configure_well_discretization_test_target(
 
 add_executable(
     mpmc_well_discretization_header_self_contained
-    hydraulic_conductance_header_self_contained.cpp)
+    hydraulic_conductance_header_self_contained.cpp
+    pressure_drawdown_rate_header_self_contained.cpp)
 configure_well_discretization_test_target(
     mpmc_well_discretization_header_self_contained)
 
@@ -70,6 +71,12 @@ foreach(case IN ITEMS
     product_and_analytic_gradient
     phase_selection
     zero_mobility_nonzero_gradient
+    pressure_drawdown_production_and_bhp_derivative
+    pressure_drawdown_injection_sign_and_phase_selection
+    pressure_drawdown_reservoir_product_rule
+    pressure_drawdown_zero_drawdown
+    pressure_drawdown_zero_mobility_nonzero_gradient
+    pressure_drawdown_invalid_inputs
     invalid_inputs)
     add_test(
         NAME flow_discretization.well.hydraulic_conductance.${case}

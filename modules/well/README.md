@@ -13,10 +13,21 @@ Current layers:
   Peaceman `WI [m3]` by the existing local phase mobility
   `lambda [1/(Pa s)]` and propagates its natural-variable derivative.
 
-The hydraulic-conductance layer stops at
+The hydraulic-conductance layer defines
 
 `C_alpha = WI * lambda_alpha [m3/(Pa s)]`.
 
-It does not define pressure drawdown, phase/component well rates, BHP/rate
-controls, well unknowns, wellbore hydraulics, hydrostatic correction, source
-assembly, PETSc objects or scheduling. Those remain separate future layers.
+The next connection-local layer defines pressure drawdown and one-phase
+reservoir-volume rate with production-positive sign:
+
+`Delta p_alpha = p_alpha,cell - p_bhp`
+
+`q_alpha = C_alpha * Delta p_alpha [m3/s]`.
+
+It carries the full reservoir natural-variable product-rule derivative and the
+explicit derivative `dq_alpha/dp_bhp = -C_alpha`. In this layer `p_bhp` is
+still a supplied scalar, not a globally numbered unknown.
+
+The well module still does not define rate-control equations, component
+splitting, mass/molar conversion, multi-connection aggregation, wellbore
+hydrostatics/friction, source assembly, PETSc objects or scheduling.
