@@ -3135,6 +3135,17 @@ struct ControllerFixture {
     FixedBhpWellSourceAudit
         well_source_audit{};
     bool well_rebound{};
+
+    wdp::
+        FixedBhpMultiConnectionWellSourceEvaluatorContext3D*
+            multi_well_context{};
+    std::optional<
+        wdp::
+            FixedBhpMultiConnectionWellSourceEvaluatorContext3D>
+        rebound_multi_well_context;
+    FixedBhpMultiConnectionWellSourceAudit
+        multi_well_source_audit{};
+    bool multi_well_rebound{};
 };
 
 fdp::PostSnesPhaseTransitionProposal3D
@@ -3387,6 +3398,49 @@ controller_rebuild(
         source_binding = {
             &evaluate_audited_fixed_bhp_well_source,
             &fixture->well_source_audit};
+    } else if (
+        fixture->multi_well_context != nullptr) {
+        const auto transitioned =
+            accepted_global_batch.front()
+                .cell_global;
+        const auto target =
+            std::find_if(
+                cells.begin(),
+                cells.end(),
+                [&](const auto& cell) {
+                    return cell.cell_global ==
+                        transitioned;
+                });
+        if (target == cells.end()) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        try {
+            fixture
+                ->rebound_multi_well_context
+                .emplace(
+                    wdp::
+                        rebind_fixed_bhp_multi_connection_well_source_context_3d(
+                            *fixture
+                                 ->multi_well_context,
+                            transitioned,
+                            target
+                                ->target_active_phases));
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        fixture->multi_well_context =
+            &*fixture
+                 ->rebound_multi_well_context;
+        fixture
+            ->multi_well_source_audit
+            .context =
+            fixture->multi_well_context;
+        fixture->multi_well_rebound =
+            true;
+        source_binding = {
+            &evaluate_audited_fixed_bhp_multi_connection_well_source,
+            &fixture
+                 ->multi_well_source_audit};
     }
 
     return fdp::
@@ -3435,6 +3489,16 @@ make_controller_initial_system(
         source_binding = {
             &evaluate_audited_fixed_bhp_well_source,
             &fixture->well_source_audit};
+    } else if (
+        fixture->multi_well_context != nullptr) {
+        fixture
+            ->multi_well_source_audit
+            .context =
+            fixture->multi_well_context;
+        source_binding = {
+            &evaluate_audited_fixed_bhp_multi_connection_well_source,
+            &fixture
+                 ->multi_well_source_audit};
     }
 
     std::unique_ptr<
