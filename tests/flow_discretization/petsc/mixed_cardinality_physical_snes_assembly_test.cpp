@@ -374,6 +374,64 @@ evaluate_audited_fixed_bhp_well_source(
             status);
 }
 
+struct FixedBhpMultiConnectionWellSourceAudit {
+    wdp::
+        FixedBhpMultiConnectionWellSourceEvaluatorContext3D*
+            context{};
+    std::uint64_t evaluator_calls{};
+    std::uint64_t cell30_calls{};
+    std::uint64_t cell60_calls{};
+};
+
+PetscErrorCode
+evaluate_audited_fixed_bhp_multi_connection_well_source(
+    mesh::LocalIndex cell,
+    mesh::GlobalEntityId cell_global,
+    std::span<const double> natural_variables,
+    const fdp::
+        MixedCardinalityPhysicalCurrentCellLinearization3D&
+            current,
+    void* raw_context,
+    std::optional<fd::CellSourceLinearization3D>* output,
+    fdp::NaturalVariableSnesEvaluationStatus3D* status) {
+    if (raw_context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* audit =
+        static_cast<
+            FixedBhpMultiConnectionWellSourceAudit*>(
+                raw_context);
+    if (audit->context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    ++audit->evaluator_calls;
+    if (audit->context
+            ->find_connection(cell_global) !=
+        nullptr) {
+        if (cell_global ==
+            mesh::GlobalEntityId{
+                UINT64_C(30)}) {
+            ++audit->cell30_calls;
+        } else if (
+            cell_global ==
+            mesh::GlobalEntityId{
+                UINT64_C(60)}) {
+            ++audit->cell60_calls;
+        }
+    }
+
+    return wdp::
+        evaluate_fixed_bhp_multi_connection_well_source_3d(
+            cell,
+            cell_global,
+            natural_variables,
+            current,
+            audit->context,
+            output,
+            status);
+}
+
 PetscErrorCode
 evaluate_1p(
     mesh::LocalIndex,
@@ -3637,6 +3695,100 @@ frozen_well_timestep_scan(
     return PETSC_SUCCESS;
 }
 
+struct FrozenMultiWellTimestepControlAudit {
+    std::size_t scans{};
+    std::size_t rebuild_calls{};
+};
+
+PetscErrorCode
+frozen_multi_well_timestep_scan(
+    const fdp::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&
+            system,
+    Vec,
+    const fdp::
+        VariableCardinalityNaturalVariableSnesSolveReport3D&
+            solve_report,
+    void* raw_context,
+    fdp::PostSnesPhaseTransitionScanStatus3D*
+        scan_status,
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>*
+            output) {
+    if (raw_context == nullptr ||
+        scan_status == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* audit =
+        static_cast<
+            FrozenMultiWellTimestepControlAudit*>(
+                raw_context);
+    *scan_status =
+        fdp::PostSnesPhaseTransitionScanStatus3D::
+            complete;
+    output->clear();
+
+    if (static_cast<int>(
+            solve_report.converged_reason) <=
+        0) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    const auto& cell30 =
+        system.numbering().cell(
+            mesh::LocalIndex{2U});
+    const auto& cell60 =
+        system.numbering().cell(
+            mesh::LocalIndex{5U});
+    if (cell30.cell_global !=
+            mesh::GlobalEntityId{
+                UINT64_C(30)} ||
+        cell30.phase_count != 2U ||
+        cell30.scalar_count != 7U ||
+        cell60.cell_global !=
+            mesh::GlobalEntityId{
+                UINT64_C(60)} ||
+        cell60.phase_count != 3U ||
+        cell60.scalar_count != 10U) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    ++audit->scans;
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode
+unexpected_frozen_multi_well_timestep_rebuild(
+    const fdp::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&,
+    Vec,
+    const fdp::
+        VariableCardinalityNaturalVariableSnesSolveReport3D&,
+    std::span<
+        const fdp::
+            PostSnesPhaseTransitionProposal3D>,
+    std::span<
+        const fdp::
+            AcceptedPhaseTransitionSummary3D>,
+    void* raw_context,
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>*
+                output) {
+    if (raw_context == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    auto* audit =
+        static_cast<
+            FrozenMultiWellTimestepControlAudit*>(
+                raw_context);
+    ++audit->rebuild_calls;
+    return PETSC_ERR_PLIB;
+}
+
 PetscErrorCode
 unexpected_frozen_well_timestep_rebuild(
     const fdp::
@@ -3739,6 +3891,82 @@ make_frozen_fixed_bhp_timestep_system(
         system == nullptr) {
         throw std::runtime_error(
             "failed to build frozen fixed-BHP physical timestep system");
+    }
+    return system;
+}
+
+std::unique_ptr<
+    fdp::PhaseTransitionRebuiltNaturalVariableSystem3D>
+make_frozen_multi_connection_fixed_bhp_timestep_system(
+    int rank,
+    const dp::
+        ParallelOwnedConnectionSchedule3D&
+            schedule,
+    const mesh::PartitionSnapshot&
+        partition,
+    const dp::
+        PetscMpiAijSymbolicPreallocation3D&
+            bridge,
+    const dp::
+        OwnedCellStructuralColumnPatternSnapshot3D&
+            pattern,
+    DispatchAudit* dispatch_audit,
+    FixedBhpMultiConnectionWellSourceAudit*
+        source_audit,
+    flow::
+        Pr76AbsentPhasePotentialExtensionProvider<
+            double>* provider) {
+    if (dispatch_audit == nullptr ||
+        source_audit == nullptr ||
+        source_audit->context == nullptr ||
+        provider == nullptr) {
+        throw std::invalid_argument(
+            "invalid multi-connection fixed-BHP timestep fixture context");
+    }
+
+    auto cells =
+        make_controller_cells(
+            rank,
+            false,
+            dispatch_audit);
+    auto faces =
+        make_face_inputs(
+            rank,
+            false);
+
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        system;
+    const PetscErrorCode error =
+        fdp::
+            rebuild_phase_transition_natural_variable_system_3d(
+                PETSC_COMM_WORLD,
+                schedule,
+                partition,
+                bridge,
+                pattern,
+                1.0,
+                std::move(cells),
+                std::move(faces),
+                {
+                    {&evaluate_1p, dispatch_audit},
+                    {&evaluate_2p, dispatch_audit},
+                    {&evaluate_3p, dispatch_audit}},
+                {
+                    &evaluate_audited_fixed_bhp_multi_connection_well_source,
+                    source_audit},
+                &fdp::
+                    evaluate_absent_phase_thermodynamic_provider_3d<
+                        flow::
+                            Pr76AbsentPhasePotentialExtensionProvider<
+                                double>>,
+                provider,
+                &system);
+    if (error != PETSC_SUCCESS ||
+        system == nullptr) {
+        throw std::runtime_error(
+            "failed to build multi-connection fixed-BHP physical timestep system");
     }
     return system;
 }
