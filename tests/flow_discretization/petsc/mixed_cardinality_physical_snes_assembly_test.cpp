@@ -3760,6 +3760,9 @@ frozen_well_timestep_scan(
 }
 
 struct FrozenMultiWellTimestepControlAudit {
+    std::size_t expected_cell30_phase_count{2U};
+    std::size_t expected_cell30_scalar_count{7U};
+    PetscInt expected_global_scalar_count{42};
     std::size_t scans{};
     std::size_t rebuild_calls{};
 };
@@ -3805,11 +3808,16 @@ frozen_multi_well_timestep_scan(
     const auto& cell60 =
         system.numbering().cell(
             mesh::LocalIndex{5U});
-    if (cell30.cell_global !=
+    if (system.numbering()
+                .petsc_global_scalar_count() !=
+            audit->expected_global_scalar_count ||
+        cell30.cell_global !=
             mesh::GlobalEntityId{
                 UINT64_C(30)} ||
-        cell30.phase_count != 2U ||
-        cell30.scalar_count != 7U ||
+        cell30.phase_count !=
+            audit->expected_cell30_phase_count ||
+        cell30.scalar_count !=
+            audit->expected_cell30_scalar_count ||
         cell60.cell_global !=
             mesh::GlobalEntityId{
                 UINT64_C(60)} ||
