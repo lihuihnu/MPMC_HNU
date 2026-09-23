@@ -29,5 +29,5 @@ bool fixed_bhp_well_source_evaluator_header() {
         mpmc::well_discretization_petsc::
             fixed_bhp_peaceman_well_source_evaluator_convention ==
         std::string_view{
-            "well-discretization-petsc/fixed-bhp-single-connection/variable-cardinality-peaceman/v2"};
+            "well-discretization-petsc/fixed-bhp-single-connection/phase-identity-rebindable-peaceman/v3"};
 }
