@@ -245,6 +245,7 @@ struct DispatchAudit {
     std::uint64_t two_calls{};
     std::uint64_t three_calls{};
     bool source_enabled{};
+    bool well_timestep_single_phase_compressibility{};
     std::uint64_t source_evaluator_calls{};
     std::uint64_t source_cell20_calls{};
 };
@@ -450,10 +451,32 @@ evaluate_1p(
                 .push_back(
                     natural_variables[*column]);
         }
+        const bool synthetic_compressibility =
+            audit
+                ->well_timestep_single_phase_compressibility;
+        const double pressure_delta =
+            p - 10.0;
+        const double molar_density =
+            5.0 +
+            (synthetic_compressibility
+                 ? 0.05 * pressure_delta
+                 : 0.0);
+        const double mass_density =
+            2.0 +
+            (synthetic_compressibility
+                 ? 0.02 * pressure_delta
+                 : 0.0);
+        if (!(molar_density > 0.0) ||
+            !(mass_density > 0.0)) {
+            *status =
+                fdp::NaturalVariableSnesEvaluationStatus3D::
+                    domain_error;
+            return PETSC_SUCCESS;
+        }
         input.phase_properties =
             flow::PhasePropertyPrerequisiteInput{
-                5.0,
-                2.0,
+                molar_density,
+                mass_density,
                 1.0,
                 temperature,
                 0.5 * temperature};
@@ -466,11 +489,27 @@ evaluate_1p(
         std::vector<double> zero(
             q,
             0.0);
+        std::vector<double> molar_density_gradient(
+            q,
+            0.0);
+        std::vector<double> mass_density_gradient(
+            q,
+            0.0);
+        if (synthetic_compressibility) {
+            molar_density_gradient[
+                frozen_layout
+                    .pressure_unknown_index()] =
+                0.05;
+            mass_density_gradient[
+                frozen_layout
+                    .pressure_unknown_index()] =
+                0.02;
+        }
         auto molar =
             flow::
                 make_single_phase_molar_density_linearization(
                     state,
-                    zero);
+                    molar_density_gradient);
         const flow::TransportPropertyProvenance
             provenance{
                 "mixed-physical-dispatch",
@@ -480,7 +519,7 @@ evaluate_1p(
             flow::
                 make_single_phase_transport_linearization(
                     state,
-                    zero,
+                    mass_density_gradient,
                     zero,
                     1.0,
                     zero,
@@ -3657,6 +3696,9 @@ void run_frozen_fixed_bhp_timestep_case(
             "invalid fixed-BHP cardinality timestep case");
     }
 
+    audit->well_timestep_single_phase_compressibility =
+        expected_phase_count == 1U;
+
     std::vector<double>
         injection_enthalpy;
     injection_enthalpy.reserve(
@@ -4175,6 +4217,9 @@ void run_frozen_fixed_bhp_timestep_case(
                 &previous_state) ==
                 PETSC_SUCCESS,
         "variable-cardinality fixed-BHP timestep regression cleanup failed");
+
+    audit->well_timestep_single_phase_compressibility =
+        false;
 }
 
 } // namespace
