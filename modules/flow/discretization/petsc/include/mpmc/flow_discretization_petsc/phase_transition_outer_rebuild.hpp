@@ -524,6 +524,17 @@ public:
             ->snes_evaluator();
     }
 
+    [[nodiscard]] double
+    cell_bulk_volume_m3(
+        mpmc::mesh::LocalIndex cell) const {
+        if (physical_context_ == nullptr) {
+            throw std::logic_error(
+                "mpmc::flow_discretization_petsc: missing physical context for bulk-volume query");
+        }
+        return physical_context_
+            ->cell_bulk_volume_m3(cell);
+    }
+
     [[nodiscard]] PetscErrorCode
     evaluate_local_cells_for_phase_transition(
         Vec global_state,
