@@ -484,6 +484,14 @@ public:
         return jacobian_;
     }
 
+    [[nodiscard]] double
+    time_step_seconds() const noexcept {
+        return physical_context_ != nullptr
+            ? physical_context_
+                  ->time_step_seconds()
+            : 0.0;
+    }
+
     [[nodiscard]] NaturalVariableSnesEvaluator3D
     snes_evaluator() noexcept {
         return physical_context_
@@ -530,6 +538,220 @@ public:
                 output,
                 porosity,
                 status);
+    }
+
+    /// Commit one already accepted state as the exact history/state baseline
+    /// for the next physical timestep. Cardinality and physical phase identity
+    /// remain frozen; a topology change must still use the outer transition
+    /// rebuild path. Absent-phase coordinate charts are re-anchored at the
+    /// accepted host state while preserving their selected branch provenance.
+    [[nodiscard]] PetscErrorCode
+    rebase_accepted_timestep(
+        Vec accepted_state,
+        double next_time_step_seconds) {
+        using namespace
+            phase_transition_outer_rebuild_detail;
+
+        if (accepted_state == nullptr ||
+            physical_context_ == nullptr ||
+            coordinate_registry_ == nullptr ||
+            initial_state_ == nullptr ||
+            !std::isfinite(
+                next_time_step_seconds) ||
+            !(next_time_step_seconds > 0.0)) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        std::vector<std::optional<
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+            current;
+        std::vector<double> porosities;
+        NaturalVariableSnesEvaluationStatus3D
+            status =
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+        PetscErrorCode error =
+            evaluate_local_cells_for_phase_transition(
+                accepted_state,
+                &current,
+                &porosities,
+                &status);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+        if (status !=
+                NaturalVariableSnesEvaluationStatus3D::
+                    success ||
+            current.size() !=
+                numbering_->local_cell_count() ||
+            porosities.size() !=
+                current.size()) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+
+        PetscErrorCode local_error =
+            PETSC_SUCCESS;
+        std::optional<
+            FrozenAbsentPhaseCoordinateRegistry3D>
+            refreshed_registry;
+        std::vector<
+            MixedCardinalityPhysicalSnesCellInput3D>
+            rebased_inputs;
+        try {
+            const auto old_cells =
+                coordinate_registry_->cells();
+            if (old_cells.size() !=
+                current.size()) {
+                throw std::invalid_argument(
+                    "coordinate registry/cell count mismatch");
+            }
+
+            std::vector<
+                FrozenAbsentPhaseCoordinateCell3D>
+                refreshed_cells;
+            refreshed_cells.reserve(
+                old_cells.size());
+
+            for (std::size_t local = 0U;
+                 local < old_cells.size();
+                 ++local) {
+                if (!current[local]
+                        .has_value()) {
+                    throw std::invalid_argument(
+                        "accepted host cell is not evaluable");
+                }
+                const auto& host =
+                    std::visit(
+                        [](const auto& typed)
+                            -> const mpmc::flow::
+                                NaturalVariableStateIdentity3P& {
+                            return typed
+                                .transport
+                                .state_identity;
+                        },
+                        *current[local]);
+                const auto& old =
+                    old_cells[local];
+                if (old.cell !=
+                        numbering_->cell(
+                            mpmc::mesh::LocalIndex{
+                                static_cast<
+                                    mpmc::mesh::
+                                        LocalIndex::value_type>(
+                                            local)})
+                            .cell ||
+                    old.active_phases
+                            .phase_count() !=
+                        host.layout
+                            .phase_count()) {
+                    throw std::invalid_argument(
+                        "accepted host topology changed without rebuild");
+                }
+
+                std::vector<
+                    FrozenAbsentPhaseCoordinateEntry3D>
+                    absent;
+                absent.reserve(
+                    old.absent_phases.size());
+                for (const auto& entry :
+                     old.absent_phases) {
+                    auto coordinates =
+                        coordinate_registry_
+                            ->resolve_affine(
+                                old.cell_global,
+                                entry.identity,
+                                host);
+                    coordinates.validate();
+                    absent.push_back(
+                        {
+                            entry.identity,
+                            std::move(
+                                coordinates),
+                            entry
+                                .selected_branch_provenance});
+                }
+                refreshed_cells.push_back(
+                    {
+                        old.cell,
+                        old.cell_global,
+                        old.active_phases,
+                        std::move(absent)});
+            }
+
+            std::vector<
+                FrozenAbsentPhaseFaceEndpoint3D>
+                refreshed_faces{
+                    coordinate_registry_
+                        ->faces()
+                        .begin(),
+                    coordinate_registry_
+                        ->faces()
+                        .end()};
+            refreshed_registry.emplace(
+                std::move(
+                    refreshed_cells),
+                std::move(
+                    refreshed_faces));
+
+            local_error =
+                physical_context_
+                    ->prepare_accepted_history_rebase(
+                        current,
+                        next_time_step_seconds,
+                        &rebased_inputs);
+        } catch (const std::exception&) {
+            local_error =
+                PETSC_ERR_ARG_INCOMP;
+        }
+
+        error =
+            collective_error(
+                comm_,
+                local_error);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+        if (!refreshed_registry.has_value() ||
+            rebased_inputs.size() !=
+                current.size()) {
+            return PETSC_ERR_PLIB;
+        }
+
+        Vec next_initial = nullptr;
+        error =
+            VecDuplicate(
+                initial_state_,
+                &next_initial);
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecCopy(
+                    accepted_state,
+                    next_initial);
+        }
+        if (error != PETSC_SUCCESS) {
+            if (next_initial != nullptr) {
+                (void)VecDestroy(
+                    &next_initial);
+            }
+            return error;
+        }
+
+        physical_context_
+            ->commit_accepted_history_rebase(
+                std::move(
+                    rebased_inputs),
+                next_time_step_seconds);
+        *coordinate_registry_ =
+            std::move(
+                *refreshed_registry);
+
+        Vec old_initial =
+            initial_state_;
+        initial_state_ =
+            next_initial;
+        next_initial = nullptr;
+        return VecDestroy(
+            &old_initial);
     }
 
     [[nodiscard]] PetscErrorCode

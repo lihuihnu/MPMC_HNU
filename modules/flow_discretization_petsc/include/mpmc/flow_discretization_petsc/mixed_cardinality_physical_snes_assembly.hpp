@@ -870,6 +870,181 @@ public:
                 output);
     }
 
+    [[nodiscard]] double
+    time_step_seconds() const noexcept {
+        return time_step_seconds_;
+    }
+
+    [[nodiscard]] PetscErrorCode
+    prepare_accepted_history_rebase(
+        std::span<const std::optional<
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+            current,
+        double next_time_step_seconds,
+        std::vector<
+            MixedCardinalityPhysicalSnesCellInput3D>*
+                rebased_inputs) const {
+        using namespace
+            mixed_cardinality_physical_detail;
+
+        if (rebased_inputs == nullptr) {
+            return PETSC_ERR_ARG_NULL;
+        }
+        rebased_inputs->clear();
+        if (!std::isfinite(
+                next_time_step_seconds) ||
+            !(next_time_step_seconds > 0.0) ||
+            current.size() !=
+                cell_inputs_.size()) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        auto candidate =
+            cell_inputs_;
+        try {
+            for (std::size_t local = 0U;
+                 local < candidate.size();
+                 ++local) {
+                const auto cell =
+                    mpmc::mesh::LocalIndex{
+                        static_cast<
+                            mpmc::mesh::LocalIndex::
+                                value_type>(
+                                    local)};
+                if (!numbering_
+                        ->is_owned_cell(
+                            cell)) {
+                    continue;
+                }
+                if (!current[local]
+                        .has_value()) {
+                    throw std::invalid_argument(
+                        "owned accepted cell is not evaluable");
+                }
+
+                const auto& record =
+                    numbering_->cell(
+                        cell);
+                const double cell_porosity =
+                    porosity(
+                        candidate[local]);
+                std::optional<
+                    mpmc::flow::
+                        PoreVolumeComponentAccumulationSnapshot3P>
+                    component;
+                std::optional<
+                    mpmc::flow::
+                        PoreVolumeEnergyAccumulationSnapshot3P>
+                    energy;
+
+                if (record.phase_count == 1U) {
+                    const auto* evaluated =
+                        std::get_if<
+                            SinglePhaseCurrentCellLinearization3D>(
+                                &*current[local]);
+                    if (evaluated == nullptr) {
+                        throw std::invalid_argument(
+                            "accepted 1P cell variant mismatch");
+                    }
+                    component =
+                        mpmc::flow::
+                            build_single_phase_component_accumulation(
+                                evaluated->state,
+                                cell_porosity);
+                    energy =
+                        mpmc::flow::
+                            build_single_phase_energy_accumulation_snapshot(
+                                evaluated->state,
+                                cell_porosity,
+                                evaluated->transport,
+                                evaluated->caloric,
+                                evaluated->rock);
+                } else if (
+                    record.phase_count == 2U) {
+                    const auto* evaluated =
+                        std::get_if<
+                            TwoPhaseCurrentCellLinearization3D>(
+                                &*current[local]);
+                    if (evaluated == nullptr) {
+                        throw std::invalid_argument(
+                            "accepted 2P cell variant mismatch");
+                    }
+                    component =
+                        mpmc::flow::
+                            build_two_phase_component_accumulation(
+                                evaluated->state,
+                                cell_porosity);
+                    energy =
+                        mpmc::flow::
+                            build_two_phase_energy_accumulation_snapshot(
+                                evaluated->state,
+                                cell_porosity,
+                                evaluated->transport,
+                                evaluated->caloric,
+                                evaluated->rock);
+                } else if (
+                    record.phase_count == 3U) {
+                    const auto* evaluated =
+                        std::get_if<
+                            FixedThreePhaseCurrentCellLinearization3D>(
+                                &*current[local]);
+                    if (evaluated == nullptr) {
+                        throw std::invalid_argument(
+                            "accepted 3P cell variant mismatch");
+                    }
+                    component =
+                        mpmc::flow::
+                            build_pore_volume_component_accumulation(
+                                evaluated->state,
+                                cell_porosity);
+                    energy =
+                        mpmc::flow::
+                            build_pore_volume_energy_accumulation_snapshot(
+                                evaluated->state,
+                                cell_porosity,
+                                evaluated->transport,
+                                evaluated->caloric,
+                                evaluated->rock);
+                } else {
+                    throw std::invalid_argument(
+                        "accepted cell phase count is not 1/2/3");
+                }
+
+                if (!component.has_value() ||
+                    !energy.has_value()) {
+                    throw std::logic_error(
+                        "accepted histories were not constructed");
+                }
+                std::visit(
+                    [&](auto& typed) {
+                        typed.previous_component_accumulation =
+                            *component;
+                        typed.previous_energy_accumulation =
+                            *energy;
+                    },
+                    candidate[local]);
+            }
+        } catch (const std::exception&) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+
+        *rebased_inputs =
+            std::move(candidate);
+        return PETSC_SUCCESS;
+    }
+
+    void commit_accepted_history_rebase(
+        std::vector<
+            MixedCardinalityPhysicalSnesCellInput3D>
+            rebased_inputs,
+        double next_time_step_seconds) noexcept {
+        cell_inputs_ =
+            std::move(
+                rebased_inputs);
+        time_step_seconds_ =
+            next_time_step_seconds;
+    }
+
     [[nodiscard]] PetscErrorCode
     evaluate_local_cells_for_phase_transition(
         Vec global_state,

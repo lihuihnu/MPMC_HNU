@@ -4251,3 +4251,40 @@ The variable-cardinality solver also accepts optional
 SNES/KSP/top-level PC/ASM-sub-KSP/sub-PC reasons, iteration/evaluation/domain-error
 counts and the PETSc function norm before returning `PETSC_ERR_NOT_CONVERGED`.
 This is diagnostic evidence only and does not convert divergence into success.
+
+### 47.12 Accepted physical-time clock and history advancement
+
+The first real multi-timestep ownership boundary now sits above the existing
+adaptive-timestep and variable-cardinality PETSc solvers.
+
+`AcceptedPhysicalTimeClock3D` owns only accepted physical-time metadata:
+accepted time, accepted-step count and the next proposed timestep. Time does not
+advance on a rejected nonlinear attempt, cutback, or phase-transition handoff.
+A phase-transition restart remains part of the same physical timestep.
+
+After a stable solve has passed its production phase-set review,
+`commit_accepted_physical_timestep_3d()` performs the accepted-step commit in
+this order:
+
+1. evaluate the converged mixed-cardinality cell state;
+2. rebuild the owned backward-Euler component and energy history from that exact
+   accepted state;
+3. re-anchor every frozen absent-phase coordinate chart at the accepted host
+   state while preserving the selected PR76 branch provenance;
+4. copy the accepted PETSc state as the next timestep initial state;
+5. install the adaptive controller's accepted next `dt`;
+6. only then advance the physical clock.
+
+The real two-rank CH4/C2H6/C3H8 regression now accepts two consecutive physical
+steps. The first step consumes the production PR76 `1P -> 2P` proposal and
+ragged `2P/1P` restart, so the adaptive policy holds `dt=1 s` because one
+transition restart occurred. The committed history is then used by a second
+fully implicit solve of the same physical system. Its fresh PT rescan remains
+stable, the zero-effort accepted step requests growth to `dt=2 s`, and the
+clock reaches `t=2 s` after exactly two accepted steps. A fresh residual
+evaluation after the second commit checks that the rebased state/history is a
+valid baseline for the next timestep.
+
+This slice does not add a well, boundary/source control, checkpoint file,
+long-duration schedule, or any new phase-transition physics.
+

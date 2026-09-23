@@ -3,6 +3,7 @@
 #include <mpmc/flow_discretization/single_phase_tpfa.hpp>
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
 #include <mpmc/flow_discretization_petsc/adaptive_timestep_controller.hpp>
+#include <mpmc/flow_discretization_petsc/accepted_physical_time.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_production_cell_evaluator.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_single_phase_transition_target_rebuild.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_transition_rebuild_materialization.hpp>
@@ -2827,9 +2828,261 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
             final_proposals.empty(),
         "real PR76 restarted 2P/1P state failed the production post-SNES stability rescan");
 
+    fdp::AdaptiveTimestepControllerOptions3D
+        multi_step_options;
+    multi_step_options.minimum_timestep_seconds =
+        0.25;
+    multi_step_options.maximum_timestep_seconds =
+        4.0;
+    multi_step_options.cutback_factor =
+        0.5;
+    multi_step_options.growth_factor =
+        2.0;
+    multi_step_options.maximum_retries =
+        4U;
+    multi_step_options
+        .growth_nonlinear_iteration_limit =
+        4;
+    multi_step_options
+        .growth_line_search_direction_change_limit =
+        0;
+    multi_step_options
+        .growth_transition_restart_limit =
+        0U;
+
+    const auto first_attempt =
+        fdp::
+            make_adaptive_timestep_attempt_result(
+                *restarted_report,
+                1U);
+    const auto first_decision =
+        fdp::decide_adaptive_timestep_3d(
+            1.0,
+            0U,
+            first_attempt,
+            multi_step_options);
+    require_real_collective(
+        first_decision.decision ==
+                fdp::AdaptiveTimestepDecision3D::
+                    accept_and_hold &&
+            first_decision
+                    .next_timestep_seconds ==
+                std::optional<double>{1.0},
+        "real PR76 transition-restarted timestep did not hold dt after one phase restart");
+
+    fdp::AcceptedPhysicalTimeClock3D
+        physical_clock{
+            0.0,
+            1.0};
+    std::optional<
+        fdp::AcceptedPhysicalTimestepRecord3D>
+        first_record;
+    error =
+        fdp::
+            commit_accepted_physical_timestep_3d(
+                *materialized->system,
+                restarted_state,
+                1.0,
+                first_attempt,
+                first_decision,
+                &physical_clock,
+                &first_record);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            first_record.has_value() &&
+            first_record
+                    ->accepted_step_index ==
+                0U &&
+            first_record
+                    ->phase_transition_restarts ==
+                1U &&
+            physical_clock
+                    .accepted_step_count() ==
+                1U &&
+            physical_clock
+                    .accepted_time_seconds() ==
+                1.0 &&
+            physical_clock
+                    .next_timestep_seconds() ==
+                1.0 &&
+            materialized
+                    ->system
+                    ->time_step_seconds() ==
+                1.0,
+        "real PR76 first accepted physical timestep did not advance clock/history exactly once");
+
     require_real_collective(
         VecDestroy(
             &restarted_state) ==
+            PETSC_SUCCESS,
+        "real PR76 first accepted restarted state cleanup failed");
+
+    Vec second_state = nullptr;
+    std::optional<
+        fdp::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        second_report;
+    std::optional<
+        fdp::NaturalVariableSnesFailureDiagnostics3D>
+        second_failure;
+    error =
+        materialized
+            ->system
+            ->solve(
+                &second_state,
+                &second_report,
+                &second_failure);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            second_state != nullptr &&
+            second_report.has_value() &&
+            static_cast<int>(
+                second_report
+                    ->converged_reason) >
+                0 &&
+            std::isfinite(
+                second_report
+                    ->final_function_l2_norm) &&
+            second_report
+                    ->final_function_l2_norm <=
+                1.0e-6 &&
+            !second_failure.has_value(),
+        "real PR76 second physical timestep did not converge from committed accepted history");
+
+    final_scan_status =
+        fdp::
+            PostSnesPhaseTransitionScanStatus3D::
+                indeterminate;
+    final_proposals.clear();
+    error =
+        fdp::
+            scan_post_snes_pt_flash_phase_transitions_3d(
+                *materialized->system,
+                second_state,
+                *second_report,
+                &final_scanner,
+                &final_scan_status,
+                &final_proposals);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            final_scan_status ==
+                fdp::
+                    PostSnesPhaseTransitionScanStatus3D::
+                        complete &&
+            final_proposals.empty(),
+        "real PR76 second accepted physical timestep failed the production phase-set rescan");
+
+    const auto second_attempt =
+        fdp::
+            make_adaptive_timestep_attempt_result(
+                *second_report,
+                0U);
+    const auto second_decision =
+        fdp::decide_adaptive_timestep_3d(
+            1.0,
+            0U,
+            second_attempt,
+            multi_step_options);
+    require_real_collective(
+        second_decision.decision ==
+                fdp::AdaptiveTimestepDecision3D::
+                    accept_and_grow &&
+            second_decision
+                    .next_timestep_seconds ==
+                std::optional<double>{2.0},
+        "real PR76 stable second timestep did not request conservative dt growth");
+
+    std::optional<
+        fdp::AcceptedPhysicalTimestepRecord3D>
+        second_record;
+    error =
+        fdp::
+            commit_accepted_physical_timestep_3d(
+                *materialized->system,
+                second_state,
+                1.0,
+                second_attempt,
+                second_decision,
+                &physical_clock,
+                &second_record);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            second_record.has_value() &&
+            second_record
+                    ->accepted_step_index ==
+                1U &&
+            second_record
+                    ->phase_transition_restarts ==
+                0U &&
+            physical_clock
+                    .accepted_step_count() ==
+                2U &&
+            physical_clock
+                    .accepted_time_seconds() ==
+                2.0 &&
+            physical_clock
+                    .next_timestep_seconds() ==
+                2.0 &&
+            materialized
+                    ->system
+                    ->time_step_seconds() ==
+                2.0,
+        "real PR76 second accepted physical timestep did not advance clock/history or dt");
+
+    Vec rebased_residual = nullptr;
+    require_real_collective(
+        VecDuplicate(
+            materialized
+                ->system
+                ->initial_state(),
+            &rebased_residual) ==
+            PETSC_SUCCESS,
+        "failed to allocate real PR76 rebased residual");
+    auto rebased_evaluator =
+        materialized
+            ->system
+            ->snes_evaluator();
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        rebased_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    error =
+        rebased_evaluator.function(
+            materialized
+                ->system
+                ->initial_state(),
+            rebased_residual,
+            rebased_evaluator.user_context,
+            &rebased_status);
+    PetscReal rebased_norm = 0.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                rebased_residual,
+                NORM_2,
+                &rebased_norm);
+    }
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            rebased_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            std::isfinite(
+                static_cast<double>(
+                    rebased_norm)) &&
+            static_cast<double>(
+                rebased_norm) <=
+                1.0e-6,
+        "real PR76 accepted-history rebase did not make the committed state a valid next-step baseline");
+
+    require_real_collective(
+        VecDestroy(
+            &rebased_residual) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &second_state) ==
                 PETSC_SUCCESS &&
             VecDestroy(
                 &converged_source) ==
@@ -2837,7 +3090,7 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
             VecDestroy(
                 &accepted_state) ==
                 PETSC_SUCCESS,
-        "real PR76 physical restart state cleanup failed");
+        "real PR76 multi-timestep physical clock state cleanup failed");
 }
 
 PetscErrorCode real_unexpected_transition_commit(

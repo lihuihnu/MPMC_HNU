@@ -389,6 +389,31 @@ make_adaptive_timestep_attempt_result(
 [[nodiscard]] inline
 AdaptiveTimestepAttemptResult3D
 make_adaptive_timestep_attempt_result(
+    const VariableCardinalityNaturalVariableSnesSolveReport3D&
+        report,
+    std::size_t phase_transition_restarts = 0U) {
+    if (static_cast<int>(
+            report.converged_reason) <= 0 ||
+        report.nonlinear_iterations < 0 ||
+        report.line_search_direction_changes < 0 ||
+        !std::isfinite(
+            report.final_function_l2_norm)) {
+        throw std::invalid_argument(
+            "mpmc::flow_discretization_petsc: successful variable-cardinality SNES report is invalid");
+    }
+    return {
+        AdaptiveTimestepAttemptOutcome3D::
+            stable_phase_set,
+        report.nonlinear_iterations,
+        0,
+        0,
+        report.line_search_direction_changes,
+        phase_transition_restarts};
+}
+
+[[nodiscard]] inline
+AdaptiveTimestepAttemptResult3D
+make_adaptive_timestep_attempt_result(
     const PostSnesPhaseTransitionControllerReport3D&
         report) {
     AdaptiveTimestepAttemptResult3D result;
