@@ -4588,6 +4588,517 @@ void run_rebound_fixed_bhp_physical_timestep(
     (void)rank;
 }
 
+void run_rebound_multi_connection_fixed_bhp_physical_timestep(
+    int rank,
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>*
+                system,
+    Vec* stable_state,
+    ControllerFixture* fixture,
+    std::size_t expected_cell30_phase_count,
+    std::size_t expected_cell30_scalar_count,
+    PetscInt expected_global_scalar_count) {
+    if (system == nullptr ||
+        *system == nullptr ||
+        stable_state == nullptr ||
+        *stable_state == nullptr ||
+        fixture == nullptr ||
+        fixture->multi_well_context == nullptr) {
+        throw std::invalid_argument(
+            "invalid rebound multi-connection fixed-BHP physical timestep fixture");
+    }
+
+    const auto& record30 =
+        (*system)->numbering().cell(
+            mesh::LocalIndex{2U});
+    const auto& record60 =
+        (*system)->numbering().cell(
+            mesh::LocalIndex{5U});
+    require_collective(
+        (*system)->numbering()
+                .petsc_global_scalar_count() ==
+            expected_global_scalar_count &&
+            record30.cell_global ==
+                mesh::GlobalEntityId{
+                    UINT64_C(30)} &&
+            record30.phase_count ==
+                expected_cell30_phase_count &&
+            record30.scalar_count ==
+                expected_cell30_scalar_count &&
+            record30.owner_rank.value() == 0U &&
+            record60.cell_global ==
+                mesh::GlobalEntityId{
+                    UINT64_C(60)} &&
+            record60.phase_count == 3U &&
+            record60.scalar_count == 10U &&
+            record60.owner_rank.value() == 1U,
+        "rebound multi-connection fixed-BHP target charts or ownership changed unexpectedly");
+
+    require_collective(
+        (*system)
+                ->rebase_accepted_timestep(
+                    *stable_state,
+                    1.0) ==
+            PETSC_SUCCESS &&
+            VecDestroy(
+                stable_state) ==
+            PETSC_SUCCESS,
+        "failed to rebase stable multi-connection fixed-BHP state");
+
+    bool rebased_history_matches = false;
+    require_collective(
+        (*system)
+                ->accepted_history_matches_state(
+                    (*system)
+                        ->initial_state(),
+                    &rebased_history_matches) ==
+            PETSC_SUCCESS &&
+            rebased_history_matches,
+        "rebound multi-connection fixed-BHP history did not match stable state");
+
+    const auto local_previous_total =
+        owned_conserved_totals(
+            **system,
+            (*system)
+                ->initial_state());
+    std::array<double, 4>
+        global_previous_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_previous_total.data(),
+            global_previous_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce rebound multi-connection previous conserved totals");
+
+    Vec previous_state = nullptr;
+    require_collective(
+        VecDuplicate(
+            (*system)
+                ->initial_state(),
+            &previous_state) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                (*system)
+                    ->initial_state(),
+                previous_state) ==
+                PETSC_SUCCESS,
+        "failed to preserve rebound multi-connection previous state");
+
+    fixture
+        ->multi_well_source_audit
+        .evaluator_calls = 0U;
+    fixture
+        ->multi_well_source_audit
+        .cell30_calls = 0U;
+    fixture
+        ->multi_well_source_audit
+        .cell60_calls = 0U;
+
+    fdp::PhysicalTimestepDriverOptions3D
+        timestep_options;
+    timestep_options.adaptive
+        .minimum_timestep_seconds =
+        0.125;
+    timestep_options.adaptive
+        .maximum_timestep_seconds =
+        1.0;
+    timestep_options.adaptive
+        .cutback_factor =
+        0.5;
+    timestep_options.adaptive
+        .growth_factor =
+        2.0;
+    timestep_options.adaptive
+        .maximum_retries =
+        4U;
+    timestep_options.adaptive
+        .growth_nonlinear_iteration_limit =
+        20;
+    timestep_options.adaptive
+        .growth_line_search_direction_change_limit =
+        4;
+    timestep_options.adaptive
+        .growth_transition_restart_limit =
+        0U;
+    timestep_options.phase_transition
+        .max_transition_restarts =
+        0U;
+
+    FrozenMultiWellTimestepControlAudit
+        control_audit;
+    control_audit
+        .expected_cell30_phase_count =
+        expected_cell30_phase_count;
+    control_audit
+        .expected_cell30_scalar_count =
+        expected_cell30_scalar_count;
+    control_audit
+        .expected_global_scalar_count =
+        expected_global_scalar_count;
+
+    fdp::AcceptedPhysicalTimeClock3D
+        timestep_clock{
+            0.0,
+            1.0};
+    std::optional<
+        fdp::PhysicalTimestepDriverReport3D>
+        timestep_report;
+    const PetscErrorCode error =
+        fdp::advance_one_physical_timestep_3d(
+            PETSC_COMM_WORLD,
+            system,
+            0U,
+            {
+                &frozen_multi_well_timestep_scan,
+                &control_audit,
+                &unexpected_frozen_multi_well_timestep_rebuild,
+                &control_audit},
+            timestep_options,
+            &timestep_clock,
+            &timestep_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            timestep_report.has_value() &&
+            timestep_report->accepted() &&
+            timestep_report
+                    ->adaptive
+                    .accepted_timestep_seconds
+                    .has_value() &&
+            timestep_clock
+                    .accepted_step_count() ==
+                1U &&
+            control_audit.scans > 0U &&
+            control_audit.rebuild_calls == 0U &&
+            fixture
+                    ->multi_well_source_audit
+                    .evaluator_calls >
+                0U &&
+            (rank == 0
+                 ? fixture
+                           ->multi_well_source_audit
+                           .cell30_calls >
+                       0U &&
+                       fixture
+                               ->multi_well_source_audit
+                               .cell60_calls ==
+                           0U
+                 : fixture
+                           ->multi_well_source_audit
+                           .cell30_calls ==
+                       0U &&
+                       fixture
+                               ->multi_well_source_audit
+                               .cell60_calls >
+                           0U),
+        "rebound multi-connection sources were not assembled exactly on authoritative owners");
+
+    const double accepted_dt =
+        *timestep_report
+             ->adaptive
+             .accepted_timestep_seconds;
+
+    Vec state_delta = nullptr;
+    PetscReal state_delta_norm = 0.0;
+    require_collective(
+        VecDuplicate(
+            (*system)
+                ->initial_state(),
+            &state_delta) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                (*system)
+                    ->initial_state(),
+                state_delta) ==
+                PETSC_SUCCESS &&
+            VecAXPY(
+                state_delta,
+                PetscScalar{-1.0},
+                previous_state) ==
+                PETSC_SUCCESS &&
+            VecNorm(
+                state_delta,
+                NORM_2,
+                &state_delta_norm) ==
+                PETSC_SUCCESS &&
+            static_cast<double>(
+                state_delta_norm) >
+                1.0e-10,
+        "rebound multi-connection accepted timestep did not change reservoir state");
+
+    const auto local_final_total =
+        owned_conserved_totals(
+            **system,
+            (*system)
+                ->initial_state());
+    std::array<double, 4>
+        global_final_total{};
+    require_collective(
+        MPI_Allreduce(
+            local_final_total.data(),
+            global_final_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce rebound multi-connection final conserved totals");
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        final_current;
+    std::vector<double>
+        final_porosity;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        final_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    require_collective(
+        (*system)
+                ->evaluate_local_cells_for_phase_transition(
+                    (*system)
+                        ->initial_state(),
+                    &final_current,
+                    &final_porosity,
+                    &final_status) ==
+            PETSC_SUCCESS &&
+            final_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            final_current.size() > 5U &&
+            final_current[2U].has_value() &&
+            final_current[5U].has_value(),
+        "failed to evaluate accepted rebound multi-connection states");
+
+    std::vector<
+        wd::
+            FixedBhpConnectionCellSourceLinearization3D>
+        local_authoritative_sources;
+    std::array<double, 4>
+        local_connection30_rate{};
+    std::array<double, 4>
+        local_connection60_rate{};
+    bool local_connection_shapes_ok =
+        true;
+
+    if (record30.owner_rank ==
+        (*system)->numbering().local_rank()) {
+        const auto* connection =
+            fixture->multi_well_context
+                ->find_connection(
+                    record30.cell_global);
+        if (connection == nullptr) {
+            local_connection_shapes_ok =
+                false;
+        } else {
+            const auto source30 =
+                wdp::
+                    build_fixed_bhp_peaceman_well_source_3d(
+                        *connection,
+                        *final_current[2U]);
+            local_connection_shapes_ok =
+                local_connection_shapes_ok &&
+                source30.cell_source.input_count ==
+                    expected_cell30_scalar_count;
+            for (std::size_t component = 0U;
+                 component < 3U;
+                 ++component) {
+                local_connection30_rate[
+                    component] =
+                    -source30
+                         .cell_source
+                         .component_molar_rate_mol_per_s[
+                             component];
+            }
+            local_connection30_rate[3] =
+                -source30
+                     .cell_source
+                     .energy_rate_w;
+            local_authoritative_sources
+                .push_back(source30);
+        }
+    }
+
+    if (record60.owner_rank ==
+        (*system)->numbering().local_rank()) {
+        const auto* connection =
+            fixture->multi_well_context
+                ->find_connection(
+                    record60.cell_global);
+        if (connection == nullptr) {
+            local_connection_shapes_ok =
+                false;
+        } else {
+            const auto source60 =
+                wdp::
+                    build_fixed_bhp_peaceman_well_source_3d(
+                        *connection,
+                        *final_current[5U]);
+            local_connection_shapes_ok =
+                local_connection_shapes_ok &&
+                source60.cell_source.input_count ==
+                    10U;
+            for (std::size_t component = 0U;
+                 component < 3U;
+                 ++component) {
+                local_connection60_rate[
+                    component] =
+                    -source60
+                         .cell_source
+                         .component_molar_rate_mol_per_s[
+                             component];
+            }
+            local_connection60_rate[3] =
+                -source60
+                     .cell_source
+                     .energy_rate_w;
+            local_authoritative_sources
+                .push_back(source60);
+        }
+    }
+
+    require_collective(
+        local_connection_shapes_ok &&
+            local_authoritative_sources.size() ==
+                1U,
+        "rebound multi-connection owner did not expose exactly one authoritative connection");
+
+    const auto local_well_total =
+        wd::
+            aggregate_fixed_bhp_connection_production_rates_3d(
+                local_authoritative_sources);
+    std::array<double, 4>
+        local_well_rate{};
+    for (std::size_t component = 0U;
+         component < 3U;
+         ++component) {
+        local_well_rate[component] =
+            local_well_total
+                .component_molar_rate_mol_per_s[
+                    component];
+    }
+    local_well_rate[3] =
+        local_well_total.energy_rate_w;
+
+    std::array<double, 4>
+        global_well_rate{};
+    std::array<double, 4>
+        global_connection30_rate{};
+    std::array<double, 4>
+        global_connection60_rate{};
+    require_collective(
+        MPI_Allreduce(
+            local_well_rate.data(),
+            global_well_rate.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            MPI_Allreduce(
+                local_connection30_rate.data(),
+                global_connection30_rate.data(),
+                4,
+                MPI_DOUBLE,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            MPI_Allreduce(
+                local_connection60_rate.data(),
+                global_connection60_rate.data(),
+                4,
+                MPI_DOUBLE,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS,
+        "failed to reduce rebound multi-connection authoritative rates");
+
+    std::uint64_t local_authoritative_count =
+        static_cast<std::uint64_t>(
+            local_well_total
+                .authoritative_connection_count);
+    std::uint64_t global_authoritative_count =
+        0U;
+    require_collective(
+        MPI_Allreduce(
+            &local_authoritative_count,
+            &global_authoritative_count,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            global_authoritative_count ==
+                2U,
+        "rebound multi-connection well did not retain exactly two authoritative connections");
+
+    for (std::size_t quantity = 0U;
+         quantity < 4U;
+         ++quantity) {
+        require_collective(
+            std::isfinite(
+                global_connection30_rate[
+                    quantity]) &&
+                std::isfinite(
+                    global_connection60_rate[
+                        quantity]) &&
+                std::abs(
+                    global_connection30_rate[
+                        quantity]) >
+                    0.0 &&
+                std::abs(
+                    global_connection60_rate[
+                        quantity]) >
+                    0.0,
+            "rebound multi-connection accepted rate vanished or became non-finite");
+        near_collective(
+            global_well_rate[quantity],
+            global_connection30_rate[
+                quantity] +
+                global_connection60_rate[
+                    quantity],
+            2.0e-12,
+            2.0e-12);
+        near_collective(
+            global_final_total[quantity],
+            global_previous_total[quantity] -
+                accepted_dt *
+                    global_well_rate[quantity],
+            2.0e-7,
+            quantity < 3U
+                ? 2.0e-8
+                : 2.0e-7);
+    }
+
+    bool history_matches = false;
+    require_collective(
+        (*system)
+                ->accepted_history_matches_state(
+                    (*system)
+                        ->initial_state(),
+                    &history_matches) ==
+            PETSC_SUCCESS &&
+            history_matches,
+        "rebound multi-connection accepted timestep did not rebase history");
+
+    require_collective(
+        VecDestroy(
+            &state_delta) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &previous_state) ==
+                PETSC_SUCCESS,
+        "rebound multi-connection physical timestep cleanup failed");
+}
+
 void run_frozen_fixed_bhp_timestep_case(
     int rank,
     std::uint64_t target_stable,
