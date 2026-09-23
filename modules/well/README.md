@@ -96,9 +96,9 @@ the new natural-variable chart. The first regression covers a stable-cell
 `2P -> 3P` restart followed by a separate accepted physical timestep.
 
 The well module still does not define conductive well/reservoir heat exchange,
-wellbore heat loss, multi-connection aggregation, rate-control equations,
-global well unknowns, control switching, completion creation/deletion,
-cross-cell well migration or scheduling.
+wellbore heat loss, rate-control equations, global well unknowns, control
+switching, completion creation/deletion, cross-cell well migration or
+scheduling.
 
 
 ## Single-well multi-connection fixed-BHP aggregation
@@ -125,6 +125,18 @@ line-search callback re-entry from multiplying reported well totals.
 The current regression spans one 2P connection owned by rank 0 and one 3P
 connection owned by rank 1, verifies exactly two authoritative contributions,
 and closes global component/energy conservation against their summed well
-rate. Rate control, global well unknowns, control switching, wellbore pressure
-drop, crossflow control, multi-well networks and scheduling remain outside this
+rate.
+
+A multi-connection context can also rebind exactly one completion by stable
+cell identity. The selected connection delegates to the same stable
+physical-phase rebinding contract used by a single completion, while all other
+connection objects are copied unchanged and the complete logical well is
+revalidated for unique stable cells and one shared frozen BHP. The local
+transition regression drives only cell30 through `2P -> 3P -> 2P`; cell60
+remains frozen 3P. After each restart, the well still has exactly two
+authoritative owner-side connection rates and the post-rebuild accepted
+physical timestep closes component/energy conservation against their sum.
+
+Rate control, global well unknowns, control switching, wellbore pressure drop,
+crossflow control, multi-well networks and scheduling remain outside this
 contract.
