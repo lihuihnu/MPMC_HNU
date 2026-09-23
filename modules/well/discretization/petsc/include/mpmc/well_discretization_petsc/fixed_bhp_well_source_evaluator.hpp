@@ -424,6 +424,171 @@ rebind_fixed_bhp_peaceman_well_source_context_3d(
 using FixedBhpThreePhasePeacemanWellSourceEvaluatorContext3D =
     FixedBhpPeacemanWellSourceEvaluatorContext3D;
 
+inline constexpr std::string_view
+    fixed_bhp_multi_connection_well_source_evaluator_convention =
+        "well-discretization-petsc/fixed-bhp-single-well/multi-connection-owner-only/v1";
+
+/// One logical fixed-BHP well spanning multiple stable reservoir cells.
+///
+/// The context is immutable after construction. Connections are sorted by
+/// stable cell GlobalEntityId for deterministic lookup. A stable cell may
+/// appear at most once, and every connection must carry exactly the same BHP.
+/// This prevents one physical completion from being assembled twice and makes
+/// the shared control parameter explicit without introducing a well unknown.
+class FixedBhpMultiConnectionWellSourceEvaluatorContext3D {
+public:
+    static constexpr std::string_view convention =
+        fixed_bhp_multi_connection_well_source_evaluator_convention;
+
+    [[nodiscard]] static
+    FixedBhpMultiConnectionWellSourceEvaluatorContext3D
+    create(
+        std::string well_id,
+        std::vector<
+            FixedBhpPeacemanWellSourceEvaluatorContext3D>
+            connections) {
+        if (well_id.empty() ||
+            connections.size() < 2U) {
+            throw std::invalid_argument(
+                "mpmc::well_discretization_petsc: multi-connection fixed-BHP well requires nonempty well id and at least two connections");
+        }
+
+        const double bottom_hole_pressure_pa =
+            connections.front()
+                .bottom_hole_pressure_pa();
+        if (!std::isfinite(bottom_hole_pressure_pa) ||
+            !(bottom_hole_pressure_pa > 0.0)) {
+            throw std::invalid_argument(
+                "mpmc::well_discretization_petsc: multi-connection fixed-BHP well has invalid shared BHP");
+        }
+
+        std::sort(
+            connections.begin(),
+            connections.end(),
+            [](const auto& left,
+               const auto& right) {
+                return left
+                           .target_cell_global()
+                           .value() <
+                    right
+                        .target_cell_global()
+                        .value();
+            });
+
+        for (std::size_t index = 0U;
+             index < connections.size();
+             ++index) {
+            if (connections[index]
+                    .bottom_hole_pressure_pa() !=
+                bottom_hole_pressure_pa) {
+                throw std::invalid_argument(
+                    "mpmc::well_discretization_petsc: multi-connection fixed-BHP well connections do not share one frozen BHP");
+            }
+            if (index > 0U &&
+                connections[index - 1U]
+                        .target_cell_global() ==
+                    connections[index]
+                        .target_cell_global()) {
+                throw std::invalid_argument(
+                    "mpmc::well_discretization_petsc: duplicate stable-cell completion in multi-connection fixed-BHP well");
+            }
+        }
+
+        return FixedBhpMultiConnectionWellSourceEvaluatorContext3D{
+            std::move(well_id),
+            bottom_hole_pressure_pa,
+            std::move(connections)};
+    }
+
+    [[nodiscard]] std::string_view
+    well_id() const noexcept {
+        return well_id_;
+    }
+
+    [[nodiscard]] double
+    bottom_hole_pressure_pa() const noexcept {
+        return bottom_hole_pressure_pa_;
+    }
+
+    [[nodiscard]] std::size_t
+    connection_count() const noexcept {
+        return connections_.size();
+    }
+
+    [[nodiscard]] std::span<
+        const FixedBhpPeacemanWellSourceEvaluatorContext3D>
+    connections() const noexcept {
+        return connections_;
+    }
+
+    [[nodiscard]]
+    const FixedBhpPeacemanWellSourceEvaluatorContext3D*
+    find_connection(
+        mpmc::mesh::GlobalEntityId
+            cell_global) const noexcept {
+        const auto found =
+            std::lower_bound(
+                connections_.begin(),
+                connections_.end(),
+                cell_global.value(),
+                [](const auto& connection,
+                   std::uint64_t value) {
+                    return connection
+                               .target_cell_global()
+                               .value() <
+                        value;
+                });
+        return found != connections_.end() &&
+                       found->target_cell_global() ==
+                           cell_global
+            ? &*found
+            : nullptr;
+    }
+
+    [[nodiscard]]
+    FixedBhpPeacemanWellSourceEvaluatorContext3D*
+    find_connection(
+        mpmc::mesh::GlobalEntityId
+            cell_global) noexcept {
+        const auto found =
+            std::lower_bound(
+                connections_.begin(),
+                connections_.end(),
+                cell_global.value(),
+                [](const auto& connection,
+                   std::uint64_t value) {
+                    return connection
+                               .target_cell_global()
+                               .value() <
+                        value;
+                });
+        return found != connections_.end() &&
+                       found->target_cell_global() ==
+                           cell_global
+            ? &*found
+            : nullptr;
+    }
+
+private:
+    FixedBhpMultiConnectionWellSourceEvaluatorContext3D(
+        std::string well_id,
+        double bottom_hole_pressure_pa,
+        std::vector<
+            FixedBhpPeacemanWellSourceEvaluatorContext3D>
+            connections)
+        : well_id_(std::move(well_id)),
+          bottom_hole_pressure_pa_(
+              bottom_hole_pressure_pa),
+          connections_(
+              std::move(connections)) {}
+
+    std::string well_id_;
+    double bottom_hole_pressure_pa_{};
+    std::vector<
+        FixedBhpPeacemanWellSourceEvaluatorContext3D>
+        connections_;
+};
+
 namespace fixed_bhp_well_source_evaluator_detail {
 
 [[nodiscard]] inline
@@ -730,6 +895,59 @@ evaluate_fixed_bhp_peaceman_well_source_3d(
     }
 }
 
+/// Owner-only multi-connection callback for one logical fixed-BHP well.
+///
+/// The surrounding mixed-cardinality assembly calls this evaluator only for
+/// locally owned cells. This callback performs a deterministic stable-cell
+/// lookup and delegates exactly one matching completion to the validated
+/// single-connection evaluator. Non-completion owned cells publish no source.
+inline PetscErrorCode
+evaluate_fixed_bhp_multi_connection_well_source_3d(
+    mpmc::mesh::LocalIndex cell,
+    mpmc::mesh::GlobalEntityId cell_global,
+    std::span<const double> natural_variables,
+    const mpmc::flow_discretization_petsc::
+        MixedCardinalityPhysicalCurrentCellLinearization3D&
+            current,
+    void* raw_context,
+    std::optional<
+        mpmc::flow_discretization::
+            CellSourceLinearization3D>* output,
+    mpmc::flow_discretization_petsc::
+        NaturalVariableSnesEvaluationStatus3D*
+            status) {
+    if (raw_context == nullptr ||
+        output == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    *status =
+        mpmc::flow_discretization_petsc::
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+
+    auto* context =
+        static_cast<
+            FixedBhpMultiConnectionWellSourceEvaluatorContext3D*>(
+                raw_context);
+    auto* connection =
+        context->find_connection(
+            cell_global);
+    if (connection == nullptr) {
+        return PETSC_SUCCESS;
+    }
+
+    return evaluate_fixed_bhp_peaceman_well_source_3d(
+        cell,
+        cell_global,
+        natural_variables,
+        current,
+        connection,
+        output,
+        status);
+}
+
 /// Compatibility callback retaining the former strict-3P behavior.
 inline PetscErrorCode
 evaluate_fixed_bhp_three_phase_peaceman_well_source_3d(
@@ -802,6 +1020,17 @@ fixed_bhp_peaceman_well_source_binding_3d(
         context) noexcept {
     return {
         &evaluate_fixed_bhp_peaceman_well_source_3d,
+        context};
+}
+
+[[nodiscard]] inline
+mpmc::flow_discretization_petsc::
+    MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
+fixed_bhp_multi_connection_well_source_binding_3d(
+    FixedBhpMultiConnectionWellSourceEvaluatorContext3D*
+        context) noexcept {
+    return {
+        &evaluate_fixed_bhp_multi_connection_well_source_3d,
         context};
 }
 
