@@ -483,7 +483,12 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
         entry_bhp,
         &options.adaptive,
         clock,
-        accepted_bottom_hole_pressure_pa};
+        accepted_bottom_hole_pressure_pa,
+        {},
+        nullptr,
+        std::nullopt,
+        std::nullopt,
+        std::nullopt};
 
     std::optional<
         fdp::AdaptiveTimestepControllerReport3D>
