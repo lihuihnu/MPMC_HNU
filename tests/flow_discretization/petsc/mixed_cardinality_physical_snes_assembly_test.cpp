@@ -220,7 +220,91 @@ struct DispatchAudit {
     std::uint64_t single_calls{};
     std::uint64_t two_calls{};
     std::uint64_t three_calls{};
+    bool source_enabled{};
+    std::uint64_t source_evaluator_calls{};
+    std::uint64_t source_cell20_calls{};
 };
+
+PetscErrorCode evaluate_explicit_cell_source(
+    mesh::LocalIndex,
+    mesh::GlobalEntityId cell_global,
+    std::span<const double> natural_variables,
+    const fdp::MixedCardinalityPhysicalCurrentCellLinearization3D&
+        current,
+    void* raw_context,
+    std::optional<fd::CellSourceLinearization3D>* output,
+    fdp::NaturalVariableSnesEvaluationStatus3D* status) {
+    if (raw_context == nullptr ||
+        output == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    auto* audit =
+        static_cast<DispatchAudit*>(raw_context);
+    ++audit->source_evaluator_calls;
+    *status =
+        fdp::NaturalVariableSnesEvaluationStatus3D::
+            success;
+    if (!audit->source_enabled ||
+        cell_global !=
+            mesh::GlobalEntityId{UINT64_C(20)}) {
+        return PETSC_SUCCESS;
+    }
+    ++audit->source_cell20_calls;
+
+    const auto& identity =
+        std::visit(
+            [](const auto& typed)
+                -> const flow::NaturalVariableStateIdentity3P& {
+                return typed.transport.state_identity;
+            },
+            current);
+    const std::size_t q =
+        natural_variables.size();
+    if (identity.component_ids.size() != 3U ||
+        q != identity.layout.unknown_count()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    fd::CellSourceLinearization3D source;
+    source.provenance =
+        "test/mixed-cell-source/v1";
+    source.component_ids =
+        identity.component_ids;
+    source.input_count = q;
+    source.component_molar_rate_mol_per_s =
+        {2.0, -1.0, 0.5};
+    source.component_molar_rate_jacobian_mol_per_s.assign(
+        3U * q,
+        0.0);
+    for (std::size_t component = 0U;
+         component < 3U;
+         ++component) {
+        for (std::size_t column = 0U;
+             column < q;
+             ++column) {
+            source.component_molar_rate_jacobian_mol_per_s[
+                component * q + column] =
+                0.1 *
+                static_cast<double>(
+                    (component + 1U) *
+                    (column + 1U));
+        }
+    }
+    source.energy_rate_w = 20.0;
+    source.energy_rate_gradient_w.resize(q);
+    for (std::size_t column = 0U;
+         column < q;
+         ++column) {
+        source.energy_rate_gradient_w[column] =
+            0.2 *
+            static_cast<double>(
+                column + 1U);
+    }
+    output->emplace(std::move(source));
+    return PETSC_SUCCESS;
+}
 
 PetscErrorCode
 evaluate_1p(
@@ -3240,6 +3324,9 @@ void mixed_cardinality_physical_snes_assembly_test() {
                         {&evaluate_2p, &audit},
                         {&evaluate_3p, &audit}},
                     {},
+                    {
+                        &evaluate_explicit_cell_source,
+                        &audit},
                     &context);
     require_collective(
         error == PETSC_SUCCESS &&
@@ -3402,6 +3489,174 @@ void mixed_cardinality_physical_snes_assembly_test() {
             audit.two_calls > 0U &&
             audit.three_calls > 0U,
         "mixed physical dispatcher did not exercise all three cell closures");
+
+    PetscScalar baseline_component_d = 0.0;
+    PetscScalar baseline_energy_d = 0.0;
+    if (rank == 1) {
+        const auto& source_record =
+            numbering->cell(
+                mesh::LocalIndex{1U});
+        const PetscInt row0 =
+            source_record.petsc_global_scalar_start;
+        const PetscInt energy_row =
+            row0 + 3;
+        const PetscInt column = row0;
+        require_collective(
+            MatGetValues(
+                jacobian,
+                1,
+                &row0,
+                1,
+                &column,
+                &baseline_component_d) ==
+                PETSC_SUCCESS &&
+            MatGetValues(
+                jacobian,
+                1,
+                &energy_row,
+                1,
+                &column,
+                &baseline_energy_d) ==
+                PETSC_SUCCESS,
+            "failed to capture source-disabled diagonal Jacobian");
+    } else {
+        require_collective(
+            true,
+            "source-disabled diagonal Jacobian");
+    }
+
+    audit.source_enabled = true;
+    error = VecSet(
+        residual,
+        PetscScalar{0.0});
+    status =
+        fdp::NaturalVariableSnesEvaluationStatus3D::
+            success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            evaluator.function(
+                state,
+                residual,
+                evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = VecAssemblyBegin(residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = VecAssemblyEnd(residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error = MatZeroEntries(jacobian);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            evaluator.jacobian(
+                state,
+                jacobian,
+                evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyBegin(
+                jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyEnd(
+                jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+
+    bool local_source_ok = true;
+    if (rank == 1) {
+        const auto& source_record =
+            numbering->cell(
+                mesh::LocalIndex{1U});
+        const PetscInt row0 =
+            source_record.petsc_global_scalar_start;
+        const PetscInt energy_row =
+            row0 + 3;
+        const PetscInt column = row0;
+        std::array<PetscInt, 4> rows{
+            row0,
+            row0 + 1,
+            row0 + 2,
+            energy_row};
+        std::array<PetscScalar, 4> values{};
+        local_source_ok =
+            VecGetValues(
+                residual,
+                static_cast<PetscInt>(rows.size()),
+                rows.data(),
+                values.data()) ==
+            PETSC_SUCCESS;
+        const std::array<double, 4> expected{
+            -2.0 / 3.0,
+            1.0 / 3.0,
+            -0.5 / 3.0,
+            -20.0 / 3.0};
+        for (std::size_t i = 0U;
+             i < expected.size();
+             ++i) {
+            local_source_ok =
+                local_source_ok &&
+                std::abs(
+                    static_cast<double>(
+                        PetscRealPart(values[i])) -
+                    expected[i]) <
+                    1.0e-11;
+        }
+
+        PetscScalar sourced_component_d = 0.0;
+        PetscScalar sourced_energy_d = 0.0;
+        local_source_ok =
+            local_source_ok &&
+            MatGetValues(
+                jacobian,
+                1,
+                &row0,
+                1,
+                &column,
+                &sourced_component_d) ==
+                PETSC_SUCCESS &&
+            MatGetValues(
+                jacobian,
+                1,
+                &energy_row,
+                1,
+                &column,
+                &sourced_energy_d) ==
+                PETSC_SUCCESS &&
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        sourced_component_d -
+                        baseline_component_d)) +
+                0.1 / 3.0) <
+                1.0e-11 &&
+            std::abs(
+                static_cast<double>(
+                    PetscRealPart(
+                        sourced_energy_d -
+                        baseline_energy_d)) +
+                0.2 / 3.0) <
+                1.0e-11;
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            status ==
+                fdp::NaturalVariableSnesEvaluationStatus3D::
+                    success &&
+            local_source_ok &&
+            (rank == 0
+                 ? audit.source_cell20_calls == 0U
+                 : audit.source_cell20_calls > 0U),
+        "explicit cell source did not map to owner component/energy residual and diagonal Jacobian");
+
+    audit.source_enabled = false;
 
     Vec solution = nullptr;
     std::optional<

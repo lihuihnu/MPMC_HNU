@@ -1,4 +1,5 @@
 #include <mpmc/flow/pr76_methane_ethane_propane_properties.hpp>
+#include <mpmc/flow_discretization/cell_source.hpp>
 #include <mpmc/flash/pr76_pt_flash_backend.hpp>
 #include <mpmc/flow_discretization/single_phase_tpfa.hpp>
 #include <mpmc/flow_discretization_petsc/complete_natural_variable_petsc_materialization.hpp>
@@ -2071,6 +2072,73 @@ PetscErrorCode resolve_unique_pr76_absent_branch(
     }
 }
 
+struct RealExplicitCellSourceContext {
+    bool enabled{};
+    std::uint64_t published_calls{};
+};
+
+PetscErrorCode evaluate_real_explicit_cell_source(
+    mesh::LocalIndex,
+    mesh::GlobalEntityId cell_global,
+    std::span<const double> natural_variables,
+    const fdp::MixedCardinalityPhysicalCurrentCellLinearization3D&
+        current,
+    void* raw_context,
+    std::optional<fd::CellSourceLinearization3D>* output,
+    fdp::NaturalVariableSnesEvaluationStatus3D* status) {
+    if (raw_context == nullptr ||
+        output == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    *status =
+        fdp::NaturalVariableSnesEvaluationStatus3D::
+            success;
+    auto* context =
+        static_cast<RealExplicitCellSourceContext*>(
+            raw_context);
+    if (!context->enabled ||
+        cell_global !=
+            mesh::GlobalEntityId{UINT64_C(20)}) {
+        return PETSC_SUCCESS;
+    }
+
+    const auto& identity =
+        std::visit(
+            [](const auto& typed)
+                -> const flow::NaturalVariableStateIdentity3P& {
+                return typed.transport.state_identity;
+            },
+            current);
+    if (identity.component_ids.size() != 3U ||
+        natural_variables.size() !=
+            identity.layout.unknown_count()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    fd::CellSourceLinearization3D source;
+    source.provenance =
+        "test/real-pr76-explicit-source/v1";
+    source.component_ids =
+        identity.component_ids;
+    source.input_count =
+        natural_variables.size();
+    source.component_molar_rate_mol_per_s =
+        {1.0e-3, 2.0e-3, 3.0e-3};
+    source.component_molar_rate_jacobian_mol_per_s.assign(
+        source.component_ids.size() *
+            source.input_count,
+        0.0);
+    source.energy_rate_w = 10.0;
+    source.energy_rate_gradient_w.assign(
+        source.input_count,
+        0.0);
+    output->emplace(std::move(source));
+    ++context->published_calls;
+    return PETSC_SUCCESS;
+}
+
 PetscErrorCode unexpected_real_pr76_transition_rebuild(
     const fdp::PhaseTransitionRebuiltNaturalVariableSystem3D&,
     Vec,
@@ -2614,6 +2682,8 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
         absent_branch_context{
             &model,
             pt_evaluator.root_options()};
+    RealExplicitCellSourceContext
+        explicit_source_context;
     std::unique_ptr<
         fdp::
             Pr76TransitionRebuildMaterializedSystem3D>
@@ -2636,6 +2706,9 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 {
                     &resolve_unique_pr76_absent_branch,
                     &absent_branch_context},
+                {
+                    &evaluate_real_explicit_cell_source,
+                    &explicit_source_context},
                 &materialized);
     require_real_collective(
         error == PETSC_SUCCESS &&
@@ -2670,7 +2743,7 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
         4U;
     multi_step_options
         .growth_nonlinear_iteration_limit =
-        4;
+        20;
     multi_step_options
         .growth_line_search_direction_change_limit =
         0;
@@ -2771,6 +2844,65 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
         error == PETSC_SUCCESS &&
             first_history_matches,
         "production physical-timestep driver did not rebase first-step component/energy history");
+
+    explicit_source_context.enabled = true;
+    Vec source_probe_residual = nullptr;
+    require_real_collective(
+        VecDuplicate(
+            materialized->system->initial_state(),
+            &source_probe_residual) ==
+            PETSC_SUCCESS,
+        "failed to allocate real PR76 source probe residual");
+    auto source_probe_evaluator =
+        materialized->system->snes_evaluator();
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        source_probe_status =
+            fdp::NaturalVariableSnesEvaluationStatus3D::
+                success;
+    error =
+        VecSet(
+            source_probe_residual,
+            PetscScalar{0.0});
+    if (error == PETSC_SUCCESS) {
+        error =
+            source_probe_evaluator.function(
+                materialized->system->initial_state(),
+                source_probe_residual,
+                source_probe_evaluator.user_context,
+                &source_probe_status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyBegin(
+                source_probe_residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyEnd(
+                source_probe_residual);
+    }
+    PetscReal source_probe_norm = 0.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                source_probe_residual,
+                NORM_2,
+                &source_probe_norm);
+    }
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            source_probe_status ==
+                fdp::NaturalVariableSnesEvaluationStatus3D::
+                    success &&
+            std::isfinite(
+                static_cast<double>(
+                    source_probe_norm)) &&
+            source_probe_norm > 1.0e-8,
+        "real PR76 explicit cell source did not enter production residual");
+    require_real_collective(
+        VecDestroy(&source_probe_residual) ==
+            PETSC_SUCCESS,
+        "real PR76 source probe cleanup failed");
 
     bool local_two_phase_ok = true;
     if (rank == 0) {
@@ -2990,6 +3122,19 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
         error == PETSC_SUCCESS &&
             interval_history_matches,
         "production physical-time loop did not leave accepted history on the target-time state");
+
+    std::uint64_t global_source_publications = 0U;
+    require_real_collective(
+        MPI_Allreduce(
+            &explicit_source_context.published_calls,
+            &global_source_publications,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            global_source_publications > 0U,
+        "real PR76 multi-timestep solve never evaluated the owner-local explicit cell source");
 
     const double time_before_rejection =
         physical_clock

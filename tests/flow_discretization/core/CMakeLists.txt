@@ -68,6 +68,14 @@ target_link_libraries(
     mpmc_flow_discretization_energy_tests
     PRIVATE mpmc::flow_discretization)
 
+add_executable(
+    mpmc_flow_discretization_cell_source_tests
+    cell_source_test.cpp
+    cell_source_header.cpp)
+target_link_libraries(
+    mpmc_flow_discretization_cell_source_tests
+    PRIVATE mpmc::flow_discretization)
+
 foreach(target IN ITEMS
         mpmc_flow_discretization_tests
         mpmc_flow_discretization_component_flux_tests
@@ -75,7 +83,8 @@ foreach(target IN ITEMS
         mpmc_flow_discretization_normalized_spatial_tests
         mpmc_flow_discretization_local_conservation_tests
         mpmc_flow_discretization_multi_cell_conservation_tests
-        mpmc_flow_discretization_energy_tests)
+        mpmc_flow_discretization_energy_tests
+        mpmc_flow_discretization_cell_source_tests)
     set_target_properties(
         ${target}
         PROPERTIES CXX_EXTENSIONS OFF)
@@ -88,7 +97,8 @@ foreach(target IN ITEMS
         mpmc_flow_discretization_normalized_spatial_tests
         mpmc_flow_discretization_local_conservation_tests
         mpmc_flow_discretization_multi_cell_conservation_tests
-        mpmc_flow_discretization_energy_tests)
+        mpmc_flow_discretization_energy_tests
+        mpmc_flow_discretization_cell_source_tests)
     if(MSVC)
         target_compile_options(
             ${target}
@@ -124,7 +134,8 @@ if(MPMC_FLOW_DISCRETIZATION_ENABLE_SANITIZERS)
             mpmc_flow_discretization_normalized_spatial_tests
             mpmc_flow_discretization_local_conservation_tests
             mpmc_flow_discretization_multi_cell_conservation_tests
-            mpmc_flow_discretization_energy_tests)
+            mpmc_flow_discretization_energy_tests
+        mpmc_flow_discretization_cell_source_tests)
         target_compile_options(
             ${target}
             PRIVATE
@@ -263,5 +274,21 @@ foreach(case IN LISTS energy_conservation_cases)
         flow_discretization.energy_conservation.${case}
         PROPERTIES
             LABELS "flow_discretization;energy;enthalpy;conduction;conservation"
+            TIMEOUT 30)
+endforeach()
+
+set(cell_source_cases
+    normalized_sign_units_and_jacobian
+    invalid_inputs
+    headers)
+
+foreach(case IN LISTS cell_source_cases)
+    add_test(
+        NAME flow_discretization.cell_source.${case}
+        COMMAND mpmc_flow_discretization_cell_source_tests ${case})
+    set_tests_properties(
+        flow_discretization.cell_source.${case}
+        PROPERTIES
+            LABELS "flow_discretization;cell_source;component_conservation;energy"
             TIMEOUT 30)
 endforeach()

@@ -450,6 +450,8 @@ materialize_pr76_single_phase_transition_target_rebuild_3d(
         model,
     Pr76AbsentPhaseSelectedBranchBinding3D
         absent_branch,
+    MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
+        cell_source_evaluator,
     std::unique_ptr<
         Pr76TransitionRebuildMaterializedSystem3D>*
             output) {
@@ -495,6 +497,7 @@ materialize_pr76_single_phase_transition_target_rebuild_3d(
             faces,
             runtime->dispatcher
                 ->bindings(),
+            cell_source_evaluator,
             &bootstrap_absent_provider,
             &bootstrap_token,
             &bootstrap);
@@ -820,6 +823,7 @@ materialize_pr76_single_phase_transition_target_rebuild_3d(
             std::move(faces),
             runtime->dispatcher
                 ->bindings(),
+            cell_source_evaluator,
             &evaluate_absent_phase_thermodynamic_provider_3d<
                 mpmc::flow::
                     Pr76CellScopedAbsentPhasePotentialExtensionProvider<
@@ -837,6 +841,46 @@ materialize_pr76_single_phase_transition_target_rebuild_3d(
     output->reset(
         runtime.release());
     return PETSC_SUCCESS;
+}
+
+[[nodiscard]] inline PetscErrorCode
+materialize_pr76_single_phase_transition_target_rebuild_3d(
+    MPI_Comm comm,
+    const mpmc::discretization_petsc::
+        ParallelOwnedConnectionSchedule3D& schedule,
+    const mpmc::mesh::PartitionSnapshot& partition,
+    const mpmc::discretization_petsc::
+        PetscMpiAijSymbolicPreallocation3D& cell_bridge,
+    const mpmc::discretization_petsc::
+        OwnedCellStructuralColumnPatternSnapshot3D& cell_pattern,
+    double timestep_seconds,
+    Pr76SinglePhaseTransitionTargetRebuildPlan3D plan,
+    std::span<
+        const SinglePhaseSnesAuthoritativeFaceInput3D>
+        source_faces,
+    CellScopedMixedCardinalityEvaluatorDispatcher3D
+        dispatcher,
+    const mpmc::thermodynamics::Pr76Phase<double>&
+        model,
+    Pr76AbsentPhaseSelectedBranchBinding3D
+        absent_branch,
+    std::unique_ptr<
+        Pr76TransitionRebuildMaterializedSystem3D>*
+            output) {
+    return materialize_pr76_single_phase_transition_target_rebuild_3d(
+        comm,
+        schedule,
+        partition,
+        cell_bridge,
+        cell_pattern,
+        timestep_seconds,
+        std::move(plan),
+        source_faces,
+        std::move(dispatcher),
+        model,
+        absent_branch,
+        {},
+        output);
 }
 
 } // namespace mpmc::flow_discretization_petsc

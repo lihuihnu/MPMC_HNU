@@ -4363,3 +4363,32 @@ accepted time, step count, state, history or the pre-call next-`dt` proposal.
 
 This slice still does not introduce wells, boundary/source schedules,
 checkpoint/restart files or long-duration case scheduling.
+
+### 47.15 Model-neutral conservative cell source
+
+The mixed-cardinality production assembly now accepts an optional borrowed
+`MixedCardinalityPhysicalCellSourceEvaluatorBinding3D`. It is evaluated only
+for cells owned by the current MPI rank; ghost cells never evaluate or insert
+an external source.
+
+The lower `flow_discretization` payload is
+`CellSourceLinearization3D`. Positive component molar rate [mol/s] and positive
+energy rate [W] mean injection into the control volume. With the existing
+finite-volume residual convention, source contributions are
+`R_i^src=-q_i/V_b` and `R_E^src=-Q_E/V_b`. Analytic source derivatives are
+normalized by the same frozen rigid-grid bulk volume and inserted only into the
+local diagonal natural-variable Jacobian block.
+
+The source is external and therefore does not participate in internal-face MPI
+exchange or closed-face zero-sum checks. The generic phase-transition rebuild
+and PR76 target materializer preserve the borrowed source binding, while
+compatibility overloads keep all existing no-source callers unchanged.
+
+Tests cover exact source sign/unit/Jacobian normalization, owner-only 2-rank
+PETSc residual/Jacobian insertion, and the real CH4/C2H6/C3H8 PR76 path: the
+source stays disabled through the physical 1P->2P restart, is enabled on
+accepted cell20, creates a nonzero production residual, and is then consumed by
+the existing production multi-timestep loop.
+
+This slice does not implement Peaceman well index, BHP/rate control, well
+unknowns, boundary conditions, source schedules or facilities.

@@ -850,6 +850,7 @@ private:
         std::vector<
             MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D>,
         MixedCardinalityPhysicalCellEvaluatorBindings3D,
+        MixedCardinalityPhysicalCellSourceEvaluatorBinding3D,
         AbsentPhaseThermodynamicProviderEvaluator3D,
         void*,
         std::unique_ptr<
@@ -899,6 +900,8 @@ rebuild_phase_transition_natural_variable_system_3d(
         face_inputs,
     MixedCardinalityPhysicalCellEvaluatorBindings3D
         cell_evaluators,
+    MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
+        cell_source_evaluator,
     AbsentPhaseThermodynamicProviderEvaluator3D
         provider_evaluator,
     void* provider_context,
@@ -1234,6 +1237,7 @@ rebuild_phase_transition_natural_variable_system_3d(
                     system
                         ->bridge_binding_
                         .get()},
+                cell_source_evaluator,
                 &context);
     if (error != PETSC_SUCCESS ||
         !context.has_value()) {
@@ -1257,6 +1261,45 @@ rebuild_phase_transition_natural_variable_system_3d(
     *output =
         std::move(system);
     return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode
+rebuild_phase_transition_natural_variable_system_3d(
+    MPI_Comm comm,
+    const mpmc::discretization_petsc::
+        ParallelOwnedConnectionSchedule3D& schedule,
+    const mpmc::mesh::PartitionSnapshot& partition,
+    const mpmc::discretization_petsc::
+        PetscMpiAijSymbolicPreallocation3D& cell_bridge,
+    const mpmc::discretization_petsc::
+        OwnedCellStructuralColumnPatternSnapshot3D& cell_pattern,
+    double time_step_seconds,
+    std::vector<FrozenPhaseTransitionRebuildCell3D> cells,
+    std::vector<
+        MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D>
+        face_inputs,
+    MixedCardinalityPhysicalCellEvaluatorBindings3D
+        cell_evaluators,
+    AbsentPhaseThermodynamicProviderEvaluator3D
+        provider_evaluator,
+    void* provider_context,
+    std::unique_ptr<
+        PhaseTransitionRebuiltNaturalVariableSystem3D>*
+            output) {
+    return rebuild_phase_transition_natural_variable_system_3d(
+        comm,
+        schedule,
+        partition,
+        cell_bridge,
+        cell_pattern,
+        time_step_seconds,
+        std::move(cells),
+        std::move(face_inputs),
+        cell_evaluators,
+        {},
+        provider_evaluator,
+        provider_context,
+        output);
 }
 
 } // namespace mpmc::flow_discretization_petsc

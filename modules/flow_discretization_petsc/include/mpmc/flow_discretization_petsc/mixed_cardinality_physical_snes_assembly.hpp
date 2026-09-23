@@ -2,6 +2,7 @@
 #define MPMC_FLOW_DISCRETIZATION_PETSC_MIXED_CARDINALITY_PHYSICAL_SNES_ASSEMBLY_HPP
 
 #include <mpmc/flow/cross_cardinality_phase_identity.hpp>
+#include <mpmc/flow_discretization/cell_source.hpp>
 #include <mpmc/flow_discretization_petsc/fixed_three_phase_snes_assembly.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_snes_assembly.hpp>
 #include <mpmc/flow_discretization_petsc/two_phase_snes_assembly.hpp>
@@ -56,6 +57,24 @@ struct MixedCardinalityPhysicalCellEvaluatorBindings3D {
     SinglePhaseCurrentCellEvaluatorBinding3D single_phase;
     TwoPhaseCurrentCellEvaluatorBinding3D two_phase;
     FixedThreePhaseCurrentCellEvaluatorBinding3D three_phase;
+};
+
+using MixedCardinalityPhysicalCellSourceEvaluator3D =
+    PetscErrorCode (*)(
+        mpmc::mesh::LocalIndex cell,
+        mpmc::mesh::GlobalEntityId cell_global,
+        std::span<const double> natural_variables,
+        const MixedCardinalityPhysicalCurrentCellLinearization3D&
+            current,
+        void* user_context,
+        std::optional<
+            mpmc::flow_discretization::
+                CellSourceLinearization3D>* output,
+        NaturalVariableSnesEvaluationStatus3D* status);
+
+struct MixedCardinalityPhysicalCellSourceEvaluatorBinding3D {
+    MixedCardinalityPhysicalCellSourceEvaluator3D evaluator{};
+    void* user_context{};
 };
 
 struct MixedCardinalityPhysicalFaceLinearization3D {
@@ -572,6 +591,8 @@ public:
             cell_evaluators,
         MixedCardinalityCrossPhaseFaceEvaluatorBinding3D
             cross_phase_face_evaluator,
+        MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
+            cell_source_evaluator,
         std::optional<
             MixedCardinalityPhysicalSnesAssemblyContext3D>*
             output) {
@@ -847,10 +868,55 @@ public:
                 std::move(face_inputs),
                 cell_evaluators,
                 cross_phase_face_evaluator,
+                cell_source_evaluator,
                 std::move(*infrastructure)};
         output->emplace(
             std::move(context));
         return PETSC_SUCCESS;
+    }
+
+    [[nodiscard]] static PetscErrorCode
+    create(
+        MPI_Comm comm,
+        const mpmc::discretization_petsc::
+            ParallelOwnedConnectionSchedule3D& schedule,
+        const mpmc::mesh::PartitionSnapshot& partition,
+        const VariableCardinalityNaturalVariableNumbering3D&
+            numbering,
+        const mpmc::discretization_petsc::
+            PetscMpiAijSymbolicPreallocation3D& cell_bridge,
+        const mpmc::discretization_petsc::
+            OwnedCellStructuralColumnPatternSnapshot3D& cell_pattern,
+        double time_step_seconds,
+        std::vector<MixedCardinalityPhysicalSnesCellInput3D>
+            cell_inputs,
+        std::vector<mpmc::flow::FrozenActivePhaseIdentityMap>
+            phase_identity_maps,
+        std::vector<
+            MixedCardinalityPhysicalSnesAuthoritativeFaceInput3D>
+            face_inputs,
+        MixedCardinalityPhysicalCellEvaluatorBindings3D
+            cell_evaluators,
+        MixedCardinalityCrossPhaseFaceEvaluatorBinding3D
+            cross_phase_face_evaluator,
+        std::optional<
+            MixedCardinalityPhysicalSnesAssemblyContext3D>*
+            output) {
+        return create(
+            comm,
+            schedule,
+            partition,
+            numbering,
+            cell_bridge,
+            cell_pattern,
+            time_step_seconds,
+            std::move(cell_inputs),
+            std::move(phase_identity_maps),
+            std::move(face_inputs),
+            cell_evaluators,
+            cross_phase_face_evaluator,
+            {},
+            output);
     }
 
     [[nodiscard]] NaturalVariableSnesEvaluator3D
@@ -1290,6 +1356,7 @@ public:
                 local_state,
                 output,
                 &unused_mobility,
+                nullptr,
                 status);
         if (error != PETSC_SUCCESS ||
             *status !=
@@ -1373,6 +1440,8 @@ private:
             cell_evaluators,
         MixedCardinalityCrossPhaseFaceEvaluatorBinding3D
             cross_phase_face_evaluator,
+        MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
+            cell_source_evaluator,
         VariableCardinalityNaturalVariableSnesAssemblyContext3D
             infrastructure)
         : comm_(comm),
@@ -1394,6 +1463,8 @@ private:
               cell_evaluators),
           cross_phase_face_evaluator_(
               cross_phase_face_evaluator),
+          cell_source_evaluator_(
+              cell_source_evaluator),
           infrastructure_(
               std::move(infrastructure)) {}
 
@@ -1610,6 +1681,10 @@ private:
         std::vector<std::optional<
             MixedCardinalityPhysicalMobilityLinearization3D>>*
                 mobility,
+        std::vector<std::optional<
+            mpmc::flow_discretization::
+                CellSourceLinearization3D>>*
+                sources,
         NaturalVariableSnesEvaluationStatus3D*
             status) {
         if (current == nullptr ||
@@ -1623,6 +1698,11 @@ private:
         mobility->assign(
             numbering_->local_cell_count(),
             std::nullopt);
+        if (sources != nullptr) {
+            sources->assign(
+                numbering_->local_cell_count(),
+                std::nullopt);
+        }
         *status =
             NaturalVariableSnesEvaluationStatus3D::
                 success;
@@ -1673,6 +1753,62 @@ private:
                 local_domain = 1;
                 continue;
             }
+
+            if (sources != nullptr &&
+                record.owner_rank ==
+                    numbering_->local_rank() &&
+                cell_source_evaluator_.evaluator != nullptr) {
+                std::optional<
+                    mpmc::flow_discretization::
+                        CellSourceLinearization3D>
+                    cell_source;
+                NaturalVariableSnesEvaluationStatus3D
+                    source_status =
+                        NaturalVariableSnesEvaluationStatus3D::
+                            success;
+                local_error =
+                    cell_source_evaluator_.evaluator(
+                        cell_index,
+                        record.cell_global,
+                        values,
+                        *cell_current,
+                        cell_source_evaluator_.user_context,
+                        &cell_source,
+                        &source_status);
+                if (local_error != PETSC_SUCCESS) {
+                    break;
+                }
+                if (source_status ==
+                    NaturalVariableSnesEvaluationStatus3D::
+                        domain_error) {
+                    local_domain = 1;
+                    continue;
+                }
+                if (source_status !=
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success) {
+                    local_error =
+                        PETSC_ERR_ARG_INCOMP;
+                    break;
+                }
+                if (cell_source.has_value()) {
+                    try {
+                        mpmc::flow_discretization::
+                            validate_cell_source_linearization(
+                                *cell_source,
+                                component_ids(
+                                    cell_inputs_[local]),
+                                record.scalar_count);
+                    } catch (...) {
+                        local_error =
+                            PETSC_ERR_ARG_INCOMP;
+                        break;
+                    }
+                    (*sources)[local] =
+                        std::move(cell_source);
+                }
+            }
+
             (*current)[local] =
                 std::move(cell_current);
             (*mobility)[local] =
@@ -1710,7 +1846,11 @@ private:
     build_owned_cell_assembly(
         std::size_t local,
         const MixedCardinalityPhysicalCurrentCellLinearization3D&
-            current) const {
+            current,
+        const std::optional<
+            mpmc::flow_discretization::
+                CellSourceLinearization3D>&
+            source) const {
         using namespace
             mixed_cardinality_physical_detail;
 
@@ -2007,6 +2147,51 @@ private:
                             local_row * q +
                             column];
                 }
+            }
+        }
+
+        if (source.has_value()) {
+            const auto normalized_source =
+                mpmc::flow_discretization::
+                    normalize_cell_source_by_bulk_volume(
+                        *source,
+                        bulk_volume(input));
+            if (normalized_source.component_ids !=
+                    component_ids(input) ||
+                normalized_source.input_count != q ||
+                normalized_source
+                        .component_residual_mol_per_bulk_m3_s
+                        .size() != nc) {
+                throw std::invalid_argument(
+                    "mixed-cardinality cell source shape mismatch");
+            }
+            for (std::size_t row = 0U;
+                 row < nc;
+                 ++row) {
+                assembly.residual[row] +=
+                    normalized_source
+                        .component_residual_mol_per_bulk_m3_s[
+                            row];
+                for (std::size_t column = 0U;
+                     column < q;
+                     ++column) {
+                    diagonal.values_row_major[
+                        row * q + column] +=
+                        normalized_source
+                            .d_component_residual(
+                                row,
+                                column);
+                }
+            }
+            assembly.residual[nc] +=
+                normalized_source.energy_residual_w_per_bulk_m3;
+            for (std::size_t column = 0U;
+                 column < q;
+                 ++column) {
+                diagonal.values_row_major[
+                    nc * q + column] +=
+                        normalized_source
+                            .d_energy_residual(column);
             }
         }
 
@@ -2355,11 +2540,16 @@ private:
         std::vector<std::optional<
             MixedCardinalityPhysicalMobilityLinearization3D>>
             mobility;
+        std::vector<std::optional<
+            mpmc::flow_discretization::
+                CellSourceLinearization3D>>
+            sources;
         error =
             evaluate_cells(
                 local_state,
                 &current,
                 &mobility,
+                &sources,
                 status);
         if (error != PETSC_SUCCESS ||
             *status ==
@@ -2390,7 +2580,8 @@ private:
                 auto assembly =
                     build_owned_cell_assembly(
                         local,
-                        *current[local]);
+                        *current[local],
+                        sources[local]);
                 local_error =
                     insert_dense_cell_assembly(
                         record,
@@ -2772,6 +2963,8 @@ private:
         cell_evaluators_;
     MixedCardinalityCrossPhaseFaceEvaluatorBinding3D
         cross_phase_face_evaluator_;
+    MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
+        cell_source_evaluator_;
     VariableCardinalityNaturalVariableSnesAssemblyContext3D
         infrastructure_;
 };
