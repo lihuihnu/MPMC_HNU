@@ -169,3 +169,31 @@ analytic Jacobian. The controlled solve freezes every cell phase set. BHP/rate
 switching, BHP limits, surface-rate conversions, phase transitions during the
 controlled solve, multi-well networks and wellbore pressure-drop models remain
 outside this contract.
+
+
+### Fixed-total-molar-rate controlled physical timestep
+
+The fixed-total-molar-rate augmented solve now has a production physical-timestep
+bridge. It deliberately reuses the existing adaptive timestep controller and
+accepted-history clock rather than introducing a second retry/commit state
+machine.
+
+For every nonlinear trial the bridge changes only the reservoir trial
+backward-Euler timestep, then recreates the one-scalar augmented
+`[q_reservoir, p_bhp]` system from the same accepted reservoir state/history
+and the same entry accepted BHP initial guess. A nonconverged augmented solve is
+therefore disposable and may be cut back without rebasing reservoir history or
+carrying a failed-trial BHP into the next retry.
+
+On acceptance, the augmented solution is split at the existing numbering
+boundary. Only the reservoir state is passed to
+`commit_accepted_physical_timestep_3d()`, which owns accumulation-history and
+physical-time advancement. The converged BHP is committed separately only as
+the next physical timestep's nonlinear initial guess. BHP never enters the
+backward-Euler reservoir history.
+
+Terminal adaptive rejection restores the entry reservoir trial timestep and
+the entry BHP evaluator state. Phase cardinality and rate-control mode remain
+frozen throughout this bridge. BHP/rate switching, BHP limits, phase
+transitions during the controlled solve, surface/phase-rate controls and
+multi-well control remain outside this contract.

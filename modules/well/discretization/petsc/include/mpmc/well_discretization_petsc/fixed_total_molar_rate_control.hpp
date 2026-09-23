@@ -240,6 +240,10 @@ struct FixedTotalMolarRateWellControlSolveReport3D {
     PetscInt nonlinear_iterations{};
     PetscInt function_evaluations{};
     PetscInt jacobian_evaluations{};
+    PetscInt function_domain_errors{};
+    PetscInt jacobian_domain_errors{};
+    PetscInt line_search_prechecks{};
+    PetscInt line_search_direction_changes{};
     PetscInt global_scalar_count{};
     PetscInt well_global_scalar{-1};
     int well_owner_rank{-1};
@@ -896,6 +900,14 @@ public:
                     .function_evaluations,
                 callback_context
                     .jacobian_evaluations,
+                callback_context
+                    .function_domain_errors,
+                callback_context
+                    .jacobian_domain_errors,
+                callback_context
+                    .line_search_prechecks,
+                callback_context
+                    .line_search_direction_changes,
                 global_scalar_count(),
                 well_global_scalar(),
                 well_owner_rank_,

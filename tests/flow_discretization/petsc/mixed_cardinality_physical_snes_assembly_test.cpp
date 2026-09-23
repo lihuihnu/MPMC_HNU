@@ -3,6 +3,7 @@
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_handoff_scanner.hpp>
 #include <mpmc/well_discretization_petsc/fixed_bhp_well_source_evaluator.hpp>
 #include <mpmc/well_discretization_petsc/fixed_total_molar_rate_control.hpp>
+#include <mpmc/well_discretization_petsc/fixed_total_molar_rate_timestep_driver.hpp>
 #include <mpmc/thermodynamics/pr_parameters.hpp>
 
 #include <petscmat.h>
@@ -7566,13 +7567,148 @@ void run_fixed_total_molar_rate_control_case(
                 : 3.0e-7);
     }
 
+    // Re-run the same physical step through the production rate-control
+    // timestep bridge. The earlier direct solve remains an independent
+    // algebra/Jacobian/conservation oracle; only this bridge is allowed to
+    // advance accepted reservoir history/time and the accepted BHP initial
+    // guess.
+    source_context.begin_evaluation(
+        initial_bhp_pa);
+    double accepted_bhp_pa =
+        initial_bhp_pa;
+    fdp::AcceptedPhysicalTimeClock3D
+        rate_control_clock{
+            0.0,
+            reservoir_system
+                ->time_step_seconds()};
+    wdp::
+        FixedTotalMolarRatePhysicalTimestepDriverOptions3D
+        timestep_options;
+    timestep_options.adaptive
+        .minimum_timestep_seconds =
+        0.25;
+    timestep_options.adaptive
+        .maximum_timestep_seconds =
+        4.0;
+    timestep_options.adaptive
+        .maximum_retries =
+        2U;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        timestep_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                reservoir_system.get(),
+                &source_context,
+                target_rate,
+                timestep_options,
+                &rate_control_clock,
+                &accepted_bhp_pa,
+                &timestep_report);
+
     require_collective(
-        reservoir_system
-                ->rebase_accepted_timestep(
-                    reservoir_solution,
-                    1.0) ==
-            PETSC_SUCCESS,
-        "failed to accept rate-controlled reservoir state");
+        error == PETSC_SUCCESS &&
+            timestep_report.has_value() &&
+            timestep_report->accepted() &&
+            timestep_report
+                    ->accepted_record
+                    ->accepted_step_index ==
+                0U &&
+            timestep_report
+                    ->accepted_record
+                    ->time_n_seconds ==
+                0.0 &&
+            timestep_report
+                    ->accepted_record
+                    ->time_np1_seconds ==
+                1.0 &&
+            timestep_report
+                    ->accepted_record
+                    ->accepted_timestep_seconds ==
+                1.0 &&
+            timestep_report
+                    ->accepted_solve
+                    ->global_scalar_count ==
+                43 &&
+            timestep_report
+                    ->accepted_solve
+                    ->well_global_scalar ==
+                42 &&
+            timestep_report
+                    ->accepted_solve
+                    ->well_owner_rank ==
+                1 &&
+            std::isfinite(
+                accepted_bhp_pa) &&
+            accepted_bhp_pa > 0.0 &&
+            std::abs(
+                accepted_bhp_pa -
+                initial_bhp_pa) >
+                1.0e-7 &&
+            std::abs(
+                timestep_report
+                    ->accepted_solve
+                    ->total_molar_rate_residual_mol_per_s()) <=
+                1.0e-8 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            target_rate)) &&
+            rate_control_clock
+                    .accepted_time_seconds() ==
+                1.0 &&
+            rate_control_clock
+                    .accepted_step_count() ==
+                1U &&
+            source_context
+                    .current_bottom_hole_pressure_pa() ==
+                accepted_bhp_pa,
+        "fixed-total-molar-rate physical-timestep driver did not commit reservoir time/history and BHP exactly once");
+
+    near_collective(
+        accepted_bhp_pa,
+        report->bottom_hole_pressure_pa,
+        2.0e-8,
+        2.0e-10);
+
+    Vec committed_difference = nullptr;
+    error =
+        VecDuplicate(
+            reservoir_system
+                ->initial_state(),
+            &committed_difference);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecCopy(
+                reservoir_system
+                    ->initial_state(),
+                committed_difference);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAXPY(
+                committed_difference,
+                PetscScalar{-1.0},
+                reservoir_solution);
+    }
+    PetscReal committed_difference_norm =
+        -1.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                committed_difference,
+                NORM_2,
+                &committed_difference_norm);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            committed_difference_norm <=
+                2.0e-8,
+        "rate-control timestep driver committed a different reservoir root from the independently verified augmented solve");
 
     bool history_matches = false;
     require_collective(
@@ -7583,7 +7719,135 @@ void run_fixed_total_molar_rate_control_case(
                     &history_matches) ==
             PETSC_SUCCESS &&
             history_matches,
-        "rate-controlled accepted reservoir history did not rebase");
+        "rate-controlled accepted reservoir history did not rebase through the physical-timestep driver");
+
+    Vec accepted_snapshot = nullptr;
+    error =
+        VecDuplicate(
+            reservoir_system
+                ->initial_state(),
+            &accepted_snapshot);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecCopy(
+                reservoir_system
+                    ->initial_state(),
+                accepted_snapshot);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            accepted_snapshot != nullptr,
+        "failed to snapshot accepted rate-control state for rollback regression");
+
+    const double accepted_time_before_rejection =
+        rate_control_clock
+            .accepted_time_seconds();
+    const std::size_t
+        accepted_steps_before_rejection =
+            rate_control_clock
+                .accepted_step_count();
+    const double
+        next_dt_before_rejection =
+            rate_control_clock
+                .next_timestep_seconds();
+    const double
+        bhp_before_rejection =
+            accepted_bhp_pa;
+
+    auto invalid_timestep_options =
+        timestep_options;
+    invalid_timestep_options.adaptive
+        .minimum_timestep_seconds =
+        next_dt_before_rejection *
+        2.0;
+    invalid_timestep_options.adaptive
+        .maximum_timestep_seconds =
+        next_dt_before_rejection *
+        4.0;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        rejected_timestep_report;
+    const PetscErrorCode rejection_error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                reservoir_system.get(),
+                &source_context,
+                target_rate,
+                invalid_timestep_options,
+                &rate_control_clock,
+                &accepted_bhp_pa,
+                &rejected_timestep_report);
+
+    Vec rollback_difference = nullptr;
+    error =
+        VecDuplicate(
+            reservoir_system
+                ->initial_state(),
+            &rollback_difference);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecCopy(
+                reservoir_system
+                    ->initial_state(),
+                rollback_difference);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAXPY(
+                rollback_difference,
+                PetscScalar{-1.0},
+                accepted_snapshot);
+    }
+    PetscReal rollback_difference_norm =
+        -1.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                rollback_difference,
+                NORM_2,
+                &rollback_difference_norm);
+    }
+    require_collective(
+        rejection_error ==
+                PETSC_ERR_ARG_OUTOFRANGE &&
+            !rejected_timestep_report
+                 .has_value() &&
+            error == PETSC_SUCCESS &&
+            rollback_difference_norm <=
+                1.0e-14 &&
+            rate_control_clock
+                    .accepted_time_seconds() ==
+                accepted_time_before_rejection &&
+            rate_control_clock
+                    .accepted_step_count() ==
+                accepted_steps_before_rejection &&
+            rate_control_clock
+                    .next_timestep_seconds() ==
+                next_dt_before_rejection &&
+            reservoir_system
+                    ->time_step_seconds() ==
+                next_dt_before_rejection &&
+            accepted_bhp_pa ==
+                bhp_before_rejection &&
+            source_context
+                    .current_bottom_hole_pressure_pa() ==
+                bhp_before_rejection,
+        "rejected rate-control timestep entry mutated accepted state/time/dt/BHP ownership");
+
+    require_collective(
+        VecDestroy(
+            &rollback_difference) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &accepted_snapshot) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &committed_difference) ==
+                PETSC_SUCCESS,
+        "rate-control timestep bridge regression cleanup failed");
 
     require_collective(
         MatDestroy(

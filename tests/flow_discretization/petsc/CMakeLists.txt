@@ -36,6 +36,7 @@ add_executable(
     variable_cardinality_snes_assembly_header.cpp
     mixed_cardinality_physical_snes_assembly_header.cpp
     fixed_bhp_well_source_evaluator_header.cpp
+    fixed_total_molar_rate_timestep_driver_header.cpp
     pr76_production_cell_evaluator_header.cpp
     pr76_single_phase_transition_target_rebuild_header.cpp
     pr76_transition_rebuild_materialization_header.cpp
