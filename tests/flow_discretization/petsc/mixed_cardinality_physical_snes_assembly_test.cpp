@@ -7125,6 +7125,14 @@ void mixed_cardinality_physical_snes_assembly_test() {
         pattern,
         &audit);
 
+    run_multi_connection_fixed_bhp_timestep_case(
+        rank,
+        schedule,
+        partition,
+        bridge,
+        pattern,
+        &audit);
+
     Vec solution = nullptr;
     std::optional<
         fdp::
