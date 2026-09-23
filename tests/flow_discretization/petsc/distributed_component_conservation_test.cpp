@@ -42,6 +42,7 @@ bool variable_cardinality_snes_assembly_header();
 void variable_cardinality_snes_assembly_test();
 bool mixed_cardinality_physical_snes_assembly_header();
 void mixed_cardinality_physical_snes_assembly_test();
+bool fixed_bhp_well_source_evaluator_header();
 bool pr76_production_cell_evaluator_header();
 bool pr76_single_phase_transition_target_rebuild_header();
 bool pr76_transition_rebuild_materialization_header();
@@ -5491,6 +5492,9 @@ void headers() {
     require_collective(
         mixed_cardinality_physical_snes_assembly_header(),
         "mixed-cardinality physical SNES assembly header probe failed");
+    require_collective(
+        fixed_bhp_well_source_evaluator_header(),
+        "fixed-BHP well source evaluator header probe failed");
     require_collective(
         pr76_production_cell_evaluator_header(),
         "PR76 production cell evaluator header probe failed");

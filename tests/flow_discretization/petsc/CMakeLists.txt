@@ -4,6 +4,10 @@ project(mpmc_flow_discretization_petsc_tests LANGUAGES CXX)
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/../../../modules/flow/discretization/petsc"
     flow-discretization-petsc-library)
+
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/well/discretization/petsc"
+    well-discretization-petsc-library)
 enable_testing()
 
 add_executable(
@@ -31,6 +35,7 @@ add_executable(
     variable_cardinality_natural_variable_numbering_header.cpp
     variable_cardinality_snes_assembly_header.cpp
     mixed_cardinality_physical_snes_assembly_header.cpp
+    fixed_bhp_well_source_evaluator_header.cpp
     pr76_production_cell_evaluator_header.cpp
     pr76_single_phase_transition_target_rebuild_header.cpp
     pr76_transition_rebuild_materialization_header.cpp
@@ -50,7 +55,9 @@ add_executable(
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(
     mpmc_flow_discretization_petsc_tests
-    PRIVATE mpmc::flow_discretization_petsc)
+    PRIVATE
+        mpmc::flow_discretization_petsc
+        mpmc::well_discretization_petsc)
 target_include_directories(
     mpmc_flow_discretization_petsc_tests
     PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")

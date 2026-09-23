@@ -61,7 +61,20 @@ The adapter is intentionally compatible with the existing
 change, a production-positive well rate becomes a positive outward
 conservation residual. This prevents a hidden double-negation convention.
 
-The well module still does not connect this adapter to the production source
-evaluator/PETSc assembly, and still does not define conductive well/reservoir
-heat exchange, wellbore heat loss, multi-connection aggregation, rate-control
-equations, global well unknowns or scheduling.
+The first PETSc bridge lives under `well/discretization/petsc`. It binds one
+explicit Peaceman connection with frozen BHP to the existing owner-only
+mixed-cardinality cell-source callback. The global reservoir may remain
+1P/2P/3P mixed, but this first bridge intentionally requires its configured
+target cell to stay on a frozen 3P chart; non-target cells publish no source and
+a 1P/2P target is explicitly unsupported rather than padded with fictitious
+inactive phases.
+
+The bridge reuses the full validated chain through
+`CellSourceLinearization3D`, so component/energy well terms enter the existing
+bulk-volume-normalized fully implicit residual and diagonal reservoir Jacobian.
+BHP remains a frozen parameter and is not globally numbered.
+
+The well module still does not define conductive well/reservoir heat exchange,
+wellbore heat loss, multi-connection aggregation, rate-control equations,
+global well unknowns, control switching, phase-transition-aware completion
+remapping or scheduling.

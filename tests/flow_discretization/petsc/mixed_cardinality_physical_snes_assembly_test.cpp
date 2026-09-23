@@ -1,5 +1,6 @@
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_controller.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_handoff_scanner.hpp>
+#include <mpmc/well_discretization_petsc/fixed_bhp_well_source_evaluator.hpp>
 #include <mpmc/thermodynamics/pr_parameters.hpp>
 
 #include <petscmat.h>
@@ -27,6 +28,9 @@ namespace disc = mpmc::discretization;
 namespace dp = mpmc::discretization_petsc;
 namespace fd = mpmc::flow_discretization;
 namespace fdp = mpmc::flow_discretization_petsc;
+namespace wd = mpmc::well_discretization;
+namespace wdp = mpmc::well_discretization_petsc;
+namespace well = mpmc::well;
 namespace th = mpmc::thermodynamics;
 
 void require_collective(
@@ -304,6 +308,50 @@ PetscErrorCode evaluate_explicit_cell_source(
     }
     output->emplace(std::move(source));
     return PETSC_SUCCESS;
+}
+
+struct FixedBhpWellSourceAudit {
+    wdp::
+        FixedBhpThreePhasePeacemanWellSourceEvaluatorContext3D*
+            context{};
+    std::uint64_t evaluator_calls{};
+    std::uint64_t target_calls{};
+};
+
+PetscErrorCode
+evaluate_audited_fixed_bhp_well_source(
+    mesh::LocalIndex cell,
+    mesh::GlobalEntityId cell_global,
+    std::span<const double> natural_variables,
+    const fdp::
+        MixedCardinalityPhysicalCurrentCellLinearization3D&
+            current,
+    void* raw_context,
+    std::optional<fd::CellSourceLinearization3D>* output,
+    fdp::NaturalVariableSnesEvaluationStatus3D* status) {
+    if (raw_context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* audit =
+        static_cast<FixedBhpWellSourceAudit*>(
+            raw_context);
+    if (audit->context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    ++audit->evaluator_calls;
+    if (cell_global ==
+        audit->context->target_cell_global()) {
+        ++audit->target_calls;
+    }
+    return wdp::
+        evaluate_fixed_bhp_three_phase_peaceman_well_source_3d(
+            cell,
+            cell_global,
+            natural_variables,
+            current,
+            audit->context,
+            output,
+            status);
 }
 
 PetscErrorCode
@@ -3292,6 +3340,77 @@ void mixed_cardinality_physical_snes_assembly_test() {
             false);
 
     DispatchAudit audit;
+
+    auto fixed_bhp_well_context =
+        wdp::
+            FixedBhpThreePhasePeacemanWellSourceEvaluatorContext3D::
+                create(
+                    mesh::GlobalEntityId{
+                        UINT64_C(60)},
+                    well::make_peaceman_well_index_3d(
+                        {10.0, 10.0, 5.0},
+                        {
+                            1.0e-12,
+                            1.0e-12,
+                            1.0e-12},
+                        well::
+                            AxisAlignedWellDirection3D::z,
+                        0.10,
+                        0.0),
+                    25.0,
+                    wd::InjectionPhaseSpecificEnthalpy3P{
+                        "fixture/fixed-bhp-injection-enthalpy/v1",
+                        {1000.0, 2000.0, 3000.0}},
+                    "fixture/fixed-bhp-cell60-source/v1");
+
+    // The first bridge intentionally supports only a frozen 3P target. A 1P
+    // target is rejected explicitly rather than padded with fictitious phases.
+    {
+        auto unsupported_context =
+            wdp::
+                FixedBhpThreePhasePeacemanWellSourceEvaluatorContext3D::
+                    create(
+                        mesh::GlobalEntityId{
+                            UINT64_C(20)},
+                        fixed_bhp_well_context
+                            .connection(),
+                        5.0,
+                        wd::InjectionPhaseSpecificEnthalpy3P{
+                            "fixture/fixed-bhp-unsupported/v1",
+                            {1000.0, 2000.0, 3000.0}},
+                        "fixture/fixed-bhp-unsupported-source/v1");
+        auto current_1p =
+            evaluate_target(
+                UINT64_C(20),
+                &audit);
+        std::optional<
+            fd::CellSourceLinearization3D>
+            unsupported_source;
+        fdp::NaturalVariableSnesEvaluationStatus3D
+            unsupported_status =
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success;
+        const auto q1 =
+            target_1p();
+        const PetscErrorCode unsupported_error =
+            wdp::
+                evaluate_fixed_bhp_three_phase_peaceman_well_source_3d(
+                    mesh::LocalIndex{1U},
+                    mesh::GlobalEntityId{
+                        UINT64_C(20)},
+                    q1,
+                    current_1p,
+                    &unsupported_context,
+                    &unsupported_source,
+                    &unsupported_status);
+        require_collective(
+            unsupported_error ==
+                    PETSC_ERR_SUP &&
+                !unsupported_source.has_value(),
+            "fixed-BHP well bridge fabricated inactive phases for a non-3P target");
+    }
+
     auto cell_inputs =
         make_cell_inputs(
             rank,
@@ -3525,6 +3644,42 @@ void mixed_cardinality_physical_snes_assembly_test() {
             "source-disabled diagonal Jacobian");
     }
 
+    PetscScalar baseline_well_component_d = 0.0;
+    PetscScalar baseline_well_energy_d = 0.0;
+    if (rank == 1) {
+        const auto& well_record =
+            numbering->cell(
+                mesh::LocalIndex{5U});
+        const PetscInt row0 =
+            well_record.petsc_global_scalar_start;
+        const PetscInt energy_row =
+            row0 + 3;
+        const PetscInt column =
+            row0;
+        require_collective(
+            MatGetValues(
+                jacobian,
+                1,
+                &row0,
+                1,
+                &column,
+                &baseline_well_component_d) ==
+                PETSC_SUCCESS &&
+            MatGetValues(
+                jacobian,
+                1,
+                &energy_row,
+                1,
+                &column,
+                &baseline_well_energy_d) ==
+                PETSC_SUCCESS,
+            "failed to capture fixed-BHP well target baseline Jacobian");
+    } else {
+        require_collective(
+            true,
+            "fixed-BHP well target baseline Jacobian");
+    }
+
     audit.source_enabled = true;
     error = VecSet(
         residual,
@@ -3655,6 +3810,301 @@ void mixed_cardinality_physical_snes_assembly_test() {
                  ? audit.source_cell20_calls == 0U
                  : audit.source_cell20_calls > 0U),
         "explicit cell source did not map to owner component/energy residual and diagonal Jacobian");
+
+    // The actual fixed-BHP well bridge now enters the same owner-only source
+    // callback and therefore the fully implicit mixed-cardinality residual and
+    // diagonal Jacobian. The connection is attached to stable cell60, owned by
+    // rank1 and ghosted on rank0.
+    FixedBhpWellSourceAudit
+        fixed_bhp_source_audit{
+            &fixed_bhp_well_context};
+    auto well_cells =
+        make_cell_inputs(
+            rank,
+            &audit);
+    auto well_faces =
+        make_face_inputs(
+            rank,
+            false);
+    std::optional<
+        fdp::
+            MixedCardinalityPhysicalSnesAssemblyContext3D>
+        well_assembly_context;
+    error =
+        fdp::
+            MixedCardinalityPhysicalSnesAssemblyContext3D::
+                create(
+                    PETSC_COMM_WORLD,
+                    schedule,
+                    partition,
+                    *numbering,
+                    bridge,
+                    pattern,
+                    1.0,
+                    std::move(well_cells),
+                    make_phase_identity_maps(),
+                    std::move(well_faces),
+                    {
+                        {&evaluate_1p, &audit},
+                        {&evaluate_2p, &audit},
+                        {&evaluate_3p, &audit}},
+                    {},
+                    {
+                        &evaluate_audited_fixed_bhp_well_source,
+                        &fixed_bhp_source_audit},
+                    &well_assembly_context);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            well_assembly_context.has_value(),
+        "failed to create fixed-BHP well mixed physical assembly context");
+
+    auto direct_current =
+        evaluate_target(
+            UINT64_C(60),
+            &audit);
+    const auto& direct_three_phase =
+        std::get<
+            fdp::
+                FixedThreePhaseCurrentCellLinearization3D>(
+                    direct_current);
+    const auto expected_well_source =
+        wdp::
+            build_fixed_bhp_three_phase_peaceman_well_source_3d(
+                fixed_bhp_well_context,
+                direct_three_phase);
+    const auto expected_well_normalized =
+        fd::normalize_cell_source_by_bulk_volume(
+            expected_well_source.cell_source,
+            7.0);
+
+    Mat well_jacobian = nullptr;
+    Vec well_residual = nullptr;
+    error =
+        well_assembly_context
+            ->create_jacobian_structure(
+                &well_jacobian);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecDuplicate(
+                state,
+                &well_residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecSet(
+                well_residual,
+                PetscScalar{0.0});
+    }
+    auto well_evaluator =
+        well_assembly_context
+            ->snes_evaluator();
+    status =
+        fdp::
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            well_evaluator.function(
+                state,
+                well_residual,
+                well_evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyBegin(
+                well_residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAssemblyEnd(
+                well_residual);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatZeroEntries(
+                well_jacobian);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            well_evaluator.jacobian(
+                state,
+                well_jacobian,
+                well_evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyBegin(
+                well_jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyEnd(
+                well_jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+
+    bool local_well_source_ok =
+        error == PETSC_SUCCESS &&
+        status ==
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    if (rank == 1 &&
+        local_well_source_ok) {
+        const auto& well_record =
+            numbering->cell(
+                mesh::LocalIndex{5U});
+        const PetscInt row0 =
+            well_record.petsc_global_scalar_start;
+        const PetscInt energy_row =
+            row0 + 3;
+        const PetscInt column =
+            row0;
+        std::array<PetscInt, 4>
+            rows{
+                row0,
+                row0 + 1,
+                row0 + 2,
+                energy_row};
+        std::array<PetscScalar, 4>
+            values{};
+        local_well_source_ok =
+            VecGetValues(
+                well_residual,
+                static_cast<PetscInt>(
+                    rows.size()),
+                rows.data(),
+                values.data()) ==
+            PETSC_SUCCESS;
+
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            const double actual =
+                static_cast<double>(
+                    PetscRealPart(
+                        values[component]));
+            const double expected =
+                expected_well_normalized
+                    .component_residual_mol_per_bulk_m3_s[
+                        component];
+            local_well_source_ok =
+                local_well_source_ok &&
+                std::abs(
+                    actual -
+                    expected) <=
+                    1.0e-10 *
+                        std::max(
+                            1.0e-30,
+                            std::abs(expected)) +
+                    1.0e-20;
+        }
+        {
+            const double actual =
+                static_cast<double>(
+                    PetscRealPart(
+                        values[3]));
+            const double expected =
+                expected_well_normalized
+                    .energy_residual_w_per_bulk_m3;
+            local_well_source_ok =
+                local_well_source_ok &&
+                std::abs(
+                    actual -
+                    expected) <=
+                    1.0e-10 *
+                        std::max(
+                            1.0e-30,
+                            std::abs(expected)) +
+                    1.0e-20;
+        }
+
+        PetscScalar well_component_d = 0.0;
+        PetscScalar well_energy_d = 0.0;
+        local_well_source_ok =
+            local_well_source_ok &&
+            MatGetValues(
+                well_jacobian,
+                1,
+                &row0,
+                1,
+                &column,
+                &well_component_d) ==
+                PETSC_SUCCESS &&
+            MatGetValues(
+                well_jacobian,
+                1,
+                &energy_row,
+                1,
+                &column,
+                &well_energy_d) ==
+                PETSC_SUCCESS;
+
+        const double component_delta =
+            static_cast<double>(
+                PetscRealPart(
+                    well_component_d -
+                    baseline_well_component_d));
+        const double energy_delta =
+            static_cast<double>(
+                PetscRealPart(
+                    well_energy_d -
+                    baseline_well_energy_d));
+        const double expected_component_delta =
+            expected_well_normalized
+                .d_component_residual(
+                    0U,
+                    0U);
+        const double expected_energy_delta =
+            expected_well_normalized
+                .d_energy_residual(
+                    0U);
+        local_well_source_ok =
+            local_well_source_ok &&
+            std::abs(
+                component_delta -
+                expected_component_delta) <=
+                1.0e-10 *
+                    std::max(
+                        1.0e-30,
+                        std::abs(
+                            expected_component_delta)) +
+                1.0e-20 &&
+            std::abs(
+                energy_delta -
+                expected_energy_delta) <=
+                1.0e-10 *
+                    std::max(
+                        1.0e-30,
+                        std::abs(
+                            expected_energy_delta)) +
+                1.0e-20;
+    }
+
+    require_collective(
+        local_well_source_ok &&
+            (rank == 0
+                 ? fixed_bhp_source_audit
+                           .target_calls ==
+                       0U
+                 : fixed_bhp_source_audit
+                           .target_calls ==
+                       2U),
+        "fixed-BHP production well source did not enter owner-only residual/Jacobian correctly");
+
+    require_collective(
+        (well_residual == nullptr ||
+         VecDestroy(
+             &well_residual) ==
+             PETSC_SUCCESS) &&
+            (well_jacobian == nullptr ||
+             MatDestroy(
+                 &well_jacobian) ==
+                 PETSC_SUCCESS),
+        "fixed-BHP well source assembly cleanup failed");
 
     audit.source_enabled = false;
 

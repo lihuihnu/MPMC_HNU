@@ -54,7 +54,8 @@ ownership = {
         "modules/flow/discretization/CMakeLists.txt",
         "modules/well/include/**",
         "modules/well/CMakeLists.txt",
-        "modules/well/discretization/**",
+        "modules/well/discretization/include/**",
+        "modules/well/discretization/CMakeLists.txt",
         "tests/well/discretization/**",
         "modules/flow/include/mpmc/flow/phase_potential_upwind.hpp",
         "modules/flow/include/mpmc/flow/phase_transport.hpp",
@@ -77,6 +78,7 @@ ownership = {
     "flow_discretization_petsc": [
         "modules/flow_discretization_petsc/**",
         "modules/flow/discretization/petsc/**",
+        "modules/well/discretization/petsc/**",
         "modules/flow/include/mpmc/flow/fugacity_equilibrium_residual.hpp",
         "modules/flow/include/mpmc/flow/fugacity_equilibrium_linearization.hpp",
         "modules/thermodynamics/include/mpmc/thermodynamics/selected_phase_density.hpp",
