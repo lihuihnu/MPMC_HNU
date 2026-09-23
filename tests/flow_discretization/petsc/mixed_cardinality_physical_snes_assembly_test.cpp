@@ -3001,6 +3001,45 @@ make_controller_cells(
 }
 
 struct ControllerFixture {
+    ControllerFixture(
+        int input_rank,
+        const dp::
+            ParallelOwnedConnectionSchedule3D*
+                input_schedule,
+        const mesh::PartitionSnapshot*
+            input_partition,
+        const dp::
+            PetscMpiAijSymbolicPreallocation3D*
+                input_bridge,
+        const dp::
+            OwnedCellStructuralColumnPatternSnapshot3D*
+                input_pattern,
+        DispatchAudit* input_audit,
+        const th::Pr76Phase<double>*
+            input_pr_model,
+        flow::
+            Pr76AbsentPhasePotentialExtensionProvider<
+                double>*
+                input_provider,
+        bool input_oscillate_after_restart,
+        std::size_t input_rebuild_calls,
+        bool input_scan_indeterminate =
+            false)
+        : rank(input_rank),
+          schedule(input_schedule),
+          partition(input_partition),
+          bridge(input_bridge),
+          pattern(input_pattern),
+          audit(input_audit),
+          pr_model(input_pr_model),
+          provider(input_provider),
+          oscillate_after_restart(
+              input_oscillate_after_restart),
+          rebuild_calls(
+              input_rebuild_calls),
+          scan_indeterminate(
+              input_scan_indeterminate) {}
+
     int rank{};
     const dp::
         ParallelOwnedConnectionSchedule3D*
