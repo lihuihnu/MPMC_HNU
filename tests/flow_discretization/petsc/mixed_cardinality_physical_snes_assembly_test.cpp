@@ -57,6 +57,23 @@ void require_collective(
     }
 }
 
+void near_collective(
+    double actual,
+    double expected,
+    double relative,
+    double absolute) {
+    require_collective(
+        std::isfinite(actual) &&
+            std::isfinite(expected) &&
+            std::abs(actual - expected) <=
+                absolute +
+                    relative *
+                        std::max(
+                            std::abs(actual),
+                            std::abs(expected)),
+        "numeric mismatch in mixed physical dispatcher regression");
+}
+
 [[nodiscard]] std::size_t
 phase_count_for(
     std::uint64_t stable) {
