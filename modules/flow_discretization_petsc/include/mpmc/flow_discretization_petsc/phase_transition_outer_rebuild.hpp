@@ -538,15 +538,38 @@ public:
         std::optional<
             VariableCardinalityNaturalVariableSnesSolveReport3D>*
                 report) {
-        return solve_variable_cardinality_natural_variable_snes_3d(
-            comm_,
-            *numbering_,
-            initial_state_,
-            jacobian_,
-            physical_context_
-                ->snes_evaluator(),
-            solution,
-            report);
+        Vec row_scaling =
+            nullptr;
+        PetscErrorCode error =
+            make_variable_cardinality_initial_row_equilibration_3d(
+                comm_,
+                *numbering_,
+                initial_state_,
+                jacobian_,
+                physical_context_
+                    ->snes_evaluator(),
+                &row_scaling);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+
+        error =
+            solve_variable_cardinality_natural_variable_snes_3d(
+                comm_,
+                *numbering_,
+                initial_state_,
+                jacobian_,
+                physical_context_
+                    ->snes_evaluator(),
+                solution,
+                report,
+                row_scaling);
+        const PetscErrorCode destroy =
+            VecDestroy(
+                &row_scaling);
+        return error != PETSC_SUCCESS
+            ? error
+            : destroy;
     }
 
 private:

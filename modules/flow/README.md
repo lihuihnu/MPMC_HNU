@@ -4214,3 +4214,25 @@ For the restarted 2P/1P face, the absent-side PR76 branch is no longer a control
 hypothetical target composition and publishes a selection only when exactly one
 positive-slope derivative-valid PR76 branch exists. Ambiguous root topology remains
 unresolved instead of being guessed.
+
+### 47.11.2 Frozen row scaling for restarted ragged SNES
+
+The real PR76 1P->2P regression exposed a solver asymmetry: fixed-cardinality
+production SNES already supported frozen left row equilibration, while the
+variable-cardinality restart path solved the native component/energy/fugacity rows
+without scaling.
+
+`make_variable_cardinality_initial_row_equilibration_3d()` now independently
+assembles the analytic ragged Jacobian at q0 and freezes
+`D_i = 1 / max_j |J_ij(q0)|` for every owned scalar row. Rows without a finite
+nonzero analytic coefficient are rejected.
+
+`solve_variable_cardinality_natural_variable_snes_3d()` accepts the same optional
+positive D contract as the fixed solver. The shared PETSc callbacks solve `D*R=0`
+with `D*J`; physical residual/Jacobian evaluators remain unscaled. Newton,
+backtracking, GMRES, ASM overlap, tolerances and analytic Jacobian policy are
+unchanged.
+
+`PhaseTransitionRebuiltNaturalVariableSystem3D::solve()` now creates and destroys
+this frozen scaling automatically. The generic 1P/2P/3P ragged manufactured solver
+regression also runs through the scaled path, so this is not a PR76 special case.

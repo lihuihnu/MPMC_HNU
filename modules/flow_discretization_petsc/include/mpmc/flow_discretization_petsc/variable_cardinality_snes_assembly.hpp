@@ -1683,7 +1683,357 @@ validate_layout(
     return PETSC_SUCCESS;
 }
 
+[[nodiscard]] inline PetscErrorCode
+validate_row_scaling(
+    MPI_Comm comm,
+    const VariableCardinalityNaturalVariableNumbering3D&
+        numbering,
+    Vec row_scaling) {
+    using namespace
+        natural_variable_snes_detail;
+
+    if (row_scaling == nullptr) {
+        return PETSC_SUCCESS;
+    }
+    if (!communicators_are_compatible(
+            comm,
+            PetscObjectComm(
+                reinterpret_cast<PetscObject>(
+                    row_scaling)))) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    PetscInt local = -1;
+    PetscInt global = -1;
+    PetscInt start = -1;
+    PetscInt end = -1;
+    PetscErrorCode error =
+        VecGetLocalSize(
+            row_scaling,
+            &local);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecGetSize(
+                row_scaling,
+                &global);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecGetOwnershipRange(
+                row_scaling,
+                &start,
+                &end);
+    }
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    if (local !=
+            numbering
+                .petsc_local_owned_scalar_count() ||
+        global !=
+            numbering
+                .petsc_global_scalar_count() ||
+        start !=
+            numbering
+                .petsc_owned_scalar_start() ||
+        end !=
+            numbering
+                .petsc_owned_scalar_end()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    const PetscScalar* values = nullptr;
+    error =
+        VecGetArrayRead(
+            row_scaling,
+            &values);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    bool valid = true;
+    for (PetscInt index = 0;
+         index < local;
+         ++index) {
+        const double value =
+            static_cast<double>(
+                PetscRealPart(
+                    values[index]));
+        if (!std::isfinite(value) ||
+            !(value > 0.0)) {
+            valid = false;
+            break;
+        }
+    }
+    const PetscErrorCode restore =
+        VecRestoreArrayRead(
+            row_scaling,
+            &values);
+    if (restore != PETSC_SUCCESS) {
+        return restore;
+    }
+    return valid
+        ? PETSC_SUCCESS
+        : PETSC_ERR_ARG_OUTOFRANGE;
+}
+
 } // namespace variable_cardinality_snes_solver_detail
+
+/// Construct a frozen positive left row-equilibration vector from the analytic
+/// q-ragged Jacobian at one initial state.
+///
+/// For each owned scalar equation row i:
+///   D_i = 1 / max_j |J_ij(q0)|.
+///
+/// The evaluator's physical residual/Jacobian is not mutated. D is caller-owned
+/// and is intended to remain frozen for the subsequent nonlinear solve.
+[[nodiscard]] inline PetscErrorCode
+make_variable_cardinality_initial_row_equilibration_3d(
+    MPI_Comm comm,
+    const VariableCardinalityNaturalVariableNumbering3D&
+        numbering,
+    Vec initial_state,
+    Mat jacobian_structure_template,
+    NaturalVariableSnesEvaluator3D evaluator,
+    Vec* row_scaling) {
+    using namespace
+        variable_cardinality_snes_solver_detail;
+    using variable_cardinality_snes_assembly_detail::
+        collective_error;
+
+    if (row_scaling == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    if (*row_scaling != nullptr) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+    if (evaluator.jacobian == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    PetscErrorCode error =
+        validate_layout(
+            comm,
+            numbering,
+            initial_state,
+            jacobian_structure_template);
+    error =
+        collective_error(
+            comm,
+            error);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    Mat jacobian = nullptr;
+    Vec scaling = nullptr;
+    error =
+        MatDuplicate(
+            jacobian_structure_template,
+            MAT_DO_NOT_COPY_VALUES,
+            &jacobian);
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatZeroEntries(
+                jacobian);
+    }
+
+    NaturalVariableSnesEvaluationStatus3D
+        status =
+            NaturalVariableSnesEvaluationStatus3D::
+                success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            evaluator.jacobian(
+                initial_state,
+                jacobian,
+                evaluator.user_context,
+                &status);
+    }
+    if (error == PETSC_SUCCESS) {
+        int local_status =
+            status ==
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success
+                ? 0
+                : (status ==
+                           NaturalVariableSnesEvaluationStatus3D::
+                               domain_error
+                       ? 1
+                       : 2);
+        int global_status = 0;
+        if (MPI_Allreduce(
+                &local_status,
+                &global_status,
+                1,
+                MPI_INT,
+                MPI_MAX,
+                comm) != MPI_SUCCESS) {
+            error =
+                PETSC_ERR_MPI;
+        } else if (global_status != 0) {
+            error =
+                global_status == 1
+                ? PETSC_ERR_ARG_OUTOFRANGE
+                : PETSC_ERR_ARG_INCOMP;
+        }
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyBegin(
+                jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatAssemblyEnd(
+                jacobian,
+                MAT_FINAL_ASSEMBLY);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecDuplicate(
+                initial_state,
+                &scaling);
+    }
+
+    PetscInt start = -1;
+    PetscInt end = -1;
+    if (error == PETSC_SUCCESS) {
+        error =
+            MatGetOwnershipRange(
+                jacobian,
+                &start,
+                &end);
+    }
+    if (error == PETSC_SUCCESS &&
+        (start !=
+             numbering
+                 .petsc_owned_scalar_start() ||
+         end !=
+             numbering
+                 .petsc_owned_scalar_end())) {
+        error =
+            PETSC_ERR_ARG_INCOMP;
+    }
+
+    PetscScalar* values = nullptr;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecGetArray(
+                scaling,
+                &values);
+    }
+    if (error == PETSC_SUCCESS) {
+        for (PetscInt row = start;
+             row < end;
+             ++row) {
+            PetscInt count = 0;
+            const PetscInt* columns =
+                nullptr;
+            const PetscScalar* row_values =
+                nullptr;
+            error =
+                MatGetRow(
+                    jacobian,
+                    row,
+                    &count,
+                    &columns,
+                    &row_values);
+            if (error != PETSC_SUCCESS) {
+                break;
+            }
+            double maximum = 0.0;
+            for (PetscInt entry = 0;
+                 entry < count;
+                 ++entry) {
+                const double magnitude =
+                    std::abs(
+                        static_cast<double>(
+                            PetscRealPart(
+                                row_values[
+                                    entry])));
+                if (!std::isfinite(
+                        magnitude)) {
+                    error =
+                        PETSC_ERR_FP;
+                    break;
+                }
+                maximum =
+                    std::max(
+                        maximum,
+                        magnitude);
+            }
+            const PetscErrorCode restore =
+                MatRestoreRow(
+                    jacobian,
+                    row,
+                    &count,
+                    &columns,
+                    &row_values);
+            if (error == PETSC_SUCCESS &&
+                restore != PETSC_SUCCESS) {
+                error =
+                    restore;
+            }
+            if (error != PETSC_SUCCESS) {
+                break;
+            }
+            if (!(maximum > 0.0) ||
+                !std::isfinite(maximum)) {
+                error =
+                    PETSC_ERR_ARG_WRONGSTATE;
+                break;
+            }
+            values[
+                row - start] =
+                static_cast<PetscScalar>(
+                    1.0 / maximum);
+        }
+    }
+
+    if (values != nullptr) {
+        const PetscErrorCode restore =
+            VecRestoreArray(
+                scaling,
+                &values);
+        if (error == PETSC_SUCCESS &&
+            restore != PETSC_SUCCESS) {
+            error =
+                restore;
+        }
+    }
+    const PetscErrorCode destroy =
+        MatDestroy(
+            &jacobian);
+    if (error == PETSC_SUCCESS &&
+        destroy != PETSC_SUCCESS) {
+        error =
+            destroy;
+    }
+    if (error != PETSC_SUCCESS) {
+        if (scaling != nullptr) {
+            (void)VecDestroy(
+                &scaling);
+        }
+        return error;
+    }
+
+    error =
+        validate_row_scaling(
+            comm,
+            numbering,
+            scaling);
+    if (error != PETSC_SUCCESS) {
+        (void)VecDestroy(
+            &scaling);
+        return error;
+    }
+
+    *row_scaling =
+        scaling;
+    return PETSC_SUCCESS;
+}
 
 /// Solve one distributed q-ragged natural-variable system with PETSc-owned
 /// nonlinear orchestration.
@@ -1692,6 +2042,10 @@ validate_layout(
 /// SNESNEWTONLS -> SNESLINESEARCHBT -> KSPGMRES -> PCASM(restrict, overlap=1).
 /// Runtime SNESSetFromOptions() remains disabled so an unvalidated option
 /// cannot replace the analytic/AD Jacobian path with finite differences.
+///
+/// An optional frozen positive left row-scaling vector D applies the same
+/// audited contract as the fixed-cardinality solver: PETSc solves D*R=0 with
+/// D*J while the physical evaluator continues to publish native R and J.
 inline PetscErrorCode
 solve_variable_cardinality_natural_variable_snes_3d(
     MPI_Comm comm,
@@ -1703,7 +2057,8 @@ solve_variable_cardinality_natural_variable_snes_3d(
     Vec* solution,
     std::optional<
         VariableCardinalityNaturalVariableSnesSolveReport3D>*
-        report) {
+        report,
+    Vec row_scaling = nullptr) {
     using namespace
         variable_cardinality_snes_solver_detail;
     using namespace natural_variable_snes_detail;
@@ -1767,6 +2122,17 @@ solve_variable_cardinality_natural_variable_snes_3d(
         collective_error(
             comm,
             local_error);
+    if (error == PETSC_SUCCESS) {
+        local_error =
+            validate_row_scaling(
+                comm,
+                numbering,
+                row_scaling);
+        error =
+            collective_error(
+                comm,
+                local_error);
+    }
     if (error != PETSC_SUCCESS) {
         return error;
     }
@@ -1831,7 +2197,8 @@ solve_variable_cardinality_natural_variable_snes_3d(
     }
 
     CallbackContext callback_context{
-        evaluator};
+        evaluator,
+        row_scaling};
 
     error =
         SNESSetFunction(

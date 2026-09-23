@@ -656,6 +656,21 @@ void variable_cardinality_snes_assembly_test() {
         initial,
         *numbering);
 
+    Vec row_scaling = nullptr;
+    error =
+        fdp::
+            make_variable_cardinality_initial_row_equilibration_3d(
+                PETSC_COMM_WORLD,
+                *numbering,
+                initial,
+                structure,
+                context->snes_evaluator(),
+                &row_scaling);
+    require_mixed_collective(
+        error == PETSC_SUCCESS &&
+            row_scaling != nullptr,
+        "failed to construct q-ragged frozen row equilibration");
+
     Vec solution = nullptr;
     std::optional<
         fdp::
@@ -670,7 +685,8 @@ void variable_cardinality_snes_assembly_test() {
                 structure,
                 context->snes_evaluator(),
                 &solution,
-                &report);
+                &report,
+                row_scaling);
     require_mixed_collective(
         error == PETSC_SUCCESS &&
             solution != nullptr &&
@@ -724,6 +740,11 @@ void variable_cardinality_snes_assembly_test() {
     require_mixed_collective(
         local_solution_ok,
         "mixed-cardinality SNES solution did not recover q-ragged target");
+    require_mixed_collective(
+        VecDestroy(
+            &row_scaling) ==
+            PETSC_SUCCESS,
+        "mixed-cardinality row scaling cleanup failed");
 
     std::vector<double>
         local_packed;
