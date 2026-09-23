@@ -4328,3 +4328,38 @@ state and component/energy history unchanged.
 This slice does not change PR76/flash physics or target materialization and does
 not add wells, boundary/source controls, checkpointing or a long-duration
 schedule.
+
+### 47.14 Production physical-time interval loop
+
+The PETSc flow layer now has a production interval-level orchestration entry:
+
+`advance_physical_time_to_3d(..., target_time_seconds, ...)`.
+
+It is deliberately a thin owner above `advance_one_physical_timestep_3d()`:
+the loop never solves equations, scans phase stability or commits history by
+itself. For every accepted step it delegates those responsibilities to the
+one-timestep driver and stops immediately if that driver returns a terminal
+timestep rejection.
+
+The only interval-specific operation is end-time alignment. Before each step the
+loop supplies a first-attempt `dt` cap equal to the remaining physical time.
+The driver validates the accepted system against the clock's original proposal,
+then uses `min(next_dt, remaining)` as the first trial. If a clipped trial is
+rejected, the one-step rollback restores the entry proposal and leaves accepted
+time/history unchanged. If the remaining terminal interval is below the ordinary
+adaptive minimum, that remainder is allowed as the exact terminal first attempt
+and becomes that step's retry floor; failure therefore exits instead of silently
+stepping below the requested end-time boundary.
+
+The real two-rank CH4/C2H6/C3H8 regression now keeps the production PR76
+transition-restarted first step at `t=1 s`, then advances the same accepted
+2P/1P system through this interval loop to `t=2.5 s`. The loop accepts one
+ordinary `dt=1 s` step, observes adaptive growth, then truncates the proposed
+`dt=2 s` to the remaining `0.5 s` without overshoot. The resulting accepted
+step count is three and the next proposal is `1 s` from the clipped step's
+growth policy. A second interval call forces an indeterminate post-SNES review
+with zero retry budget and verifies immediate failure exit with no change to
+accepted time, step count, state, history or the pre-call next-`dt` proposal.
+
+This slice still does not introduce wells, boundary/source schedules,
+checkpoint/restart files or long-duration case scheduling.

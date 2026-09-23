@@ -5,6 +5,7 @@
 #include <mpmc/flow_discretization_petsc/adaptive_timestep_controller.hpp>
 #include <mpmc/flow_discretization_petsc/accepted_physical_time.hpp>
 #include <mpmc/flow_discretization_petsc/physical_timestep_driver.hpp>
+#include <mpmc/flow_discretization_petsc/physical_time_loop.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_production_cell_evaluator.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_single_phase_transition_target_rebuild.hpp>
 #include <mpmc/flow_discretization_petsc/pr76_transition_rebuild_materialization.hpp>
@@ -2879,64 +2880,104 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
         "production physical-timestep driver did not retain the strict-positive PR76 two-phase target");
 
     std::optional<
-        fdp::PhysicalTimestepDriverReport3D>
-        second_step;
+        fdp::PhysicalTimeLoopReport3D>
+        interval_report;
     error =
-        fdp::advance_one_physical_timestep_3d(
+        fdp::advance_physical_time_to_3d(
             PETSC_COMM_WORLD,
             &materialized->system,
             0U,
             driver_bindings,
             driver_options,
+            2.5,
             &physical_clock,
-            &second_step);
+            &interval_report);
     require_real_collective(
         error == PETSC_SUCCESS &&
-            second_step.has_value() &&
-            second_step->accepted() &&
-            second_step->adaptive
-                    .attempts
+            interval_report.has_value() &&
+            interval_report
+                ->target_reached() &&
+            interval_report
+                    ->initial_time_seconds ==
+                1.0 &&
+            interval_report
+                    ->target_time_seconds ==
+                2.5 &&
+            interval_report
+                    ->timesteps
                     .size() ==
+                2U &&
+            interval_report
+                    ->timesteps[0]
+                    .accepted() &&
+            interval_report
+                    ->timesteps[0]
+                    .accepted_record
+                    .has_value() &&
+            interval_report
+                    ->timesteps[0]
+                    .accepted_record
+                    ->accepted_step_index ==
                 1U &&
-            second_step->adaptive
-                    .attempts
-                    .front()
-                    .result
-                    .phase_transition_restarts ==
-                0U &&
-            second_step->adaptive
+            interval_report
+                    ->timesteps[0]
+                    .accepted_record
+                    ->accepted_timestep_seconds ==
+                1.0 &&
+            interval_report
+                    ->timesteps[0]
+                    .adaptive
                     .attempts
                     .front()
                     .decision ==
                 fdp::AdaptiveTimestepDecision3D::
                     accept_and_grow &&
-            second_step
-                    ->accepted_record
+            interval_report
+                    ->timesteps[1]
+                    .accepted() &&
+            interval_report
+                    ->timesteps[1]
+                    .accepted_record
                     .has_value() &&
-            second_step
-                    ->accepted_record
+            interval_report
+                    ->timesteps[1]
+                    .accepted_record
                     ->accepted_step_index ==
-                1U &&
-            second_step
-                    ->accepted_record
-                    ->phase_transition_restarts ==
-                0U &&
+                2U &&
+            interval_report
+                    ->timesteps[1]
+                    .accepted_record
+                    ->accepted_timestep_seconds ==
+                0.5 &&
+            interval_report
+                    ->timesteps[1]
+                    .adaptive
+                    .initial_timestep_seconds ==
+                0.5 &&
+            interval_report
+                    ->timesteps[1]
+                    .adaptive
+                    .attempts
+                    .front()
+                    .request
+                    .timestep_seconds ==
+                0.5 &&
             physical_clock
                     .accepted_step_count() ==
-                2U &&
+                3U &&
             physical_clock
                     .accepted_time_seconds() ==
-                2.0 &&
+                2.5 &&
             physical_clock
                     .next_timestep_seconds() ==
-                2.0 &&
+                1.0 &&
             materialized
                     ->system
                     ->time_step_seconds() ==
-                2.0,
-        "production physical-timestep driver did not accept/grow the second PR76 physical step");
+                1.0,
+        "production physical-time loop did not advance to the exact target with a truncated final PR76 step");
 
-    bool second_history_matches = false;
+    bool interval_history_matches = false;
     error =
         materialized
             ->system
@@ -2944,11 +2985,11 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 materialized
                     ->system
                     ->initial_state(),
-                &second_history_matches);
+                &interval_history_matches);
     require_real_collective(
         error == PETSC_SUCCESS &&
-            second_history_matches,
-        "production physical-timestep driver did not rebase second-step component/energy history");
+            interval_history_matches,
+        "production physical-time loop did not leave accepted history on the target-time state");
 
     const double time_before_rejection =
         physical_clock
@@ -2973,38 +3014,49 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
             &unexpected_real_pr76_transition_rebuild,
             nullptr};
     std::optional<
-        fdp::PhysicalTimestepDriverReport3D>
-        rejected_step;
+        fdp::PhysicalTimeLoopReport3D>
+        rejected_interval;
     error =
-        fdp::advance_one_physical_timestep_3d(
+        fdp::advance_physical_time_to_3d(
             PETSC_COMM_WORLD,
             &materialized->system,
             0U,
             rejection_bindings,
             rejection_options,
+            3.0,
             &physical_clock,
-            &rejected_step);
+            &rejected_interval);
     require_real_collective(
         error == PETSC_SUCCESS &&
-            rejected_step.has_value() &&
-            !rejected_step->accepted() &&
-            !rejected_step
-                 ->accepted_record
-                 .has_value() &&
-            rejected_step->adaptive.outcome ==
+            rejected_interval.has_value() &&
+            !rejected_interval
+                 ->target_reached() &&
+            rejected_interval->outcome ==
+                fdp::
+                    PhysicalTimeLoopOutcome3D::
+                        timestep_rejected &&
+            rejected_interval
+                    ->timesteps
+                    .size() ==
+                1U &&
+            !rejected_interval
+                 ->timesteps
+                 .front()
+                 .accepted() &&
+            rejected_interval
+                    ->timesteps
+                    .front()
+                    .adaptive
+                    .initial_timestep_seconds ==
+                0.5 &&
+            rejected_interval
+                    ->timesteps
+                    .front()
+                    .adaptive
+                    .outcome ==
                 fdp::
                     AdaptiveTimestepControllerOutcome3D::
                         retry_budget_exhausted &&
-            rejected_step->adaptive
-                    .attempts
-                    .size() ==
-                1U &&
-            rejected_step->adaptive
-                    .attempts
-                    .front()
-                    .decision ==
-                fdp::AdaptiveTimestepDecision3D::
-                    reject_retry_budget_exhausted &&
             physical_clock
                     .accepted_step_count() ==
                 steps_before_rejection &&
@@ -3018,7 +3070,7 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                     ->system
                     ->time_step_seconds() ==
                 next_dt_before_rejection,
-        "rejected production physical timestep changed accepted clock or retained trial dt");
+        "rejected production physical-time interval advanced clock/history or retained terminal clip dt");
 
     bool rejected_history_matches = false;
     error =
@@ -3032,7 +3084,7 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
     require_real_collective(
         error == PETSC_SUCCESS &&
             rejected_history_matches,
-        "rejected production physical timestep changed accepted component/energy history");
+        "rejected production physical-time interval changed accepted component/energy history");
 
     Vec rebased_residual = nullptr;
     require_real_collective(

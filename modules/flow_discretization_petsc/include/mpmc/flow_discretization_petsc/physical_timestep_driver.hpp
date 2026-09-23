@@ -26,6 +26,12 @@ struct PhysicalTimestepDriverOptions3D {
     AdaptiveTimestepControllerOptions3D adaptive;
     PostSnesPhaseTransitionControllerOptions3D
         phase_transition;
+
+    /// Optional cap for the first nonlinear attempt of this physical timestep.
+    /// This is intended for an outer time loop that must land on an exact
+    /// schedule/end-time boundary without mutating the accepted clock first.
+    std::optional<double>
+        initial_timestep_cap_seconds;
 };
 
 struct PhysicalTimestepDriverReport3D {
@@ -187,14 +193,33 @@ advance_one_physical_timestep_3d(
         return PETSC_ERR_ARG_INCOMP;
     }
 
-    const double initial_timestep_seconds =
+    const double entry_timestep_seconds =
         clock->next_timestep_seconds();
     if (!same_timestep(
             (*accepted_system)
                 ->time_step_seconds(),
-            initial_timestep_seconds)) {
+            entry_timestep_seconds)) {
         return PETSC_ERR_ARG_INCOMP;
     }
+
+    double initial_timestep_seconds =
+        entry_timestep_seconds;
+    if (options
+            .initial_timestep_cap_seconds
+            .has_value()) {
+        const double cap =
+            *options
+                 .initial_timestep_cap_seconds;
+        if (!std::isfinite(cap) ||
+            !(cap > 0.0)) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        initial_timestep_seconds =
+            std::min(
+                initial_timestep_seconds,
+                cap);
+    }
+
     try {
         adaptive_timestep_detail::
             validate_options(
@@ -228,7 +253,7 @@ advance_one_physical_timestep_3d(
         if (error != PETSC_SUCCESS) {
             return restore_trial_timestep(
                 accepted_system,
-                initial_timestep_seconds,
+                entry_timestep_seconds,
                 error);
         }
 
@@ -250,7 +275,7 @@ advance_one_physical_timestep_3d(
                 &solved);
             return restore_trial_timestep(
                 accepted_system,
-                initial_timestep_seconds,
+                entry_timestep_seconds,
                 error);
         }
         if (solved == nullptr ||
@@ -259,7 +284,7 @@ advance_one_physical_timestep_3d(
                 &solved);
             return restore_trial_timestep(
                 accepted_system,
-                initial_timestep_seconds,
+                entry_timestep_seconds,
                 PETSC_ERR_PLIB);
         }
 
@@ -594,7 +619,7 @@ advance_one_physical_timestep_3d(
             transitioned_candidate.reset();
             return restore_trial_timestep(
                 accepted_system,
-                initial_timestep_seconds,
+                entry_timestep_seconds,
                 PETSC_ERR_ARG_INCOMP);
         }
 
@@ -738,7 +763,7 @@ advance_one_physical_timestep_3d(
                  .has_value()) {
             return restore_trial_timestep(
                 accepted_system,
-                initial_timestep_seconds,
+                entry_timestep_seconds,
                 PETSC_ERR_PLIB);
         }
 
