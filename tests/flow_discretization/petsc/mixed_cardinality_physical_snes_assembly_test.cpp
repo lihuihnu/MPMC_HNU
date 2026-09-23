@@ -25,6 +25,7 @@ namespace mesh = mpmc::mesh;
 namespace flow = mpmc::flow;
 namespace disc = mpmc::discretization;
 namespace dp = mpmc::discretization_petsc;
+namespace fd = mpmc::flow_discretization;
 namespace fdp = mpmc::flow_discretization_petsc;
 namespace th = mpmc::thermodynamics;
 
@@ -253,10 +254,9 @@ PetscErrorCode evaluate_explicit_cell_source(
     }
     ++audit->source_cell20_calls;
 
-    const auto& identity =
+    const auto identity =
         std::visit(
-            [](const auto& typed)
-                -> const flow::NaturalVariableStateIdentity3P& {
+            [](const auto& typed) {
                 return typed.transport.state_identity;
             },
             current);

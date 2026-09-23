@@ -1796,8 +1796,9 @@ private:
                         mpmc::flow_discretization::
                             validate_cell_source_linearization(
                                 *cell_source,
-                                component_ids(
-                                    cell_inputs_[local]),
+                                mixed_cardinality_physical_detail::
+                                    component_ids(
+                                        cell_inputs_[local]),
                                 record.scalar_count);
                     } catch (...) {
                         local_error =

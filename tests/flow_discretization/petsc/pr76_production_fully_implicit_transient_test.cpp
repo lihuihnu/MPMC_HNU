@@ -2104,10 +2104,9 @@ PetscErrorCode evaluate_real_explicit_cell_source(
         return PETSC_SUCCESS;
     }
 
-    const auto& identity =
+    const auto identity =
         std::visit(
-            [](const auto& typed)
-                -> const flow::NaturalVariableStateIdentity3P& {
+            [](const auto& typed) {
                 return typed.transport.state_identity;
             },
             current);
