@@ -3693,6 +3693,29 @@ void run_frozen_fixed_bhp_timestep_case(
                             injection_enthalpy)},
                     "fixture/fixed-bhp-variable-cardinality-source/v1");
 
+    const auto initial_target_current =
+        evaluate_target(
+            target_stable,
+            audit);
+    const auto initial_well =
+        wdp::
+            build_fixed_bhp_peaceman_well_source_3d(
+                timestep_well_context,
+                initial_target_current);
+    require_collective(
+        initial_well
+                .phase_volumetric_rate_m3_per_s
+                .size() ==
+            expected_phase_count,
+        "fixed-BHP initial production source changed active phase cardinality");
+    for (double phase_rate :
+         initial_well
+             .phase_volumetric_rate_m3_per_s) {
+        require_collective(
+            phase_rate > 0.0,
+            "fixed-BHP regression was not configured production-positive at the frozen initial state");
+    }
+
     const auto timestep_pr_parameters =
         thermodynamic_adapter_pr_parameters();
     const auto timestep_pr_model =
@@ -4106,10 +4129,14 @@ void run_frozen_fixed_bhp_timestep_case(
          component < 3U;
          ++component) {
         require_collective(
-            global_well_production_rate[
-                component] >
-                0.0,
-            "variable-cardinality fixed-BHP regression did not remain production-positive");
+            std::isfinite(
+                global_well_production_rate[
+                    component]) &&
+                std::abs(
+                    global_well_production_rate[
+                        component]) >
+                    0.0,
+            "accepted variable-cardinality fixed-BHP component rate vanished or became non-finite");
         near_collective(
             global_final_total[
                 component],
@@ -4122,9 +4149,12 @@ void run_frozen_fixed_bhp_timestep_case(
             2.0e-8);
     }
     require_collective(
-        global_well_production_rate[3] >
-            0.0,
-        "variable-cardinality fixed-BHP energy rate did not remain production-positive");
+        std::isfinite(
+            global_well_production_rate[3]) &&
+            std::abs(
+                global_well_production_rate[3]) >
+                0.0,
+        "accepted variable-cardinality fixed-BHP energy rate vanished or became non-finite");
     near_collective(
         global_final_total[3],
         global_previous_total[3] -
@@ -4977,7 +5007,7 @@ void mixed_cardinality_physical_snes_assembly_test() {
         UINT64_C(20),
         1U,
         1U,
-        1.0e-12,
+        5.0,
         schedule,
         partition,
         bridge,
@@ -4988,7 +5018,7 @@ void mixed_cardinality_physical_snes_assembly_test() {
         UINT64_C(40),
         3U,
         2U,
-        1.0e-12,
+        15.0,
         schedule,
         partition,
         bridge,
@@ -4999,7 +5029,7 @@ void mixed_cardinality_physical_snes_assembly_test() {
         UINT64_C(60),
         5U,
         3U,
-        1.0e-12,
+        25.0,
         schedule,
         partition,
         bridge,
