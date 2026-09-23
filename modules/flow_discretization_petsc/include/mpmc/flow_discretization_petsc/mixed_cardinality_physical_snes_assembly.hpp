@@ -875,6 +875,21 @@ public:
         return time_step_seconds_;
     }
 
+    /// Change only the trial backward-Euler timestep. Accepted component/energy
+    /// history, phase identity, absent-phase charts and the stored initial state
+    /// are unchanged. This is the retry/cutback boundary used before a solve.
+    [[nodiscard]] PetscErrorCode
+    set_trial_timestep_seconds(
+        double timestep_seconds) noexcept {
+        if (!std::isfinite(timestep_seconds) ||
+            !(timestep_seconds > 0.0)) {
+            return PETSC_ERR_ARG_OUTOFRANGE;
+        }
+        time_step_seconds_ =
+            timestep_seconds;
+        return PETSC_SUCCESS;
+    }
+
     [[nodiscard]] PetscErrorCode
     prepare_accepted_history_rebase(
         std::span<const std::optional<

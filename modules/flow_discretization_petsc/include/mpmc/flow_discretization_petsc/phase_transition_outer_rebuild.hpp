@@ -492,6 +492,19 @@ public:
             : 0.0;
     }
 
+    /// Update only the trial timestep used by the next nonlinear attempt.
+    /// This does not advance accepted time or rewrite accepted histories/state.
+    [[nodiscard]] PetscErrorCode
+    set_trial_timestep_seconds(
+        double timestep_seconds) noexcept {
+        if (physical_context_ == nullptr) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+        return physical_context_
+            ->set_trial_timestep_seconds(
+                timestep_seconds);
+    }
+
     [[nodiscard]] PetscErrorCode
     accepted_history_matches_state(
         Vec accepted_state,

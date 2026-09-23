@@ -47,6 +47,7 @@ bool pr76_single_phase_transition_target_rebuild_header();
 bool pr76_transition_rebuild_materialization_header();
 void pr76_production_fully_implicit_transient_test();
 bool adaptive_timestep_controller_header();
+bool physical_timestep_driver_header();
 void adaptive_timestep_controller_test();
 bool single_phase_adaptive_timestep_attempt_header();
 bool single_phase_handoff_initial_system_header();
@@ -5501,6 +5502,9 @@ void headers() {
     require_collective(
         adaptive_timestep_controller_header(),
         "adaptive timestep controller header probe failed");
+    require_collective(
+        physical_timestep_driver_header(),
+        "physical timestep driver header probe failed");
     require_collective(
         single_phase_adaptive_timestep_attempt_header(),
         "single-phase adaptive timestep attempt header probe failed");

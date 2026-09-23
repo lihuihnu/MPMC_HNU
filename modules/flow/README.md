@@ -4288,3 +4288,43 @@ valid baseline for the next timestep.
 This slice does not add a well, boundary/source control, checkpoint file,
 long-duration schedule, or any new phase-transition physics.
 
+
+### 47.13 Production one-physical-timestep driver
+
+The PETSc flow layer now owns one explicit production orchestration boundary:
+
+`advance_one_physical_timestep_3d()`.
+
+The driver consumes an accepted `PhaseTransitionRebuiltNaturalVariableSystem3D`
+and performs one physical backward-Euler step only. Its invariants are:
+
+- each nonlinear retry starts from the same accepted state/history;
+- trial `dt` may change for cutback without rebasing component/energy history;
+- a phase-transition target is rebuilt on a disposable trial system, so failed
+  ragged/topology restarts cannot replace the accepted topology;
+- transition restarts remain inside the same physical timestep and are included
+  in the adaptive effort/restart budget;
+- only a stable post-SNES phase-set result reaches
+  `commit_accepted_physical_timestep_3d()`;
+- the accepted clock/history advance exactly once, after the final stable
+  candidate has been selected.
+
+`MixedCardinalityPhysicalSnesAssemblyContext3D::set_trial_timestep_seconds()`
+and the corresponding rebuilt-system facade change only the trial backward-Euler
+`dt`; they do not modify the stored initial state, accepted accumulation
+history, physical phase identity or frozen absent-phase coordinates. Terminal
+rejection restores the entry `dt`.
+
+The real two-rank CH4/C2H6/C3H8 regression now uses this production driver for
+the materialized PR76 2P/1P restart and the following physical step instead of
+manually sequencing `solve -> PT scan -> adaptive decision -> history commit`.
+The already-materialized 1P->2P restart is carried into the first driver call as
+one restart belonging to that same physical timestep, so the first accepted
+`dt=1 s` is held; the next stable step grows to `dt=2 s`. A forced
+post-SNES-indeterminate attempt with zero retry budget additionally verifies that
+terminal rejection leaves accepted time, step count, next proposed `dt`,
+state and component/energy history unchanged.
+
+This slice does not change PR76/flash physics or target materialization and does
+not add wells, boundary/source controls, checkpointing or a long-duration
+schedule.
