@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -1263,7 +1264,7 @@ private:
                 count,
                 rows.data(),
                 values,
-                INSERT_VALUES);
+                ADD_VALUES);
         const PetscErrorCode restore =
             VecRestoreArrayRead(
                 reservoir_residual_,
@@ -1309,7 +1310,7 @@ private:
                     count,
                     columns,
                     values,
-                    INSERT_VALUES);
+                    ADD_VALUES);
             const PetscErrorCode restore =
                 MatRestoreRow(
                     reservoir_jacobian_,
@@ -1392,7 +1393,7 @@ private:
                         row,
                         well,
                         value,
-                        INSERT_VALUES);
+                        ADD_VALUES);
                 if (error != PETSC_SUCCESS) {
                     return error;
                 }
@@ -1411,7 +1412,7 @@ private:
                         -linearization
                              .energy_source_bhp_derivative_w_per_pa /
                         bulk_volume_m3),
-                    INSERT_VALUES);
+                    ADD_VALUES);
             if (error != PETSC_SUCCESS) {
                 return error;
             }
