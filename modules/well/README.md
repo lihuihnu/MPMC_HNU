@@ -99,3 +99,32 @@ The well module still does not define conductive well/reservoir heat exchange,
 wellbore heat loss, multi-connection aggregation, rate-control equations,
 global well unknowns, control switching, completion creation/deletion,
 cross-cell well migration or scheduling.
+
+
+## Single-well multi-connection fixed-BHP aggregation
+
+One logical fixed-BHP well may now own multiple Peaceman connections targeting
+unique stable reservoir cell `GlobalEntityId` values. Every connection shares
+exactly one frozen BHP and remains an ordinary variable-cardinality cell source;
+there is still no globally numbered well pressure unknown.
+
+The PETSc multi-connection context sorts connections by stable cell identity,
+rejects duplicate stable-cell completions and rejects inconsistent BHP values.
+The existing mixed-cardinality assembly invokes the source callback only for
+locally owned cells, so a ghost copy of a completion never contributes a second
+source row. The callback itself is stateless and only dispatches the unique
+matching connection; it never accumulates well totals during SNES evaluation.
+
+Whole-well component and energy rates are aggregated separately from already
+authoritative connection evaluations. The aggregation is production-positive
+and contains no synthetic cross-cell Jacobian: each connection Jacobian remains
+in its own reservoir cell block, while distributed callers sum owner-side
+connection primals and then perform their MPI reduction. This keeps Newton or
+line-search callback re-entry from multiplying reported well totals.
+
+The current regression spans one 2P connection owned by rank 0 and one 3P
+connection owned by rank 1, verifies exactly two authoritative contributions,
+and closes global component/energy conservation against their summed well
+rate. Rate control, global well unknowns, control switching, wellbore pressure
+drop, crossflow control, multi-well networks and scheduling remain outside this
+contract.
