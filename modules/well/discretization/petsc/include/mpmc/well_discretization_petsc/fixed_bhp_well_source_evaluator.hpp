@@ -570,6 +570,51 @@ public:
             : nullptr;
     }
 
+
+    /// Return a new logical-well context with exactly one stable-cell
+    /// completion rebound to the supplied active physical-phase map.
+    ///
+    /// Every other connection is copied unchanged. The rebuilt logical well is
+    /// revalidated through create(), so shared-BHP and unique stable-cell
+    /// invariants remain mandatory after the local cardinality change.
+    [[nodiscard]]
+    FixedBhpMultiConnectionWellSourceEvaluatorContext3D
+    rebind_connection(
+        mpmc::mesh::GlobalEntityId
+            cell_global,
+        const mpmc::flow::
+            FrozenActivePhaseIdentityMap&
+                target_active_phases) const {
+        auto connections =
+            connections_;
+        const auto found =
+            std::lower_bound(
+                connections.begin(),
+                connections.end(),
+                cell_global.value(),
+                [](const auto& connection,
+                   std::uint64_t value) {
+                    return connection
+                               .target_cell_global()
+                               .value() <
+                        value;
+                });
+        if (found == connections.end() ||
+            found->target_cell_global() !=
+                cell_global) {
+            throw std::invalid_argument(
+                "mpmc::well_discretization_petsc: multi-connection fixed-BHP well cannot rebind unknown stable cell");
+        }
+
+        *found =
+            found->rebind(
+                cell_global,
+                target_active_phases);
+        return create(
+            well_id_,
+            std::move(connections));
+    }
+
 private:
     FixedBhpMultiConnectionWellSourceEvaluatorContext3D(
         std::string well_id,
@@ -589,6 +634,20 @@ private:
         FixedBhpPeacemanWellSourceEvaluatorContext3D>
         connections_;
 };
+
+[[nodiscard]] inline
+FixedBhpMultiConnectionWellSourceEvaluatorContext3D
+rebind_fixed_bhp_multi_connection_well_source_context_3d(
+    const FixedBhpMultiConnectionWellSourceEvaluatorContext3D&
+        context,
+    mpmc::mesh::GlobalEntityId cell_global,
+    const mpmc::flow::
+        FrozenActivePhaseIdentityMap&
+            target_active_phases) {
+    return context.rebind_connection(
+        cell_global,
+        target_active_phases);
+}
 
 namespace fixed_bhp_well_source_evaluator_detail {
 
