@@ -133,7 +133,7 @@ inline PetscErrorCode
 evaluate_fixed_total_molar_rate_well_source_3d(
     mpmc::mesh::LocalIndex cell,
     mpmc::mesh::GlobalEntityId cell_global,
-    std::span<const double> natural_variables,
+    std::span<const double>,
     const mpmc::flow_discretization_petsc::
         MixedCardinalityPhysicalCurrentCellLinearization3D&
             current,
