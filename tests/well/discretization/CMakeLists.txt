@@ -58,7 +58,8 @@ add_executable(
     mpmc_well_discretization_tests
     hydraulic_conductance_test.cpp
     component_molar_rate_test_support.cpp
-    energy_rate_test_support.cpp)
+    energy_rate_test_support.cpp
+    cell_source_adapter_test_support.cpp)
 configure_well_discretization_test_target(
     mpmc_well_discretization_tests)
 
@@ -87,6 +88,15 @@ add_dependencies(
     mpmc_well_discretization_header_self_contained
     mpmc_well_energy_rate_header_self_contained)
 
+add_executable(
+    mpmc_well_cell_source_adapter_header_self_contained
+    cell_source_adapter_header_self_contained.cpp)
+configure_well_discretization_test_target(
+    mpmc_well_cell_source_adapter_header_self_contained)
+add_dependencies(
+    mpmc_well_discretization_header_self_contained
+    mpmc_well_cell_source_adapter_header_self_contained)
+
 foreach(case IN ITEMS
     product_and_analytic_gradient
     phase_selection
@@ -108,6 +118,10 @@ foreach(case IN ITEMS
     energy_rate_bhp_derivative_selected_enthalpy
     energy_rate_zero_tie_reservoir_enthalpy
     energy_rate_invalid_inputs
+    cell_source_adapter_sign_and_reservoir_jacobian
+    cell_source_adapter_bhp_sidecar
+    cell_source_adapter_normalized_residual_sign
+    cell_source_adapter_invalid_identity_and_inputs
     invalid_inputs)
     add_test(
         NAME flow_discretization.well.hydraulic_conductance.${case}
@@ -144,4 +158,13 @@ set_tests_properties(
     flow_discretization.well.energy_rate.header_self_contained
     PROPERTIES
         LABELS "well;well_discretization;energy_rate;header"
+        TIMEOUT 30)
+
+add_test(
+    NAME flow_discretization.well.cell_source_adapter.header_self_contained
+    COMMAND mpmc_well_cell_source_adapter_header_self_contained)
+set_tests_properties(
+    flow_discretization.well.cell_source_adapter.header_self_contained
+    PROPERTIES
+        LABELS "well;well_discretization;cell_source_adapter;header"
         TIMEOUT 30)

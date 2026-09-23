@@ -49,7 +49,19 @@ fluid. Reservoir mass density remains the volume-to-mass conversion because
 the phase rate is reservoir-volume based. The reservoir and BHP derivatives
 follow the same directional enthalpy selection.
 
-The well module still does not define conductive well/reservoir heat exchange,
-wellbore heat loss, mass-rate conversion, multi-connection aggregation,
-rate-control equations, global well unknowns, source assembly, PETSc objects or
-scheduling.
+The connection-to-cell-source adapter now bridges the well sign convention to
+the model-neutral finite-volume source convention. Well component/energy rates
+are production-positive (cell -> well), while `CellSourceLinearization3D` is
+injection-positive (into cell), so the adapter applies exactly one sign
+reversal to rates and reservoir Jacobians. Explicit BHP derivatives are kept
+as a sidecar and are not inserted into the reservoir natural-variable block.
+
+The adapter is intentionally compatible with the existing
+`normalize_cell_source_by_bulk_volume()` contract: after its second sign
+change, a production-positive well rate becomes a positive outward
+conservation residual. This prevents a hidden double-negation convention.
+
+The well module still does not connect this adapter to the production source
+evaluator/PETSc assembly, and still does not define conductive well/reservoir
+heat exchange, wellbore heat loss, multi-connection aggregation, rate-control
+equations, global well unknowns or scheduling.

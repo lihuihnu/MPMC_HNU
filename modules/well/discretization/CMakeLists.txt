@@ -15,6 +15,12 @@ if(NOT TARGET mpmc_flow)
         well-discretization-flow-core)
 endif()
 
+if(NOT TARGET mpmc_flow_discretization)
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../flow/discretization"
+        well-discretization-flow-discretization)
+endif()
+
 add_library(mpmc_well_discretization INTERFACE)
 add_library(
     mpmc::well_discretization
@@ -29,4 +35,5 @@ target_link_libraries(
     mpmc_well_discretization
     INTERFACE
         mpmc::well
-        mpmc::flow)
+        mpmc::flow
+        mpmc::flow_discretization)
