@@ -2178,6 +2178,8 @@ private:
             return PETSC_ERR_ARG_NULL;
         }
 
+        last_function_local_total_molar_rate_valid_ =
+            false;
         double bhp = 0.0;
         PetscErrorCode error =
             sync_augmented_state(
@@ -2244,6 +2246,13 @@ private:
 
         const double local_rate =
             local_total_molar_production_rate();
+        if (!std::isfinite(local_rate)) {
+            return PETSC_ERR_FP;
+        }
+        last_function_local_total_molar_rate_mol_per_s_ =
+            local_rate;
+        last_function_local_total_molar_rate_valid_ =
+            true;
         error =
             VecSetValue(
                 residual,
@@ -2507,30 +2516,28 @@ private:
             return error;
         }
 
-        Vec state = nullptr;
-        error =
-            SNESGetSolution(
-                snes,
-                &state);
-        if (error != PETSC_SUCCESS ||
-            state == nullptr) {
-            return error != PETSC_SUCCESS
-                ? error
-                : PETSC_ERR_PLIB;
-        }
-
         auto* context =
             static_cast<
                 FixedTotalMolarRateWellControlSystem3D*>(
                     raw_context);
+        if (!context
+                 ->last_function_local_total_molar_rate_valid_) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+
         double achieved_rate = 0.0;
-        error =
+        const double local_rate =
             context
-                ->evaluate_whole_well_total_molar_rate(
-                    state,
-                    &achieved_rate);
-        if (error != PETSC_SUCCESS) {
-            return error;
+                ->last_function_local_total_molar_rate_mol_per_s_;
+        if (MPI_Allreduce(
+                &local_rate,
+                &achieved_rate,
+                1,
+                MPI_DOUBLE,
+                MPI_SUM,
+                context->comm_) !=
+            MPI_SUCCESS) {
+            return PETSC_ERR_MPI;
         }
 
         const double rate_residual =
@@ -2644,6 +2651,10 @@ private:
         source_context_{};
     double target_total_molar_rate_mol_per_s_{};
     double initial_bottom_hole_pressure_pa_{};
+    double
+        last_function_local_total_molar_rate_mol_per_s_{};
+    bool
+        last_function_local_total_molar_rate_valid_{};
     int mpi_rank_{-1};
     int mpi_size_{};
     int well_owner_rank_{-1};
