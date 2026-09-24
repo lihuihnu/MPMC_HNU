@@ -961,10 +961,20 @@ public:
         PetscReal reservoir_function_norm =
             0.0;
         error =
-            VecNorm(
-                reservoir_residual_,
-                NORM_2,
-                &reservoir_function_norm);
+            VecAssemblyBegin(
+                reservoir_residual_);
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecAssemblyEnd(
+                    reservoir_residual_);
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecNorm(
+                    reservoir_residual_,
+                    NORM_2,
+                    &reservoir_function_norm);
+        }
         std::optional<
             VariableCardinalityNaturalVariableSnesSolveReport3D>
             reservoir_solve_report;
