@@ -9897,92 +9897,173 @@ void run_fixed_total_molar_rate_control_case(
                 hc0_identity,
                 hc1_identity}};
 
-    // Establish a control target that is explicitly feasible on the rebuilt
-    // 3P chart. Solve the exact 3P reservoir-only system at a reference BHP,
-    // then measure its owner-only whole-well production.
-    auto transition_reference_source =
-        wdp::
-            FixedTotalMolarRateWellSourceEvaluatorContext3D::
-                create(
-                    make_transition_well(
-                        target_reference_bhp_pa),
-                    target_reference_bhp_pa);
-    transition_reference_source
-        .rebind_connection(
-            mesh::GlobalEntityId{
-                UINT64_C(30)},
-            controlled_transition_three_phase_map);
-    transition_reference_source
-        .begin_fixed_bhp_reservoir_evaluation(
-            target_reference_bhp_pa);
-    auto transition_reference_system =
-        make_fixed_total_molar_rate_reservoir_system(
-            rank,
-            schedule,
-            partition,
-            bridge,
-            pattern,
-            audit,
-            &transition_reference_source,
-            &provider,
-            true);
+    // Build a transition-control target from the common fixed-BHP production
+    // interval of the frozen 2P and rebuilt 3P charts. This avoids assuming
+    // that a rate sampled on only one chart is reachable on the other.
+    auto transition_fixed_bhp_rate =
+        [&](double bhp_pa,
+            bool cell30_is_three_phase,
+            std::string_view label) {
+            auto reference_source =
+                wdp::
+                    FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                        create(
+                            make_transition_well(
+                                bhp_pa),
+                            bhp_pa);
+            if (cell30_is_three_phase) {
+                reference_source
+                    .rebind_connection(
+                        mesh::GlobalEntityId{
+                            UINT64_C(30)},
+                        controlled_transition_three_phase_map);
+            }
+            reference_source
+                .begin_fixed_bhp_reservoir_evaluation(
+                    bhp_pa);
 
-    Vec transition_reference_state =
-        nullptr;
-    std::optional<
-        fdp::
-            VariableCardinalityNaturalVariableSnesSolveReport3D>
-        transition_reference_solve;
-    error =
-        transition_reference_system
-            ->solve(
-                &transition_reference_state,
-                &transition_reference_solve);
-    require_collective(
-        error == PETSC_SUCCESS &&
-            transition_reference_state !=
-                nullptr &&
-            transition_reference_solve
-                .has_value() &&
-            static_cast<int>(
-                transition_reference_solve
-                    ->converged_reason) >
-                0 &&
-            transition_reference_system
-                    ->numbering()
-                    .cell(
-                        mesh::LocalIndex{2U})
-                    .phase_count ==
-                3U,
-        "failed to construct stable 3P fixed-BHP reference for controlled restart target");
+            auto reference_system =
+                make_fixed_total_molar_rate_reservoir_system(
+                    rank,
+                    schedule,
+                    partition,
+                    bridge,
+                    pattern,
+                    audit,
+                    &reference_source,
+                    &provider,
+                    cell30_is_three_phase);
 
-    std::uint64_t
-        transition_reference_authoritative_count =
-            0U;
-    const auto transition_reference_rate =
-        global_fixed_bhp_well_production_rate(
-            *transition_reference_system,
-            transition_reference_state,
-            transition_reference_source.well(),
+            Vec reference_state = nullptr;
+            std::optional<
+                fdp::
+                    VariableCardinalityNaturalVariableSnesSolveReport3D>
+                reference_solve;
+            PetscErrorCode reference_error =
+                reference_system
+                    ->solve(
+                        &reference_state,
+                        &reference_solve);
+            require_collective(
+                reference_error ==
+                        PETSC_SUCCESS &&
+                    reference_state !=
+                        nullptr &&
+                    reference_solve
+                        .has_value() &&
+                    static_cast<int>(
+                        reference_solve
+                            ->converged_reason) >
+                        0 &&
+                    reference_system
+                            ->numbering()
+                            .cell(
+                                mesh::LocalIndex{2U})
+                            .phase_count ==
+                        (cell30_is_three_phase
+                             ? 3U
+                             : 2U),
+                std::string{
+                    "failed fixed-BHP transition reference: "} +
+                    std::string{label});
+
+            std::uint64_t
+                authoritative_count = 0U;
+            const auto rate =
+                global_fixed_bhp_well_production_rate(
+                    *reference_system,
+                    reference_state,
+                    reference_source.well(),
+                    bhp_pa,
+                    &authoritative_count);
+            const double total_molar_rate =
+                rate[0] +
+                rate[1] +
+                rate[2];
+
+            require_collective(
+                authoritative_count ==
+                        2U &&
+                    std::isfinite(
+                        total_molar_rate) &&
+                    total_molar_rate >
+                        0.0,
+                std::string{
+                    "invalid fixed-BHP transition production: "} +
+                    std::string{label});
+            require_collective(
+                VecDestroy(
+                    &reference_state) ==
+                    PETSC_SUCCESS,
+                std::string{
+                    "fixed-BHP transition reference cleanup failed: "} +
+                    std::string{label});
+            return total_molar_rate;
+        };
+
+    const double transition_two_phase_rate_at_entry =
+        transition_fixed_bhp_rate(
+            initial_bhp_pa,
+            false,
+            "2P@entry-BHP");
+    const double transition_two_phase_rate_at_reference =
+        transition_fixed_bhp_rate(
             target_reference_bhp_pa,
-            &transition_reference_authoritative_count);
-    const double transition_target_rate =
-        transition_reference_rate[0] +
-        transition_reference_rate[1] +
-        transition_reference_rate[2];
+            false,
+            "2P@reference-BHP");
+    const double transition_three_phase_rate_at_entry =
+        transition_fixed_bhp_rate(
+            initial_bhp_pa,
+            true,
+            "3P@entry-BHP");
+    const double transition_three_phase_rate_at_reference =
+        transition_fixed_bhp_rate(
+            target_reference_bhp_pa,
+            true,
+            "3P@reference-BHP");
+
     require_collective(
-        transition_reference_authoritative_count ==
-                2U &&
+        target_reference_bhp_pa <
+                initial_bhp_pa &&
+            transition_two_phase_rate_at_reference >
+                transition_two_phase_rate_at_entry &&
+            transition_three_phase_rate_at_reference >
+                transition_three_phase_rate_at_entry,
+        "transition fixed-BHP references do not increase production as BHP is lowered");
+
+    const double
+        transition_common_rate_lower =
+            std::max(
+                transition_two_phase_rate_at_entry,
+                transition_three_phase_rate_at_entry);
+    const double
+        transition_common_rate_upper =
+            std::min(
+                transition_two_phase_rate_at_reference,
+                transition_three_phase_rate_at_reference);
+    require_collective(
+        std::isfinite(
+            transition_common_rate_lower) &&
             std::isfinite(
-                transition_target_rate) &&
-            transition_target_rate >
-                0.0,
-        "rebuilt 3P fixed-BHP reference did not produce a usable transition rate target");
+                transition_common_rate_upper) &&
+            transition_common_rate_upper >
+                transition_common_rate_lower,
+        "2P/3P transition charts have no common lower-BHP rate interval");
+
+    const double transition_target_rate =
+        0.5 *
+        (transition_common_rate_lower +
+         transition_common_rate_upper);
     require_collective(
-        VecDestroy(
-            &transition_reference_state) ==
-            PETSC_SUCCESS,
-        "3P controlled-restart reference cleanup failed");
+        transition_target_rate >
+                transition_two_phase_rate_at_entry &&
+            transition_target_rate >
+                transition_three_phase_rate_at_entry &&
+            transition_target_rate <
+                transition_two_phase_rate_at_reference &&
+            transition_target_rate <
+                transition_three_phase_rate_at_reference,
+        "transition target is not strictly inside the common 2P/3P reachable-rate interval");
 
     // Prove the same target has a frozen augmented rate root on both sides of
     // the 2P->3P transition before testing any outer-restart semantics.
