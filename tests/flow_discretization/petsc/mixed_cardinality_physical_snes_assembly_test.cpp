@@ -10027,25 +10027,45 @@ void run_fixed_total_molar_rate_control_case(
         transition_rate_authoritative_count ==
             2U,
         "rate-controlled transition lost owner-only two-connection aggregation");
+    const double
+        transition_rate_residual_tolerance =
+            1.0e-8 *
+            std::max(
+                1.0,
+                std::abs(
+                    target_rate));
+    const double
+        transition_report_rate_residual =
+            transition_rate_report
+                ->accepted_solve
+                ->total_molar_rate_residual_mol_per_s();
+    require_collective(
+        std::abs(
+            transition_report_rate_residual) <=
+            transition_rate_residual_tolerance,
+        std::string{
+            "transitioned augmented rate solve violated control residual: residual="} +
+            std::to_string(
+                transition_report_rate_residual) +
+            ", target=" +
+            std::to_string(
+                target_rate));
     require_collective(
         std::abs(
             transition_rate_total_molar -
             target_rate) <=
-                1.0e-8 *
-                    std::max(
-                        1.0,
-                        std::abs(
-                            target_rate)) &&
-            std::abs(
-                transition_rate_report
-                    ->accepted_solve
-                    ->total_molar_rate_residual_mol_per_s()) <=
-                1.0e-8 *
-                    std::max(
-                        1.0,
-                        std::abs(
-                            target_rate)),
-        "transitioned rate-control whole-well rate did not satisfy the existing rate residual contract");
+            transition_rate_residual_tolerance,
+        std::string{
+            "transitioned committed whole-well rate drifted from control root: actual="} +
+            std::to_string(
+                transition_rate_total_molar) +
+            ", target=" +
+            std::to_string(
+                target_rate) +
+            ", accepted_bhp=" +
+            std::to_string(
+                transition_rate_control
+                    .bottom_hole_pressure_pa));
 
     const auto transition_rate_local_final =
         owned_conserved_totals(
