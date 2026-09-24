@@ -9983,15 +9983,121 @@ void run_fixed_total_molar_rate_control_case(
             .find_connection(
                 mesh::GlobalEntityId{
                     UINT64_C(30)});
+    const bool transition_rate_report_present =
+        transition_rate_report.has_value();
+    const bool transition_rate_accepted =
+        transition_rate_report_present &&
+        transition_rate_report->accepted();
+    const bool transition_rate_record_present =
+        transition_rate_report_present &&
+        transition_rate_report
+            ->accepted_record
+            .has_value();
+    const bool transition_rate_solve_present =
+        transition_rate_report_present &&
+        transition_rate_report
+            ->accepted_solve
+            .has_value();
+    const bool transition_rate_reservoir_report_present =
+        transition_rate_solve_present &&
+        transition_rate_report
+            ->accepted_solve
+            ->reservoir_nonlinear_solve
+            .has_value();
+    const std::string transition_rate_restart_diagnostic =
+        std::string{"error="} +
+        std::to_string(
+            static_cast<int>(error)) +
+        ", report=" +
+        std::to_string(
+            transition_rate_report_present ? 1 : 0) +
+        ", accepted=" +
+        std::to_string(
+            transition_rate_accepted ? 1 : 0) +
+        ", report_restarts=" +
+        std::to_string(
+            transition_rate_report_present
+                ? transition_rate_report
+                      ->phase_transition_restarts
+                : 999U) +
+        ", record=" +
+        std::to_string(
+            transition_rate_record_present ? 1 : 0) +
+        ", record_restarts=" +
+        std::to_string(
+            transition_rate_record_present
+                ? transition_rate_report
+                      ->accepted_record
+                      ->phase_transition_restarts
+                : 999U) +
+        ", scans=" +
+        std::to_string(
+            transition_rate_fixture.scans) +
+        ", rebuilds=" +
+        std::to_string(
+            transition_rate_fixture.rebuild_calls) +
+        ", anchor_rebuild=" +
+        std::to_string(
+            transition_rate_fixture
+                    .accepted_anchor_unchanged_at_rebuild
+                ? 1
+                : 0) +
+        ", anchor_scan=" +
+        std::to_string(
+            transition_rate_fixture
+                    .accepted_anchor_unchanged_at_scan
+                ? 1
+                : 0) +
+        ", previous_totals=" +
+        std::to_string(
+            transition_rate_fixture
+                    .rebuilt_previous_totals_captured
+                ? 1
+                : 0) +
+        ", cell30_phases=" +
+        std::to_string(
+            transition_rate_system
+                ->numbering()
+                .cell(
+                    mesh::LocalIndex{2U})
+                .phase_count) +
+        ", cell60_phases=" +
+        std::to_string(
+            transition_rate_system
+                ->numbering()
+                .cell(
+                    mesh::LocalIndex{5U})
+                .phase_count) +
+        ", control=" +
+        std::to_string(
+            static_cast<int>(
+                transition_rate_control
+                    .control)) +
+        ", solve=" +
+        std::to_string(
+            transition_rate_solve_present ? 1 : 0) +
+        ", reservoir_report=" +
+        std::to_string(
+            transition_rate_reservoir_report_present
+                ? 1
+                : 0) +
+        ", clock=" +
+        std::to_string(
+            transition_rate_clock
+                .accepted_time_seconds()) +
+        ", steps=" +
+        std::to_string(
+            transition_rate_clock
+                .accepted_step_count());
+
     require_collective(
         error == PETSC_SUCCESS &&
-            transition_rate_report
-                .has_value() &&
-            transition_rate_report
-                    ->accepted() &&
+            transition_rate_report_present &&
+            transition_rate_accepted &&
             transition_rate_report
                     ->phase_transition_restarts ==
                 1U &&
+            transition_rate_record_present &&
             transition_rate_report
                     ->accepted_record
                     ->phase_transition_restarts ==
@@ -10023,13 +10129,8 @@ void run_fixed_total_molar_rate_control_case(
                 wdp::
                     FixedTotalMolarRatePhysicalTimestepControlMode3D::
                         fixed_total_molar_rate &&
-            transition_rate_report
-                    ->accepted_solve
-                    .has_value() &&
-            transition_rate_report
-                    ->accepted_solve
-                    ->reservoir_nonlinear_solve
-                    .has_value() &&
+            transition_rate_solve_present &&
+            transition_rate_reservoir_report_present &&
             transition_rate_report
                     ->accepted_solve
                     ->global_scalar_count ==
@@ -10052,7 +10153,9 @@ void run_fixed_total_molar_rate_control_case(
                     ->active_phase_identities()
                     ->phase_count() ==
                 3U,
-        "rate-controlled post-SNES transition did not discard/rebuild/rebind/restart exactly once");
+        std::string{
+            "rate-controlled post-SNES transition invariant failed: "} +
+            transition_rate_restart_diagnostic);
 
     std::uint64_t
         transition_rate_authoritative_count = 0U;
