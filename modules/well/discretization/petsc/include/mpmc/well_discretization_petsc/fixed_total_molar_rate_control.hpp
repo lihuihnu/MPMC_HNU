@@ -829,7 +829,7 @@ public:
             error =
                 SNESSetTolerances(
                     snes,
-                    PetscReal{1.0e-10},
+                    PetscReal{1.0e-8},
                     PetscReal{0.0},
                     PetscReal{0.0},
                     PetscInt{30},
