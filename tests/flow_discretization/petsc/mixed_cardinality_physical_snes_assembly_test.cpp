@@ -9931,7 +9931,14 @@ void run_fixed_total_molar_rate_control_case(
             wdp::
                 FixedTotalMolarRatePhysicalTimestepControlMode3D::
                     fixed_total_molar_rate,
-            initial_bhp_pa};
+            initial_bhp_pa,
+            0U,
+            0U,
+            true,
+            false,
+            {},
+            true,
+            {}};
 
     wdp::
         FixedTotalMolarRatePhysicalTimestepDriverOptions3D
@@ -10200,7 +10207,14 @@ void run_fixed_total_molar_rate_control_case(
             wdp::
                 FixedTotalMolarRatePhysicalTimestepControlMode3D::
                     fixed_total_molar_rate,
-            initial_bhp_pa};
+            initial_bhp_pa,
+            0U,
+            0U,
+            true,
+            false,
+            {},
+            true,
+            {}};
 
     auto transition_switch_options =
         transition_rate_options;
@@ -10455,7 +10469,14 @@ void run_fixed_total_molar_rate_control_case(
             wdp::
                 FixedTotalMolarRatePhysicalTimestepControlMode3D::
                     minimum_bottom_hole_pressure,
-            transition_minimum_bhp_pa};
+            transition_minimum_bhp_pa,
+            0U,
+            0U,
+            true,
+            false,
+            {},
+            true,
+            {}};
 
     auto transition_bhp_options =
         transition_rate_options;
