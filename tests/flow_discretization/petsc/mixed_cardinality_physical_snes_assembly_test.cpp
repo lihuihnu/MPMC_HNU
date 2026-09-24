@@ -4066,7 +4066,8 @@ make_fixed_total_molar_rate_reservoir_system(
             source_context,
     flow::
         Pr76AbsentPhasePotentialExtensionProvider<
-            double>* provider) {
+            double>* provider,
+    bool cell30_is_three_phase = false) {
     if (dispatch_audit == nullptr ||
         source_context == nullptr ||
         provider == nullptr) {
@@ -4077,7 +4078,7 @@ make_fixed_total_molar_rate_reservoir_system(
     auto cells =
         make_controller_cells(
             rank,
-            false,
+            cell30_is_three_phase,
             dispatch_audit);
     auto faces =
         make_face_inputs(
@@ -9889,6 +9890,251 @@ void run_fixed_total_molar_rate_control_case(
                             reboundable30});
         };
 
+    const flow::FrozenActivePhaseIdentityMap
+        controlled_transition_three_phase_map{
+            {
+                aqueous_identity,
+                hc0_identity,
+                hc1_identity}};
+
+    // Establish a control target that is explicitly feasible on the rebuilt
+    // 3P chart. Solve the exact 3P reservoir-only system at a reference BHP,
+    // then measure its owner-only whole-well production.
+    auto transition_reference_source =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    make_transition_well(
+                        target_reference_bhp_pa),
+                    target_reference_bhp_pa);
+    transition_reference_source
+        .rebind_connection(
+            mesh::GlobalEntityId{
+                UINT64_C(30)},
+            controlled_transition_three_phase_map);
+    transition_reference_source
+        .begin_fixed_bhp_reservoir_evaluation(
+            target_reference_bhp_pa);
+    auto transition_reference_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &transition_reference_source,
+            &provider,
+            true);
+
+    Vec transition_reference_state =
+        nullptr;
+    std::optional<
+        fdp::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        transition_reference_solve;
+    error =
+        transition_reference_system
+            ->solve(
+                &transition_reference_state,
+                &transition_reference_solve);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            transition_reference_state !=
+                nullptr &&
+            transition_reference_solve
+                .has_value() &&
+            static_cast<int>(
+                transition_reference_solve
+                    ->converged_reason) >
+                0 &&
+            transition_reference_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                3U,
+        "failed to construct stable 3P fixed-BHP reference for controlled restart target");
+
+    std::uint64_t
+        transition_reference_authoritative_count =
+            0U;
+    const auto transition_reference_rate =
+        global_fixed_bhp_well_production_rate(
+            *transition_reference_system,
+            transition_reference_state,
+            transition_reference_source.well(),
+            target_reference_bhp_pa,
+            &transition_reference_authoritative_count);
+    const double transition_target_rate =
+        transition_reference_rate[0] +
+        transition_reference_rate[1] +
+        transition_reference_rate[2];
+    require_collective(
+        transition_reference_authoritative_count ==
+                2U &&
+            std::isfinite(
+                transition_target_rate) &&
+            transition_target_rate >
+                0.0,
+        "rebuilt 3P fixed-BHP reference did not produce a usable transition rate target");
+    require_collective(
+        VecDestroy(
+            &transition_reference_state) ==
+            PETSC_SUCCESS,
+        "3P controlled-restart reference cleanup failed");
+
+    // Prove the same target has a frozen augmented rate root on both sides of
+    // the 2P->3P transition before testing any outer-restart semantics.
+    auto transition_two_phase_oracle_source =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    make_transition_well(
+                        initial_bhp_pa),
+                    initial_bhp_pa);
+    auto transition_two_phase_oracle_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &transition_two_phase_oracle_source,
+            &provider);
+    std::unique_ptr<
+        wdp::
+            FixedTotalMolarRateWellControlSystem3D>
+        transition_two_phase_oracle_control;
+    error =
+        wdp::
+            FixedTotalMolarRateWellControlSystem3D::
+                create(
+                    PETSC_COMM_WORLD,
+                    transition_two_phase_oracle_system
+                        .get(),
+                    &transition_two_phase_oracle_source,
+                    initial_bhp_pa,
+                    transition_target_rate,
+                    &transition_two_phase_oracle_control);
+    Vec transition_two_phase_oracle_state =
+        nullptr;
+    std::optional<
+        wdp::
+            FixedTotalMolarRateWellControlSolveReport3D>
+        transition_two_phase_oracle_report;
+    if (error == PETSC_SUCCESS) {
+        error =
+            transition_two_phase_oracle_control
+                ->solve(
+                    &transition_two_phase_oracle_state,
+                    &transition_two_phase_oracle_report);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            transition_two_phase_oracle_state !=
+                nullptr &&
+            transition_two_phase_oracle_report
+                .has_value() &&
+            transition_two_phase_oracle_report
+                    ->converged() &&
+            std::abs(
+                transition_two_phase_oracle_report
+                    ->total_molar_rate_residual_mol_per_s()) <=
+                1.0e-8 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            transition_target_rate)) &&
+            transition_two_phase_oracle_report
+                    ->bottom_hole_pressure_pa <
+                initial_bhp_pa,
+        "transition-specific target is not a feasible lower-BHP frozen 2P rate root");
+    const double
+        transition_two_phase_rate_root_bhp_pa =
+            transition_two_phase_oracle_report
+                ->bottom_hole_pressure_pa;
+    require_collective(
+        VecDestroy(
+            &transition_two_phase_oracle_state) ==
+            PETSC_SUCCESS,
+        "2P transition rate-oracle cleanup failed");
+
+    auto transition_three_phase_oracle_source =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    make_transition_well(
+                        initial_bhp_pa),
+                    initial_bhp_pa);
+    transition_three_phase_oracle_source
+        .rebind_connection(
+            mesh::GlobalEntityId{
+                UINT64_C(30)},
+            controlled_transition_three_phase_map);
+    auto transition_three_phase_oracle_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &transition_three_phase_oracle_source,
+            &provider,
+            true);
+    std::unique_ptr<
+        wdp::
+            FixedTotalMolarRateWellControlSystem3D>
+        transition_three_phase_oracle_control;
+    error =
+        wdp::
+            FixedTotalMolarRateWellControlSystem3D::
+                create(
+                    PETSC_COMM_WORLD,
+                    transition_three_phase_oracle_system
+                        .get(),
+                    &transition_three_phase_oracle_source,
+                    initial_bhp_pa,
+                    transition_target_rate,
+                    &transition_three_phase_oracle_control);
+    Vec transition_three_phase_oracle_state =
+        nullptr;
+    std::optional<
+        wdp::
+            FixedTotalMolarRateWellControlSolveReport3D>
+        transition_three_phase_oracle_report;
+    if (error == PETSC_SUCCESS) {
+        error =
+            transition_three_phase_oracle_control
+                ->solve(
+                    &transition_three_phase_oracle_state,
+                    &transition_three_phase_oracle_report);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            transition_three_phase_oracle_state !=
+                nullptr &&
+            transition_three_phase_oracle_report
+                .has_value() &&
+            transition_three_phase_oracle_report
+                    ->converged() &&
+            std::abs(
+                transition_three_phase_oracle_report
+                    ->total_molar_rate_residual_mol_per_s()) <=
+                1.0e-8 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            transition_target_rate)),
+        "transition-specific target is not a feasible frozen 3P rate root");
+    require_collective(
+        VecDestroy(
+            &transition_three_phase_oracle_state) ==
+            PETSC_SUCCESS,
+        "3P transition rate-oracle cleanup failed");
+
     auto transition_rate_source =
         wdp::
             FixedTotalMolarRateWellSourceEvaluatorContext3D::
@@ -9966,7 +10212,7 @@ void run_fixed_total_molar_rate_control_case(
                 PETSC_COMM_WORLD,
                 &transition_rate_system,
                 &transition_rate_source,
-                target_rate,
+                transition_target_rate,
                 {
                     &controlled_well_transition_scan,
                     &transition_rate_fixture,
@@ -10305,7 +10551,7 @@ void run_fixed_total_molar_rate_control_case(
             std::max(
                 1.0,
                 std::abs(
-                    target_rate));
+                    transition_target_rate));
     const double
         transition_report_rate_residual =
             transition_rate_report
@@ -10321,11 +10567,11 @@ void run_fixed_total_molar_rate_control_case(
                 transition_report_rate_residual) +
             ", target=" +
             std::to_string(
-                target_rate));
+                transition_target_rate));
     require_collective(
         std::abs(
             transition_rate_total_molar -
-            target_rate) <=
+            transition_target_rate) <=
             transition_rate_residual_tolerance,
         std::string{
             "transitioned committed whole-well rate drifted from control root: actual="} +
@@ -10333,7 +10579,7 @@ void run_fixed_total_molar_rate_control_case(
                 transition_rate_total_molar) +
             ", target=" +
             std::to_string(
-                target_rate) +
+                transition_target_rate) +
             ", accepted_bhp=" +
             std::to_string(
                 transition_rate_control
@@ -10441,11 +10687,23 @@ void run_fixed_total_molar_rate_control_case(
             true,
             {}};
 
+    const double
+        transition_switch_minimum_bhp_pa =
+            0.5 *
+            (transition_two_phase_rate_root_bhp_pa +
+             initial_bhp_pa);
+    require_collective(
+        transition_switch_minimum_bhp_pa >
+                transition_two_phase_rate_root_bhp_pa &&
+            transition_switch_minimum_bhp_pa <
+                initial_bhp_pa,
+        "transactional switch p_min is not strictly above the feasible 2P rate root");
+
     auto transition_switch_options =
         transition_rate_options;
     transition_switch_options
         .minimum_bottom_hole_pressure_pa =
-        minimum_bhp_pa;
+        transition_switch_minimum_bhp_pa;
 
     std::optional<
         wdp::
@@ -10457,7 +10715,7 @@ void run_fixed_total_molar_rate_control_case(
                 PETSC_COMM_WORLD,
                 &transition_switch_system,
                 &transition_switch_source,
-                target_rate,
+                transition_target_rate,
                 {
                     &controlled_well_transition_scan,
                     &transition_switch_fixture,
@@ -10518,7 +10776,7 @@ void run_fixed_total_molar_rate_control_case(
             transition_switch_fixture
                     .scanned_source_bottom_hole_pressure_pa[
                         0U] ==
-                minimum_bhp_pa &&
+                transition_switch_minimum_bhp_pa &&
             transition_switch_fixture
                 .accepted_anchor_unchanged_at_rebuild &&
             transition_switch_fixture
@@ -10577,7 +10835,7 @@ void run_fixed_total_molar_rate_control_case(
                     .has_value() &&
                 std::abs(
                     transition_switch_total_molar_rate -
-                    target_rate) <=
+                    transition_target_rate) <=
                     transition_rate_residual_tolerance &&
                 std::abs(
                     transition_switch_report
@@ -10593,7 +10851,7 @@ void run_fixed_total_molar_rate_control_case(
                             minimum_bottom_hole_pressure &&
                 transition_switch_control
                         .bottom_hole_pressure_pa ==
-                    minimum_bhp_pa &&
+                    transition_switch_minimum_bhp_pa &&
                 transition_switch_report
                         ->accepted_fixed_bhp_solve
                         .has_value(),
@@ -10719,7 +10977,7 @@ void run_fixed_total_molar_rate_control_case(
                 PETSC_COMM_WORLD,
                 &transition_bhp_system,
                 &transition_bhp_source,
-                target_rate,
+                transition_target_rate,
                 {
                     &controlled_well_transition_scan,
                     &transition_bhp_fixture,
