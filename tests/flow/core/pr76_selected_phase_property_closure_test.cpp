@@ -16,6 +16,8 @@
 bool pr76_selected_phase_property_closure_header();
 bool pr76_methane_ethane_propane_properties_header();
 void pr76_methane_ethane_propane_provider_regression();
+bool pr76_li_firoozabadi_sour_gas_properties_header();
+void pr76_li_firoozabadi_sour_gas_provider_regression();
 
 namespace {
 
@@ -746,6 +748,10 @@ int main() {
         require(
             pr76_methane_ethane_propane_properties_header(),
             "real PR76 property public header probe failed");
+        pr76_li_firoozabadi_sour_gas_provider_regression();
+        require(
+            pr76_li_firoozabadi_sour_gas_properties_header(),
+            "Li-Firoozabadi sour-gas property public header probe failed");
         invalid_inputs();
         std::cout
             << "[PASS] PR76 selected-phase property closure"

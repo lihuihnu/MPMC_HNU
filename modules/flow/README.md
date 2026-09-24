@@ -4392,3 +4392,31 @@ the existing production multi-timestep loop.
 
 This slice does not implement Peaceman well index, BHP/rate control, well
 unknowns, boundary conditions, source schedules or facilities.
+
+
+### 47.25 Li-Firoozabadi six-component sourced flow-property benchmark
+
+The flow thermodynamics boundary now also exposes
+
+`<mpmc/flow/pr76_li_firoozabadi_sour_gas_properties.hpp>`
+
+for the repository's Li-Firoozabadi-2012 six-component acid-gas PR76 dataset.
+It does not introduce a new transport or caloric law: it reuses the established
+selected-PR76 + Stiel-Thodos/Herning-Zipperer/Lohrenz-Bray-Clark + sourced
+ideal-gas-Cp + PR-departure structure, with NIST low-temperature data restricted
+to the explicit 100-298.15 K interval.
+
+The first consumer is a one-cell stationary non-isothermal serial PETSc
+short-step at the independent 20-bar / 178.8-K three-phase equilibrium.  Its
+fixed BHP equals phase pressure, so the independently expected well rate is
+exactly zero and all six component inventories plus total internal energy are
+invariants of the 1-s backward-Euler step.  NIST SRD 30 low-temperature quartz
+data supply the stationary-rock thermal derivative; SPE1/Odeh supplies the
+Cartesian cell/porosity/permeability/well-radius engineering inputs.
+
+The regression's local `kr=S` callback is explicitly software-structural only.
+Because the benchmark has no internal faces and zero well drawdown, that callback
+does not enter any externally validated rate or inventory value and is not a
+physical V-L1-L2 relative-permeability claim.  Full provenance and the independent
+oracle contract are recorded in
+`tests/flow_discretization/petsc/pr76_li_firoozabadi_sour_gas_short_step.md`.

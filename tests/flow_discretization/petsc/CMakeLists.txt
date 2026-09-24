@@ -20,6 +20,7 @@ add_executable(
     variable_cardinality_snes_assembly_test.cpp
     mixed_cardinality_physical_snes_assembly_test.cpp
     pr76_production_fully_implicit_transient_test.cpp
+    pr76_li_firoozabadi_sour_gas_short_step_test.cpp
     adaptive_timestep_controller_test.cpp
     post_snes_pt_flash_phase_transition_scanner_test.cpp
     distributed_component_conservation_header.cpp

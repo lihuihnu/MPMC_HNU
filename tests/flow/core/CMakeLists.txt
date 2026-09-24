@@ -83,11 +83,14 @@ add_executable(
     pr76_selected_phase_property_closure_test.cpp
     pr76_selected_phase_property_closure_header.cpp
     pr76_methane_ethane_propane_properties_test.cpp
-    pr76_methane_ethane_propane_properties_header.cpp)
+    pr76_methane_ethane_propane_properties_header.cpp
+    pr76_li_firoozabadi_sour_gas_properties_test.cpp
+    pr76_li_firoozabadi_sour_gas_properties_header.cpp)
 target_link_libraries(
     mpmc_flow_pr76_selected_phase_property_tests
     PRIVATE
         mpmc::flow_thermodynamics
+        mpmc::flash
         mpmc::ad)
 
 add_executable(
