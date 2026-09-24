@@ -63,11 +63,25 @@ add_executable(
 configure_well_test_target(
     mpmc_well_peaceman_header_self_contained)
 
+add_executable(
+    mpmc_well_control_policy_tests
+    single_well_control_policy_test.cpp)
+configure_well_test_target(
+    mpmc_well_control_policy_tests)
+
+add_executable(
+    mpmc_well_control_policy_header_self_contained
+    single_well_control_policy_header_self_contained.cpp)
+configure_well_test_target(
+    mpmc_well_control_policy_header_self_contained)
+
 add_custom_target(
     mpmc_well_core_all
     DEPENDS
         mpmc_well_peaceman_tests
-        mpmc_well_peaceman_header_self_contained)
+        mpmc_well_peaceman_header_self_contained
+        mpmc_well_control_policy_tests
+        mpmc_well_control_policy_header_self_contained)
 
 foreach(case IN ITEMS
     isotropic_square_limit
@@ -92,4 +106,32 @@ set_tests_properties(
     discretization.core.well.peaceman_well_index_3d.header_self_contained
     PROPERTIES
         LABELS "well;well.core;peaceman;header"
+        TIMEOUT 30)
+
+
+foreach(case IN ITEMS
+    rate_hold_and_switch
+    rate_pressure_equality_boundary
+    capacity_deadband_and_equality
+    pressure_deadband_and_equality
+    disabled_reactivation
+    accepted_state
+    invalid_policy)
+    add_test(
+        NAME well.core.single_well_control_policy.${case}
+        COMMAND mpmc_well_control_policy_tests ${case})
+    set_tests_properties(
+        well.core.single_well_control_policy.${case}
+        PROPERTIES
+            LABELS "well;well.core;control_policy;unit"
+            TIMEOUT 30)
+endforeach()
+
+add_test(
+    NAME well.core.single_well_control_policy.header_self_contained
+    COMMAND mpmc_well_control_policy_header_self_contained)
+set_tests_properties(
+    well.core.single_well_control_policy.header_self_contained
+    PROPERTIES
+        LABELS "well;well.core;control_policy;header"
         TIMEOUT 30)

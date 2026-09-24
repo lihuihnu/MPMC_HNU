@@ -295,3 +295,29 @@ reverse transition: reactivation is considered only when the *entry accepted*
 control mode was already minimum-BHP. This prevents same-step control
 oscillation. The accepted rate mode then persists normally into subsequent
 physical timesteps.
+
+
+### PETSc-independent single-well control arbitration kernel
+
+The `rate <-> minimum-BHP` control policy is now owned by the core
+`mpmc::well` module in `single_well_control_policy.hpp`. The kernel contains
+no PETSc, MPI, reservoir-assembly or Peaceman-evaluation types. It owns control
+mode, accepted control state, policy validation, and the three pure arbitration
+decisions used by the production driver.
+
+The comparison semantics are frozen and unit tested: `p_rate < p_min` switches
+to BHP while equality remains rate controlled; `q_bhp >= q_target + delta_q`
+permits a rate reactivation probe including equality; and
+`p_rate >= p_min + delta_p` accepts reactivated rate control including
+equality.
+
+The PETSc physical-timestep driver retains execution responsibilities only:
+constructing and solving candidates, owner-only source evaluation, MPI
+reduction, adaptive retry/cutback and transactional reservoir/time commit. It
+passes scalar candidate summaries to the core arbitration kernel and consumes
+the returned decisions. Existing PETSc-facing control-mode and accepted-state
+type names are compatibility aliases to the core types.
+
+A separate well-core target tests hold/switch decisions, capacity and pressure
+deadbands, all equality boundaries, disabled reactivation, accepted-state
+construction and invalid policy configuration without PETSc or MPI.

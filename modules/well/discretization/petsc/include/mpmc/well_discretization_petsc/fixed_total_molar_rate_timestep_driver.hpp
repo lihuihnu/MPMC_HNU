@@ -2,6 +2,7 @@
 #define MPMC_WELL_DISCRETIZATION_PETSC_FIXED_TOTAL_MOLAR_RATE_TIMESTEP_DRIVER_HPP
 
 #include <mpmc/flow_discretization_petsc/accepted_physical_time.hpp>
+#include <mpmc/well/single_well_control_policy.hpp>
 #include <mpmc/well_discretization_petsc/fixed_total_molar_rate_control.hpp>
 
 #include <petscvec.h>
@@ -12,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 
@@ -48,54 +50,11 @@ struct FixedTotalMolarRatePhysicalTimestepDriverOptions3D {
         minimum_bhp_release_pressure_margin_pa;
 };
 
-enum class FixedTotalMolarRatePhysicalTimestepControlMode3D {
-    fixed_total_molar_rate,
-    minimum_bottom_hole_pressure
-};
+using FixedTotalMolarRatePhysicalTimestepControlMode3D =
+    mpmc::well::SingleWellControlMode;
 
-struct AcceptedFixedTotalMolarRateWellControlState3D {
-    FixedTotalMolarRatePhysicalTimestepControlMode3D
-        control{
-            FixedTotalMolarRatePhysicalTimestepControlMode3D::
-                fixed_total_molar_rate};
-    double bottom_hole_pressure_pa{};
-
-    [[nodiscard]] static
-    AcceptedFixedTotalMolarRateWellControlState3D
-    fixed_total_molar_rate(
-        double bottom_hole_pressure_pa) {
-        if (!std::isfinite(bottom_hole_pressure_pa) ||
-            !(bottom_hole_pressure_pa > 0.0)) {
-            throw std::invalid_argument(
-                "mpmc::well_discretization_petsc: accepted rate-control BHP must be finite and positive");
-        }
-        return {
-            FixedTotalMolarRatePhysicalTimestepControlMode3D::
-                fixed_total_molar_rate,
-            bottom_hole_pressure_pa};
-    }
-
-    [[nodiscard]] static
-    AcceptedFixedTotalMolarRateWellControlState3D
-    minimum_bottom_hole_pressure(
-        double bottom_hole_pressure_pa) {
-        if (!std::isfinite(bottom_hole_pressure_pa) ||
-            !(bottom_hole_pressure_pa > 0.0)) {
-            throw std::invalid_argument(
-                "mpmc::well_discretization_petsc: accepted minimum-BHP must be finite and positive");
-        }
-        return {
-            FixedTotalMolarRatePhysicalTimestepControlMode3D::
-                minimum_bottom_hole_pressure,
-            bottom_hole_pressure_pa};
-    }
-
-    [[nodiscard]] bool valid() const noexcept {
-        return std::isfinite(
-                   bottom_hole_pressure_pa) &&
-            bottom_hole_pressure_pa > 0.0;
-    }
-};
+using AcceptedFixedTotalMolarRateWellControlState3D =
+    mpmc::well::AcceptedSingleWellControlState;
 
 struct FixedTotalMolarRatePhysicalTimestepDriverReport3D {
     mpmc::flow_discretization_petsc::
@@ -196,6 +155,8 @@ struct DriverContext3D {
             reservoir_system{};
     FixedTotalMolarRateWellSourceEvaluatorContext3D*
         source_context{};
+    mpmc::well::SingleWellControlPolicy
+        control_policy;
     double target_total_molar_rate_mol_per_s{};
     double entry_bottom_hole_pressure_pa{};
     FixedTotalMolarRatePhysicalTimestepControlMode3D
@@ -352,11 +313,8 @@ restore_entry(
 minimum_bhp_reactivation_enabled(
     const DriverContext3D& context) noexcept {
     return context
-               .minimum_bhp_release_rate_margin_mol_per_s
-               .has_value() &&
-        context
-            .minimum_bhp_release_pressure_margin_pa
-            .has_value();
+        .control_policy
+        .minimum_bhp_reactivation_enabled();
 }
 
 [[nodiscard]] inline PetscErrorCode
@@ -543,16 +501,24 @@ try_reactivate_rate_control(
         ->minimum_bhp_probe_total_molar_rate_mol_per_s =
         probe_rate;
 
-    const double release_rate_threshold =
-        context
-            ->target_total_molar_rate_mol_per_s +
-        rate_margin;
-    if (!std::isfinite(
-            release_rate_threshold)) {
+    mpmc::well::
+        SingleWellMinimumBhpProbeDecision
+            probe_decision;
+    try {
+        probe_decision =
+            mpmc::well::
+                decide_single_well_minimum_bhp_probe(
+                    context->control_policy,
+                    probe_rate);
+    } catch (const std::overflow_error&) {
         return PETSC_ERR_FP;
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
     }
-    if (probe_rate <
-        release_rate_threshold) {
+    if (probe_decision ==
+        mpmc::well::
+            SingleWellMinimumBhpProbeDecision::
+                accept_minimum_bottom_hole_pressure) {
         return PETSC_SUCCESS;
     }
 
@@ -629,19 +595,30 @@ try_reactivate_rate_control(
         rate_report
             ->line_search_direction_changes;
 
-    const double release_pressure_threshold =
-        minimum_bhp +
-        pressure_margin;
-    if (!std::isfinite(
-            release_pressure_threshold)) {
+    mpmc::well::
+        SingleWellRateReactivationDecision
+            reactivation_decision;
+    try {
+        reactivation_decision =
+            mpmc::well::
+                decide_single_well_rate_reactivation_candidate(
+                    context->control_policy,
+                    rate_report
+                        ->bottom_hole_pressure_pa);
+    } catch (const std::overflow_error&) {
         (void)VecDestroy(
             &rate_solution);
         return PETSC_ERR_FP;
+    } catch (...) {
+        (void)VecDestroy(
+            &rate_solution);
+        return PETSC_ERR_ARG_INCOMP;
     }
 
-    if (rate_report
-            ->bottom_hole_pressure_pa <
-        release_pressure_threshold) {
+    if (reactivation_decision ==
+        mpmc::well::
+            SingleWellRateReactivationDecision::
+                keep_minimum_bottom_hole_pressure) {
         context
             ->discarded_rate_reactivation_candidate =
             *rate_report;
@@ -925,13 +902,26 @@ attempt(
         return PETSC_ERR_PLIB;
     }
 
-    if (context
-            ->minimum_bottom_hole_pressure_pa
-            .has_value() &&
-        solve_report
-                ->bottom_hole_pressure_pa <
-            *context
-                 ->minimum_bottom_hole_pressure_pa) {
+    mpmc::well::
+        SingleWellRateCandidateDecision
+            rate_candidate_decision;
+    try {
+        rate_candidate_decision =
+            mpmc::well::
+                decide_single_well_rate_candidate(
+                    context->control_policy,
+                    solve_report
+                        ->bottom_hole_pressure_pa);
+    } catch (...) {
+        (void)VecDestroy(
+            &solution);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    if (rate_candidate_decision ==
+        mpmc::well::
+            SingleWellRateCandidateDecision::
+                solve_minimum_bottom_hole_pressure) {
         const PetscInt rate_iterations =
             solve_report
                 ->nonlinear_iterations;
@@ -1158,18 +1148,23 @@ commit(
         return PETSC_ERR_ARG_INCOMP;
     }
 
-    context
-        ->accepted_control_state
-        ->control =
-        fixed_bhp
-            ? FixedTotalMolarRatePhysicalTimestepControlMode3D::
-                  minimum_bottom_hole_pressure
-            : FixedTotalMolarRatePhysicalTimestepControlMode3D::
-                  fixed_total_molar_rate;
-    context
-        ->accepted_control_state
-        ->bottom_hole_pressure_pa =
-        accepted_bhp;
+    try {
+        *context
+             ->accepted_control_state =
+            mpmc::well::
+                make_accepted_single_well_control_state(
+                    context->control_policy,
+                    fixed_bhp
+                        ? mpmc::well::
+                              SingleWellControlMode::
+                                  minimum_bottom_hole_pressure
+                        : mpmc::well::
+                              SingleWellControlMode::
+                                  fixed_total_molar_rate,
+                    accepted_bhp);
+    } catch (...) {
+        return PETSC_ERR_PLIB;
+    }
     context->accepted_record =
         std::move(accepted_record);
 
@@ -1261,52 +1256,47 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
             ->control;
     const double entry_dt =
         clock->next_timestep_seconds();
-    if (!accepted_control_state->valid() ||
-        !std::isfinite(
-            target_total_molar_rate_mol_per_s) ||
-        !(target_total_molar_rate_mol_per_s >
-          0.0) ||
-        (options
-             .minimum_bottom_hole_pressure_pa
-             .has_value() &&
-         (!std::isfinite(
-              *options
-                   .minimum_bottom_hole_pressure_pa) ||
-          !(*options
-                 .minimum_bottom_hole_pressure_pa >
-            0.0)))) {
+    if (!accepted_control_state->valid()) {
         return PETSC_ERR_ARG_OUTOFRANGE;
     }
-    const bool release_rate_configured =
-        options
-            .minimum_bhp_release_rate_margin_mol_per_s
-            .has_value();
-    const bool release_pressure_configured =
-        options
-            .minimum_bhp_release_pressure_margin_pa
-            .has_value();
-    if (release_rate_configured !=
-            release_pressure_configured ||
-        (release_rate_configured &&
-         !options
-              .minimum_bottom_hole_pressure_pa
-              .has_value())) {
+    const auto policy_validation =
+        mpmc::well::
+            validate_single_well_control_policy(
+                target_total_molar_rate_mol_per_s,
+                options
+                    .minimum_bottom_hole_pressure_pa,
+                options
+                    .minimum_bhp_release_rate_margin_mol_per_s,
+                options
+                    .minimum_bhp_release_pressure_margin_pa);
+    if (policy_validation ==
+        mpmc::well::
+            SingleWellControlPolicyValidationStatus::
+                value_out_of_range) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    if (policy_validation ==
+        mpmc::well::
+            SingleWellControlPolicyValidationStatus::
+                inconsistent_configuration) {
         return PETSC_ERR_ARG_INCOMP;
     }
-    if (release_rate_configured &&
-        (!std::isfinite(
-             *options
-                  .minimum_bhp_release_rate_margin_mol_per_s) ||
-         !(*options
-                .minimum_bhp_release_rate_margin_mol_per_s >
-           0.0) ||
-         !std::isfinite(
-             *options
-                  .minimum_bhp_release_pressure_margin_pa) ||
-         !(*options
-                .minimum_bhp_release_pressure_margin_pa >
-           0.0))) {
-        return PETSC_ERR_ARG_OUTOFRANGE;
+
+    mpmc::well::SingleWellControlPolicy
+        control_policy;
+    try {
+        control_policy =
+            mpmc::well::
+                make_single_well_control_policy(
+                    target_total_molar_rate_mol_per_s,
+                    options
+                        .minimum_bottom_hole_pressure_pa,
+                    options
+                        .minimum_bhp_release_rate_margin_mol_per_s,
+                    options
+                        .minimum_bhp_release_pressure_margin_pa);
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
     }
     if (entry_control ==
             FixedTotalMolarRatePhysicalTimestepControlMode3D::
@@ -1330,6 +1320,8 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
     DriverContext3D context;
     context.comm =
         comm;
+    context.control_policy =
+        control_policy;
     context.reservoir_system =
         reservoir_system;
     context.source_context =
