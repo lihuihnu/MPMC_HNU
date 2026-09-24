@@ -10014,6 +10014,128 @@ void run_fixed_total_molar_rate_control_case(
         ", accepted=" +
         std::to_string(
             transition_rate_accepted ? 1 : 0) +
+        ", adaptive_outcome=" +
+        std::to_string(
+            transition_rate_report_present
+                ? static_cast<int>(
+                      transition_rate_report
+                          ->adaptive
+                          .outcome)
+                : -999) +
+        ", adaptive_retries=" +
+        std::to_string(
+            transition_rate_report_present
+                ? transition_rate_report
+                      ->adaptive
+                      .retries
+                : 999U) +
+        ", adaptive_attempts=" +
+        std::to_string(
+            transition_rate_report_present
+                ? transition_rate_report
+                      ->adaptive
+                      .attempts
+                      .size()
+                : 999U) +
+        ", attempt_outcome=" +
+        std::to_string(
+            transition_rate_report_present &&
+                    !transition_rate_report
+                         ->adaptive
+                         .attempts
+                         .empty()
+                ? static_cast<int>(
+                      transition_rate_report
+                          ->adaptive
+                          .attempts
+                          .back()
+                          .result
+                          .outcome)
+                : -999) +
+        ", attempt_decision=" +
+        std::to_string(
+            transition_rate_report_present &&
+                    !transition_rate_report
+                         ->adaptive
+                         .attempts
+                         .empty()
+                ? static_cast<int>(
+                      transition_rate_report
+                          ->adaptive
+                          .attempts
+                          .back()
+                          .decision)
+                : -999) +
+        ", attempt_nonlinear_iterations=" +
+        std::to_string(
+            transition_rate_report_present &&
+                    !transition_rate_report
+                         ->adaptive
+                         .attempts
+                         .empty()
+                ? transition_rate_report
+                      ->adaptive
+                      .attempts
+                      .back()
+                      .result
+                      .nonlinear_iterations
+                : -999) +
+        ", attempt_function_domain_errors=" +
+        std::to_string(
+            transition_rate_report_present &&
+                    !transition_rate_report
+                         ->adaptive
+                         .attempts
+                         .empty()
+                ? transition_rate_report
+                      ->adaptive
+                      .attempts
+                      .back()
+                      .result
+                      .function_domain_errors
+                : -999) +
+        ", attempt_jacobian_domain_errors=" +
+        std::to_string(
+            transition_rate_report_present &&
+                    !transition_rate_report
+                         ->adaptive
+                         .attempts
+                         .empty()
+                ? transition_rate_report
+                      ->adaptive
+                      .attempts
+                      .back()
+                      .result
+                      .jacobian_domain_errors
+                : -999) +
+        ", attempt_line_search_changes=" +
+        std::to_string(
+            transition_rate_report_present &&
+                    !transition_rate_report
+                         ->adaptive
+                         .attempts
+                         .empty()
+                ? transition_rate_report
+                      ->adaptive
+                      .attempts
+                      .back()
+                      .result
+                      .line_search_direction_changes
+                : -999) +
+        ", attempt_transition_restarts=" +
+        std::to_string(
+            transition_rate_report_present &&
+                    !transition_rate_report
+                         ->adaptive
+                         .attempts
+                         .empty()
+                ? transition_rate_report
+                      ->adaptive
+                      .attempts
+                      .back()
+                      .result
+                      .phase_transition_restarts
+                : 999U) +
         ", report_restarts=" +
         std::to_string(
             transition_rate_report_present
