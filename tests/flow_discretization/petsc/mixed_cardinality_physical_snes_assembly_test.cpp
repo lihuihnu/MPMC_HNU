@@ -4276,6 +4276,137 @@ owned_conserved_totals(
     return totals;
 }
 
+std::array<double, 4>
+global_fixed_bhp_well_production_rate(
+    const fdp::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&
+            system,
+    Vec state,
+    const wdp::
+        FixedBhpMultiConnectionWellSourceEvaluatorContext3D&
+            well_context,
+    double bottom_hole_pressure_pa,
+    std::uint64_t*
+        authoritative_connection_count) {
+    if (state == nullptr ||
+        authoritative_connection_count ==
+            nullptr ||
+        !std::isfinite(
+            bottom_hole_pressure_pa) ||
+        !(bottom_hole_pressure_pa > 0.0)) {
+        throw std::invalid_argument(
+            "invalid fixed-BHP well-rate probe input");
+    }
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        current;
+    std::vector<double>
+        porosities;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    if (system
+            .evaluate_local_cells_for_phase_transition(
+                state,
+                &current,
+                &porosities,
+                &status) !=
+            PETSC_SUCCESS ||
+        status !=
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success ||
+        current.size() !=
+            porosities.size()) {
+        throw std::runtime_error(
+            "failed to evaluate fixed-BHP well-rate probe state");
+    }
+
+    std::array<double, 4>
+        local_rate{};
+    std::uint64_t
+        local_count = 0U;
+    for (std::size_t local = 0U;
+         local < current.size();
+         ++local) {
+        const auto& record =
+            system.numbering().cell(
+                mesh::LocalIndex{
+                    static_cast<
+                        mesh::LocalIndex::value_type>(
+                            local)});
+        if (record.owner_rank !=
+            system.numbering().local_rank()) {
+            continue;
+        }
+        const auto* connection =
+            well_context.find_connection(
+                record.cell_global);
+        if (connection == nullptr) {
+            continue;
+        }
+        if (!current[local].has_value()) {
+            throw std::runtime_error(
+                "authoritative fixed-BHP connection has no current cell state");
+        }
+
+        const auto source =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    connection
+                        ->with_bottom_hole_pressure(
+                            bottom_hole_pressure_pa),
+                    *current[local]);
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            local_rate[component] -=
+                source
+                    .cell_source
+                    .component_molar_rate_mol_per_s[
+                        component];
+        }
+        local_rate[3] -=
+            source
+                .cell_source
+                .energy_rate_w;
+        ++local_count;
+    }
+
+    std::array<double, 4>
+        global_rate{};
+    std::uint64_t
+        global_count = 0U;
+    if (MPI_Allreduce(
+            local_rate.data(),
+            global_rate.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) !=
+            MPI_SUCCESS ||
+        MPI_Allreduce(
+            &local_count,
+            &global_count,
+            1,
+            MPI_UINT64_T,
+            MPI_SUM,
+            PETSC_COMM_WORLD) !=
+            MPI_SUCCESS) {
+        throw std::runtime_error(
+            "failed to reduce fixed-BHP well-rate probe");
+    }
+
+    *authoritative_connection_count =
+        global_count;
+    return global_rate;
+}
+
+
 void run_rebound_fixed_bhp_physical_timestep(
     int rank,
     std::unique_ptr<
@@ -8751,6 +8882,580 @@ void run_fixed_total_molar_rate_control_case(
                     .current_bottom_hole_pressure_pa() ==
                 minimum_bhp_pa,
         "rejected persisted minimum-BHP timestep mutated accepted control state/time/history");
+
+    // Build an independent accepted minimum-BHP baseline and measure its
+    // p_min capacity without committing it. The guarded reactivation target is
+    // then chosen strictly below that capacity, so both release gates can be
+    // exercised without introducing schedule logic into the production API.
+    auto reactivation_source_context =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    multi_context,
+                    minimum_bhp_pa);
+    auto reactivation_reservoir_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &reactivation_source_context,
+            &provider);
+
+    constexpr double reactivation_dt_seconds =
+        0.25;
+    require_collective(
+        reactivation_reservoir_system !=
+                nullptr &&
+            reactivation_reservoir_system
+                    ->set_trial_timestep_seconds(
+                        reactivation_dt_seconds) ==
+                PETSC_SUCCESS,
+        "failed to prepare minimum-BHP reactivation baseline");
+
+    reactivation_source_context
+        .begin_fixed_bhp_reservoir_evaluation(
+            minimum_bhp_pa);
+    Vec reactivation_probe_state = nullptr;
+    std::optional<
+        fdp::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        reactivation_probe_solve;
+    error =
+        reactivation_reservoir_system
+            ->solve(
+                &reactivation_probe_state,
+                &reactivation_probe_solve);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            reactivation_probe_state !=
+                nullptr &&
+            reactivation_probe_solve
+                .has_value(),
+        "failed to solve independent minimum-BHP capacity oracle");
+
+    std::uint64_t
+        reactivation_probe_authoritative_count = 0U;
+    const auto reactivation_probe_rate =
+        global_fixed_bhp_well_production_rate(
+            *reactivation_reservoir_system,
+            reactivation_probe_state,
+            multi_context,
+            minimum_bhp_pa,
+            &reactivation_probe_authoritative_count);
+    const double
+        reactivation_probe_total_molar_rate =
+            reactivation_probe_rate[0] +
+            reactivation_probe_rate[1] +
+            reactivation_probe_rate[2];
+    require_collective(
+        reactivation_probe_authoritative_count ==
+                2U &&
+            std::isfinite(
+                reactivation_probe_total_molar_rate) &&
+            reactivation_probe_total_molar_rate >
+                0.0,
+        "minimum-BHP capacity oracle is not a positive two-connection production rate");
+
+    const double reactivation_target_rate =
+        0.50 *
+        reactivation_probe_total_molar_rate;
+    const double reactivation_rate_margin =
+        0.10 *
+        reactivation_probe_total_molar_rate;
+    constexpr double
+        reactivation_pressure_margin_pa =
+            1.0e-3;
+
+    const auto reactivation_local_previous_total =
+        owned_conserved_totals(
+            *reactivation_reservoir_system,
+            reactivation_reservoir_system
+                ->initial_state());
+    std::array<double, 4>
+        reactivation_global_previous_total{};
+    require_collective(
+        MPI_Allreduce(
+            reactivation_local_previous_total.data(),
+            reactivation_global_previous_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce reactivation previous conserved totals");
+
+    auto reactivation_control_state =
+        wdp::
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                minimum_bottom_hole_pressure(
+                    minimum_bhp_pa);
+    fdp::AcceptedPhysicalTimeClock3D
+        reactivation_clock{
+            0.0,
+            reactivation_dt_seconds};
+    wdp::
+        FixedTotalMolarRatePhysicalTimestepDriverOptions3D
+        reactivation_options;
+    reactivation_options.adaptive
+        .minimum_timestep_seconds =
+        reactivation_dt_seconds;
+    reactivation_options.adaptive
+        .maximum_timestep_seconds =
+        reactivation_dt_seconds;
+    reactivation_options.adaptive
+        .maximum_retries =
+        1U;
+    reactivation_options
+        .minimum_bottom_hole_pressure_pa =
+        minimum_bhp_pa;
+    reactivation_options
+        .minimum_bhp_release_rate_margin_mol_per_s =
+        reactivation_rate_margin;
+    reactivation_options
+        .minimum_bhp_release_pressure_margin_pa =
+        reactivation_pressure_margin_pa;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        reactivation_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                reactivation_reservoir_system.get(),
+                &reactivation_source_context,
+                reactivation_target_rate,
+                reactivation_options,
+                &reactivation_clock,
+                &reactivation_control_state,
+                &reactivation_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            reactivation_report.has_value() &&
+            reactivation_report->accepted() &&
+            reactivation_report
+                    ->entry_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            reactivation_report
+                    ->accepted_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        fixed_total_molar_rate &&
+            reactivation_report
+                    ->minimum_bhp_probe_total_molar_rate_mol_per_s
+                    .has_value() &&
+            reactivation_report
+                    ->minimum_bhp_to_rate_reactivation_attempted &&
+            reactivation_report
+                    ->minimum_bhp_to_rate_reactivation_accepted &&
+            reactivation_report
+                    ->discarded_minimum_bhp_candidate
+                    .has_value() &&
+            !reactivation_report
+                 ->discarded_rate_reactivation_candidate
+                 .has_value() &&
+            reactivation_report
+                    ->accepted_solve
+                    .has_value() &&
+            !reactivation_report
+                 ->accepted_fixed_bhp_solve
+                 .has_value() &&
+            reactivation_report
+                    ->accepted_solve
+                    ->bottom_hole_pressure_pa >=
+                minimum_bhp_pa +
+                    reactivation_pressure_margin_pa &&
+            std::abs(
+                reactivation_report
+                    ->accepted_solve
+                    ->total_molar_rate_residual_mol_per_s()) <=
+                1.0e-8 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            reactivation_target_rate)) &&
+            reactivation_control_state
+                    .control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        fixed_total_molar_rate &&
+            reactivation_control_state
+                    .bottom_hole_pressure_pa ==
+                reactivation_report
+                    ->accepted_solve
+                    ->bottom_hole_pressure_pa &&
+            reactivation_clock
+                    .accepted_time_seconds() ==
+                reactivation_dt_seconds &&
+            reactivation_clock
+                    .accepted_step_count() ==
+                1U,
+        "minimum-BHP feasibility probe did not reactivate fixed-total-molar-rate control through both hysteresis guards");
+
+    near_collective(
+        *reactivation_report
+             ->minimum_bhp_probe_total_molar_rate_mol_per_s,
+        reactivation_probe_total_molar_rate,
+        2.0e-8,
+        2.0e-10);
+
+    std::uint64_t
+        reactivation_final_authoritative_count = 0U;
+    const auto reactivation_final_rate =
+        global_fixed_bhp_well_production_rate(
+            *reactivation_reservoir_system,
+            reactivation_reservoir_system
+                ->initial_state(),
+            multi_context,
+            reactivation_control_state
+                .bottom_hole_pressure_pa,
+            &reactivation_final_authoritative_count);
+    const double
+        reactivation_final_total_molar_rate =
+            reactivation_final_rate[0] +
+            reactivation_final_rate[1] +
+            reactivation_final_rate[2];
+    require_collective(
+        reactivation_final_authoritative_count ==
+                2U,
+        "reactivated rate-control state lost owner-only two-connection aggregation");
+    near_collective(
+        reactivation_final_total_molar_rate,
+        reactivation_target_rate,
+        1.0e-8,
+        1.0e-10);
+
+    const auto reactivation_local_final_total =
+        owned_conserved_totals(
+            *reactivation_reservoir_system,
+            reactivation_reservoir_system
+                ->initial_state());
+    std::array<double, 4>
+        reactivation_global_final_total{};
+    require_collective(
+        MPI_Allreduce(
+            reactivation_local_final_total.data(),
+            reactivation_global_final_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce reactivated rate-control final conserved totals");
+    for (std::size_t quantity = 0U;
+         quantity < 4U;
+         ++quantity) {
+        near_collective(
+            reactivation_global_final_total[
+                quantity],
+            reactivation_global_previous_total[
+                quantity] -
+                reactivation_dt_seconds *
+                    reactivation_final_rate[
+                        quantity],
+            3.0e-7,
+            quantity < 3U
+                ? 3.0e-8
+                : 3.0e-7);
+    }
+
+    Vec reactivation_probe_difference = nullptr;
+    error =
+        VecDuplicate(
+            reactivation_reservoir_system
+                ->initial_state(),
+            &reactivation_probe_difference);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecCopy(
+                reactivation_reservoir_system
+                    ->initial_state(),
+                reactivation_probe_difference);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAXPY(
+                reactivation_probe_difference,
+                PetscScalar{-1.0},
+                reactivation_probe_state);
+    }
+    PetscReal reactivation_probe_difference_norm =
+        -1.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                reactivation_probe_difference,
+                NORM_2,
+                &reactivation_probe_difference_norm);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            reactivation_probe_difference_norm >
+                1.0e-9,
+        "reactivation committed the discarded minimum-BHP feasibility probe");
+
+    // The accepted reactivated state must persist: the next step enters rate
+    // control directly and does not run another fixed-BHP feasibility probe.
+    const double reactivated_second_time_n =
+        reactivation_clock
+            .accepted_time_seconds();
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        reactivated_second_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                reactivation_reservoir_system.get(),
+                &reactivation_source_context,
+                reactivation_target_rate,
+                reactivation_options,
+                &reactivation_clock,
+                &reactivation_control_state,
+                &reactivated_second_report);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            reactivated_second_report
+                .has_value() &&
+            reactivated_second_report
+                    ->accepted() &&
+            reactivated_second_report
+                    ->entry_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        fixed_total_molar_rate &&
+            reactivated_second_report
+                    ->accepted_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        fixed_total_molar_rate &&
+            !reactivated_second_report
+                 ->minimum_bhp_probe_total_molar_rate_mol_per_s
+                 .has_value() &&
+            !reactivated_second_report
+                 ->minimum_bhp_to_rate_reactivation_attempted &&
+            !reactivated_second_report
+                 ->minimum_bhp_to_rate_reactivation_accepted &&
+            reactivation_clock
+                    .accepted_time_seconds() ==
+                reactivated_second_time_n +
+                    reactivation_dt_seconds &&
+            reactivation_clock
+                    .accepted_step_count() ==
+                2U,
+        "reactivated accepted rate control did not persist directly into the next timestep");
+
+    // Rate-capacity deadband: p_min capacity does not clear target + Δq, so
+    // no augmented rate candidate may be created.
+    auto capacity_deadband_source_context =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    multi_context,
+                    minimum_bhp_pa);
+    auto capacity_deadband_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &capacity_deadband_source_context,
+            &provider);
+    require_collective(
+        capacity_deadband_system
+                    ->set_trial_timestep_seconds(
+                        reactivation_dt_seconds) ==
+                PETSC_SUCCESS,
+        "failed to prepare rate-capacity deadband system");
+
+    auto capacity_deadband_control =
+        wdp::
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                minimum_bottom_hole_pressure(
+                    minimum_bhp_pa);
+    fdp::AcceptedPhysicalTimeClock3D
+        capacity_deadband_clock{
+            0.0,
+            reactivation_dt_seconds};
+    auto capacity_deadband_options =
+        reactivation_options;
+    const double capacity_deadband_target =
+        0.95 *
+        reactivation_probe_total_molar_rate;
+    capacity_deadband_options
+        .minimum_bhp_release_rate_margin_mol_per_s =
+        0.10 *
+        reactivation_probe_total_molar_rate;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        capacity_deadband_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                capacity_deadband_system.get(),
+                &capacity_deadband_source_context,
+                capacity_deadband_target,
+                capacity_deadband_options,
+                &capacity_deadband_clock,
+                &capacity_deadband_control,
+                &capacity_deadband_report);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            capacity_deadband_report
+                .has_value() &&
+            capacity_deadband_report
+                    ->accepted() &&
+            capacity_deadband_report
+                    ->accepted_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            capacity_deadband_report
+                    ->minimum_bhp_probe_total_molar_rate_mol_per_s
+                    .has_value() &&
+            !capacity_deadband_report
+                 ->minimum_bhp_to_rate_reactivation_attempted &&
+            !capacity_deadband_report
+                 ->minimum_bhp_to_rate_reactivation_accepted &&
+            !capacity_deadband_report
+                 ->discarded_minimum_bhp_candidate
+                 .has_value() &&
+            !capacity_deadband_report
+                 ->discarded_rate_reactivation_candidate
+                 .has_value() &&
+            !capacity_deadband_report
+                 ->accepted_solve
+                 .has_value() &&
+            capacity_deadband_report
+                    ->accepted_fixed_bhp_solve
+                    .has_value() &&
+            capacity_deadband_control
+                    .control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure,
+        "minimum-BHP rate-capacity hysteresis gate reactivated rate control inside the deadband");
+
+    // Pressure deadband: capacity clears Δq and the augmented rate root
+    // converges, but an intentionally wide Δp guard rejects that candidate and
+    // keeps the already converged fixed-BHP probe as the accepted state.
+    auto pressure_deadband_source_context =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    multi_context,
+                    minimum_bhp_pa);
+    auto pressure_deadband_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &pressure_deadband_source_context,
+            &provider);
+    require_collective(
+        pressure_deadband_system
+                    ->set_trial_timestep_seconds(
+                        reactivation_dt_seconds) ==
+                PETSC_SUCCESS,
+        "failed to prepare pressure-deadband reactivation system");
+
+    auto pressure_deadband_control =
+        wdp::
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                minimum_bottom_hole_pressure(
+                    minimum_bhp_pa);
+    fdp::AcceptedPhysicalTimeClock3D
+        pressure_deadband_clock{
+            0.0,
+            reactivation_dt_seconds};
+    auto pressure_deadband_options =
+        reactivation_options;
+    pressure_deadband_options
+        .minimum_bhp_release_pressure_margin_pa =
+        100.0;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        pressure_deadband_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                pressure_deadband_system.get(),
+                &pressure_deadband_source_context,
+                reactivation_target_rate,
+                pressure_deadband_options,
+                &pressure_deadband_clock,
+                &pressure_deadband_control,
+                &pressure_deadband_report);
+    require_collective(
+        error == PETSC_SUCCESS &&
+            pressure_deadband_report
+                .has_value() &&
+            pressure_deadband_report
+                    ->accepted() &&
+            pressure_deadband_report
+                    ->accepted_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            pressure_deadband_report
+                    ->minimum_bhp_to_rate_reactivation_attempted &&
+            !pressure_deadband_report
+                 ->minimum_bhp_to_rate_reactivation_accepted &&
+            pressure_deadband_report
+                    ->discarded_rate_reactivation_candidate
+                    .has_value() &&
+            !pressure_deadband_report
+                 ->discarded_minimum_bhp_candidate
+                 .has_value() &&
+            !pressure_deadband_report
+                 ->accepted_solve
+                 .has_value() &&
+            pressure_deadband_report
+                    ->accepted_fixed_bhp_solve
+                    .has_value() &&
+            pressure_deadband_report
+                    ->discarded_rate_reactivation_candidate
+                    ->bottom_hole_pressure_pa <
+                minimum_bhp_pa +
+                    *pressure_deadband_options
+                         .minimum_bhp_release_pressure_margin_pa &&
+            pressure_deadband_control
+                    .control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            pressure_deadband_control
+                    .bottom_hole_pressure_pa ==
+                minimum_bhp_pa,
+        "minimum-BHP pressure hysteresis gate accepted a rate candidate inside the release deadband");
+
+    require_collective(
+        VecDestroy(
+            &reactivation_probe_difference) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &reactivation_probe_state) ==
+                PETSC_SUCCESS,
+        "minimum-BHP reactivation regression cleanup failed");
 
     Vec discarded_rate_difference = nullptr;
     error =

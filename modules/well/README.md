@@ -258,3 +258,40 @@ The former `double* accepted_bottom_hole_pressure_pa` driver overload remains
 as a single-step compatibility entry and reconstructs fixed-rate mode on each
 call. Multi-timestep callers that require persistent control ownership use the
 accepted well-control state overload.
+
+
+### Guarded minimum-BHP-to-rate reactivation
+
+An accepted minimum-BHP well can now reactivate fixed-total-molar-rate control,
+but only through two explicit positive hysteresis margins:
+`minimum_bhp_release_rate_margin_mol_per_s` and
+`minimum_bhp_release_pressure_margin_pa`. The margins are configured as a
+pair; omitting either disables reactivation rather than silently guessing a
+scale.
+
+For an entry minimum-BHP timestep, the reservoir-only `p_bhp=p_min` solve is
+always performed first. Its converged state is a feasibility probe. The driver
+re-evaluates the owner-only connection sources once at that probe state and
+MPI-reduces whole-well molar production. No augmented rate system is created
+unless
+
+`q_bhp >= q_target + delta_q_release`.
+
+If the capacity guard passes, the driver solves the 43-scalar augmented
+fixed-total-molar-rate system from the same accepted reservoir history and the
+same physical timestep. The rate candidate is accepted only when
+
+`p_bhp_rate >= p_min + delta_p_release`.
+
+When both guards pass, the fixed-BHP probe is discarded and only the augmented
+rate candidate is committed; accepted control state becomes
+`fixed_total_molar_rate`. If the pressure guard fails, or if the reactivation
+rate solve does not converge, the already converged fixed-BHP probe remains the
+final candidate and accepted control stays minimum-BHP. Thus reactivation
+cannot invalidate an otherwise usable physical timestep.
+
+A rate-to-BHP switch within the same timestep never immediately attempts the
+reverse transition: reactivation is considered only when the *entry accepted*
+control mode was already minimum-BHP. This prevents same-step control
+oscillation. The accepted rate mode then persists normally into subsequent
+physical timesteps.

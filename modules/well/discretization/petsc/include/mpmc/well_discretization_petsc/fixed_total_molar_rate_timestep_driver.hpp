@@ -34,6 +34,18 @@ struct FixedTotalMolarRatePhysicalTimestepDriverOptions3D {
     /// behavior.
     std::optional<double>
         minimum_bottom_hole_pressure_pa;
+
+    /// Optional minimum-BHP -> rate reactivation deadband [mol/s].
+    /// Reactivation is considered only when the p_min fixed-BHP candidate can
+    /// produce at least target + this positive margin.
+    std::optional<double>
+        minimum_bhp_release_rate_margin_mol_per_s;
+
+    /// Optional minimum-BHP -> rate reactivation deadband [Pa].
+    /// A converged augmented rate candidate must satisfy
+    /// p_bhp >= p_min + this positive margin before rate control is accepted.
+    std::optional<double>
+        minimum_bhp_release_pressure_margin_pa;
 };
 
 enum class FixedTotalMolarRatePhysicalTimestepControlMode3D {
@@ -111,6 +123,24 @@ struct FixedTotalMolarRatePhysicalTimestepDriverReport3D {
         FixedTotalMolarRateWellControlSolveReport3D>
         discarded_rate_control_candidate;
 
+    /// Fixed-BHP feasibility probe discarded after successful BHP -> rate
+    /// reactivation. It is diagnostic only and is never committed.
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        discarded_minimum_bhp_candidate;
+
+    /// Converged augmented rate candidate rejected by the pressure-release
+    /// margin. The accepted candidate remains the fixed-BHP probe.
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        discarded_rate_reactivation_candidate;
+
+    std::optional<double>
+        minimum_bhp_probe_total_molar_rate_mol_per_s;
+    bool minimum_bhp_to_rate_reactivation_attempted{};
+    bool minimum_bhp_to_rate_reactivation_accepted{};
+
     double entry_bottom_hole_pressure_pa{};
     double accepted_bottom_hole_pressure_pa{};
     FixedTotalMolarRatePhysicalTimestepControlMode3D
@@ -174,6 +204,10 @@ struct DriverContext3D {
                 fixed_total_molar_rate};
     std::optional<double>
         minimum_bottom_hole_pressure_pa;
+    std::optional<double>
+        minimum_bhp_release_rate_margin_mol_per_s;
+    std::optional<double>
+        minimum_bhp_release_pressure_margin_pa;
     const mpmc::flow_discretization_petsc::
         AdaptiveTimestepControllerOptions3D*
             adaptive_options{};
@@ -190,6 +224,18 @@ struct DriverContext3D {
     /// True only when this physical timestep actually switched from rate to
     /// minimum-BHP. Entering with an already accepted BHP mode leaves it false.
     bool rate_to_bhp_switch_triggered{};
+    bool minimum_bhp_to_rate_reactivation_attempted{};
+    bool minimum_bhp_to_rate_reactivation_accepted{};
+    std::optional<double>
+        minimum_bhp_probe_total_molar_rate_mol_per_s;
+
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        discarded_minimum_bhp_candidate;
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        discarded_rate_reactivation_candidate;
 
     std::unique_ptr<
         FixedTotalMolarRateWellControlSystem3D>
@@ -302,6 +348,353 @@ restore_entry(
     return bhp_error;
 }
 
+[[nodiscard]] inline bool
+minimum_bhp_reactivation_enabled(
+    const DriverContext3D& context) noexcept {
+    return context
+               .minimum_bhp_release_rate_margin_mol_per_s
+               .has_value() &&
+        context
+            .minimum_bhp_release_pressure_margin_pa
+            .has_value();
+}
+
+[[nodiscard]] inline PetscErrorCode
+evaluate_minimum_bhp_probe_total_molar_rate(
+    DriverContext3D* context,
+    Vec reservoir_state,
+    double* total_molar_rate_mol_per_s) {
+    namespace fdp =
+        mpmc::flow_discretization_petsc;
+
+    if (context == nullptr ||
+        context->reservoir_system == nullptr ||
+        context->source_context == nullptr ||
+        reservoir_state == nullptr ||
+        total_molar_rate_mol_per_s == nullptr ||
+        !context
+             ->minimum_bottom_hole_pressure_pa
+             .has_value()) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    *total_molar_rate_mol_per_s =
+        0.0;
+
+    const double minimum_bhp =
+        *context
+             ->minimum_bottom_hole_pressure_pa;
+    try {
+        context->source_context
+            ->begin_evaluation(
+                minimum_bhp);
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    Vec residual = nullptr;
+    PetscErrorCode error =
+        VecDuplicate(
+            reservoir_state,
+            &residual);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecSet(
+                residual,
+                PetscScalar{0.0});
+    }
+
+    auto evaluator =
+        context->reservoir_system
+            ->snes_evaluator();
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            evaluator.function(
+                reservoir_state,
+                residual,
+                evaluator.user_context,
+                &status);
+    }
+
+    const PetscErrorCode destroy_error =
+        residual != nullptr
+            ? VecDestroy(
+                  &residual)
+            : PETSC_SUCCESS;
+    if (error == PETSC_SUCCESS &&
+        destroy_error != PETSC_SUCCESS) {
+        error =
+            destroy_error;
+    }
+    if (error == PETSC_SUCCESS &&
+        status !=
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success) {
+        error =
+            PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    double global_total = 0.0;
+    if (error == PETSC_SUCCESS) {
+        double local_total = 0.0;
+        for (const auto& entry :
+             context->source_context
+                 ->local_authoritative_evaluations()) {
+            for (double source_rate :
+                 entry
+                     .linearization
+                     .cell_source
+                     .component_molar_rate_mol_per_s) {
+                local_total -=
+                    source_rate;
+            }
+        }
+        if (MPI_Allreduce(
+                &local_total,
+                &global_total,
+                1,
+                MPI_DOUBLE,
+                MPI_SUM,
+                context->comm) !=
+            MPI_SUCCESS) {
+            error =
+                PETSC_ERR_MPI;
+        }
+    }
+
+    PetscErrorCode restore_mode_error =
+        PETSC_SUCCESS;
+    try {
+        context->source_context
+            ->begin_fixed_bhp_reservoir_evaluation(
+                minimum_bhp);
+    } catch (...) {
+        restore_mode_error =
+            PETSC_ERR_ARG_INCOMP;
+    }
+    if (error == PETSC_SUCCESS &&
+        restore_mode_error != PETSC_SUCCESS) {
+        error =
+            restore_mode_error;
+    }
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    if (!std::isfinite(global_total)) {
+        return PETSC_ERR_FP;
+    }
+
+    *total_molar_rate_mol_per_s =
+        global_total;
+    return PETSC_SUCCESS;
+}
+
+[[nodiscard]] inline PetscErrorCode
+try_reactivate_rate_control(
+    DriverContext3D* context,
+    mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D*
+            result) {
+    if (context == nullptr ||
+        result == nullptr ||
+        context->reservoir_system == nullptr ||
+        context->source_context == nullptr ||
+        context->pending_reservoir_state ==
+            nullptr ||
+        !context
+             ->pending_fixed_bhp_solve_report
+             .has_value() ||
+        context->entry_control !=
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure ||
+        !minimum_bhp_reactivation_enabled(
+            *context) ||
+        !context
+             ->minimum_bottom_hole_pressure_pa
+             .has_value()) {
+        return PETSC_SUCCESS;
+    }
+
+    const double minimum_bhp =
+        *context
+             ->minimum_bottom_hole_pressure_pa;
+    const double rate_margin =
+        *context
+             ->minimum_bhp_release_rate_margin_mol_per_s;
+    const double pressure_margin =
+        *context
+             ->minimum_bhp_release_pressure_margin_pa;
+
+    double probe_rate = 0.0;
+    PetscErrorCode error =
+        evaluate_minimum_bhp_probe_total_molar_rate(
+            context,
+            context->pending_reservoir_state,
+            &probe_rate);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    context
+        ->minimum_bhp_probe_total_molar_rate_mol_per_s =
+        probe_rate;
+
+    const double release_rate_threshold =
+        context
+            ->target_total_molar_rate_mol_per_s +
+        rate_margin;
+    if (!std::isfinite(
+            release_rate_threshold)) {
+        return PETSC_ERR_FP;
+    }
+    if (probe_rate <
+        release_rate_threshold) {
+        return PETSC_SUCCESS;
+    }
+
+    context
+        ->minimum_bhp_to_rate_reactivation_attempted =
+        true;
+
+    std::unique_ptr<
+        FixedTotalMolarRateWellControlSystem3D>
+        control_system;
+    error =
+        FixedTotalMolarRateWellControlSystem3D::
+            create(
+                context->comm,
+                context->reservoir_system,
+                context->source_context,
+                minimum_bhp,
+                context
+                    ->target_total_molar_rate_mol_per_s,
+                &control_system);
+    if (error != PETSC_SUCCESS ||
+        control_system == nullptr) {
+        return error != PETSC_SUCCESS
+            ? error
+            : PETSC_ERR_PLIB;
+    }
+
+    Vec rate_solution = nullptr;
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        rate_report;
+    error =
+        control_system->solve(
+            &rate_solution,
+            &rate_report);
+
+    if (error == PETSC_ERR_NOT_CONVERGED) {
+        if (rate_solution != nullptr) {
+            (void)VecDestroy(
+                &rate_solution);
+        }
+        control_system.reset();
+        try {
+            context->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    minimum_bhp);
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        return PETSC_SUCCESS;
+    }
+    if (error != PETSC_SUCCESS) {
+        if (rate_solution != nullptr) {
+            (void)VecDestroy(
+                &rate_solution);
+        }
+        return error;
+    }
+    if (rate_solution == nullptr ||
+        !rate_report.has_value() ||
+        !rate_report->converged()) {
+        if (rate_solution != nullptr) {
+            (void)VecDestroy(
+                &rate_solution);
+        }
+        return PETSC_ERR_PLIB;
+    }
+
+    result->nonlinear_iterations +=
+        rate_report
+            ->nonlinear_iterations;
+    result
+        ->line_search_direction_changes +=
+        rate_report
+            ->line_search_direction_changes;
+
+    const double release_pressure_threshold =
+        minimum_bhp +
+        pressure_margin;
+    if (!std::isfinite(
+            release_pressure_threshold)) {
+        (void)VecDestroy(
+            &rate_solution);
+        return PETSC_ERR_FP;
+    }
+
+    if (rate_report
+            ->bottom_hole_pressure_pa <
+        release_pressure_threshold) {
+        context
+            ->discarded_rate_reactivation_candidate =
+            *rate_report;
+        const PetscErrorCode destroy =
+            VecDestroy(
+                &rate_solution);
+        control_system.reset();
+        if (destroy != PETSC_SUCCESS) {
+            return destroy;
+        }
+        try {
+            context->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    minimum_bhp);
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        return PETSC_SUCCESS;
+    }
+
+    context->discarded_minimum_bhp_candidate =
+        context
+            ->pending_fixed_bhp_solve_report;
+
+    const PetscErrorCode destroy_probe =
+        VecDestroy(
+            &context
+                 ->pending_reservoir_state);
+    if (destroy_probe != PETSC_SUCCESS) {
+        (void)VecDestroy(
+            &rate_solution);
+        return destroy_probe;
+    }
+    context
+        ->pending_fixed_bhp_solve_report
+        .reset();
+
+    context->minimum_bhp_active =
+        false;
+    context
+        ->minimum_bhp_to_rate_reactivation_accepted =
+        true;
+    context->pending_control_system =
+        std::move(
+            control_system);
+    context->pending_augmented_state =
+        rate_solution;
+    context->pending_rate_solve_report =
+        std::move(
+            rate_report);
+    return PETSC_SUCCESS;
+}
+
 [[nodiscard]] inline PetscErrorCode
 solve_minimum_bhp_attempt(
     DriverContext3D* context,
@@ -405,7 +798,18 @@ solve_minimum_bhp_attempt(
     context->pending_reservoir_state =
         solution;
     context->pending_fixed_bhp_solve_report =
-        std::move(solve_report);
+        std::move(
+            solve_report);
+
+    if (context->entry_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure &&
+        minimum_bhp_reactivation_enabled(
+            *context)) {
+        return try_reactivate_rate_control(
+            context,
+            result);
+    }
     return PETSC_SUCCESS;
 }
 
@@ -802,8 +1206,15 @@ commit(
 /// Once triggered, minimum-BHP mode is sticky for all retries of this physical
 /// timestep. If that timestep is accepted, the mode and p_min become the
 /// accepted well-control state, so the next physical timestep starts directly
-/// in reservoir-only fixed-BHP mode. A terminal rejection leaves the accepted
-/// well-control state unchanged.
+/// in reservoir-only fixed-BHP mode.
+///
+/// If both minimum-BHP release margins are configured, an entry minimum-BHP
+/// timestep uses its converged fixed-BHP solution as a feasibility probe.
+/// Reactivation is attempted only when the probe capacity exceeds the rate
+/// target by the configured molar-rate deadband. The augmented rate candidate
+/// then must clear the configured pressure deadband above p_min. Only after
+/// both guards pass is the fixed-BHP probe discarded and rate control accepted.
+/// A terminal rejection leaves the accepted well-control state unchanged.
 ///
 /// A terminal adaptive rejection is reported with PETSC_SUCCESS and
 /// report->accepted()==false, matching the model-neutral adaptive controller.
@@ -866,6 +1277,37 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
             0.0)))) {
         return PETSC_ERR_ARG_OUTOFRANGE;
     }
+    const bool release_rate_configured =
+        options
+            .minimum_bhp_release_rate_margin_mol_per_s
+            .has_value();
+    const bool release_pressure_configured =
+        options
+            .minimum_bhp_release_pressure_margin_pa
+            .has_value();
+    if (release_rate_configured !=
+            release_pressure_configured ||
+        (release_rate_configured &&
+         !options
+              .minimum_bottom_hole_pressure_pa
+              .has_value())) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    if (release_rate_configured &&
+        (!std::isfinite(
+             *options
+                  .minimum_bhp_release_rate_margin_mol_per_s) ||
+         !(*options
+                .minimum_bhp_release_rate_margin_mol_per_s >
+           0.0) ||
+         !std::isfinite(
+             *options
+                  .minimum_bhp_release_pressure_margin_pa) ||
+         !(*options
+                .minimum_bhp_release_pressure_margin_pa >
+           0.0))) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
     if (entry_control ==
             FixedTotalMolarRatePhysicalTimestepControlMode3D::
                 minimum_bottom_hole_pressure &&
@@ -901,6 +1343,12 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
     context.minimum_bottom_hole_pressure_pa =
         options
             .minimum_bottom_hole_pressure_pa;
+    context.minimum_bhp_release_rate_margin_mol_per_s =
+        options
+            .minimum_bhp_release_rate_margin_mol_per_s;
+    context.minimum_bhp_release_pressure_margin_pa =
+        options
+            .minimum_bhp_release_pressure_margin_pa;
     context.adaptive_options =
         &options.adaptive;
     context.clock =
@@ -964,6 +1412,21 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
         completed.discarded_rate_control_candidate =
             context
                 .switch_trigger_rate_candidate;
+        completed.discarded_minimum_bhp_candidate =
+            context
+                .discarded_minimum_bhp_candidate;
+        completed.discarded_rate_reactivation_candidate =
+            context
+                .discarded_rate_reactivation_candidate;
+        completed.minimum_bhp_probe_total_molar_rate_mol_per_s =
+            context
+                .minimum_bhp_probe_total_molar_rate_mol_per_s;
+        completed.minimum_bhp_to_rate_reactivation_attempted =
+            context
+                .minimum_bhp_to_rate_reactivation_attempted;
+        completed.minimum_bhp_to_rate_reactivation_accepted =
+            context
+                .minimum_bhp_to_rate_reactivation_accepted;
         completed.entry_bottom_hole_pressure_pa =
             entry_bhp;
         completed.accepted_bottom_hole_pressure_pa =
@@ -1009,6 +1472,21 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
     completed.discarded_rate_control_candidate =
         context
             .switch_trigger_rate_candidate;
+    completed.discarded_minimum_bhp_candidate =
+        context
+            .discarded_minimum_bhp_candidate;
+    completed.discarded_rate_reactivation_candidate =
+        context
+            .discarded_rate_reactivation_candidate;
+    completed.minimum_bhp_probe_total_molar_rate_mol_per_s =
+        context
+            .minimum_bhp_probe_total_molar_rate_mol_per_s;
+    completed.minimum_bhp_to_rate_reactivation_attempted =
+        context
+            .minimum_bhp_to_rate_reactivation_attempted;
+    completed.minimum_bhp_to_rate_reactivation_accepted =
+        context
+            .minimum_bhp_to_rate_reactivation_accepted;
     completed.entry_bottom_hole_pressure_pa =
         entry_bhp;
     completed.accepted_bottom_hole_pressure_pa =
