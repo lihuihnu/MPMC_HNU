@@ -111,6 +111,33 @@ public:
         return local_authoritative_evaluations_;
     }
 
+    /// Replace the immutable logical-well completion snapshot while retaining
+    /// the current dynamic BHP/evaluation mode. Used only by outer
+    /// phase-transition rollback/rebind orchestration.
+    void replace_well(
+        FixedBhpMultiConnectionWellSourceEvaluatorContext3D
+            well) {
+        well_ =
+            std::move(well);
+        local_authoritative_evaluations_.clear();
+    }
+
+    /// Rebind one stable-cell completion to a rebuilt active physical-phase
+    /// identity map. Peaceman geometry/provenance and the dynamic BHP are
+    /// preserved by the underlying immutable fixed-BHP context contract.
+    void rebind_connection(
+        mpmc::mesh::GlobalEntityId cell_global,
+        const mpmc::flow::
+            FrozenActivePhaseIdentityMap&
+                target_active_phases) {
+        well_ =
+            rebind_fixed_bhp_multi_connection_well_source_context_3d(
+                well_,
+                cell_global,
+                target_active_phases);
+        local_authoritative_evaluations_.clear();
+    }
+
 private:
     void set_bottom_hole_pressure(
         double bottom_hole_pressure_pa) {
@@ -285,6 +312,14 @@ struct FixedTotalMolarRateWellControlSolveReport3D {
     std::string snes_type;
     std::string ksp_type;
     std::string pc_type;
+
+    /// Reservoir-only projection of the converged augmented nonlinear solve.
+    /// This contains the actual reservoir state and nonlinear metadata used by
+    /// post-SNES phase-transition scanners; it is not a synthetic re-solve.
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        reservoir_nonlinear_solve;
 
     [[nodiscard]] bool converged() const noexcept {
         return static_cast<int>(
@@ -923,6 +958,45 @@ public:
             return error;
         }
 
+        PetscReal reservoir_function_norm =
+            0.0;
+        error =
+            VecNorm(
+                reservoir_residual_,
+                NORM_2,
+                &reservoir_function_norm);
+        std::optional<
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+            reservoir_solve_report;
+        if (error == PETSC_SUCCESS) {
+            error =
+                make_reservoir_nonlinear_solve_report(
+                    reason,
+                    nonlinear_iterations,
+                    callback_context
+                        .function_evaluations,
+                    callback_context
+                        .jacobian_evaluations,
+                    callback_context
+                        .line_search_prechecks,
+                    callback_context
+                        .line_search_direction_changes,
+                    static_cast<double>(
+                        reservoir_function_norm),
+                    &reservoir_solve_report);
+        }
+        if (error != PETSC_SUCCESS ||
+            !reservoir_solve_report.has_value()) {
+            cleanup_solve(
+                &solved_state,
+                &residual,
+                &jacobian,
+                &snes);
+            return error != PETSC_SUCCESS
+                ? error
+                : PETSC_ERR_PLIB;
+        }
+
         report->emplace(
             FixedTotalMolarRateWellControlSolveReport3D{
                 reason,
@@ -949,7 +1023,9 @@ public:
                     function_norm),
                 SNESNEWTONLS,
                 KSPGMRES,
-                PCASM});
+                PCASM,
+                std::move(
+                    reservoir_solve_report)});
 
         *solution =
             solved_state;
@@ -989,6 +1065,144 @@ private:
               reservoir_system
                   ->numbering()
                   .petsc_global_scalar_count()) {}
+
+    [[nodiscard]] PetscErrorCode
+    make_reservoir_nonlinear_solve_report(
+        SNESConvergedReason reason,
+        PetscInt nonlinear_iterations,
+        PetscInt function_evaluations,
+        PetscInt jacobian_evaluations,
+        PetscInt line_search_prechecks,
+        PetscInt line_search_direction_changes,
+        double final_function_l2_norm,
+        std::optional<
+            mpmc::flow_discretization_petsc::
+                VariableCardinalityNaturalVariableSnesSolveReport3D>*
+                    output) {
+        using namespace
+            mpmc::flow_discretization_petsc;
+
+        if (output == nullptr ||
+            reservoir_state_ == nullptr ||
+            !std::isfinite(
+                final_function_l2_norm)) {
+            return PETSC_ERR_ARG_NULL;
+        }
+        output->reset();
+
+        const auto& numbering =
+            reservoir_system_->numbering();
+        const PetscScalar* values = nullptr;
+        PetscErrorCode error =
+            VecGetArrayRead(
+                reservoir_state_,
+                &values);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+
+        std::vector<
+            VariableCardinalityNaturalVariableSnesSolutionEntry3D>
+            entries(
+                static_cast<std::size_t>(
+                    numbering
+                        .petsc_local_owned_scalar_count()));
+        bool entries_ok = true;
+        for (const auto& cell :
+             numbering.cells()) {
+            if (cell.owner_rank !=
+                numbering.local_rank()) {
+                continue;
+            }
+            for (std::size_t slot = 0U;
+                 slot < cell.scalar_count;
+                 ++slot) {
+                const PetscInt global =
+                    cell.petsc_global_scalar_start +
+                    static_cast<PetscInt>(
+                        slot);
+                const PetscInt local =
+                    global -
+                    numbering
+                        .petsc_owned_scalar_start();
+                if (local < 0 ||
+                    local >=
+                        numbering
+                            .petsc_local_owned_scalar_count()) {
+                    entries_ok = false;
+                    continue;
+                }
+                entries[
+                    static_cast<std::size_t>(
+                        local)] =
+                    {
+                        global,
+                        cell.cell_global,
+                        cell.phase_count,
+                        slot,
+                        static_cast<double>(
+                            PetscRealPart(
+                                values[local]))};
+            }
+        }
+
+        const PetscErrorCode restore =
+            VecRestoreArrayRead(
+                reservoir_state_,
+                &values);
+        if (restore != PETSC_SUCCESS) {
+            return restore;
+        }
+        if (!entries_ok) {
+            return PETSC_ERR_PLIB;
+        }
+        for (std::size_t index = 0U;
+             index < entries.size();
+             ++index) {
+            if (entries[index]
+                    .petsc_global_scalar !=
+                    numbering
+                        .petsc_owned_scalar_start() +
+                        static_cast<PetscInt>(
+                            index) ||
+                !std::isfinite(
+                    entries[index].value)) {
+                return PETSC_ERR_PLIB;
+            }
+        }
+
+        VariableCardinalityNaturalVariableSnesSolveReport3D
+            completed;
+        completed.converged_reason =
+            reason;
+        completed.nonlinear_iterations =
+            nonlinear_iterations;
+        completed.function_evaluations =
+            function_evaluations;
+        completed.jacobian_evaluations =
+            jacobian_evaluations;
+        completed.line_search_prechecks =
+            line_search_prechecks;
+        completed.line_search_direction_changes =
+            line_search_direction_changes;
+        completed.final_function_l2_norm =
+            final_function_l2_norm;
+        completed.snes_type =
+            SNESNEWTONLS;
+        completed.line_search_type =
+            SNESLINESEARCHBT;
+        completed.ksp_type =
+            KSPGMRES;
+        completed.pc_type =
+            PCASM;
+        completed.asm_overlap =
+            PetscInt{1};
+        completed.locally_owned_solution =
+            std::move(entries);
+        output->emplace(
+            std::move(completed));
+        return PETSC_SUCCESS;
+    }
 
     [[nodiscard]] PetscErrorCode
     initialize(
