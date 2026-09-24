@@ -197,3 +197,33 @@ the entry BHP evaluator state. Phase cardinality and rate-control mode remain
 frozen throughout this bridge. BHP/rate switching, BHP limits, phase
 transitions during the controlled solve, surface/phase-rate controls and
 multi-well control remain outside this contract.
+
+
+### Minimum-BHP rate-to-BHP control switching
+
+The fixed-total-molar-rate physical-timestep driver now accepts an optional
+producer minimum-BHP constraint. Fixed-rate control remains the entry mode. If
+its augmented nonlinear solve converges with
+
+`p_bhp < p_min`,
+
+that 43-scalar candidate is diagnostic evidence only and is destroyed without
+advancing reservoir history or physical time. The source evaluator is then
+fixed at exactly `p_min`, and the existing 42-scalar reservoir-only nonlinear
+system is re-solved at the same physical timestep from the original accepted
+reservoir state/history.
+
+Once the minimum-BHP constraint is triggered it is sticky for all nonlinear
+retries of that physical timestep. If the fixed-BHP re-solve diverges, normal
+adaptive timestep cutback applies, but the retry stays in minimum-BHP mode and
+still starts from the accepted reservoir baseline. A terminal timestep
+rejection discards the trial switch and restores the entry BHP/dt; there is no
+accepted control-mode mutation without an accepted physical step.
+
+On acceptance, only the final fixed-BHP reservoir state is committed. The
+accepted BHP is exactly `p_min`; the discarded rate candidate is retained in
+the driver report for audit but never enters backward-Euler history. Because the
+BHP limit is binding, the final well rate is allowed to differ from the original
+rate target. BHP-to-rate switching, maximum-BHP constraints, surface/phase-rate
+controls, multi-well control priority and schedule logic remain outside this
+contract.

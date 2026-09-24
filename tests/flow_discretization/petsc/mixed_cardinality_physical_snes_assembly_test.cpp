@@ -8089,6 +8089,381 @@ void run_fixed_total_molar_rate_control_case(
             PETSC_SUCCESS,
         "rate-control nonlinear cutback regression cleanup failed");
 
+    // Bind a true producer minimum-BHP constraint between the unconstrained
+    // rate-control root and the entry BHP. The fixed-rate candidate must be
+    // discarded, then the same 1 s physical timestep must be re-solved from
+    // the original accepted reservoir history at exactly p_min.
+    require_collective(
+        report->bottom_hole_pressure_pa <
+            initial_bhp_pa,
+        "rate-control switching fixture did not produce a lower-BHP unconstrained rate root");
+    const double minimum_bhp_pa =
+        0.5 *
+        (report->bottom_hole_pressure_pa +
+         initial_bhp_pa);
+    require_collective(
+        minimum_bhp_pa >
+                report
+                    ->bottom_hole_pressure_pa &&
+            minimum_bhp_pa <
+                initial_bhp_pa,
+        "minimum-BHP switching fixture did not place p_min strictly above the rate-control candidate");
+
+    auto switch_source_context =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    multi_context,
+                    initial_bhp_pa);
+    auto switch_reservoir_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &switch_source_context,
+            &provider);
+
+    const auto switch_local_previous_total =
+        owned_conserved_totals(
+            *switch_reservoir_system,
+            switch_reservoir_system
+                ->initial_state());
+    std::array<double, 4>
+        switch_global_previous_total{};
+    require_collective(
+        MPI_Allreduce(
+            switch_local_previous_total.data(),
+            switch_global_previous_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce minimum-BHP switching previous conserved totals");
+
+    fdp::AcceptedPhysicalTimeClock3D
+        switch_clock{
+            0.0,
+            1.0};
+    wdp::
+        FixedTotalMolarRatePhysicalTimestepDriverOptions3D
+        switch_options;
+    switch_options.adaptive
+        .minimum_timestep_seconds =
+        0.25;
+    switch_options.adaptive
+        .maximum_timestep_seconds =
+        4.0;
+    switch_options.adaptive
+        .maximum_retries =
+        2U;
+    switch_options.minimum_bottom_hole_pressure_pa =
+        minimum_bhp_pa;
+
+    double switch_accepted_bhp_pa =
+        initial_bhp_pa;
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        switch_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                switch_reservoir_system.get(),
+                &switch_source_context,
+                target_rate,
+                switch_options,
+                &switch_clock,
+                &switch_accepted_bhp_pa,
+                &switch_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            switch_report.has_value() &&
+            switch_report->accepted() &&
+            switch_report
+                    ->rate_to_bhp_switch_triggered &&
+            switch_report
+                    ->accepted_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            !switch_report
+                 ->accepted_solve
+                 .has_value() &&
+            switch_report
+                    ->accepted_fixed_bhp_solve
+                    .has_value() &&
+            switch_report
+                    ->discarded_rate_control_candidate
+                    .has_value() &&
+            switch_report
+                    ->discarded_rate_control_candidate
+                    ->bottom_hole_pressure_pa <
+                minimum_bhp_pa &&
+            switch_report
+                    ->accepted_record
+                    ->accepted_timestep_seconds ==
+                1.0 &&
+            switch_clock
+                    .accepted_time_seconds() ==
+                1.0 &&
+            switch_clock
+                    .accepted_step_count() ==
+                1U &&
+            switch_accepted_bhp_pa ==
+                minimum_bhp_pa &&
+            switch_source_context
+                    .current_bottom_hole_pressure_pa() ==
+                minimum_bhp_pa,
+        "minimum-BHP constraint did not discard the violating rate candidate and accept a same-timestep fixed-BHP re-solve");
+
+    near_collective(
+        switch_report
+            ->discarded_rate_control_candidate
+            ->bottom_hole_pressure_pa,
+        report->bottom_hole_pressure_pa,
+        2.0e-8,
+        2.0e-10);
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        switch_final_current;
+    std::vector<double>
+        switch_final_porosity;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        switch_final_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    require_collective(
+        switch_reservoir_system
+                ->evaluate_local_cells_for_phase_transition(
+                    switch_reservoir_system
+                        ->initial_state(),
+                    &switch_final_current,
+                    &switch_final_porosity,
+                    &switch_final_status) ==
+            PETSC_SUCCESS &&
+            switch_final_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            switch_final_current.size() > 5U &&
+            switch_final_current[2U]
+                .has_value() &&
+            switch_final_current[5U]
+                .has_value(),
+        "failed to evaluate accepted minimum-BHP reservoir state");
+
+    std::array<double, 4>
+        switch_local_well_rate{};
+    std::uint64_t
+        switch_local_authoritative_count = 0U;
+    const auto& switch_record30 =
+        switch_reservoir_system
+            ->numbering()
+            .cell(
+                mesh::LocalIndex{2U});
+    if (switch_record30.owner_rank ==
+        switch_reservoir_system
+            ->numbering()
+            .local_rank()) {
+        const auto source =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    multi_context
+                        .find_connection(
+                            switch_record30
+                                .cell_global)
+                        ->with_bottom_hole_pressure(
+                            minimum_bhp_pa),
+                    *switch_final_current[2U]);
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            switch_local_well_rate[
+                component] -=
+                source
+                    .cell_source
+                    .component_molar_rate_mol_per_s[
+                        component];
+        }
+        switch_local_well_rate[3] -=
+            source
+                .cell_source
+                .energy_rate_w;
+        ++switch_local_authoritative_count;
+    }
+
+    const auto& switch_record60 =
+        switch_reservoir_system
+            ->numbering()
+            .cell(
+                mesh::LocalIndex{5U});
+    if (switch_record60.owner_rank ==
+        switch_reservoir_system
+            ->numbering()
+            .local_rank()) {
+        const auto source =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    multi_context
+                        .find_connection(
+                            switch_record60
+                                .cell_global)
+                        ->with_bottom_hole_pressure(
+                            minimum_bhp_pa),
+                    *switch_final_current[5U]);
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            switch_local_well_rate[
+                component] -=
+                source
+                    .cell_source
+                    .component_molar_rate_mol_per_s[
+                        component];
+        }
+        switch_local_well_rate[3] -=
+            source
+                .cell_source
+                .energy_rate_w;
+        ++switch_local_authoritative_count;
+    }
+
+    std::array<double, 4>
+        switch_global_well_rate{};
+    std::uint64_t
+        switch_global_authoritative_count = 0U;
+    require_collective(
+        MPI_Allreduce(
+            switch_local_well_rate.data(),
+            switch_global_well_rate.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            MPI_Allreduce(
+                &switch_local_authoritative_count,
+                &switch_global_authoritative_count,
+                1,
+                MPI_UINT64_T,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            switch_global_authoritative_count ==
+                2U,
+        "minimum-BHP switched well lost owner-only multi-connection aggregation");
+
+    const double switch_total_molar_rate =
+        switch_global_well_rate[0] +
+        switch_global_well_rate[1] +
+        switch_global_well_rate[2];
+    require_collective(
+        std::isfinite(
+            switch_total_molar_rate) &&
+            switch_total_molar_rate <
+                target_rate -
+                    1.0e-10 *
+                        std::max(
+                            1.0,
+                            std::abs(
+                                target_rate)),
+        "minimum-BHP constrained solution still forced the infeasible fixed-rate target");
+
+    const auto switch_local_final_total =
+        owned_conserved_totals(
+            *switch_reservoir_system,
+            switch_reservoir_system
+                ->initial_state());
+    std::array<double, 4>
+        switch_global_final_total{};
+    require_collective(
+        MPI_Allreduce(
+            switch_local_final_total.data(),
+            switch_global_final_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce minimum-BHP switching final conserved totals");
+
+    for (std::size_t quantity = 0U;
+         quantity < 4U;
+         ++quantity) {
+        near_collective(
+            switch_global_final_total[
+                quantity],
+            switch_global_previous_total[
+                quantity] -
+                switch_global_well_rate[
+                    quantity],
+            3.0e-7,
+            quantity < 3U
+                ? 3.0e-8
+                : 3.0e-7);
+    }
+
+    bool switch_history_matches = false;
+    require_collective(
+        switch_reservoir_system
+                ->accepted_history_matches_state(
+                    switch_reservoir_system
+                        ->initial_state(),
+                    &switch_history_matches) ==
+                PETSC_SUCCESS &&
+            switch_history_matches,
+        "minimum-BHP switch did not commit exactly the final fixed-BHP reservoir state/history");
+
+    Vec discarded_rate_difference = nullptr;
+    error =
+        VecDuplicate(
+            switch_reservoir_system
+                ->initial_state(),
+            &discarded_rate_difference);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecCopy(
+                switch_reservoir_system
+                    ->initial_state(),
+                discarded_rate_difference);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAXPY(
+                discarded_rate_difference,
+                PetscScalar{-1.0},
+                reservoir_solution);
+    }
+    PetscReal discarded_rate_difference_norm =
+        -1.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                discarded_rate_difference,
+                NORM_2,
+                &discarded_rate_difference_norm);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            discarded_rate_difference_norm >
+                1.0e-9,
+        "minimum-BHP switch appears to have committed the discarded rate-control reservoir candidate");
+
+    require_collective(
+        VecDestroy(
+            &discarded_rate_difference) ==
+            PETSC_SUCCESS,
+        "minimum-BHP switching regression cleanup failed");
+
     require_collective(
         MatDestroy(
             &controlled_jacobian) ==
