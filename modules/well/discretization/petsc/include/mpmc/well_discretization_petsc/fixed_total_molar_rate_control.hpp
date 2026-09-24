@@ -601,6 +601,17 @@ public:
                 success) {
             return PETSC_ERR_ARG_OUTOFRANGE;
         }
+        error =
+            VecAssemblyBegin(
+                reservoir_residual_);
+        if (error == PETSC_SUCCESS) {
+            error =
+                VecAssemblyEnd(
+                    reservoir_residual_);
+        }
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
 
         double local_total =
             local_total_molar_production_rate();
@@ -990,20 +1001,10 @@ public:
         PetscReal reservoir_function_norm =
             0.0;
         error =
-            VecAssemblyBegin(
-                reservoir_residual_);
-        if (error == PETSC_SUCCESS) {
-            error =
-                VecAssemblyEnd(
-                    reservoir_residual_);
-        }
-        if (error == PETSC_SUCCESS) {
-            error =
-                VecNorm(
-                    reservoir_residual_,
-                    NORM_2,
-                    &reservoir_function_norm);
-        }
+            VecNorm(
+                reservoir_residual_,
+                NORM_2,
+                &reservoir_function_norm);
         std::optional<
             VariableCardinalityNaturalVariableSnesSolveReport3D>
             reservoir_solve_report;
