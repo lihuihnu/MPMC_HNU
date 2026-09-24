@@ -750,7 +750,7 @@ void pr76_li_firoozabadi_sour_gas_short_step_test() {
     near(
         initial_current
             .rock
-            .gradient[
+            .volumetric_internal_energy_gradient[
                 layout
                     .temperature_unknown_index()],
         ref::
