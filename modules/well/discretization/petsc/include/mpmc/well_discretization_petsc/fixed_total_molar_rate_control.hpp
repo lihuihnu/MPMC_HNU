@@ -829,11 +829,19 @@ public:
             error =
                 SNESSetTolerances(
                     snes,
-                    PetscReal{1.0e-8},
-                    PetscReal{0.0},
-                    PetscReal{0.0},
+                    PetscReal{1.0e-10},
+                    PetscReal{1.0e-10},
+                    PetscReal{1.0e-12},
                     PetscInt{30},
                     PetscInt{2000});
+        }
+        if (error == PETSC_SUCCESS) {
+            error =
+                SNESSetConvergenceTest(
+                    snes,
+                    &rate_aware_convergence_test,
+                    this,
+                    nullptr);
         }
         if (error == PETSC_SUCCESS) {
             error =
@@ -2467,6 +2475,83 @@ private:
             }
         }
         return error;
+    }
+
+    static PetscErrorCode
+    rate_aware_convergence_test(
+        SNES snes,
+        PetscInt iteration,
+        PetscReal solution_norm,
+        PetscReal step_norm,
+        PetscReal function_norm,
+        SNESConvergedReason* reason,
+        void* raw_context) {
+        if (snes == nullptr ||
+            reason == nullptr ||
+            raw_context == nullptr) {
+            return PETSC_ERR_ARG_NULL;
+        }
+
+        PetscErrorCode error =
+            SNESConvergedDefault(
+                snes,
+                iteration,
+                solution_norm,
+                step_norm,
+                function_norm,
+                reason,
+                nullptr);
+        if (error != PETSC_SUCCESS ||
+            static_cast<int>(*reason) <= 0) {
+            return error;
+        }
+
+        Vec state = nullptr;
+        error =
+            SNESGetSolution(
+                snes,
+                &state);
+        if (error != PETSC_SUCCESS ||
+            state == nullptr) {
+            return error != PETSC_SUCCESS
+                ? error
+                : PETSC_ERR_PLIB;
+        }
+
+        auto* context =
+            static_cast<
+                FixedTotalMolarRateWellControlSystem3D*>(
+                    raw_context);
+        double achieved_rate = 0.0;
+        error =
+            context
+                ->evaluate_whole_well_total_molar_rate(
+                    state,
+                    &achieved_rate);
+        if (error != PETSC_SUCCESS) {
+            return error;
+        }
+
+        const double rate_residual =
+            achieved_rate -
+            context
+                ->target_total_molar_rate_mol_per_s_;
+        const double rate_residual_tolerance =
+            1.0e-8 *
+            std::max(
+                1.0,
+                std::abs(
+                    context
+                        ->target_total_molar_rate_mol_per_s_));
+        if (!std::isfinite(rate_residual)) {
+            return PETSC_ERR_FP;
+        }
+        if (std::abs(rate_residual) >
+            rate_residual_tolerance) {
+            *reason =
+                SNES_CONVERGED_ITERATING;
+        }
+        return PETSC_SUCCESS;
     }
 
     static PetscErrorCode

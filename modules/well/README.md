@@ -339,15 +339,20 @@ final phase-stable candidate may commit reservoir history, physical time and
 accepted well-control state.
 
 The augmented rate solve also now enforces its physical rate residual contract
-independently of PETSc's scaled convergence reason. The well row is scaled at
-least by the target-rate normalization, SNES relative/step convergence is
-disabled for this controlled solve, and a converged solution is rejected unless
+independently of PETSc's scaled convergence reason. PETSc keeps the existing
+default absolute/relative/step tolerances. A custom convergence test first
+delegates to `SNESConvergedDefault()`; only when PETSc would return a positive
+convergence reason does the well-control layer re-evaluate the unscaled
+whole-well production rate. The positive reason is retained only when
 
 `abs(q_achieved - q_target) <= 1e-8 * max(1, abs(q_target))`.
 
-This prevents a phase-rebuilt system with a very large initial scaled norm from
-terminating on relative convergence while still carrying a material whole-well
-rate residual.
+Otherwise the reason is reset to `SNES_CONVERGED_ITERATING` and Newton
+continues. Divergence reasons are never overridden. The same unscaled rate
+residual is checked again before `solve()` returns success. This prevents a
+phase-rebuilt system with a very large initial scaled norm from terminating on
+relative convergence while still carrying a material whole-well rate residual,
+without changing the reservoir equations' normal convergence criteria.
 
 The 2-rank regression crosses both state machines explicitly: accepted RATE
 first selects a tentative minimum-BHP candidate, that candidate triggers a
