@@ -41,6 +41,50 @@ enum class FixedTotalMolarRatePhysicalTimestepControlMode3D {
     minimum_bottom_hole_pressure
 };
 
+struct AcceptedFixedTotalMolarRateWellControlState3D {
+    FixedTotalMolarRatePhysicalTimestepControlMode3D
+        control{
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                fixed_total_molar_rate};
+    double bottom_hole_pressure_pa{};
+
+    [[nodiscard]] static
+    AcceptedFixedTotalMolarRateWellControlState3D
+    fixed_total_molar_rate(
+        double bottom_hole_pressure_pa) {
+        if (!std::isfinite(bottom_hole_pressure_pa) ||
+            !(bottom_hole_pressure_pa > 0.0)) {
+            throw std::invalid_argument(
+                "mpmc::well_discretization_petsc: accepted rate-control BHP must be finite and positive");
+        }
+        return {
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                fixed_total_molar_rate,
+            bottom_hole_pressure_pa};
+    }
+
+    [[nodiscard]] static
+    AcceptedFixedTotalMolarRateWellControlState3D
+    minimum_bottom_hole_pressure(
+        double bottom_hole_pressure_pa) {
+        if (!std::isfinite(bottom_hole_pressure_pa) ||
+            !(bottom_hole_pressure_pa > 0.0)) {
+            throw std::invalid_argument(
+                "mpmc::well_discretization_petsc: accepted minimum-BHP must be finite and positive");
+        }
+        return {
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure,
+            bottom_hole_pressure_pa};
+    }
+
+    [[nodiscard]] bool valid() const noexcept {
+        return std::isfinite(
+                   bottom_hole_pressure_pa) &&
+            bottom_hole_pressure_pa > 0.0;
+    }
+};
+
 struct FixedTotalMolarRatePhysicalTimestepDriverReport3D {
     mpmc::flow_discretization_petsc::
         AdaptiveTimestepControllerReport3D
@@ -69,6 +113,10 @@ struct FixedTotalMolarRatePhysicalTimestepDriverReport3D {
 
     double entry_bottom_hole_pressure_pa{};
     double accepted_bottom_hole_pressure_pa{};
+    FixedTotalMolarRatePhysicalTimestepControlMode3D
+        entry_control{
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                fixed_total_molar_rate};
     FixedTotalMolarRatePhysicalTimestepControlMode3D
         accepted_control{
             FixedTotalMolarRatePhysicalTimestepControlMode3D::
@@ -120,6 +168,10 @@ struct DriverContext3D {
         source_context{};
     double target_total_molar_rate_mol_per_s{};
     double entry_bottom_hole_pressure_pa{};
+    FixedTotalMolarRatePhysicalTimestepControlMode3D
+        entry_control{
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                fixed_total_molar_rate};
     std::optional<double>
         minimum_bottom_hole_pressure_pa;
     const mpmc::flow_discretization_petsc::
@@ -128,12 +180,16 @@ struct DriverContext3D {
     mpmc::flow_discretization_petsc::
         AcceptedPhysicalTimeClock3D*
             clock{};
-    double* accepted_bottom_hole_pressure_pa{};
+    AcceptedFixedTotalMolarRateWellControlState3D*
+        accepted_control_state{};
 
-    /// Once the minimum-BHP constraint is triggered, this remains true for all
-    /// retries of the same physical timestep. A terminal rejection discards
-    /// the context and therefore does not change the accepted control mode.
-    bool switched_to_minimum_bhp{};
+    /// Active control mode for this physical timestep. If the accepted entry
+    /// state is already minimum-BHP, the very first attempt starts here.
+    bool minimum_bhp_active{};
+
+    /// True only when this physical timestep actually switched from rate to
+    /// minimum-BHP. Entering with an already accepted BHP mode leaves it false.
+    bool rate_to_bhp_switch_triggered{};
 
     std::unique_ptr<
         FixedTotalMolarRateWellControlSystem3D>
@@ -219,10 +275,19 @@ restore_entry(
     PetscErrorCode bhp_error =
         PETSC_SUCCESS;
     try {
-        context->source_context
-            ->begin_evaluation(
-                context
-                    ->entry_bottom_hole_pressure_pa);
+        if (context->entry_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure) {
+            context->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    context
+                        ->entry_bottom_hole_pressure_pa);
+        } else {
+            context->source_context
+                ->begin_evaluation(
+                    context
+                        ->entry_bottom_hole_pressure_pa);
+        }
     } catch (...) {
         bhp_error =
             PETSC_ERR_ARG_INCOMP;
@@ -253,7 +318,7 @@ solve_minimum_bhp_attempt(
         !context
              ->minimum_bottom_hole_pressure_pa
              .has_value() ||
-        !context->switched_to_minimum_bhp) {
+        !context->minimum_bhp_active) {
         return PETSC_ERR_ARG_WRONGSTATE;
     }
 
@@ -382,7 +447,7 @@ attempt(
         return error;
     }
 
-    if (context->switched_to_minimum_bhp) {
+    if (context->minimum_bhp_active) {
         return solve_minimum_bhp_attempt(
             context,
             result);
@@ -472,7 +537,9 @@ attempt(
 
         context->switch_trigger_rate_candidate =
             *solve_report;
-        context->switched_to_minimum_bhp =
+        context->minimum_bhp_active =
+            true;
+        context->rate_to_bhp_switch_triggered =
             true;
 
         const PetscErrorCode destroy =
@@ -539,13 +606,13 @@ commit(
         context->adaptive_options == nullptr ||
         context->clock == nullptr ||
         context
-                ->accepted_bottom_hole_pressure_pa ==
+                ->accepted_control_state ==
             nullptr) {
         return PETSC_ERR_ARG_WRONGSTATE;
     }
 
     const bool fixed_bhp =
-        context->switched_to_minimum_bhp;
+        context->minimum_bhp_active;
     if (fixed_bhp) {
         if (!context
                  ->minimum_bottom_hole_pressure_pa
@@ -555,9 +622,11 @@ commit(
             !context
                  ->pending_fixed_bhp_solve_report
                  .has_value() ||
-            !context
-                 ->switch_trigger_rate_candidate
-                 .has_value()) {
+            (context
+                 ->rate_to_bhp_switch_triggered &&
+             !context
+                  ->switch_trigger_rate_candidate
+                  .has_value())) {
             return PETSC_ERR_ARG_WRONGSTATE;
         }
     } else if (
@@ -685,8 +754,17 @@ commit(
         return PETSC_ERR_ARG_INCOMP;
     }
 
-    *context
-         ->accepted_bottom_hole_pressure_pa =
+    context
+        ->accepted_control_state
+        ->control =
+        fixed_bhp
+            ? FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                  minimum_bottom_hole_pressure
+            : FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                  fixed_total_molar_rate;
+    context
+        ->accepted_control_state
+        ->bottom_hole_pressure_pa =
         accepted_bhp;
     context->accepted_record =
         std::move(accepted_record);
@@ -722,7 +800,10 @@ commit(
 /// commit. The source BHP is fixed to the minimum and the reservoir-only
 /// nonlinear system is solved again at the same dt from the accepted baseline.
 /// Once triggered, minimum-BHP mode is sticky for all retries of this physical
-/// timestep. A terminal rejection discards the switch together with the trial.
+/// timestep. If that timestep is accepted, the mode and p_min become the
+/// accepted well-control state, so the next physical timestep starts directly
+/// in reservoir-only fixed-BHP mode. A terminal rejection leaves the accepted
+/// well-control state unchanged.
 ///
 /// A terminal adaptive rejection is reported with PETSC_SUCCESS and
 /// report->accepted()==false, matching the model-neutral adaptive controller.
@@ -741,7 +822,8 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
     mpmc::flow_discretization_petsc::
         AcceptedPhysicalTimeClock3D*
             clock,
-    double* accepted_bottom_hole_pressure_pa,
+    AcceptedFixedTotalMolarRateWellControlState3D*
+        accepted_control_state,
     std::optional<
         FixedTotalMolarRatePhysicalTimestepDriverReport3D>*
             report) {
@@ -753,7 +835,7 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
     if (reservoir_system == nullptr ||
         source_context == nullptr ||
         clock == nullptr ||
-        accepted_bottom_hole_pressure_pa ==
+        accepted_control_state ==
             nullptr ||
         report == nullptr) {
         return PETSC_ERR_ARG_NULL;
@@ -761,11 +843,14 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
     report->reset();
 
     const double entry_bhp =
-        *accepted_bottom_hole_pressure_pa;
+        accepted_control_state
+            ->bottom_hole_pressure_pa;
+    const auto entry_control =
+        accepted_control_state
+            ->control;
     const double entry_dt =
         clock->next_timestep_seconds();
-    if (!std::isfinite(entry_bhp) ||
-        !(entry_bhp > 0.0) ||
+    if (!accepted_control_state->valid() ||
         !std::isfinite(
             target_total_molar_rate_mol_per_s) ||
         !(target_total_molar_rate_mol_per_s >
@@ -780,6 +865,18 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
                  .minimum_bottom_hole_pressure_pa >
             0.0)))) {
         return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    if (entry_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure &&
+        (!options
+              .minimum_bottom_hole_pressure_pa
+              .has_value() ||
+         !same_timestep(
+             entry_bhp,
+             *options
+                  .minimum_bottom_hole_pressure_pa))) {
+        return PETSC_ERR_ARG_INCOMP;
     }
     if (!same_timestep(
             reservoir_system
@@ -799,6 +896,8 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
         target_total_molar_rate_mol_per_s;
     context.entry_bottom_hole_pressure_pa =
         entry_bhp;
+    context.entry_control =
+        entry_control;
     context.minimum_bottom_hole_pressure_pa =
         options
             .minimum_bottom_hole_pressure_pa;
@@ -806,8 +905,12 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
         &options.adaptive;
     context.clock =
         clock;
-    context.accepted_bottom_hole_pressure_pa =
-        accepted_bottom_hole_pressure_pa;
+    context.accepted_control_state =
+        accepted_control_state;
+    context.minimum_bhp_active =
+        entry_control ==
+        FixedTotalMolarRatePhysicalTimestepControlMode3D::
+            minimum_bottom_hole_pressure;
 
     std::optional<
         fdp::AdaptiveTimestepControllerReport3D>
@@ -865,20 +968,21 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
             entry_bhp;
         completed.accepted_bottom_hole_pressure_pa =
             entry_bhp;
+        completed.entry_control =
+            entry_control;
+        completed.accepted_control =
+            entry_control;
         completed.rate_to_bhp_switch_triggered =
             context
-                .switched_to_minimum_bhp;
+                .rate_to_bhp_switch_triggered;
         report->emplace(
             std::move(completed));
         return PETSC_SUCCESS;
     }
 
     if (!context.accepted_record.has_value() ||
-        !std::isfinite(
-            *accepted_bottom_hole_pressure_pa) ||
-        !(*accepted_bottom_hole_pressure_pa >
-          0.0) ||
-        (context.switched_to_minimum_bhp
+        !accepted_control_state->valid() ||
+        (context.minimum_bhp_active
              ? !context
                     .accepted_fixed_bhp_solve
                     .has_value()
@@ -908,19 +1012,75 @@ advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
     completed.entry_bottom_hole_pressure_pa =
         entry_bhp;
     completed.accepted_bottom_hole_pressure_pa =
-        *accepted_bottom_hole_pressure_pa;
+        accepted_control_state
+            ->bottom_hole_pressure_pa;
+    completed.entry_control =
+        entry_control;
     completed.accepted_control =
-        context.switched_to_minimum_bhp
-            ? FixedTotalMolarRatePhysicalTimestepControlMode3D::
-                  minimum_bottom_hole_pressure
-            : FixedTotalMolarRatePhysicalTimestepControlMode3D::
-                  fixed_total_molar_rate;
+        accepted_control_state
+            ->control;
     completed.rate_to_bhp_switch_triggered =
         context
-            .switched_to_minimum_bhp;
+            .rate_to_bhp_switch_triggered;
     report->emplace(
         std::move(completed));
     return PETSC_SUCCESS;
+}
+
+/// Compatibility single-step entry retaining the former accepted-BHP scalar
+/// contract. It intentionally reconstructs fixed-rate mode for every call.
+/// Callers that need control-mode persistence across physical timesteps must
+/// use AcceptedFixedTotalMolarRateWellControlState3D.
+inline PetscErrorCode
+advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+    MPI_Comm comm,
+    mpmc::flow_discretization_petsc::
+        PhaseTransitionRebuiltNaturalVariableSystem3D*
+            reservoir_system,
+    FixedTotalMolarRateWellSourceEvaluatorContext3D*
+        source_context,
+    double target_total_molar_rate_mol_per_s,
+    const FixedTotalMolarRatePhysicalTimestepDriverOptions3D&
+        options,
+    mpmc::flow_discretization_petsc::
+        AcceptedPhysicalTimeClock3D*
+            clock,
+    double* accepted_bottom_hole_pressure_pa,
+    std::optional<
+        FixedTotalMolarRatePhysicalTimestepDriverReport3D>*
+            report) {
+    if (accepted_bottom_hole_pressure_pa ==
+        nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    AcceptedFixedTotalMolarRateWellControlState3D
+        accepted_state;
+    try {
+        accepted_state =
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                fixed_total_molar_rate(
+                    *accepted_bottom_hole_pressure_pa);
+    } catch (...) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    const PetscErrorCode error =
+        advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+            comm,
+            reservoir_system,
+            source_context,
+            target_total_molar_rate_mol_per_s,
+            options,
+            clock,
+            &accepted_state,
+            report);
+    if (error == PETSC_SUCCESS) {
+        *accepted_bottom_hole_pressure_pa =
+            accepted_state
+                .bottom_hole_pressure_pa;
+    }
+    return error;
 }
 
 } // namespace mpmc::well_discretization_petsc

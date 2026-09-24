@@ -8163,8 +8163,11 @@ void run_fixed_total_molar_rate_control_case(
     switch_options.minimum_bottom_hole_pressure_pa =
         minimum_bhp_pa;
 
-    double switch_accepted_bhp_pa =
-        initial_bhp_pa;
+    auto switch_control_state =
+        wdp::
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                fixed_total_molar_rate(
+                    initial_bhp_pa);
     std::optional<
         wdp::
             FixedTotalMolarRatePhysicalTimestepDriverReport3D>
@@ -8178,7 +8181,7 @@ void run_fixed_total_molar_rate_control_case(
                 target_rate,
                 switch_options,
                 &switch_clock,
-                &switch_accepted_bhp_pa,
+                &switch_control_state,
                 &switch_report);
 
     require_collective(
@@ -8215,7 +8218,13 @@ void run_fixed_total_molar_rate_control_case(
             switch_clock
                     .accepted_step_count() ==
                 1U &&
-            switch_accepted_bhp_pa ==
+            switch_control_state
+                    .control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            switch_control_state
+                    .bottom_hole_pressure_pa ==
                 minimum_bhp_pa &&
             switch_source_context
                     .current_bottom_hole_pressure_pa() ==
@@ -8422,6 +8431,326 @@ void run_fixed_total_molar_rate_control_case(
                 PETSC_SUCCESS &&
             switch_history_matches,
         "minimum-BHP switch did not commit exactly the final fixed-BHP reservoir state/history");
+
+    // Advance a second accepted physical timestep with the same accepted
+    // well-control state. It must enter directly in minimum-BHP mode: no
+    // augmented rate solve, no discarded rate candidate and no new rate->BHP
+    // transition are allowed.
+    const double second_step_dt =
+        switch_clock
+            .next_timestep_seconds();
+    const double second_step_time_n =
+        switch_clock
+            .accepted_time_seconds();
+    const auto second_step_local_previous_total =
+        owned_conserved_totals(
+            *switch_reservoir_system,
+            switch_reservoir_system
+                ->initial_state());
+    std::array<double, 4>
+        second_step_global_previous_total{};
+    require_collective(
+        MPI_Allreduce(
+            second_step_local_previous_total.data(),
+            second_step_global_previous_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce persisted minimum-BHP second-step previous totals");
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        persisted_bhp_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                switch_reservoir_system.get(),
+                &switch_source_context,
+                target_rate,
+                switch_options,
+                &switch_clock,
+                &switch_control_state,
+                &persisted_bhp_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            persisted_bhp_report.has_value() &&
+            persisted_bhp_report->accepted() &&
+            persisted_bhp_report
+                    ->entry_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            persisted_bhp_report
+                    ->accepted_control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            !persisted_bhp_report
+                 ->rate_to_bhp_switch_triggered &&
+            !persisted_bhp_report
+                 ->discarded_rate_control_candidate
+                 .has_value() &&
+            !persisted_bhp_report
+                 ->accepted_solve
+                 .has_value() &&
+            persisted_bhp_report
+                    ->accepted_fixed_bhp_solve
+                    .has_value() &&
+            persisted_bhp_report
+                    ->accepted_record
+                    ->accepted_timestep_seconds ==
+                second_step_dt &&
+            switch_clock
+                    .accepted_time_seconds() ==
+                second_step_time_n +
+                    second_step_dt &&
+            switch_clock
+                    .accepted_step_count() ==
+                2U &&
+            switch_control_state
+                    .control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            switch_control_state
+                    .bottom_hole_pressure_pa ==
+                minimum_bhp_pa &&
+            switch_source_context
+                    .current_bottom_hole_pressure_pa() ==
+                minimum_bhp_pa,
+        "accepted minimum-BHP control state did not persist directly into the next physical timestep");
+
+    std::vector<std::optional<
+        fdp::
+            MixedCardinalityPhysicalCurrentCellLinearization3D>>
+        second_step_final_current;
+    std::vector<double>
+        second_step_final_porosity;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        second_step_final_status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    require_collective(
+        switch_reservoir_system
+                ->evaluate_local_cells_for_phase_transition(
+                    switch_reservoir_system
+                        ->initial_state(),
+                    &second_step_final_current,
+                    &second_step_final_porosity,
+                    &second_step_final_status) ==
+            PETSC_SUCCESS &&
+            second_step_final_status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            second_step_final_current.size() > 5U &&
+            second_step_final_current[2U]
+                .has_value() &&
+            second_step_final_current[5U]
+                .has_value(),
+        "failed to evaluate persisted minimum-BHP second-step state");
+
+    std::array<double, 4>
+        second_step_local_well_rate{};
+    std::uint64_t
+        second_step_local_authoritative_count = 0U;
+    if (switch_record30.owner_rank ==
+        switch_reservoir_system
+            ->numbering()
+            .local_rank()) {
+        const auto source =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    multi_context
+                        .find_connection(
+                            switch_record30
+                                .cell_global)
+                        ->with_bottom_hole_pressure(
+                            minimum_bhp_pa),
+                    *second_step_final_current[2U]);
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            second_step_local_well_rate[
+                component] -=
+                source
+                    .cell_source
+                    .component_molar_rate_mol_per_s[
+                        component];
+        }
+        second_step_local_well_rate[3] -=
+            source
+                .cell_source
+                .energy_rate_w;
+        ++second_step_local_authoritative_count;
+    }
+    if (switch_record60.owner_rank ==
+        switch_reservoir_system
+            ->numbering()
+            .local_rank()) {
+        const auto source =
+            wdp::
+                build_fixed_bhp_peaceman_well_source_3d(
+                    multi_context
+                        .find_connection(
+                            switch_record60
+                                .cell_global)
+                        ->with_bottom_hole_pressure(
+                            minimum_bhp_pa),
+                    *second_step_final_current[5U]);
+        for (std::size_t component = 0U;
+             component < 3U;
+             ++component) {
+            second_step_local_well_rate[
+                component] -=
+                source
+                    .cell_source
+                    .component_molar_rate_mol_per_s[
+                        component];
+        }
+        second_step_local_well_rate[3] -=
+            source
+                .cell_source
+                .energy_rate_w;
+        ++second_step_local_authoritative_count;
+    }
+
+    std::array<double, 4>
+        second_step_global_well_rate{};
+    std::uint64_t
+        second_step_global_authoritative_count = 0U;
+    require_collective(
+        MPI_Allreduce(
+            second_step_local_well_rate.data(),
+            second_step_global_well_rate.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            MPI_Allreduce(
+                &second_step_local_authoritative_count,
+                &second_step_global_authoritative_count,
+                1,
+                MPI_UINT64_T,
+                MPI_SUM,
+                PETSC_COMM_WORLD) ==
+                MPI_SUCCESS &&
+            second_step_global_authoritative_count ==
+                2U,
+        "persisted minimum-BHP second step lost owner-only well aggregation");
+
+    const auto second_step_local_final_total =
+        owned_conserved_totals(
+            *switch_reservoir_system,
+            switch_reservoir_system
+                ->initial_state());
+    std::array<double, 4>
+        second_step_global_final_total{};
+    require_collective(
+        MPI_Allreduce(
+            second_step_local_final_total.data(),
+            second_step_global_final_total.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce persisted minimum-BHP second-step final totals");
+
+    for (std::size_t quantity = 0U;
+         quantity < 4U;
+         ++quantity) {
+        near_collective(
+            second_step_global_final_total[
+                quantity],
+            second_step_global_previous_total[
+                quantity] -
+                second_step_dt *
+                    second_step_global_well_rate[
+                        quantity],
+            3.0e-7,
+            quantity < 3U
+                ? 3.0e-8
+                : 3.0e-7);
+    }
+
+    // A rejected third entry must not mutate the already accepted BHP control
+    // state. This checks control-mode rollback together with the existing
+    // reservoir history/time ownership.
+    const auto control_before_rejection =
+        switch_control_state;
+    const double time_before_control_rejection =
+        switch_clock
+            .accepted_time_seconds();
+    const std::size_t steps_before_control_rejection =
+        switch_clock
+            .accepted_step_count();
+    const double dt_before_control_rejection =
+        switch_clock
+            .next_timestep_seconds();
+
+    auto invalid_persisted_options =
+        switch_options;
+    invalid_persisted_options.adaptive
+        .minimum_timestep_seconds =
+        dt_before_control_rejection *
+        2.0;
+    invalid_persisted_options.adaptive
+        .maximum_timestep_seconds =
+        dt_before_control_rejection *
+        4.0;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        rejected_persisted_report;
+    const PetscErrorCode persisted_rejection_error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                switch_reservoir_system.get(),
+                &switch_source_context,
+                target_rate,
+                invalid_persisted_options,
+                &switch_clock,
+                &switch_control_state,
+                &rejected_persisted_report);
+
+    require_collective(
+        persisted_rejection_error ==
+                PETSC_ERR_ARG_OUTOFRANGE &&
+            !rejected_persisted_report
+                 .has_value() &&
+            switch_control_state.control ==
+                control_before_rejection
+                    .control &&
+            switch_control_state
+                    .bottom_hole_pressure_pa ==
+                control_before_rejection
+                    .bottom_hole_pressure_pa &&
+            switch_clock
+                    .accepted_time_seconds() ==
+                time_before_control_rejection &&
+            switch_clock
+                    .accepted_step_count() ==
+                steps_before_control_rejection &&
+            switch_clock
+                    .next_timestep_seconds() ==
+                dt_before_control_rejection &&
+            switch_reservoir_system
+                    ->time_step_seconds() ==
+                dt_before_control_rejection &&
+            switch_source_context
+                    .current_bottom_hole_pressure_pa() ==
+                minimum_bhp_pa,
+        "rejected persisted minimum-BHP timestep mutated accepted control state/time/history");
 
     Vec discarded_rate_difference = nullptr;
     error =

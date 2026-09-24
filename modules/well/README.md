@@ -232,3 +232,29 @@ BHP limit is binding, the final well rate is allowed to differ from the original
 rate target. BHP-to-rate switching, maximum-BHP constraints, surface/phase-rate
 controls, multi-well control priority and schedule logic remain outside this
 contract.
+
+
+### Accepted well-control state across timesteps
+
+Well control mode is now part of explicit accepted state rather than a
+single-driver-call flag. `AcceptedFixedTotalMolarRateWellControlState3D`
+stores both the accepted control mode and its BHP value.
+
+A fixed-rate accepted step retains `fixed_total_molar_rate` and stores the
+converged BHP only as the next rate-control nonlinear initial guess. When a
+minimum-BHP switch is accepted, the state is committed atomically as
+`minimum_bottom_hole_pressure` with BHP exactly equal to `p_min`. The next
+physical timestep reads that accepted state and enters reservoir-only fixed-BHP
+mode immediately; it does not create or solve the augmented rate-control system
+first.
+
+Control state follows the same transactional boundary as reservoir history and
+the accepted physical clock. Nonlinear retry and timestep cutback never mutate
+the accepted control state. Terminal rejection restores the entry source mode
+and leaves accepted mode/BHP unchanged. No automatic minimum-BHP-to-rate
+switchback or hysteresis is introduced in this contract.
+
+The former `double* accepted_bottom_hole_pressure_pa` driver overload remains
+as a single-step compatibility entry and reconstructs fixed-rate mode on each
+call. Multi-timestep callers that require persistent control ownership use the
+accepted well-control state overload.
