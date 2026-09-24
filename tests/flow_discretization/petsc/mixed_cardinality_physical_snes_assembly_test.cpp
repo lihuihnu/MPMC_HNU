@@ -7047,6 +7047,10 @@ struct ControlledWellPhaseTransitionFixture {
     bool rebuilt_previous_totals_captured{};
     std::array<double, 4>
         rebuilt_previous_totals{};
+    bool accepted_anchor_unchanged_at_scan{
+        true};
+    std::vector<double>
+        scanned_source_bottom_hole_pressure_pa;
 };
 
 PetscErrorCode
@@ -7091,6 +7095,40 @@ controlled_well_transition_scan(
                     .petsc_local_owned_scalar_count())) {
         return PETSC_ERR_ARG_INCOMP;
     }
+
+    if (fixture->source_context == nullptr ||
+        fixture->accepted_control == nullptr ||
+        fixture->clock == nullptr) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    fixture
+        ->accepted_anchor_unchanged_at_scan =
+        fixture
+            ->accepted_anchor_unchanged_at_scan &&
+        fixture
+                ->accepted_control
+                ->control ==
+            fixture
+                ->expected_entry_control &&
+        fixture
+                ->accepted_control
+                ->bottom_hole_pressure_pa ==
+            fixture
+                ->expected_entry_bhp_pa &&
+        fixture
+                ->clock
+                ->accepted_time_seconds() ==
+            0.0 &&
+        fixture
+                ->clock
+                ->accepted_step_count() ==
+            0U;
+    fixture
+        ->scanned_source_bottom_hole_pressure_pa
+        .push_back(
+            fixture
+                ->source_context
+                ->current_bottom_hole_pressure_pa());
 
     ++fixture->scans;
     const auto& cell30 =
@@ -9958,6 +9996,8 @@ void run_fixed_total_molar_rate_control_case(
             transition_rate_fixture
                 .accepted_anchor_unchanged_at_rebuild &&
             transition_rate_fixture
+                .accepted_anchor_unchanged_at_scan &&
+            transition_rate_fixture
                 .rebuilt_previous_totals_captured &&
             transition_rate_system
                     ->numbering()
@@ -10113,6 +10153,260 @@ void run_fixed_total_molar_rate_control_case(
             transition_rate_history_matches,
         "transitioned rate-control accepted history did not commit exactly once");
 
+    // Cross the two state machines in one physical timestep. Entry control is
+    // accepted RATE, but the first 2P rate candidate is known to violate the
+    // already validated p_min and therefore selects a tentative fixed-BHP
+    // candidate. That selected BHP candidate triggers 2P -> 3P. The phase
+    // restart must discard the complete trial control generation and restart
+    // the rebuilt system from the accepted RATE/BHP anchor, not from p_min.
+    auto transition_switch_source =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    make_transition_well(
+                        initial_bhp_pa),
+                    initial_bhp_pa);
+    auto transition_switch_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &transition_switch_source,
+            &provider);
+    auto transition_switch_control =
+        wdp::
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                fixed_total_molar_rate(
+                    initial_bhp_pa);
+    fdp::AcceptedPhysicalTimeClock3D
+        transition_switch_clock{
+            0.0,
+            1.0};
+    ControlledWellPhaseTransitionFixture
+        transition_switch_fixture{
+            rank,
+            &schedule,
+            &partition,
+            &bridge,
+            &pattern,
+            audit,
+            &provider,
+            &transition_switch_source,
+            &transition_switch_control,
+            &transition_switch_clock,
+            wdp::
+                FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                    fixed_total_molar_rate,
+            initial_bhp_pa};
+
+    auto transition_switch_options =
+        transition_rate_options;
+    transition_switch_options
+        .minimum_bottom_hole_pressure_pa =
+        minimum_bhp_pa;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        transition_switch_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_with_phase_transitions_3d(
+                PETSC_COMM_WORLD,
+                &transition_switch_system,
+                &transition_switch_source,
+                target_rate,
+                {
+                    &controlled_well_transition_scan,
+                    &transition_switch_fixture,
+                    &controlled_well_transition_rebuild,
+                    &transition_switch_fixture},
+                transition_switch_options,
+                &transition_switch_clock,
+                &transition_switch_control,
+                &transition_switch_report);
+
+    const wdp::
+        FixedTotalMolarRateWellControlSolveReport3D*
+        restarted_rate_candidate =
+            nullptr;
+    if (transition_switch_report
+            .has_value()) {
+        if (transition_switch_report
+                ->accepted_solve
+                .has_value()) {
+            restarted_rate_candidate =
+                &*transition_switch_report
+                      ->accepted_solve;
+        } else if (
+            transition_switch_report
+                ->discarded_rate_control_candidate
+                .has_value()) {
+            restarted_rate_candidate =
+                &*transition_switch_report
+                      ->discarded_rate_control_candidate;
+        }
+    }
+
+    const auto* rebound_switch_cell30 =
+        transition_switch_source
+            .well()
+            .find_connection(
+                mesh::GlobalEntityId{
+                    UINT64_C(30)});
+    require_collective(
+        error == PETSC_SUCCESS &&
+            transition_switch_report
+                .has_value() &&
+            transition_switch_report
+                    ->accepted() &&
+            transition_switch_report
+                    ->phase_transition_restarts ==
+                1U &&
+            transition_switch_report
+                    ->accepted_record
+                    ->phase_transition_restarts ==
+                1U &&
+            transition_switch_fixture.scans ==
+                2U &&
+            transition_switch_fixture
+                    .scanned_source_bottom_hole_pressure_pa
+                    .size() ==
+                2U &&
+            transition_switch_fixture
+                    .scanned_source_bottom_hole_pressure_pa[
+                        0U] ==
+                minimum_bhp_pa &&
+            transition_switch_fixture
+                .accepted_anchor_unchanged_at_rebuild &&
+            transition_switch_fixture
+                .accepted_anchor_unchanged_at_scan &&
+            restarted_rate_candidate !=
+                nullptr &&
+            restarted_rate_candidate
+                    ->initial_bottom_hole_pressure_pa ==
+                initial_bhp_pa &&
+            transition_switch_clock
+                    .accepted_time_seconds() ==
+                1.0 &&
+            transition_switch_clock
+                    .accepted_step_count() ==
+                1U &&
+            rebound_switch_cell30 !=
+                nullptr &&
+            rebound_switch_cell30
+                    ->active_phase_identities()
+                    .has_value() &&
+            rebound_switch_cell30
+                    ->active_phase_identities()
+                    ->phase_count() ==
+                3U,
+        "rate-to-BHP trial control generation leaked across the phase-transition restart");
+
+    std::uint64_t
+        transition_switch_authoritative_count =
+            0U;
+    const auto transition_switch_well_rate =
+        global_fixed_bhp_well_production_rate(
+            *transition_switch_system,
+            transition_switch_system
+                ->initial_state(),
+            transition_switch_source.well(),
+            transition_switch_control
+                .bottom_hole_pressure_pa,
+            &transition_switch_authoritative_count);
+    require_collective(
+        transition_switch_authoritative_count ==
+            2U,
+        "control/phase transactional restart lost owner-only two-connection aggregation");
+
+    const double
+        transition_switch_total_molar_rate =
+            transition_switch_well_rate[0] +
+            transition_switch_well_rate[1] +
+            transition_switch_well_rate[2];
+    if (transition_switch_control.control ==
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                fixed_total_molar_rate) {
+        require_collective(
+            transition_switch_report
+                    ->accepted_solve
+                    .has_value() &&
+                std::abs(
+                    transition_switch_total_molar_rate -
+                    target_rate) <=
+                    transition_rate_residual_tolerance &&
+                std::abs(
+                    transition_switch_report
+                        ->accepted_solve
+                        ->total_molar_rate_residual_mol_per_s()) <=
+                    transition_rate_residual_tolerance,
+            "restarted RATE generation did not satisfy the rate residual contract");
+    } else {
+        require_collective(
+            transition_switch_control.control ==
+                    wdp::
+                        FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                            minimum_bottom_hole_pressure &&
+                transition_switch_control
+                        .bottom_hole_pressure_pa ==
+                    minimum_bhp_pa &&
+                transition_switch_report
+                        ->accepted_fixed_bhp_solve
+                        .has_value(),
+            "restarted arbitration produced an invalid final minimum-BHP control state");
+    }
+
+    const auto transition_switch_local_final =
+        owned_conserved_totals(
+            *transition_switch_system,
+            transition_switch_system
+                ->initial_state());
+    std::array<double, 4>
+        transition_switch_global_final{};
+    require_collective(
+        MPI_Allreduce(
+            transition_switch_local_final.data(),
+            transition_switch_global_final.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce control/phase transactional final totals");
+    for (std::size_t quantity = 0U;
+         quantity < 4U;
+         ++quantity) {
+        near_collective(
+            transition_switch_global_final[
+                quantity],
+            transition_switch_fixture
+                    .rebuilt_previous_totals[
+                        quantity] -
+                transition_switch_well_rate[
+                    quantity],
+            4.0e-7,
+            quantity < 3U
+                ? 4.0e-8
+                : 4.0e-7);
+    }
+
+    bool transition_switch_history_matches =
+        false;
+    require_collective(
+        transition_switch_system
+                ->accepted_history_matches_state(
+                    transition_switch_system
+                        ->initial_state(),
+                    &transition_switch_history_matches) ==
+                PETSC_SUCCESS &&
+            transition_switch_history_matches,
+        "control/phase transactional restart did not commit exactly one final history");
+
     // Repeat from an already accepted minimum-BHP mode. The 2P fixed-BHP
     // candidate is discarded by the phase transition, the completion is
     // rebound to 3P, and the same timestep restarts from the accepted
@@ -10215,6 +10509,8 @@ void run_fixed_total_molar_rate_control_case(
                 1U &&
             transition_bhp_fixture
                 .accepted_anchor_unchanged_at_rebuild &&
+            transition_bhp_fixture
+                .accepted_anchor_unchanged_at_scan &&
             transition_bhp_control
                     .control ==
                 wdp::

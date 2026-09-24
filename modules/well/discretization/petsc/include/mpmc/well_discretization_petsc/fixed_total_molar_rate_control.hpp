@@ -305,6 +305,7 @@ struct FixedTotalMolarRateWellControlSolveReport3D {
     PetscInt global_scalar_count{};
     PetscInt well_global_scalar{-1};
     int well_owner_rank{-1};
+    double initial_bottom_hole_pressure_pa{};
     double bottom_hole_pressure_pa{};
     double target_total_molar_rate_mol_per_s{};
     double achieved_total_molar_rate_mol_per_s{};
@@ -829,8 +830,8 @@ public:
                 SNESSetTolerances(
                     snes,
                     PetscReal{1.0e-10},
-                    PetscReal{1.0e-10},
-                    PetscReal{1.0e-12},
+                    PetscReal{0.0},
+                    PetscReal{0.0},
                     PetscInt{30},
                     PetscInt{2000});
         }
@@ -958,6 +959,26 @@ public:
             return error;
         }
 
+        const double rate_residual =
+            achieved_rate -
+            target_total_molar_rate_mol_per_s_;
+        const double rate_residual_tolerance =
+            1.0e-8 *
+            std::max(
+                1.0,
+                std::abs(
+                    target_total_molar_rate_mol_per_s_));
+        if (!std::isfinite(rate_residual) ||
+            std::abs(rate_residual) >
+                rate_residual_tolerance) {
+            cleanup_solve(
+                &solved_state,
+                &residual,
+                &jacobian,
+                &snes);
+            return PETSC_ERR_NOT_CONVERGED;
+        }
+
         PetscReal reservoir_function_norm =
             0.0;
         error =
@@ -1026,6 +1047,7 @@ public:
                 global_scalar_count(),
                 well_global_scalar(),
                 well_owner_rank_,
+                initial_bottom_hole_pressure_pa_,
                 bottom_hole_pressure_pa,
                 target_total_molar_rate_mol_per_s_,
                 achieved_rate,
@@ -1217,6 +1239,8 @@ private:
     [[nodiscard]] PetscErrorCode
     initialize(
         double initial_bottom_hole_pressure_pa) {
+        initial_bottom_hole_pressure_pa_ =
+            initial_bottom_hole_pressure_pa;
         PetscErrorCode error =
             VecDuplicate(
                 reservoir_system_
@@ -2102,11 +2126,25 @@ private:
                     PETSC_ERR_ARG_WRONGSTATE;
                 break;
             }
+            double row_scale =
+                1.0 / maximum;
+            if (row ==
+                well_global_scalar()) {
+                const double target_scale =
+                    std::max(
+                        1.0,
+                        std::abs(
+                            target_total_molar_rate_mol_per_s_));
+                row_scale =
+                    std::max(
+                        row_scale,
+                        1.0 / target_scale);
+            }
             scaling[
                 static_cast<std::size_t>(
                     row - start)] =
                 static_cast<PetscScalar>(
-                    1.0 / maximum);
+                    row_scale);
         }
 
         const PetscErrorCode restore =
@@ -2519,6 +2557,7 @@ private:
     FixedTotalMolarRateWellSourceEvaluatorContext3D*
         source_context_{};
     double target_total_molar_rate_mol_per_s_{};
+    double initial_bottom_hole_pressure_pa_{};
     int mpi_rank_{-1};
     int mpi_size_{};
     int well_owner_rank_{-1};

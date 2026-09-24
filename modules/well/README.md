@@ -321,3 +321,38 @@ type names are compatibility aliases to the core types.
 A separate well-core target tests hold/switch decisions, capacity and pressure
 deadbands, all equality boundaries, disabled reactivation, accepted-state
 construction and invalid policy configuration without PETSc or MPI.
+
+
+### Control arbitration and phase-transition transactional restart
+
+The transition-aware controlled physical-timestep path now treats a phase-set
+restart as invalidating the complete trial well-control generation. A selected
+rate or minimum-BHP candidate may be scanned for a post-SNES phase transition,
+but no trial BHP, control mode, discarded-candidate diagnostics, reservoir
+history or physical time survives an accepted rebuild.
+
+After rebuild/rebind, the same physical timestep restarts from the entry
+accepted well-control mode and accepted BHP. The rebuilt phase set is allowed to
+change the subsequent arbitration result, but the nonlinear initial BHP is the
+accepted entry BHP rather than a tentative p_min or trial rate root. Only the
+final phase-stable candidate may commit reservoir history, physical time and
+accepted well-control state.
+
+The augmented rate solve also now enforces its physical rate residual contract
+independently of PETSc's scaled convergence reason. The well row is scaled at
+least by the target-rate normalization, SNES relative/step convergence is
+disabled for this controlled solve, and a converged solution is rejected unless
+
+`abs(q_achieved - q_target) <= 1e-8 * max(1, abs(q_target))`.
+
+This prevents a phase-rebuilt system with a very large initial scaled norm from
+terminating on relative convergence while still carrying a material whole-well
+rate residual.
+
+The 2-rank regression crosses both state machines explicitly: accepted RATE
+first selects a tentative minimum-BHP candidate, that candidate triggers a
+cell30 2P-to-3P transition, the rebuild leaves accepted control/time untouched,
+and the rebuilt generation proves its rate solve was initialized from the
+original accepted BHP before re-running the complete arbitration. The final
+phase-stable candidate remains owner-only and closes component/energy
+conservation with one accepted history/time commit.
