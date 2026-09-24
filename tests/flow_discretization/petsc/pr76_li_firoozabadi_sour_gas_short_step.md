@@ -146,3 +146,58 @@ Production acceptance requires:
 This benchmark does not add rate control, minimum-BHP switching, schedules,
 phase transitions, multiple cells, MPI decomposition, or any new EOS,
 viscosity, caloric, capillary or relative-permeability model.
+
+
+## Serial ↔ 2-rank decomposition-invariance extension
+
+The same source-complete stationary state is also used in a 2×1 two-cell
+decomposition regression.  This is not a second physical benchmark: both cells
+reuse the exact 20-bar / 178.8-K Li-Firoozabadi equilibrium, the same sourced
+transport/caloric closure, the same quartz rock storage and the same SPE1/Odeh
+cell dimensions/porosity/permeability.
+
+The two cells are connected by one explicitly materialized x-normal TPFA face.
+For identical Cartesian cells,
+
+`T_f = K_x * (dy * dz) / dx`
+
+is derived directly from the already-cited SPE1 geometry/permeability.  Gravity
+is zero, both sides have identical pressure/temperature/phase state, and thermal
+face conductance is explicitly disabled rather than assigned an unsourced
+conductivity.  The independent stationary face oracle is therefore
+
+- phase volumetric flux = 0;
+- every component molar flux = 0;
+- total internal-face energy rate = 0.
+
+Cell 10 retains the same fixed-BHP Peaceman completion with
+`p_bhp = p_cell = 2 MPa`, so its independent well-rate oracle remains zero.
+Cell 20 has no external source.
+
+The regression solves the *same* 38-scalar two-cell nonlinear problem twice:
+
+1. serial: both cells owned on `PETSC_COMM_SELF`;
+2. distributed: rank 0 owns cell 10 and the authoritative internal face, rank 1
+   owns cell 20, and each rank retains the other cell as the local ghost copy.
+
+Before the nonlinear solve, the test assembles the physical Jacobian and requires
+a nonzero cross-cell block.  This prevents the zero-flux stationary state from
+passing without exercising the internal-face coupling.  In the serial solve the
+coupling resides in the local diagonal MPIAIJ block; in the 2-rank solve the same
+coupling crosses the rank boundary.
+
+After NewtonLS + GMRES + ASM convergence, the regression compares:
+
+- both stable-cell natural-variable states `p/T/S/x`;
+- the frozen three physical phase identities;
+- phase/component internal-face rates and total face energy rate;
+- fixed-BHP phase/component/energy well rates;
+- all six global component inventories;
+- global total internal energy;
+- fresh final residual L2 norm;
+- the aggregate absolute cross-cell Jacobian coupling.
+
+All physical zero-rate and inventory references remain those of the existing
+source-complete oracle.  No new EOS, transport/caloric, relative-permeability,
+capillary, well-control, phase-transition or solver model is introduced by this
+decomposition test.
