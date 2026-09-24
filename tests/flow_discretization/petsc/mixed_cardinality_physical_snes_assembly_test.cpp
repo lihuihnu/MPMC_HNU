@@ -10027,11 +10027,25 @@ void run_fixed_total_molar_rate_control_case(
         transition_rate_authoritative_count ==
             2U,
         "rate-controlled transition lost owner-only two-connection aggregation");
-    near_collective(
-        transition_rate_total_molar,
-        target_rate,
-        1.0e-8,
-        1.0e-10);
+    require_collective(
+        std::abs(
+            transition_rate_total_molar -
+            target_rate) <=
+                1.0e-8 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            target_rate)) &&
+            std::abs(
+                transition_rate_report
+                    ->accepted_solve
+                    ->total_molar_rate_residual_mol_per_s()) <=
+                1.0e-8 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            target_rate)),
+        "transitioned rate-control whole-well rate did not satisfy the existing rate residual contract");
 
     const auto transition_rate_local_final =
         owned_conserved_totals(
