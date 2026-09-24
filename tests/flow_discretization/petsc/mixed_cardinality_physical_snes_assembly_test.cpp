@@ -7005,6 +7005,278 @@ void run_multi_connection_local_transition_rebind_case(
         false;
 }
 
+struct ControlledWellPhaseTransitionFixture {
+    int rank{};
+    const dp::
+        ParallelOwnedConnectionSchedule3D*
+            schedule{};
+    const mesh::PartitionSnapshot*
+        partition{};
+    const dp::
+        PetscMpiAijSymbolicPreallocation3D*
+            bridge{};
+    const dp::
+        OwnedCellStructuralColumnPatternSnapshot3D*
+            pattern{};
+    DispatchAudit* audit{};
+    flow::
+        Pr76AbsentPhasePotentialExtensionProvider<
+            double>*
+        provider{};
+    wdp::
+        FixedTotalMolarRateWellSourceEvaluatorContext3D*
+        source_context{};
+    wdp::
+        AcceptedFixedTotalMolarRateWellControlState3D*
+        accepted_control{};
+    fdp::AcceptedPhysicalTimeClock3D*
+        clock{};
+
+    wdp::
+        FixedTotalMolarRatePhysicalTimestepControlMode3D
+        expected_entry_control{
+            wdp::
+                FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                    fixed_total_molar_rate};
+    double expected_entry_bhp_pa{};
+
+    std::size_t scans{};
+    std::size_t rebuild_calls{};
+    bool accepted_anchor_unchanged_at_rebuild{
+        true};
+    bool rebuilt_previous_totals_captured{};
+    std::array<double, 4>
+        rebuilt_previous_totals{};
+};
+
+PetscErrorCode
+controlled_well_transition_scan(
+    const fdp::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&
+            system,
+    Vec,
+    const fdp::
+        VariableCardinalityNaturalVariableSnesSolveReport3D&
+            solve_report,
+    void* raw_context,
+    fdp::PostSnesPhaseTransitionScanStatus3D*
+        scan_status,
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>*
+            output) {
+    if (raw_context == nullptr ||
+        scan_status == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* fixture =
+        static_cast<
+            ControlledWellPhaseTransitionFixture*>(
+                raw_context);
+    *scan_status =
+        fdp::
+            PostSnesPhaseTransitionScanStatus3D::
+                complete;
+    output->clear();
+
+    if (static_cast<int>(
+            solve_report.converged_reason) <=
+            0 ||
+        solve_report
+                .locally_owned_solution
+                .size() !=
+            static_cast<std::size_t>(
+                system
+                    .numbering()
+                    .petsc_local_owned_scalar_count())) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    ++fixture->scans;
+    const auto& cell30 =
+        system.numbering().cell(
+            mesh::LocalIndex{2U});
+    if (cell30.owner_rank !=
+        system.numbering().local_rank()) {
+        return PETSC_SUCCESS;
+    }
+    if (cell30.cell_global !=
+            mesh::GlobalEntityId{
+                UINT64_C(30)}) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    if (cell30.phase_count == 2U) {
+        output->push_back(
+            controller_two_to_three_proposal());
+    } else if (cell30.phase_count != 3U) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode
+controlled_well_transition_rebuild(
+    const fdp::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&
+            current_system,
+    Vec,
+    const fdp::
+        VariableCardinalityNaturalVariableSnesSolveReport3D&,
+    std::span<
+        const fdp::
+            PostSnesPhaseTransitionProposal3D>
+        local_owned_proposals,
+    std::span<
+        const fdp::
+            AcceptedPhaseTransitionSummary3D>
+        accepted_global_batch,
+    void* raw_context,
+    std::unique_ptr<
+        fdp::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>*
+        output) {
+    if (raw_context == nullptr ||
+        output == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    output->reset();
+    auto* fixture =
+        static_cast<
+            ControlledWellPhaseTransitionFixture*>(
+                raw_context);
+    if (fixture->schedule == nullptr ||
+        fixture->partition == nullptr ||
+        fixture->bridge == nullptr ||
+        fixture->pattern == nullptr ||
+        fixture->audit == nullptr ||
+        fixture->provider == nullptr ||
+        fixture->source_context == nullptr ||
+        fixture->accepted_control == nullptr ||
+        fixture->clock == nullptr ||
+        accepted_global_batch.size() !=
+            1U ||
+        accepted_global_batch.front()
+                .cell_global !=
+            mesh::GlobalEntityId{
+                UINT64_C(30)} ||
+        accepted_global_batch.front()
+                .source_phase_count !=
+            2U ||
+        accepted_global_batch.front()
+                .target_phase_count !=
+            3U) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    if (fixture->rank == 0) {
+        if (local_owned_proposals.size() !=
+                1U ||
+            local_owned_proposals.front()
+                    .cell_global !=
+                mesh::GlobalEntityId{
+                    UINT64_C(30)}) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+    } else if (
+        !local_owned_proposals.empty()) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    fixture
+        ->accepted_anchor_unchanged_at_rebuild =
+        fixture
+            ->accepted_anchor_unchanged_at_rebuild &&
+        fixture
+                ->accepted_control
+                ->control ==
+            fixture
+                ->expected_entry_control &&
+        fixture
+                ->accepted_control
+                ->bottom_hole_pressure_pa ==
+            fixture
+                ->expected_entry_bhp_pa &&
+        fixture
+                ->clock
+                ->accepted_time_seconds() ==
+            0.0 &&
+        fixture
+                ->clock
+                ->accepted_step_count() ==
+            0U;
+
+    ++fixture->rebuild_calls;
+    auto cells =
+        make_controller_cells(
+            fixture->rank,
+            true,
+            fixture->audit);
+    auto faces =
+        make_face_inputs(
+            fixture->rank,
+            false);
+
+    PetscErrorCode error =
+        fdp::
+            rebuild_phase_transition_natural_variable_system_3d(
+                PETSC_COMM_WORLD,
+                *fixture->schedule,
+                *fixture->partition,
+                *fixture->bridge,
+                *fixture->pattern,
+                current_system
+                    .time_step_seconds(),
+                std::move(cells),
+                std::move(faces),
+                {
+                    {&evaluate_1p,
+                     fixture->audit},
+                    {&evaluate_2p,
+                     fixture->audit},
+                    {&evaluate_3p,
+                     fixture->audit}},
+                wdp::
+                    fixed_total_molar_rate_well_source_binding_3d(
+                        fixture
+                            ->source_context),
+                &fdp::
+                    evaluate_absent_phase_thermodynamic_provider_3d<
+                        flow::
+                            Pr76AbsentPhasePotentialExtensionProvider<
+                                double>>,
+                fixture->provider,
+                output);
+    if (error != PETSC_SUCCESS ||
+        *output == nullptr) {
+        return error != PETSC_SUCCESS
+            ? error
+            : PETSC_ERR_PLIB;
+    }
+
+    const auto local_previous =
+        owned_conserved_totals(
+            **output,
+            (*output)->initial_state());
+    if (MPI_Allreduce(
+            local_previous.data(),
+            fixture
+                ->rebuilt_previous_totals
+                .data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) !=
+        MPI_SUCCESS) {
+        output->reset();
+        return PETSC_ERR_MPI;
+    }
+    fixture
+        ->rebuilt_previous_totals_captured =
+        true;
+    return PETSC_SUCCESS;
+}
+
 void run_fixed_total_molar_rate_control_case(
     int rank,
     const dp::
@@ -9497,6 +9769,515 @@ void run_fixed_total_molar_rate_control_case(
             &discarded_rate_difference) ==
             PETSC_SUCCESS,
         "minimum-BHP switching regression cleanup failed");
+
+    // Controlled post-SNES phase-transition restart: cell30 starts 2P,
+    // cell60 stays frozen 3P. The first selected rate candidate is scanned,
+    // discarded, rebuilt to 3P by stable identity, and the same 1 s physical
+    // timestep is solved again from the entry accepted rate-control state.
+    const auto aqueous_identity =
+        mixed_physical_phase_identity(
+            "aqueous");
+    const auto hc0_identity =
+        mixed_physical_phase_identity(
+            "hydrocarbon-0");
+    const auto hc1_identity =
+        mixed_physical_phase_identity(
+            "hydrocarbon-1");
+    const wdp::
+        FixedBhpPhaseIdentityInjectionEnthalpy3D
+        controlled_phase_enthalpies{
+            "fixture/controlled-transition-enthalpy/v1",
+            {
+                {aqueous_identity, 1000.0},
+                {hc0_identity, 2000.0},
+                {hc1_identity, 3000.0}}};
+
+    const auto make_transition_well =
+        [&](double bhp_pa) {
+            auto reboundable30 =
+                wdp::
+                    FixedBhpPeacemanWellSourceEvaluatorContext3D::
+                        create_phase_identity_bound(
+                            mesh::GlobalEntityId{
+                                UINT64_C(30)},
+                            well::
+                                make_peaceman_well_index_3d(
+                                    {10.0, 10.0, 5.0},
+                                    {
+                                        1.0e-8,
+                                        1.0e-8,
+                                        1.0e-8},
+                                    well::
+                                        AxisAlignedWellDirection3D::z,
+                                    0.10,
+                                    0.0),
+                            bhp_pa,
+                            controlled_phase_enthalpies,
+                            phase_identity_map_for_stable(
+                                UINT64_C(30)),
+                            "fixture/controlled-transition-cell30/v1");
+            auto frozen60 =
+                wdp::
+                    FixedBhpPeacemanWellSourceEvaluatorContext3D::
+                        create(
+                            mesh::GlobalEntityId{
+                                UINT64_C(60)},
+                            well::
+                                make_peaceman_well_index_3d(
+                                    {12.0, 9.0, 4.0},
+                                    {
+                                        2.0e-8,
+                                        1.5e-8,
+                                        2.5e-8},
+                                    well::
+                                        AxisAlignedWellDirection3D::z,
+                                    0.12,
+                                    0.1),
+                            bhp_pa,
+                            wd::
+                                FixedBhpInjectionEnthalpy3D{
+                                    "fixture/controlled-transition-cell60-enthalpy/v1",
+                                    {
+                                        1100.0,
+                                        2200.0,
+                                        3300.0}},
+                            "fixture/controlled-transition-cell60/v1");
+            return wdp::
+                FixedBhpMultiConnectionWellSourceEvaluatorContext3D::
+                    create(
+                        "fixture/controlled-transition-well/v1",
+                        {
+                            frozen60,
+                            reboundable30});
+        };
+
+    auto transition_rate_source =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    make_transition_well(
+                        initial_bhp_pa),
+                    initial_bhp_pa);
+    auto transition_rate_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &transition_rate_source,
+            &provider);
+
+    auto transition_rate_control =
+        wdp::
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                fixed_total_molar_rate(
+                    initial_bhp_pa);
+    fdp::AcceptedPhysicalTimeClock3D
+        transition_rate_clock{
+            0.0,
+            1.0};
+    ControlledWellPhaseTransitionFixture
+        transition_rate_fixture{
+            rank,
+            &schedule,
+            &partition,
+            &bridge,
+            &pattern,
+            audit,
+            &provider,
+            &transition_rate_source,
+            &transition_rate_control,
+            &transition_rate_clock,
+            wdp::
+                FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                    fixed_total_molar_rate,
+            initial_bhp_pa};
+
+    wdp::
+        FixedTotalMolarRatePhysicalTimestepDriverOptions3D
+        transition_rate_options;
+    transition_rate_options.adaptive
+        .minimum_timestep_seconds =
+        1.0;
+    transition_rate_options.adaptive
+        .maximum_timestep_seconds =
+        1.0;
+    transition_rate_options.adaptive
+        .maximum_retries =
+        1U;
+    transition_rate_options.phase_transition
+        .max_transition_restarts =
+        2U;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        transition_rate_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_with_phase_transitions_3d(
+                PETSC_COMM_WORLD,
+                &transition_rate_system,
+                &transition_rate_source,
+                target_rate,
+                {
+                    &controlled_well_transition_scan,
+                    &transition_rate_fixture,
+                    &controlled_well_transition_rebuild,
+                    &transition_rate_fixture},
+                transition_rate_options,
+                &transition_rate_clock,
+                &transition_rate_control,
+                &transition_rate_report);
+
+    const auto* rebound_rate_cell30 =
+        transition_rate_source
+            .well()
+            .find_connection(
+                mesh::GlobalEntityId{
+                    UINT64_C(30)});
+    require_collective(
+        error == PETSC_SUCCESS &&
+            transition_rate_report
+                .has_value() &&
+            transition_rate_report
+                    ->accepted() &&
+            transition_rate_report
+                    ->phase_transition_restarts ==
+                1U &&
+            transition_rate_report
+                    ->accepted_record
+                    ->phase_transition_restarts ==
+                1U &&
+            transition_rate_fixture.scans ==
+                2U &&
+            transition_rate_fixture.rebuild_calls ==
+                1U &&
+            transition_rate_fixture
+                .accepted_anchor_unchanged_at_rebuild &&
+            transition_rate_fixture
+                .rebuilt_previous_totals_captured &&
+            transition_rate_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                3U &&
+            transition_rate_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{5U})
+                    .phase_count ==
+                3U &&
+            transition_rate_control
+                    .control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        fixed_total_molar_rate &&
+            transition_rate_report
+                    ->accepted_solve
+                    .has_value() &&
+            transition_rate_report
+                    ->accepted_solve
+                    ->reservoir_nonlinear_solve
+                    .has_value() &&
+            transition_rate_report
+                    ->accepted_solve
+                    ->global_scalar_count ==
+                transition_rate_system
+                    ->numbering()
+                    .petsc_global_scalar_count() +
+                    1 &&
+            transition_rate_clock
+                    .accepted_time_seconds() ==
+                1.0 &&
+            transition_rate_clock
+                    .accepted_step_count() ==
+                1U &&
+            rebound_rate_cell30 !=
+                nullptr &&
+            rebound_rate_cell30
+                    ->active_phase_identities()
+                    .has_value() &&
+            rebound_rate_cell30
+                    ->active_phase_identities()
+                    ->phase_count() ==
+                3U,
+        "rate-controlled post-SNES transition did not discard/rebuild/rebind/restart exactly once");
+
+    std::uint64_t
+        transition_rate_authoritative_count = 0U;
+    const auto transition_rate_well_rate =
+        global_fixed_bhp_well_production_rate(
+            *transition_rate_system,
+            transition_rate_system
+                ->initial_state(),
+            transition_rate_source.well(),
+            transition_rate_control
+                .bottom_hole_pressure_pa,
+            &transition_rate_authoritative_count);
+    const double
+        transition_rate_total_molar =
+            transition_rate_well_rate[0] +
+            transition_rate_well_rate[1] +
+            transition_rate_well_rate[2];
+    require_collective(
+        transition_rate_authoritative_count ==
+            2U,
+        "rate-controlled transition lost owner-only two-connection aggregation");
+    near_collective(
+        transition_rate_total_molar,
+        target_rate,
+        1.0e-8,
+        1.0e-10);
+
+    const auto transition_rate_local_final =
+        owned_conserved_totals(
+            *transition_rate_system,
+            transition_rate_system
+                ->initial_state());
+    std::array<double, 4>
+        transition_rate_global_final{};
+    require_collective(
+        MPI_Allreduce(
+            transition_rate_local_final.data(),
+            transition_rate_global_final.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce transitioned rate-control final totals");
+    for (std::size_t quantity = 0U;
+         quantity < 4U;
+         ++quantity) {
+        near_collective(
+            transition_rate_global_final[
+                quantity],
+            transition_rate_fixture
+                    .rebuilt_previous_totals[
+                        quantity] -
+                transition_rate_well_rate[
+                    quantity],
+            4.0e-7,
+            quantity < 3U
+                ? 4.0e-8
+                : 4.0e-7);
+    }
+
+    bool transition_rate_history_matches =
+        false;
+    require_collective(
+        transition_rate_system
+                ->accepted_history_matches_state(
+                    transition_rate_system
+                        ->initial_state(),
+                    &transition_rate_history_matches) ==
+                PETSC_SUCCESS &&
+            transition_rate_history_matches,
+        "transitioned rate-control accepted history did not commit exactly once");
+
+    // Repeat from an already accepted minimum-BHP mode. The 2P fixed-BHP
+    // candidate is discarded by the phase transition, the completion is
+    // rebound to 3P, and the same timestep restarts from the accepted
+    // minimum-BHP mode rather than carrying any trial control decision.
+    constexpr double
+        transition_minimum_bhp_pa =
+            5.0;
+    auto transition_bhp_source =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    make_transition_well(
+                        transition_minimum_bhp_pa),
+                    transition_minimum_bhp_pa);
+    auto transition_bhp_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &transition_bhp_source,
+            &provider);
+    auto transition_bhp_control =
+        wdp::
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                minimum_bottom_hole_pressure(
+                    transition_minimum_bhp_pa);
+    fdp::AcceptedPhysicalTimeClock3D
+        transition_bhp_clock{
+            0.0,
+            1.0};
+    ControlledWellPhaseTransitionFixture
+        transition_bhp_fixture{
+            rank,
+            &schedule,
+            &partition,
+            &bridge,
+            &pattern,
+            audit,
+            &provider,
+            &transition_bhp_source,
+            &transition_bhp_control,
+            &transition_bhp_clock,
+            wdp::
+                FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                    minimum_bottom_hole_pressure,
+            transition_minimum_bhp_pa};
+
+    auto transition_bhp_options =
+        transition_rate_options;
+    transition_bhp_options
+        .minimum_bottom_hole_pressure_pa =
+        transition_minimum_bhp_pa;
+
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        transition_bhp_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_with_phase_transitions_3d(
+                PETSC_COMM_WORLD,
+                &transition_bhp_system,
+                &transition_bhp_source,
+                target_rate,
+                {
+                    &controlled_well_transition_scan,
+                    &transition_bhp_fixture,
+                    &controlled_well_transition_rebuild,
+                    &transition_bhp_fixture},
+                transition_bhp_options,
+                &transition_bhp_clock,
+                &transition_bhp_control,
+                &transition_bhp_report);
+
+    const auto* rebound_bhp_cell30 =
+        transition_bhp_source
+            .well()
+            .find_connection(
+                mesh::GlobalEntityId{
+                    UINT64_C(30)});
+    require_collective(
+        error == PETSC_SUCCESS &&
+            transition_bhp_report
+                .has_value() &&
+            transition_bhp_report
+                    ->accepted() &&
+            transition_bhp_report
+                    ->phase_transition_restarts ==
+                1U &&
+            transition_bhp_report
+                    ->accepted_record
+                    ->phase_transition_restarts ==
+                1U &&
+            transition_bhp_fixture.scans ==
+                2U &&
+            transition_bhp_fixture.rebuild_calls ==
+                1U &&
+            transition_bhp_fixture
+                .accepted_anchor_unchanged_at_rebuild &&
+            transition_bhp_control
+                    .control ==
+                wdp::
+                    FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                        minimum_bottom_hole_pressure &&
+            transition_bhp_control
+                    .bottom_hole_pressure_pa ==
+                transition_minimum_bhp_pa &&
+            !transition_bhp_report
+                 ->accepted_solve
+                 .has_value() &&
+            transition_bhp_report
+                    ->accepted_fixed_bhp_solve
+                    .has_value() &&
+            transition_bhp_system
+                    ->numbering()
+                    .cell(
+                        mesh::LocalIndex{2U})
+                    .phase_count ==
+                3U &&
+            transition_bhp_clock
+                    .accepted_time_seconds() ==
+                1.0 &&
+            transition_bhp_clock
+                    .accepted_step_count() ==
+                1U &&
+            rebound_bhp_cell30 !=
+                nullptr &&
+            rebound_bhp_cell30
+                    ->active_phase_identities()
+                    .has_value() &&
+            rebound_bhp_cell30
+                    ->active_phase_identities()
+                    ->phase_count() ==
+                3U,
+        "minimum-BHP post-SNES transition did not restart from accepted BHP control after rebind");
+
+    std::uint64_t
+        transition_bhp_authoritative_count = 0U;
+    const auto transition_bhp_well_rate =
+        global_fixed_bhp_well_production_rate(
+            *transition_bhp_system,
+            transition_bhp_system
+                ->initial_state(),
+            transition_bhp_source.well(),
+            transition_minimum_bhp_pa,
+            &transition_bhp_authoritative_count);
+    require_collective(
+        transition_bhp_authoritative_count ==
+            2U,
+        "minimum-BHP transition lost owner-only two-connection aggregation");
+
+    const auto transition_bhp_local_final =
+        owned_conserved_totals(
+            *transition_bhp_system,
+            transition_bhp_system
+                ->initial_state());
+    std::array<double, 4>
+        transition_bhp_global_final{};
+    require_collective(
+        MPI_Allreduce(
+            transition_bhp_local_final.data(),
+            transition_bhp_global_final.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) ==
+            MPI_SUCCESS,
+        "failed to reduce transitioned minimum-BHP final totals");
+    for (std::size_t quantity = 0U;
+         quantity < 4U;
+         ++quantity) {
+        near_collective(
+            transition_bhp_global_final[
+                quantity],
+            transition_bhp_fixture
+                    .rebuilt_previous_totals[
+                        quantity] -
+                transition_bhp_well_rate[
+                    quantity],
+            4.0e-7,
+            quantity < 3U
+                ? 4.0e-8
+                : 4.0e-7);
+    }
+
+    bool transition_bhp_history_matches =
+        false;
+    require_collective(
+        transition_bhp_system
+                ->accepted_history_matches_state(
+                    transition_bhp_system
+                        ->initial_state(),
+                    &transition_bhp_history_matches) ==
+                PETSC_SUCCESS &&
+            transition_bhp_history_matches,
+        "transitioned minimum-BHP accepted history did not commit exactly once");
 
     require_collective(
         MatDestroy(
