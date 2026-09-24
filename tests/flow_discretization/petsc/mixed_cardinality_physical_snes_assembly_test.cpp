@@ -7849,6 +7849,246 @@ void run_fixed_total_molar_rate_control_case(
                 PETSC_SUCCESS,
         "rate-control timestep bridge regression cleanup failed");
 
+    // Exercise a real nonlinear retry rather than a test hook.  With a fixed
+    // positive whole-well production target, an enormous physical timestep
+    // would require negative global molar inventory.  The frozen natural-
+    // variable domains cannot represent that state, so the augmented SNES
+    // must reject the first trial.  A single cutback returns exactly to the
+    // independently validated 1 s problem above.
+    auto cutback_source_context =
+        wdp::
+            FixedTotalMolarRateWellSourceEvaluatorContext3D::
+                create(
+                    multi_context,
+                    initial_bhp_pa);
+    auto cutback_reservoir_system =
+        make_fixed_total_molar_rate_reservoir_system(
+            rank,
+            schedule,
+            partition,
+            bridge,
+            pattern,
+            audit,
+            &cutback_source_context,
+            &provider);
+
+    constexpr double impossible_first_dt_seconds =
+        1.0e9;
+    require_collective(
+        cutback_reservoir_system != nullptr &&
+            cutback_reservoir_system
+                    ->set_trial_timestep_seconds(
+                        impossible_first_dt_seconds) ==
+                PETSC_SUCCESS,
+        "failed to prepare rate-control cutback baseline");
+
+    fdp::AcceptedPhysicalTimeClock3D
+        cutback_clock{
+            0.0,
+            impossible_first_dt_seconds};
+    wdp::
+        FixedTotalMolarRatePhysicalTimestepDriverOptions3D
+        cutback_options;
+    cutback_options.adaptive
+        .minimum_timestep_seconds =
+        1.0;
+    cutback_options.adaptive
+        .maximum_timestep_seconds =
+        impossible_first_dt_seconds;
+    cutback_options.adaptive
+        .cutback_factor =
+        1.0e-9;
+    cutback_options.adaptive
+        .growth_factor =
+        2.0;
+    cutback_options.adaptive
+        .maximum_retries =
+        1U;
+    cutback_options.adaptive
+        .growth_nonlinear_iteration_limit =
+        30;
+    cutback_options.adaptive
+        .growth_line_search_direction_change_limit =
+        30;
+
+    double cutback_accepted_bhp_pa =
+        initial_bhp_pa;
+    std::optional<
+        wdp::
+            FixedTotalMolarRatePhysicalTimestepDriverReport3D>
+        cutback_report;
+    error =
+        wdp::
+            advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+                PETSC_COMM_WORLD,
+                cutback_reservoir_system.get(),
+                &cutback_source_context,
+                target_rate,
+                cutback_options,
+                &cutback_clock,
+                &cutback_accepted_bhp_pa,
+                &cutback_report);
+
+    require_collective(
+        error == PETSC_SUCCESS &&
+            cutback_report.has_value() &&
+            cutback_report->accepted() &&
+            cutback_report
+                    ->adaptive
+                    .attempts
+                    .size() ==
+                2U &&
+            cutback_report
+                    ->adaptive
+                    .retries ==
+                1U &&
+            cutback_report
+                    ->adaptive
+                    .accepted_timestep_seconds
+                    .has_value() &&
+            *cutback_report
+                  ->adaptive
+                  .accepted_timestep_seconds ==
+                1.0 &&
+            cutback_report
+                    ->accepted_record
+                    ->accepted_timestep_seconds ==
+                1.0 &&
+            cutback_clock
+                    .accepted_time_seconds() ==
+                1.0 &&
+            cutback_clock
+                    .accepted_step_count() ==
+                1U,
+        "rate-control physical-timestep driver did not cut back one real failed augmented solve to the accepted 1 s retry");
+
+    const auto& failed_attempt =
+        cutback_report
+            ->adaptive
+            .attempts[0U];
+    const auto& accepted_retry =
+        cutback_report
+            ->adaptive
+            .attempts[1U];
+    require_collective(
+        failed_attempt
+                .request
+                .attempt_index ==
+            0U &&
+            failed_attempt
+                .request
+                .retry_index ==
+            0U &&
+            failed_attempt
+                .request
+                .timestep_seconds ==
+            impossible_first_dt_seconds &&
+            failed_attempt
+                .result
+                .outcome ==
+            fdp::
+                AdaptiveTimestepAttemptOutcome3D::
+                    nonlinear_solve_diverged &&
+            failed_attempt
+                .decision ==
+            fdp::
+                AdaptiveTimestepDecision3D::
+                    reject_and_cutback &&
+            failed_attempt
+                .next_attempt_timestep_seconds
+                .has_value() &&
+            *failed_attempt
+                  .next_attempt_timestep_seconds ==
+                1.0 &&
+            accepted_retry
+                .request
+                .attempt_index ==
+            1U &&
+            accepted_retry
+                .request
+                .retry_index ==
+            1U &&
+            accepted_retry
+                .request
+                .timestep_seconds ==
+            1.0 &&
+            accepted_retry
+                .result
+                .outcome ==
+            fdp::
+                AdaptiveTimestepAttemptOutcome3D::
+                    stable_phase_set,
+        "rate-control adaptive report did not preserve failed-first-attempt/cutback/retry provenance");
+
+    near_collective(
+        cutback_accepted_bhp_pa,
+        report->bottom_hole_pressure_pa,
+        2.0e-8,
+        2.0e-10);
+
+    Vec cutback_root_difference = nullptr;
+    error =
+        VecDuplicate(
+            cutback_reservoir_system
+                ->initial_state(),
+            &cutback_root_difference);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecCopy(
+                cutback_reservoir_system
+                    ->initial_state(),
+                cutback_root_difference);
+    }
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecAXPY(
+                cutback_root_difference,
+                PetscScalar{-1.0},
+                reservoir_solution);
+    }
+    PetscReal cutback_root_difference_norm =
+        -1.0;
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecNorm(
+                cutback_root_difference,
+                NORM_2,
+                &cutback_root_difference_norm);
+    }
+    bool cutback_history_matches = false;
+    if (error == PETSC_SUCCESS) {
+        error =
+            cutback_reservoir_system
+                ->accepted_history_matches_state(
+                    cutback_reservoir_system
+                        ->initial_state(),
+                    &cutback_history_matches);
+    }
+    require_collective(
+        error == PETSC_SUCCESS &&
+            cutback_root_difference_norm <=
+                2.0e-8 &&
+            cutback_history_matches &&
+            cutback_source_context
+                    .current_bottom_hole_pressure_pa() ==
+                cutback_accepted_bhp_pa &&
+            std::abs(
+                cutback_report
+                    ->accepted_solve
+                    ->total_molar_rate_residual_mol_per_s()) <=
+                1.0e-8 *
+                    std::max(
+                        1.0,
+                        std::abs(
+                            target_rate)),
+        "rate-control retry reused failed-trial state/BHP instead of rebuilding the validated 1 s accepted root");
+
+    require_collective(
+        VecDestroy(
+            &cutback_root_difference) ==
+            PETSC_SUCCESS,
+        "rate-control nonlinear cutback regression cleanup failed");
+
     require_collective(
         MatDestroy(
             &controlled_jacobian) ==
