@@ -480,8 +480,8 @@ make_cell_pattern() {
 
 flow::FrozenActivePhaseIdentityMap
 make_phase_identities() {
-    return {
-        {
+    return flow::FrozenActivePhaseIdentityMap{
+        std::vector<flow::FrozenPhysicalPhaseIdentity>{
             {
                 "Li-Firoozabadi-2012-Table9",
                 "equilibrium-phase-0"},
@@ -490,8 +490,7 @@ make_phase_identities() {
                 "equilibrium-phase-1"},
             {
                 "Li-Firoozabadi-2012-Table9",
-                "equilibrium-phase-2"}}
-    };
+                "equilibrium-phase-2"}}};
 }
 
 template <typename Closure>
