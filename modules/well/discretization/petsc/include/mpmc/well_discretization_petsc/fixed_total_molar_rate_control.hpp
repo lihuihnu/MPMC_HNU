@@ -82,13 +82,26 @@ public:
 
     void begin_evaluation(
         double bottom_hole_pressure_pa) {
-        if (!std::isfinite(bottom_hole_pressure_pa) ||
-            !(bottom_hole_pressure_pa > 0.0)) {
-            throw std::invalid_argument(
-                "mpmc::well_discretization_petsc: rate-controlled BHP must be finite and positive");
-        }
-        current_bottom_hole_pressure_pa_ =
-            bottom_hole_pressure_pa;
+        set_bottom_hole_pressure(
+            bottom_hole_pressure_pa);
+        collect_authoritative_evaluations_ =
+            true;
+        local_authoritative_evaluations_.clear();
+    }
+
+    /// Enter reservoir-only fixed-BHP evaluation mode.
+    ///
+    /// The same owner-only source callback remains active, but its
+    /// rate-control sidecar cache is disabled because there is no augmented
+    /// well row/Jrw/Jwr/Jww assembly consuming it. This lets PETSc evaluate
+    /// the reservoir residual/Jacobian repeatedly without mistaking successive
+    /// nonlinear evaluations for duplicate physical completions.
+    void begin_fixed_bhp_reservoir_evaluation(
+        double bottom_hole_pressure_pa) {
+        set_bottom_hole_pressure(
+            bottom_hole_pressure_pa);
+        collect_authoritative_evaluations_ =
+            false;
         local_authoritative_evaluations_.clear();
     }
 
@@ -99,6 +112,17 @@ public:
     }
 
 private:
+    void set_bottom_hole_pressure(
+        double bottom_hole_pressure_pa) {
+        if (!std::isfinite(bottom_hole_pressure_pa) ||
+            !(bottom_hole_pressure_pa > 0.0)) {
+            throw std::invalid_argument(
+                "mpmc::well_discretization_petsc: well-control BHP must be finite and positive");
+        }
+        current_bottom_hole_pressure_pa_ =
+            bottom_hole_pressure_pa;
+    }
+
     FixedTotalMolarRateWellSourceEvaluatorContext3D(
         FixedBhpMultiConnectionWellSourceEvaluatorContext3D
             well,
@@ -124,6 +148,7 @@ private:
     FixedBhpMultiConnectionWellSourceEvaluatorContext3D
         well_;
     double current_bottom_hole_pressure_pa_{};
+    bool collect_authoritative_evaluations_{true};
     std::vector<
         FixedTotalMolarRateAuthoritativeConnectionEvaluation3D>
         local_authoritative_evaluations_;
@@ -179,6 +204,14 @@ evaluate_fixed_total_molar_rate_well_source_3d(
                 dynamic_connection,
                 current);
 
+        output->emplace(
+            evaluated.cell_source);
+
+        if (!context
+                 ->collect_authoritative_evaluations_) {
+            return PETSC_SUCCESS;
+        }
+
         const auto duplicate =
             std::find_if(
                 context
@@ -198,8 +231,6 @@ evaluate_fixed_total_molar_rate_well_source_3d(
             return PETSC_ERR_PLIB;
         }
 
-        output->emplace(
-            evaluated.cell_source);
         context
             ->local_authoritative_evaluations_
             .push_back(

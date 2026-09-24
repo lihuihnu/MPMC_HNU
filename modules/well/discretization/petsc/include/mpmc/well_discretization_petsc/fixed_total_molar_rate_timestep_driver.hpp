@@ -262,7 +262,7 @@ solve_minimum_bhp_attempt(
              ->minimum_bottom_hole_pressure_pa;
     try {
         context->source_context
-            ->begin_evaluation(
+            ->begin_fixed_bhp_reservoir_evaluation(
                 minimum_bhp);
     } catch (...) {
         return PETSC_ERR_ARG_INCOMP;
@@ -672,9 +672,15 @@ commit(
     }
 
     try {
-        context->source_context
-            ->begin_evaluation(
-                accepted_bhp);
+        if (fixed_bhp) {
+            context->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    accepted_bhp);
+        } else {
+            context->source_context
+                ->begin_evaluation(
+                    accepted_bhp);
+        }
     } catch (...) {
         return PETSC_ERR_ARG_INCOMP;
     }

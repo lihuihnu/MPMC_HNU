@@ -214,11 +214,16 @@ system is re-solved at the same physical timestep from the original accepted
 reservoir state/history.
 
 Once the minimum-BHP constraint is triggered it is sticky for all nonlinear
-retries of that physical timestep. If the fixed-BHP re-solve diverges, normal
-adaptive timestep cutback applies, but the retry stays in minimum-BHP mode and
-still starts from the accepted reservoir baseline. A terminal timestep
-rejection discards the trial switch and restores the entry BHP/dt; there is no
-accepted control-mode mutation without an accepted physical step.
+retries of that physical timestep. The source context explicitly enters a
+reservoir-only fixed-BHP evaluation mode: Peaceman source physics and owner-only
+cell insertion are unchanged, while the authoritative connection sidecar used
+only by the augmented well row is disabled. This prevents repeated reservoir
+SNES function/Jacobian evaluations from being misclassified as duplicate
+completions. If the fixed-BHP re-solve diverges, normal adaptive timestep
+cutback applies, but the retry stays in minimum-BHP mode and still starts from
+the accepted reservoir baseline. A terminal timestep rejection discards the
+trial switch and restores the entry BHP/dt; there is no accepted control-mode
+mutation without an accepted physical step.
 
 On acceptance, only the final fixed-BHP reservoir state is committed. The
 accepted BHP is exactly `p_min`; the discarded rate candidate is retained in
