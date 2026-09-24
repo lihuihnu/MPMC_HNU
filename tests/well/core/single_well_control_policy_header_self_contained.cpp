@@ -8,14 +8,15 @@ static_assert(
     std::string_view{
         "well/single-well-control-policy/fixed-total-molar-rate-minimum-bhp/v1"});
 
-static_assert(
-    mpmc::well::
-        AcceptedSingleWellControlState{
-            mpmc::well::SingleWellControlMode::
-                fixed_total_molar_rate,
-            1.0}
-        .valid());
-
 int main() {
-    return 0;
+    const mpmc::well::
+        AcceptedSingleWellControlState
+            state{
+                mpmc::well::
+                    SingleWellControlMode::
+                        fixed_total_molar_rate,
+                1.0};
+    return state.valid()
+        ? 0
+        : 1;
 }

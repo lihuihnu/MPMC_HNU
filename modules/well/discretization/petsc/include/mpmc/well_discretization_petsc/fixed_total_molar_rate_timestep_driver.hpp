@@ -481,13 +481,6 @@ try_reactivate_rate_control(
     const double minimum_bhp =
         *context
              ->minimum_bottom_hole_pressure_pa;
-    const double rate_margin =
-        *context
-             ->minimum_bhp_release_rate_margin_mol_per_s;
-    const double pressure_margin =
-        *context
-             ->minimum_bhp_release_pressure_margin_pa;
-
     double probe_rate = 0.0;
     PetscErrorCode error =
         evaluate_minimum_bhp_probe_total_molar_rate(
