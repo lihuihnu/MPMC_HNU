@@ -34,7 +34,7 @@ inline constexpr std::array<double, 3> dynamic_viscosity_pa_s{
     0.00028297191613066484,
     0.00036514189669459766};
 inline constexpr std::array<double, 3> specific_enthalpy_j_per_kg{
-    -169779.39041907500,
+    -169779.39041907499,
     -518174.30519072997,
     -477763.37551774654};
 inline constexpr std::array<double, 3> specific_internal_energy_j_per_kg{
