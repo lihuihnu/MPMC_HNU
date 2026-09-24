@@ -60,7 +60,7 @@ jobs:
       - name: Build flow core contract
         run: |
           cmake --build build/flow-core \
-            --target mpmc_flow_core_tests mpmc_flow_phase_transition_tests mpmc_flow_fugacity_tests mpmc_flow_fugacity_linearization_tests mpmc_flow_accumulation_tests mpmc_flow_accumulation_time_tests mpmc_flow_energy_accumulation_tests mpmc_flow_saturation_constitutive_tests mpmc_flow_phase_transport_tests mpmc_flow_phase_potential_tests \
+            --target mpmc_flow_core_tests mpmc_flow_phase_transition_tests mpmc_flow_fugacity_tests mpmc_flow_absent_phase_thermodynamics_tests mpmc_flow_fugacity_linearization_tests mpmc_flow_pr76_selected_phase_property_tests mpmc_flow_accumulation_tests mpmc_flow_accumulation_time_tests mpmc_flow_energy_accumulation_tests mpmc_flow_saturation_constitutive_tests mpmc_flow_phase_transport_tests mpmc_flow_phase_potential_tests \
             --config ${{ matrix.config }} \
             --parallel 2
 
@@ -68,6 +68,12 @@ jobs:
         run: |
           ctest --test-dir build/flow-core \
             -C ${{ matrix.config }} \
-            -R '^flow[.](core|phase_transition|fugacity|fugacity_linearization|accumulation|accumulation_time|energy_accumulation|constitutive|transport|potential)[.]' \
+            -R '^flow[.](core|phase_transition|fugacity|absent_phase_thermodynamics|fugacity_linearization|pr76_selected_phase_property|accumulation|accumulation_time|energy_accumulation|constitutive|transport|potential)[.]' \
             --verbose \
             --no-tests=error
+
+      - name: Recompute independent Li-Firoozabadi flow oracle
+        if: matrix.name == 'GCC Debug + ASan/UBSan'
+        run: |
+          python3 tests/flow/core/reference_li_firoozabadi_sour_gas_flow.py --precision 80
+          python3 tests/flow/core/reference_li_firoozabadi_sour_gas_flow.py --precision 96

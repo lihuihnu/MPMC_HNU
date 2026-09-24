@@ -2,8 +2,10 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import runpy
 import subprocess
+import tempfile
 import yaml
 
 def load(path):
@@ -14,6 +16,62 @@ def load(path):
 
 def digest(obj):
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+def workflow_run_text(path):
+    workflow = load(path)
+    runs = []
+    for job in (workflow.get('jobs') or {}).values():
+        for step in job.get('steps') or []:
+            run = step.get('run')
+            if run:
+                runs.append(str(run))
+    return '\n'.join(runs)
+
+def configured_ctest_names(source_dir):
+    with tempfile.TemporaryDirectory(prefix='mpmc-ci-inventory-') as build_dir:
+        configured = subprocess.run(
+            ['cmake', '-S', source_dir, '-B', build_dir],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert configured.returncode == 0, (
+            'CTest inventory configure failed',
+            source_dir,
+            configured.stdout,
+        )
+        listed = subprocess.check_output(
+            ['ctest', '--test-dir', build_dir, '-N'],
+            text=True,
+        )
+    names = re.findall(r'Test\s+#\d+:\s+(\S+)', listed)
+    assert names, ('no registered CTests discovered', source_dir, listed)
+    return sorted(set(names))
+
+def assert_workflow_covers_registered_ctests(source_dir, workflow_path, required_targets):
+    run_text = workflow_run_text(workflow_path)
+    for target in required_targets:
+        assert target in run_text, (
+            'registered required test target omitted from workflow build',
+            workflow_path,
+            target,
+        )
+
+    raw_patterns = re.findall(r"-R\s+['\"]([^'\"]+)['\"]", run_text)
+    assert raw_patterns, ('workflow has no CTest selection regex', workflow_path)
+    patterns = [re.compile(pattern) for pattern in raw_patterns]
+    registered = configured_ctest_names(source_dir)
+    omitted = [
+        name
+        for name in registered
+        if not any(pattern.search(name) for pattern in patterns)
+    ]
+    assert not omitted, (
+        'registered CTests omitted by authoritative workflow selection',
+        workflow_path,
+        omitted,
+    )
+    return registered
 
 def main():
     catalog = json.loads(Path('.github/ci/workflow_map.json').read_text(encoding='utf-8'))
@@ -58,6 +116,34 @@ def main():
                 private_seen.add(pair)
     assert private_seen == private_allowlist, ('private runner allowlist drift', private_seen, private_allowlist)
 
+    # Registered-test inventory must be closed by the authoritative build target
+    # list and CTest regex. This catches the silent failure mode where CMake
+    # registers a required test but a narrower workflow selection never builds
+    # or runs it.
+    flow_core_tests = assert_workflow_covers_registered_ctests(
+        'tests/flow/core',
+        '.github/workflows/flow_core.yml',
+        {
+            'mpmc_flow_absent_phase_thermodynamics_tests',
+            'mpmc_flow_pr76_selected_phase_property_tests',
+        },
+    )
+    flow_discretization_tests = assert_workflow_covers_registered_ctests(
+        'tests/flow_discretization/core',
+        '.github/workflows/flow_discretization.yml',
+        {'mpmc_flow_discretization_cell_source_tests'},
+    )
+    flow_core_run_text = workflow_run_text('.github/workflows/flow_core.yml')
+    for token in (
+        'tests/flow/core/reference_li_firoozabadi_sour_gas_flow.py',
+        '--precision 80',
+        '--precision 96',
+    ):
+        assert token in flow_core_run_text, (
+            'Li-Firoozabadi independent flow oracle lost authoritative CI ownership',
+            token,
+        )
+
     assert 'result' in root['jobs'] and root['jobs']['result']['if'] == '${{ always() }}'
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')
@@ -70,6 +156,12 @@ def main():
     assert results['legacy_frontend']
     results, _, _ = select(['tests/flow_discretization/petsc/changed.cpp'])
     assert results['flow_discretization_petsc'] and not results['legacy_frontend']
+    results, _, _ = select(['tests/flow/core/reference_li_firoozabadi_sour_gas_flow.py'])
+    assert results['flow_core'] and not results['flow_discretization']
+    results, _, _ = select(['.github/workflows/flow_core.yml'])
+    assert results['flow_core']
+    results, _, _ = select(['.github/workflows/flow_discretization.yml'])
+    assert results['flow_discretization']
     results, _, _ = select(['modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp'])
     assert results['flow_discretization'] and not results['flow_core'] and not results['flow_discretization_petsc']
     results, _, _ = select(['modules/flow/discretization/petsc/include/mpmc/flow_discretization_petsc/physical_timestep_driver.hpp'])
@@ -173,6 +265,11 @@ def main():
     assert root['jobs']['sw92-phase-assigned-no-w']['with']['dependencies_prevalidated'] is True
 
     print('WORKFLOW_MAP_OK', len(paths), 'entries; single automatic entry; reusable closure:', len(seen))
+    print(
+        'REGISTERED_CTEST_INVENTORY_OK',
+        'flow-core=', len(flow_core_tests),
+        'flow-discretization=', len(flow_discretization_tests),
+    )
     print('ENTRY_INPUT_MATRIX_PERMISSIONS_AND_STEP_PARITY_OK')
 if __name__ == '__main__':
     main()
