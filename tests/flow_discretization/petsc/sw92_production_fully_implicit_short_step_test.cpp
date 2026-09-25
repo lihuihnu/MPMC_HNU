@@ -323,6 +323,16 @@ PetscErrorCode inactive_two_phase_relative_permeability(
     return PETSC_SUCCESS;
 }
 
+PetscErrorCode inactive_three_phase_saturation(
+    const flow::NaturalVariableCellState3P&,
+    void*,
+    std::optional<
+        flow::
+            ThreePhaseSaturationConstitutiveNaturalVariableLinearization3P>*,
+    fdp::NaturalVariableSnesEvaluationStatus3D*) {
+    return PETSC_ERR_SUP;
+}
+
 void sw92_stationary_short_step() {
     auto parameters =
         sourced_parameters();
@@ -373,11 +383,26 @@ void sw92_stationary_short_step() {
 
     using Closure =
         fdp::Sw92Co2WaterSelectedPhasePropertyClosure3D;
+    fdp::Sw92SinglePhaseProductionCellEvaluatorContext3D<
+        Closure>
+        one_phase_context{
+            &materialized.property_closure,
+            1.0,
+            {&zero_rock_storage, nullptr},
+            {}};
     fdp::Sw92TwoPhaseProductionCellEvaluatorContext3D<
         Closure>
         evaluator_context{
             &materialized.property_closure,
             {&inactive_two_phase_relative_permeability,
+             nullptr},
+            {&zero_rock_storage, nullptr},
+            {}};
+    fdp::Sw92ThreePhaseProductionCellEvaluatorContext3D<
+        Closure>
+        three_phase_context{
+            &materialized.property_closure,
+            {&inactive_three_phase_saturation,
              nullptr},
             {&zero_rock_storage, nullptr},
             {}};
@@ -462,11 +487,21 @@ void sw92_stationary_short_step() {
 
     fdp::MixedCardinalityPhysicalCellEvaluatorBindings3D
         bindings;
+    bindings.single_phase = {
+        &fdp::
+            evaluate_sw92_single_phase_production_cell_3d<
+                Closure>,
+        &one_phase_context};
     bindings.two_phase = {
         &fdp::
             evaluate_sw92_two_phase_production_cell_3d<
                 Closure>,
         &evaluator_context};
+    bindings.three_phase = {
+        &fdp::
+            evaluate_sw92_three_phase_production_cell_3d<
+                Closure>,
+        &three_phase_context};
 
     std::vector<
         fdp::MixedCardinalityPhysicalSnesCellInput3D>
