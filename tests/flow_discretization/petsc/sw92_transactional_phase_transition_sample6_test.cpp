@@ -620,6 +620,59 @@ void run_controller(
                 &final_state,
                 &report);
 
+    std::string lifecycle_diagnostic =
+        "Sample-6 SW92 " +
+        std::to_string(source_count) +
+        "P->" +
+        std::to_string(target_count) +
+        "P lifecycle failed: error=" +
+        std::to_string(static_cast<int>(error)) +
+        " final_system=" +
+        std::to_string(final_system != nullptr ? 1 : 0) +
+        " final_state=" +
+        std::to_string(final_state != nullptr ? 1 : 0) +
+        " report=" +
+        std::to_string(report.has_value() ? 1 : 0);
+    if (report.has_value()) {
+        lifecycle_diagnostic +=
+            " outcome=" +
+            std::to_string(
+                static_cast<int>(
+                    report->outcome)) +
+            " restarts=" +
+            std::to_string(
+                report->transition_restarts) +
+            " generations=" +
+            std::to_string(
+                report->generations.size());
+        if (!report->generations.empty()) {
+            lifecycle_diagnostic +=
+                " gen0_batch=" +
+                std::to_string(
+                    report->generations[0]
+                        .accepted_transition_batch
+                        .size()) +
+                " gen0_snes_reason=" +
+                std::to_string(
+                    static_cast<int>(
+                        report->generations[0]
+                            .nonlinear_solve
+                            .converged_reason));
+        }
+    }
+    if (final_system != nullptr) {
+        lifecycle_diagnostic +=
+            " final_phase_count=" +
+            std::to_string(
+                final_system->numbering()
+                    .cell(mesh::LocalIndex{0U})
+                    .phase_count) +
+            " final_dt=" +
+            std::to_string(
+                final_system
+                    ->time_step_seconds());
+    }
+
     require_sample6_transaction(
         error == PETSC_SUCCESS &&
             final_system != nullptr &&
@@ -650,7 +703,7 @@ void run_controller(
                     .phase_count ==
                 target_count &&
             final_system->time_step_seconds() == 1.0,
-        "Sample-6 SW92 same-dt transactional lifecycle failed");
+        lifecycle_diagnostic);
 
     bool history_matches = false;
     require_sample6_transaction(
