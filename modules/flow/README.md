@@ -1069,11 +1069,20 @@ The dedicated `flow.constitutive.*` regression covers:
 - the exact zero value/zero derivative behavior of `NoCapillaryPressure3P`;
 - zero/invalid saturation, negative/non-finite relative permeability, non-finite
   capillary pressure and non-positive resolved pressure rejection;
-- public-header self containment.
+- public-header self containment;
+- a reference-backed Kenyon-Behie SPE3 three-phase saturation point using the
+  published/table-2 SWOF/SGOF data with explicit `phase0=oil`,
+  `phase1=water`, `phase2=gas` role mapping. The regression checks source-table
+  node values, interior piecewise-linear `kr` and nonzero water-oil capillary
+  pressure, SI/sign conversion, exact segment slopes through forward AD, and
+  explicit rejection outside the registered source brackets.
 
-The synthetic polynomial `kr` and linear capillary law used by the regression are
-structural derivative fixtures only. They are not physical constitutive models and
-provide no reservoir parameters or validation data.
+The synthetic polynomial `kr` and linear capillary law remain structural derivative
+fixtures only. Physical constitutive evidence is provided separately by the SPE3
+regression, which cites Kenyon & Behie (SPE 12278 / DOI 10.2118/12278-PA) and a
+fixed OPM/opm-data revision of `SPE3CASE2.DATA`. The regression does not turn that
+table into a new production constitutive model and does not extrapolate beyond its
+registered brackets.
 
 This slice still does **not** divide by viscosity, construct phase mobility, evaluate
 gravity, create a Darcy face flux, apply transmissibility, assemble a spatial residual,

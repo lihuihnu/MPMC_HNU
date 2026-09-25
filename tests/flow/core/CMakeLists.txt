@@ -333,6 +333,7 @@ foreach(case IN LISTS energy_accumulation_cases)
 endforeach()
 
 set(saturation_constitutive_cases
+    reference_backed_spe3
     primal
     differentiable_chart
     no_capillary

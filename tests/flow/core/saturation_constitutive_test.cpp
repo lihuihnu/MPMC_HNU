@@ -1,6 +1,8 @@
 #include <mpmc/ad/dual.hpp>
 #include <mpmc/flow/saturation_constitutive.hpp>
 
+#include "spe3_kenyon_behie_saturation_reference.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -19,6 +21,7 @@ namespace {
 
 namespace ad = mpmc::ad;
 namespace fl = mpmc::flow;
+namespace spe3 = mpmc::flow::test_reference::spe3;
 
 void require(
     bool condition,
@@ -118,6 +121,316 @@ static_assert(
     fl::CapillaryPressureEvaluator3P<
         fl::NoCapillaryPressure3P,
         double>);
+
+template <typename Number>
+[[nodiscard]] double
+reference_primal(const Number& value) {
+    if constexpr (requires { value.value(); }) {
+        return static_cast<double>(value.value());
+    } else {
+        return static_cast<double>(value);
+    }
+}
+
+template <typename Number>
+[[nodiscard]] Number
+reference_linear_segment(
+    const Number& coordinate,
+    double x0,
+    double y0,
+    double x1,
+    double y1,
+    std::string_view quantity) {
+    const double x =
+        reference_primal(coordinate);
+    if (!std::isfinite(x) ||
+        x < x0 ||
+        x > x1) {
+        throw std::invalid_argument(
+            std::string{quantity} +
+            " outside SPE3 reference bracket");
+    }
+    const double slope =
+        (y1 - y0) / (x1 - x0);
+    return Number{y0} +
+        (coordinate - Number{x0}) *
+            slope;
+}
+
+/// Test-only table evaluator.  It is intentionally restricted to the source
+/// brackets required for the registered SPE3 point and is not a production
+/// interpolation/extrapolation model.
+struct Spe3ReferenceRelativePermeability3P {
+    template <typename Number>
+    [[nodiscard]]
+    fl::RelativePermeabilityEvaluation3P<Number>
+    operator()(
+        const fl::ThreePhaseSaturationState3P<Number>&
+            state) const {
+        const auto& s = state.saturation;
+
+        const double so0 =
+            1.0 -
+            spe3::oil_low_saturation_source
+                .water_saturation;
+        const double so1 =
+            1.0 -
+            spe3::oil_high_saturation_source
+                .water_saturation;
+
+        const Number kro =
+            reference_linear_segment(
+                s[0],
+                so0,
+                spe3::oil_low_saturation_source
+                    .oil_relative_permeability,
+                so1,
+                spe3::oil_high_saturation_source
+                    .oil_relative_permeability,
+                "oil saturation");
+        const Number krw =
+            reference_linear_segment(
+                s[1],
+                spe3::water_lower.water_saturation,
+                spe3::water_lower
+                    .water_relative_permeability,
+                spe3::water_upper.water_saturation,
+                spe3::water_upper
+                    .water_relative_permeability,
+                "water saturation");
+        const Number krg =
+            reference_linear_segment(
+                s[2],
+                spe3::gas_lower.gas_saturation,
+                spe3::gas_lower
+                    .gas_relative_permeability,
+                spe3::gas_upper.gas_saturation,
+                spe3::gas_upper
+                    .gas_relative_permeability,
+                "gas saturation");
+
+        return {
+            std::array<Number, 3>{
+                kro,
+                krw,
+                krg}};
+    }
+};
+
+struct Spe3ReferenceCapillaryPressure3P {
+    template <typename Number>
+    [[nodiscard]]
+    fl::CapillaryPressureOffsetsEvaluation3P<Number>
+    operator()(
+        const fl::ThreePhaseSaturationState3P<Number>&
+            state) const {
+        const Number pcow_psi =
+            reference_linear_segment(
+                state.saturation[1],
+                spe3::water_lower.water_saturation,
+                spe3::water_lower.pcow_psi,
+                spe3::water_upper.water_saturation,
+                spe3::water_upper.pcow_psi,
+                "water saturation");
+        const Number pcgo_psi =
+            reference_linear_segment(
+                state.saturation[2],
+                spe3::gas_lower.gas_saturation,
+                spe3::gas_lower.pcgo_psi,
+                spe3::gas_upper.gas_saturation,
+                spe3::gas_upper.pcgo_psi,
+                "gas saturation");
+
+        // The repository contract stores offsets relative to phase0=oil.
+        // SPE/OPM signs are Pcow=Po-Pw and Pcgo=Pg-Po.
+        return {
+            std::array<Number, 2>{
+                -pcow_psi *
+                    spe3::psi_to_pa,
+                pcgo_psi *
+                    spe3::psi_to_pa}};
+    }
+};
+
+static_assert(
+    fl::RelativePermeabilityEvaluator3P<
+        Spe3ReferenceRelativePermeability3P,
+        double>);
+static_assert(
+    fl::CapillaryPressureEvaluator3P<
+        Spe3ReferenceCapillaryPressure3P,
+        double>);
+
+void reference_backed_spe3() {
+    constexpr double reference_pressure_pa =
+        20.0e6;
+
+    const auto primal =
+        fl::evaluate_three_phase_saturation_constitutive(
+            reference_pressure_pa,
+            spe3::oil_saturation,
+            spe3::water_saturation,
+            Spe3ReferenceRelativePermeability3P{},
+            Spe3ReferenceCapillaryPressure3P{});
+
+    near(
+        primal.saturation_state.saturation[2],
+        spe3::gas_saturation);
+    near(
+        primal.relative_permeability[0],
+        spe3::oil_relative_permeability);
+    near(
+        primal.relative_permeability[1],
+        spe3::water_relative_permeability);
+    near(
+        primal.relative_permeability[2],
+        spe3::gas_relative_permeability);
+    near(
+        primal.capillary_pressure_offset_pa[0],
+        0.0);
+    near(
+        primal.capillary_pressure_offset_pa[1],
+        spe3::water_minus_oil_pressure_pa,
+        3.0e-13,
+        1.0e-8);
+    near(
+        primal.capillary_pressure_offset_pa[2],
+        spe3::gas_minus_oil_pressure_pa);
+    near(
+        primal.phase_pressure_pa[1],
+        reference_pressure_pa +
+            spe3::water_minus_oil_pressure_pa,
+        3.0e-13,
+        1.0e-8);
+    near(
+        primal.phase_pressure_pa[2],
+        reference_pressure_pa);
+
+    using D = ad::Dual<double, 2U>;
+    const auto differentiated =
+        fl::evaluate_three_phase_saturation_constitutive(
+            D{reference_pressure_pa},
+            D::variable(
+                spe3::oil_saturation,
+                0U),
+            D::variable(
+                spe3::water_saturation,
+                1U),
+            Spe3ReferenceRelativePermeability3P{},
+            Spe3ReferenceCapillaryPressure3P{});
+
+    near(
+        differentiated
+            .relative_permeability[0]
+            .derivative(0U),
+        spe3::d_kro_d_so);
+    near(
+        differentiated
+            .relative_permeability[0]
+            .derivative(1U),
+        0.0);
+    near(
+        differentiated
+            .relative_permeability[1]
+            .derivative(0U),
+        0.0);
+    near(
+        differentiated
+            .relative_permeability[1]
+            .derivative(1U),
+        spe3::d_krw_d_sw);
+    near(
+        differentiated
+            .relative_permeability[2]
+            .derivative(0U),
+        -spe3::d_krg_d_sg);
+    near(
+        differentiated
+            .relative_permeability[2]
+            .derivative(1U),
+        -spe3::d_krg_d_sg);
+    near(
+        differentiated
+            .capillary_pressure_offset_pa[1]
+            .derivative(0U),
+        0.0);
+    near(
+        differentiated
+            .capillary_pressure_offset_pa[1]
+            .derivative(1U),
+        spe3::
+            d_water_minus_oil_pressure_d_sw_pa,
+        3.0e-13,
+        1.0e-7);
+    near(
+        differentiated
+            .capillary_pressure_offset_pa[2]
+            .derivative(0U),
+        0.0);
+    near(
+        differentiated
+            .capillary_pressure_offset_pa[2]
+            .derivative(1U),
+        0.0);
+
+    // Both bracket-endpoint states lie exactly on source table rows and must
+    // remain admissible; no extrapolation is needed for this regression.
+    const auto endpoint_a =
+        fl::evaluate_three_phase_saturation_constitutive(
+            reference_pressure_pa,
+            0.56,
+            0.28,
+            Spe3ReferenceRelativePermeability3P{},
+            Spe3ReferenceCapillaryPressure3P{});
+    near(
+        endpoint_a.relative_permeability[0],
+        0.150);
+    near(
+        endpoint_a.relative_permeability[1],
+        0.020);
+    near(
+        endpoint_a.relative_permeability[2],
+        0.040);
+    near(
+        endpoint_a.capillary_pressure_offset_pa[1],
+        -15.5 * spe3::psi_to_pa,
+        3.0e-13,
+        1.0e-8);
+
+    const auto endpoint_b =
+        fl::evaluate_three_phase_saturation_constitutive(
+            reference_pressure_pa,
+            0.52,
+            0.32,
+            Spe3ReferenceRelativePermeability3P{},
+            Spe3ReferenceCapillaryPressure3P{});
+    near(
+        endpoint_b.relative_permeability[0],
+        0.112);
+    near(
+        endpoint_b.relative_permeability[1],
+        0.033);
+    near(
+        endpoint_b.relative_permeability[2],
+        0.040);
+    near(
+        endpoint_b.capillary_pressure_offset_pa[1],
+        -12.0 * spe3::psi_to_pa,
+        3.0e-13,
+        1.0e-8);
+
+    expect_invalid(
+        [&] {
+            (void)fl::
+                evaluate_three_phase_saturation_constitutive(
+                    reference_pressure_pa,
+                    0.57,
+                    0.28,
+                    Spe3ReferenceRelativePermeability3P{},
+                    Spe3ReferenceCapillaryPressure3P{});
+        },
+        "oil saturation outside SPE3 reference bracket");
+}
 
 void primal() {
     const auto evaluated =
@@ -431,6 +744,7 @@ using Test =
     std::pair<std::string_view, void (*)()>;
 
 constexpr Test tests[]{
+    {"reference_backed_spe3", reference_backed_spe3},
     {"primal", primal},
     {"differentiable_chart", differentiable_chart},
     {"no_capillary", no_capillary},
