@@ -3653,8 +3653,13 @@ u = h - p / rho_mass .
 ```
 
 The v1 bridge is explicitly `pc=none`: all active phases are evaluated at the
-reference pressure. Capillary-pressure-resolved phase pressures remain a later
-extension.
+reference pressure. The production bridge now enforces that capability boundary:
+every caller-owned three-phase saturation carrier must publish exactly zero
+capillary offsets, `p_alpha == p_ref` for every active phase, and a phase-pressure
+Jacobian containing only `dp_alpha/dp_ref = 1`. A nonzero capillary/phase-pressure
+value, or a zero primal value with any nonzero capillary/phase-pressure derivative,
+is a hard unsupported-capability error rather than a nonlinear domain failure.
+Capillary-pressure-resolved phase pressures remain a later extension.
 
 One topology-neutral chart evaluator now covers `P=1/2/3` with
 

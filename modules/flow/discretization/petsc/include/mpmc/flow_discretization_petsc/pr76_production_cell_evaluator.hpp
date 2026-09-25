@@ -132,6 +132,9 @@ template <typename Function>
     NaturalVariableSnesEvaluationStatus3D* status) {
     try {
         return std::forward<Function>(function)();
+    } catch (const mpmc::flow::
+                 Pr76SelectedPhasePcNoneCapabilityError&) {
+        return PETSC_ERR_SUP;
     } catch (const std::domain_error&) {
         if (status != nullptr) {
             *status =
@@ -547,6 +550,11 @@ evaluate_pr76_three_phase_production_cell_3d(
                 if (!saturation) {
                     return PETSC_ERR_ARG_WRONGSTATE;
                 }
+
+                mpmc::flow::
+                    require_pr76_selected_phase_pc_none_capability(
+                        flow.state,
+                        *saturation);
 
                 auto rock =
                     pr76_production_cell_evaluator_detail::

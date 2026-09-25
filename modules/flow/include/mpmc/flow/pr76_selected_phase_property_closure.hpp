@@ -4,6 +4,7 @@
 #include <mpmc/ad/runtime_differentiate.hpp>
 #include <mpmc/flow/energy_accumulation.hpp>
 #include <mpmc/flow/fugacity_equilibrium_linearization.hpp>
+#include <mpmc/flow/phase_transport.hpp>
 #include <mpmc/flow/single_phase_natural_variable.hpp>
 #include <mpmc/flow/two_phase_natural_variable.hpp>
 #include <mpmc/thermodynamics/selected_phase_density.hpp>
@@ -57,6 +58,12 @@ struct Pr76SelectedPhasePropertyValues {
     Number specific_internal_energy_j_per_kg;
     Number mixture_molar_mass_kg_per_mol;
     std::vector<Number> ln_phi;
+};
+
+class Pr76SelectedPhasePcNoneCapabilityError final
+    : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
 };
 
 namespace pr76_selected_phase_property_detail {
@@ -186,6 +193,65 @@ independent_composition_values(
 }
 
 } // namespace pr76_selected_phase_property_detail
+
+/// Require the caller-owned three-phase saturation/pressure carrier to remain
+/// inside the current PR76 selected-phase pc=none capability.
+///
+/// The PR76 property/fugacity closure evaluates every active selected branch at
+/// the single natural-variable reference pressure. Allowing a downstream
+/// transport carrier to publish a different phase pressure (or only a nonzero
+/// pressure derivative) would mix two incompatible thermodynamic states in one
+/// production residual/Jacobian. Such input is unsupported, not a nonlinear
+/// domain excursion.
+inline void
+require_pr76_selected_phase_pc_none_capability(
+    const NaturalVariableCellState3P& state,
+    const ThreePhaseSaturationConstitutiveNaturalVariableLinearization3P&
+        constitutive) {
+    phase_transport_detail::
+        validate_saturation_linearization(
+            state,
+            constitutive);
+
+    const auto& layout = state.layout();
+    const std::size_t q =
+        layout.unknown_count();
+    const std::size_t pressure_column =
+        layout.pressure_unknown_index();
+
+    for (std::size_t phase = 0U;
+         phase < fixed_three_phase_count;
+         ++phase) {
+        if (constitutive
+                    .capillary_pressure_offset_pa[phase] !=
+                0.0 ||
+            constitutive.phase_pressure_pa[phase] !=
+                state.reference_pressure_pa()) {
+            throw Pr76SelectedPhasePcNoneCapabilityError{
+                "mpmc::flow: PR76 selected-phase pc=none bridge does not support nonzero capillary/phase-pressure offset"};
+        }
+
+        const auto& gradient =
+            constitutive
+                .phase_pressure_gradient[phase];
+        if (gradient.size() != q) {
+            throw std::invalid_argument(
+                "mpmc::flow: PR76 selected-phase pc=none phase-pressure Jacobian shape mismatch");
+        }
+        for (std::size_t column = 0U;
+             column < q;
+             ++column) {
+            const double expected =
+                column == pressure_column
+                    ? 1.0
+                    : 0.0;
+            if (gradient[column] != expected) {
+                throw Pr76SelectedPhasePcNoneCapabilityError{
+                    "mpmc::flow: PR76 selected-phase pc=none bridge does not support nonzero capillary/phase-pressure Jacobian"};
+            }
+        }
+    }
+}
 
 /// Fixed-selected-branch PR76 property closure.
 ///

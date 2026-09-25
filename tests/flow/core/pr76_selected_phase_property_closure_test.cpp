@@ -46,6 +46,26 @@ void near(
         "numeric comparison failed");
 }
 
+template <class Function>
+void expect_pc_none_capability_error(
+    Function&& function,
+    std::string_view diagnostic_fragment) {
+    try {
+        std::forward<Function>(function)();
+    } catch (const flow::
+                 Pr76SelectedPhasePcNoneCapabilityError&
+                     error) {
+        require(
+            std::string_view{error.what()}.find(
+                diagnostic_fragment) !=
+                std::string_view::npos,
+            "pc=none capability diagnostic changed");
+        return;
+    }
+    throw std::runtime_error(
+        "expected PR76 pc=none capability rejection");
+}
+
 th::Provenance source(std::string locator) {
     return {
         th::SourceKind::synthetic_test,
@@ -210,6 +230,51 @@ struct SyntheticTransportCaloricProvider {
     }
 };
 
+struct LinearSaturationRelativePermeability3P {
+    template <typename Number>
+    [[nodiscard]]
+    flow::RelativePermeabilityEvaluation3P<Number>
+    operator()(
+        const flow::
+            ThreePhaseSaturationState3P<Number>&
+                state) const {
+        return {state.saturation};
+    }
+};
+
+struct ConstantNonzeroCapillaryPressure3P {
+    template <typename Number>
+    [[nodiscard]]
+    flow::CapillaryPressureOffsetsEvaluation3P<Number>
+    operator()(
+        const flow::
+            ThreePhaseSaturationState3P<Number>&) const {
+        return {
+            std::array<Number, 2>{
+                Number{1000.0},
+                Number{-2000.0}}};
+    }
+};
+
+struct ZeroValueNonzeroCapillaryJacobian3P {
+    template <typename Number>
+    [[nodiscard]]
+    flow::CapillaryPressureOffsetsEvaluation3P<Number>
+    operator()(
+        const flow::
+            ThreePhaseSaturationState3P<Number>&
+                state) const {
+        return {
+            std::array<Number, 2>{
+                Number{5.0e4} *
+                    (state.saturation[0] -
+                     Number{0.20}),
+                Number{7.0e4} *
+                    (state.saturation[1] -
+                     Number{0.30})}};
+    }
+};
+
 flow::SelectedPhasePropertyProvenance
 provenance() {
     return {
@@ -308,6 +373,66 @@ evaluate(
             q,
             closure,
             workspace);
+}
+
+template <typename CapillaryPressureEvaluator>
+[[nodiscard]]
+flow::
+    ThreePhaseSaturationConstitutiveNaturalVariableLinearization3P
+make_test_saturation_linearization_from_ad(
+    const flow::NaturalVariableCellState3P& state,
+    CapillaryPressureEvaluator capillary_pressure) {
+    using D = ad::Dual<double, 2U>;
+
+    const double saturation0 =
+        state.phase_saturation(
+            flow::PhaseSlot3::phase0);
+    const double saturation1 =
+        state.phase_saturation(
+            flow::PhaseSlot3::phase1);
+
+    const auto primal =
+        flow::
+            evaluate_three_phase_saturation_constitutive(
+                state,
+                LinearSaturationRelativePermeability3P{},
+                capillary_pressure);
+    const auto differentiated =
+        flow::
+            evaluate_three_phase_saturation_constitutive(
+                D{state.reference_pressure_pa()},
+                D::variable(saturation0, 0U),
+                D::variable(saturation1, 1U),
+                LinearSaturationRelativePermeability3P{},
+                capillary_pressure);
+
+    flow::
+        ThreePhaseSaturationCoordinateDerivatives3P
+            derivatives{};
+    for (std::size_t phase = 0U;
+         phase < 3U;
+         ++phase) {
+        for (std::size_t direction = 0U;
+             direction < 2U;
+             ++direction) {
+            derivatives
+                .relative_permeability[phase][direction] =
+                differentiated
+                    .relative_permeability[phase]
+                    .derivative(direction);
+            derivatives
+                .capillary_pressure_offset_pa[phase][direction] =
+                differentiated
+                    .capillary_pressure_offset_pa[phase]
+                    .derivative(direction);
+        }
+    }
+
+    return flow::
+        make_saturation_constitutive_natural_variable_linearization(
+            state,
+            primal,
+            derivatives);
 }
 
 void cardinality_and_direct_eos() {
@@ -515,6 +640,82 @@ void cardinality_and_direct_eos() {
         bridged.fugacity.residual_count() ==
             6U,
         "3P fugacity bridge row count changed");
+}
+
+void pc_none_capability_guard() {
+    auto parameters =
+        Fixture{}.parameters();
+    auto model =
+        th::Pr76Phase<double>::
+            from_parameters(parameters);
+    auto closure =
+        flow::make_pr76_selected_phase_property_closure(
+            model,
+            std::vector<th::Pr76SelectedPhase>{
+                {0U, {}},
+                {1U, {}},
+                {2U, {}}},
+            SyntheticTransportCaloricProvider{},
+            provenance());
+
+    const auto chart = layout(3U);
+    const auto q = natural_variables(chart);
+    ad::RuntimeJacobianWorkspace<double, 4U>
+        workspace;
+    const auto properties =
+        evaluate(
+            chart,
+            q,
+            closure,
+            workspace);
+    const auto flow_linearization =
+        flow::
+            make_pr76_selected_phase_flow_linearization_3p(
+                properties,
+                q);
+
+    const auto valid =
+        make_test_saturation_linearization_from_ad(
+            flow_linearization.state,
+            flow::NoCapillaryPressure3P{});
+    flow::
+        require_pr76_selected_phase_pc_none_capability(
+            flow_linearization.state,
+            valid);
+
+    const auto nonzero_value =
+        make_test_saturation_linearization_from_ad(
+            flow_linearization.state,
+            ConstantNonzeroCapillaryPressure3P{});
+    expect_pc_none_capability_error(
+        [&] {
+            flow::
+                require_pr76_selected_phase_pc_none_capability(
+                    flow_linearization.state,
+                    nonzero_value);
+        },
+        "nonzero capillary/phase-pressure offset");
+
+    const auto zero_value_nonzero_jacobian =
+        make_test_saturation_linearization_from_ad(
+            flow_linearization.state,
+            ZeroValueNonzeroCapillaryJacobian3P{});
+    require(
+        zero_value_nonzero_jacobian
+                .capillary_pressure_offset_pa[1] ==
+            0.0 &&
+            zero_value_nonzero_jacobian
+                .capillary_pressure_offset_pa[2] ==
+            0.0,
+        "zero-value/nonzero-Jacobian capillary fixture changed");
+    expect_pc_none_capability_error(
+        [&] {
+            flow::
+                require_pr76_selected_phase_pc_none_capability(
+                    flow_linearization.state,
+                    zero_value_nonzero_jacobian);
+        },
+        "nonzero capillary/phase-pressure Jacobian");
 }
 
 void derivative_oracle() {
@@ -743,6 +944,7 @@ int main() {
             pr76_selected_phase_property_closure_header(),
             "public header probe failed");
         cardinality_and_direct_eos();
+        pc_none_capability_guard();
         derivative_oracle();
         pr76_methane_ethane_propane_provider_regression();
         require(

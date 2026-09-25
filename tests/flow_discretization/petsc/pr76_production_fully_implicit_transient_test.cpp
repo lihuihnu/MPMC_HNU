@@ -651,6 +651,113 @@ PetscErrorCode linear_three_phase_constitutive(
     }
 }
 
+struct ConstantNonzeroCapillaryPressure3P {
+    template <typename Number>
+    [[nodiscard]]
+    flow::CapillaryPressureOffsetsEvaluation3P<Number>
+    operator()(
+        const flow::
+            ThreePhaseSaturationState3P<Number>&) const {
+        return {
+            std::array<Number, 2>{
+                Number{1000.0},
+                Number{0.0}}};
+    }
+};
+
+PetscErrorCode nonzero_three_phase_capillary_constitutive(
+    const flow::NaturalVariableCellState3P& state,
+    void*,
+    std::optional<
+        flow::
+            ThreePhaseSaturationConstitutiveNaturalVariableLinearization3P>*
+                output,
+    fdp::NaturalVariableSnesEvaluationStatus3D*
+        status) {
+    if (output == nullptr || status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    try {
+        const auto primal =
+            flow::evaluate_three_phase_saturation_constitutive(
+                state,
+                SaturationKr3P{},
+                ConstantNonzeroCapillaryPressure3P{});
+        flow::
+            ThreePhaseSaturationCoordinateDerivatives3P
+            derivatives{};
+        derivatives.relative_permeability[0] =
+            {1.0, 0.0};
+        derivatives.relative_permeability[1] =
+            {0.0, 1.0};
+        derivatives.relative_permeability[2] =
+            {-1.0, -1.0};
+        output->emplace(
+            flow::
+                make_saturation_constitutive_natural_variable_linearization(
+                    state,
+                    primal,
+                    derivatives));
+        *status =
+            fdp::NaturalVariableSnesEvaluationStatus3D::
+                success;
+        return PETSC_SUCCESS;
+    } catch (const std::exception&) {
+        *status =
+            fdp::NaturalVariableSnesEvaluationStatus3D::
+                domain_error;
+        return PETSC_SUCCESS;
+    }
+}
+
+PetscErrorCode zero_value_nonzero_capillary_jacobian_constitutive(
+    const flow::NaturalVariableCellState3P& state,
+    void*,
+    std::optional<
+        flow::
+            ThreePhaseSaturationConstitutiveNaturalVariableLinearization3P>*
+                output,
+    fdp::NaturalVariableSnesEvaluationStatus3D*
+        status) {
+    if (output == nullptr || status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    try {
+        const auto primal =
+            flow::evaluate_three_phase_saturation_constitutive(
+                state,
+                SaturationKr3P{},
+                flow::NoCapillaryPressure3P{});
+        flow::
+            ThreePhaseSaturationCoordinateDerivatives3P
+            derivatives{};
+        derivatives.relative_permeability[0] =
+            {1.0, 0.0};
+        derivatives.relative_permeability[1] =
+            {0.0, 1.0};
+        derivatives.relative_permeability[2] =
+            {-1.0, -1.0};
+        derivatives
+            .capillary_pressure_offset_pa[1] =
+            {5.0e4, 0.0};
+        output->emplace(
+            flow::
+                make_saturation_constitutive_natural_variable_linearization(
+                    state,
+                    primal,
+                    derivatives));
+        *status =
+            fdp::NaturalVariableSnesEvaluationStatus3D::
+                success;
+        return PETSC_SUCCESS;
+    } catch (const std::exception&) {
+        *status =
+            fdp::NaturalVariableSnesEvaluationStatus3D::
+                domain_error;
+        return PETSC_SUCCESS;
+    }
+}
+
 mesh::Topology real_topology(int rank) {
     mesh::Topology::EntityIds ids;
     ids.faces = {
@@ -1523,6 +1630,82 @@ void check_real_cardinality_bridges(
             three->saturation_constitutive
                     .relative_permeability[0] > 0.0,
         "real PR76 3P production bridge failed");
+
+    const auto require_capillary_dispatch_rejection =
+        [&](fdp::
+                Pr76ThreePhaseProductionCellEvaluatorContext3D<
+                    Closure3>* rejected_context,
+            std::string_view message) {
+            fdp::
+                CellScopedMixedCardinalityEvaluatorDispatcher3D
+                    dispatcher{
+                        {},
+                        {},
+                        std::vector<
+                            fdp::
+                                CellScopedMixedCardinalityEvaluatorDispatcher3D::
+                                    ThreeEntry>{
+                            {
+                                mesh::GlobalEntityId{
+                                    UINT64_C(10)},
+                                {
+                                    &fdp::
+                                        evaluate_pr76_three_phase_production_cell_3d<
+                                            Closure3>,
+                                    rejected_context}}}};
+            const auto bindings =
+                dispatcher.bindings();
+            std::optional<
+                fdp::
+                    FixedThreePhaseCurrentCellLinearization3D>
+                rejected;
+            fdp::NaturalVariableSnesEvaluationStatus3D
+                rejected_status =
+                    fdp::
+                        NaturalVariableSnesEvaluationStatus3D::
+                            success;
+            const PetscErrorCode rejected_error =
+                bindings.three_phase.evaluator(
+                    mesh::LocalIndex{0U},
+                    mesh::GlobalEntityId{
+                        UINT64_C(10)},
+                    q3,
+                    three_layout,
+                    real_component_ids(),
+                    bindings.three_phase.user_context,
+                    &rejected,
+                    &rejected_status);
+            require_real_collective(
+                rejected_error == PETSC_ERR_SUP &&
+                    rejected_status ==
+                        fdp::
+                            NaturalVariableSnesEvaluationStatus3D::
+                                success &&
+                    !rejected.has_value(),
+                message);
+        };
+
+    fdp::Pr76ThreePhaseProductionCellEvaluatorContext3D<
+        Closure3>
+        nonzero_capillary_context{
+            &three_closure,
+            {&nonzero_three_phase_capillary_constitutive, nullptr},
+            {&disabled_rock_storage, nullptr},
+            {}};
+    require_capillary_dispatch_rejection(
+        &nonzero_capillary_context,
+        "PR76 production dispatcher accepted nonzero capillary/phase-pressure value");
+
+    fdp::Pr76ThreePhaseProductionCellEvaluatorContext3D<
+        Closure3>
+        nonzero_capillary_jacobian_context{
+            &three_closure,
+            {&zero_value_nonzero_capillary_jacobian_constitutive, nullptr},
+            {&disabled_rock_storage, nullptr},
+            {}};
+    require_capillary_dispatch_rejection(
+        &nonzero_capillary_jacobian_context,
+        "PR76 production dispatcher accepted zero-value/nonzero capillary Jacobian");
 }
 
 std::array<double, 4>
