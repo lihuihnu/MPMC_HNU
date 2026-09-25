@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -104,6 +105,7 @@ struct Sw92TransactionalPhaseTransitionRestartContext3D {
     std::function<Provider()> provider_factory;
     mpmc::flow::SelectedPhasePropertyProvenance property_provenance;
 
+    MPI_Comm comm{MPI_COMM_NULL};
     PostSnesSw92ProfileCPhaseTransitionScannerContext3D* scanner{};
     const mpmc::discretization_petsc::ParallelOwnedConnectionSchedule3D*
         schedule{};
@@ -158,33 +160,32 @@ make_generation_runtime(
     runtime->one_phase =
         std::make_unique<
             Sw92SinglePhaseProductionCellEvaluatorContext3D<
-                typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>>(
-                    Sw92SinglePhaseProductionCellEvaluatorContext3D<
-                        typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>{
-                        runtime->closure.get(),
-                        context.single_phase_relative_permeability,
-                        context.rock,
-                        {}});
+                typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>>();
+    runtime->one_phase->property_closure =
+        runtime->closure.get();
+    runtime->one_phase->relative_permeability =
+        context.single_phase_relative_permeability;
+    runtime->one_phase->rock = context.rock;
+
     runtime->two_phase =
         std::make_unique<
             Sw92TwoPhaseProductionCellEvaluatorContext3D<
-                typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>>(
-                    Sw92TwoPhaseProductionCellEvaluatorContext3D<
-                        typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>{
-                        runtime->closure.get(),
-                        context.two_phase_relative_permeability,
-                        context.rock,
-                        {}});
+                typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>>();
+    runtime->two_phase->property_closure =
+        runtime->closure.get();
+    runtime->two_phase->relative_permeability =
+        context.two_phase_relative_permeability;
+    runtime->two_phase->rock = context.rock;
+
     runtime->three_phase =
         std::make_unique<
             Sw92ThreePhaseProductionCellEvaluatorContext3D<
-                typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>>(
-                    Sw92ThreePhaseProductionCellEvaluatorContext3D<
-                        typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>{
-                        runtime->closure.get(),
-                        context.three_phase_saturation,
-                        context.rock,
-                        {}});
+                typename Sw92TransactionalGenerationRuntime3D<Provider>::Closure>>();
+    runtime->three_phase->property_closure =
+        runtime->closure.get();
+    runtime->three_phase->saturation_constitutive =
+        context.three_phase_saturation;
+    runtime->three_phase->rock = context.rock;
     return runtime;
 }
 
@@ -276,6 +277,7 @@ template <typename Provider>
 [[nodiscard]] inline PetscErrorCode
 materialize_sw92_transactional_initial_system_3d(
     MPI_Comm comm,
+    double timestep_seconds,
     Sw92TransactionalPhaseTransitionRestartContext3D<Provider>* context,
     Sw92TransactionalInitialCell3D initial,
     std::unique_ptr<PhaseTransitionRebuiltNaturalVariableSystem3D>* output) {
@@ -287,17 +289,17 @@ materialize_sw92_transactional_initial_system_3d(
 
     try {
         validate_context(*context);
-        if (initial.baseline.cell != mpmc::mesh::LocalIndex{0U} ||
+        if (comm == MPI_COMM_NULL ||
+            !std::isfinite(timestep_seconds) ||
+            !(timestep_seconds > 0.0) ||
+            initial.baseline.cell != mpmc::mesh::LocalIndex{0U} ||
             initial.baseline.cell_global !=
                 context->partition->global_id(
                     mpmc::mesh::EntityKind::cell,
                     mpmc::mesh::LocalIndex{0U}) ||
             initial.layout.phase_count() != initial.selections.size() ||
             initial.natural_variables.size() != initial.layout.unknown_count() ||
-            initial.active_phases.phase_count() != initial.layout.phase_count() ||
-            initial.baseline.component_ids != initial.layout.component_count() == 0U
-                ? std::vector<std::string>{}
-                : initial.baseline.component_ids) {
+            initial.active_phases.phase_count() != initial.layout.phase_count()) {
             return PETSC_ERR_ARG_INCOMP;
         }
         if (initial.baseline.component_ids.size() !=
@@ -337,7 +339,7 @@ materialize_sw92_transactional_initial_system_3d(
                 *context->partition,
                 *context->cell_bridge,
                 *context->cell_pattern,
-                1.0,
+                timestep_seconds,
                 std::vector<FrozenPhaseTransitionRebuildCell3D>{
                     std::move(cell)},
                 {},
@@ -349,6 +351,7 @@ materialize_sw92_transactional_initial_system_3d(
         if (error != PETSC_SUCCESS || system == nullptr) {
             return error != PETSC_SUCCESS ? error : PETSC_ERR_PLIB;
         }
+        context->comm = comm;
         context->accepted_baseline = initial.baseline;
         context->generations.push_back(std::move(runtime));
         *output = std::move(system);
@@ -436,8 +439,9 @@ rebuild_sw92_transactional_phase_transition_3d(
             baseline.component_ids != proposal.candidate.component_ids ||
             !post_snes_pt_flash_scanner_detail::near_roundoff(
                 baseline.porosity, porosity) ||
-            !post_snes_pt_flash_scanner_detail::near_roundoff(
-                current_system.time_step_seconds(), 1.0)) {
+            !std::isfinite(current_system.time_step_seconds()) ||
+            !(current_system.time_step_seconds() > 0.0) ||
+            context->comm == MPI_COMM_NULL) {
             return PETSC_ERR_ARG_INCOMP;
         }
 
@@ -498,7 +502,7 @@ rebuild_sw92_transactional_phase_transition_3d(
         std::unique_ptr<PhaseTransitionRebuiltNaturalVariableSystem3D> next;
         error =
             rebuild_phase_transition_natural_variable_system_3d(
-                PETSC_COMM_SELF,
+                context->comm,
                 *context->schedule,
                 *context->partition,
                 *context->cell_bridge,

@@ -230,7 +230,7 @@ void verify_transaction(
     std::unique_ptr<fdp::PhaseTransitionRebuiltNaturalVariableSystem3D> system;
     require_tx(
         fdp::materialize_sw92_transactional_initial_system_3d(
-            PETSC_COMM_SELF,&rebuild,std::move(initial),&system)==PETSC_SUCCESS &&
+            PETSC_COMM_SELF,1.0,&rebuild,std::move(initial),&system)==PETSC_SUCCESS &&
         system!=nullptr,"failed to materialize SW92 transactional initial system");
 
     std::unique_ptr<fdp::PhaseTransitionRebuiltNaturalVariableSystem3D> final_system;
