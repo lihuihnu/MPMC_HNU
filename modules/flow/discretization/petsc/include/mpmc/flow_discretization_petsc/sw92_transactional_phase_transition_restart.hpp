@@ -671,13 +671,14 @@ rebuild_sw92_transactional_phase_transition_system_3d(
             case 1U: {
                 auto evaluator =
                     std::make_unique<
-                        typename Runtime::OneContext>(
-                            typename Runtime::OneContext{
-                                closure_ptr,
-                                context
-                                    ->single_phase_relative_permeability,
-                                context->rock_storage,
-                                {}});
+                        typename Runtime::OneContext>();
+                evaluator->property_closure =
+                    closure_ptr;
+                evaluator->relative_permeability =
+                    context
+                        ->single_phase_relative_permeability;
+                evaluator->rock =
+                    context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
                 runtime->one_phase_contexts
@@ -694,13 +695,14 @@ rebuild_sw92_transactional_phase_transition_system_3d(
             case 2U: {
                 auto evaluator =
                     std::make_unique<
-                        typename Runtime::TwoContext>(
-                            typename Runtime::TwoContext{
-                                closure_ptr,
-                                context
-                                    ->two_phase_relative_permeability,
-                                context->rock_storage,
-                                {}});
+                        typename Runtime::TwoContext>();
+                evaluator->property_closure =
+                    closure_ptr;
+                evaluator->relative_permeability =
+                    context
+                        ->two_phase_relative_permeability;
+                evaluator->rock =
+                    context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
                 runtime->two_phase_contexts
@@ -717,13 +719,14 @@ rebuild_sw92_transactional_phase_transition_system_3d(
             case 3U: {
                 auto evaluator =
                     std::make_unique<
-                        typename Runtime::ThreeContext>(
-                            typename Runtime::ThreeContext{
-                                closure_ptr,
-                                context
-                                    ->three_phase_saturation,
-                                context->rock_storage,
-                                {}});
+                        typename Runtime::ThreeContext>();
+                evaluator->property_closure =
+                    closure_ptr;
+                evaluator->saturation_constitutive =
+                    context
+                        ->three_phase_saturation;
+                evaluator->rock =
+                    context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
                 runtime->three_phase_contexts
