@@ -137,6 +137,352 @@ current_component_inventory(
         current);
 }
 
+
+[[nodiscard]] inline
+mpmc::flow::PoreVolumeEnergyAccumulationSnapshot3P
+current_energy_inventory(
+    const MixedCardinalityPhysicalCurrentCellLinearization3D&
+        current,
+    double porosity) {
+    return std::visit(
+        [porosity](const auto& typed)
+            -> mpmc::flow::
+                PoreVolumeEnergyAccumulationSnapshot3P {
+            using Typed =
+                std::decay_t<decltype(typed)>;
+            if constexpr (
+                std::is_same_v<
+                    Typed,
+                    SinglePhaseCurrentCellLinearization3D>) {
+                return mpmc::flow::
+                    build_single_phase_energy_accumulation_snapshot(
+                        typed.state,
+                        porosity,
+                        typed.transport,
+                        typed.caloric,
+                        typed.rock);
+            } else if constexpr (
+                std::is_same_v<
+                    Typed,
+                    TwoPhaseCurrentCellLinearization3D>) {
+                return mpmc::flow::
+                    build_two_phase_energy_accumulation_snapshot(
+                        typed.state,
+                        porosity,
+                        typed.transport,
+                        typed.caloric,
+                        typed.rock);
+            } else {
+                return mpmc::flow::
+                    build_pore_volume_energy_accumulation_snapshot(
+                        typed.state,
+                        porosity,
+                        typed.transport,
+                        typed.caloric,
+                        typed.rock);
+            }
+        },
+        current);
+}
+
+struct AggregateStorageLinearization3D {
+    double total_molar_accumulation{};
+    double total_internal_energy{};
+    double d_molar_dp{};
+    double d_molar_dt{};
+    double d_energy_dp{};
+    double d_energy_dt{};
+};
+
+[[nodiscard]] inline
+AggregateStorageLinearization3D
+aggregate_storage_linearization(
+    const MixedCardinalityPhysicalCurrentCellLinearization3D&
+        current,
+    double porosity) {
+    return std::visit(
+        [porosity](const auto& typed)
+            -> AggregateStorageLinearization3D {
+            using Typed =
+                std::decay_t<decltype(typed)>;
+
+            mpmc::flow::
+                PoreVolumeComponentAccumulationLinearization3P
+                component;
+            mpmc::flow::
+                PoreVolumeEnergyAccumulationLinearization3P
+                energy;
+
+            if constexpr (
+                std::is_same_v<
+                    Typed,
+                    SinglePhaseCurrentCellLinearization3D>) {
+                component =
+                    mpmc::flow::
+                        build_single_phase_component_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.molar_density);
+                energy =
+                    mpmc::flow::
+                        build_single_phase_energy_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock);
+            } else if constexpr (
+                std::is_same_v<
+                    Typed,
+                    TwoPhaseCurrentCellLinearization3D>) {
+                component =
+                    mpmc::flow::
+                        build_two_phase_component_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.molar_density);
+                energy =
+                    mpmc::flow::
+                        build_two_phase_energy_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock);
+            } else {
+                component =
+                    mpmc::flow::
+                        build_pore_volume_component_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.molar_density);
+                energy =
+                    mpmc::flow::
+                        build_pore_volume_energy_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock);
+            }
+
+            if (component.total_accumulation_gradient.size() < 2U ||
+                energy.total_internal_energy_gradient.size() < 2U) {
+                throw std::invalid_argument(
+                    "SW92 transactional aggregate storage lacks p/T derivatives");
+            }
+
+            const auto component_snapshot =
+                current_component_inventory(
+                    MixedCardinalityPhysicalCurrentCellLinearization3D{
+                        typed},
+                    porosity);
+            return {
+                component_snapshot
+                    .total_accumulation_mol_per_bulk_m3,
+                energy
+                    .total_internal_energy_j_per_bulk_m3,
+                component
+                    .total_accumulation_gradient[0],
+                component
+                    .total_accumulation_gradient[1],
+                energy
+                    .total_internal_energy_gradient[0],
+                energy
+                    .total_internal_energy_gradient[1]};
+        },
+        current);
+}
+
+template <typename Evaluate>
+inline void conservative_pt_anchor(
+    std::vector<double>* q,
+    double porosity,
+    double target_total_molar_accumulation,
+    double target_total_internal_energy,
+    Evaluate&& evaluate) {
+    if (q == nullptr ||
+        q->size() < 2U ||
+        !std::isfinite(target_total_molar_accumulation) ||
+        !(target_total_molar_accumulation > 0.0) ||
+        !std::isfinite(target_total_internal_energy)) {
+        throw std::invalid_argument(
+            "SW92 transactional conservative p/T anchor inputs are invalid");
+    }
+
+    const double molar_scale =
+        std::max(
+            1.0,
+            std::abs(
+                target_total_molar_accumulation));
+    const double energy_scale =
+        std::max(
+            1.0,
+            std::abs(
+                target_total_internal_energy));
+
+    auto residual_norm =
+        [&](const AggregateStorageLinearization3D& value) {
+            return std::hypot(
+                (value.total_molar_accumulation -
+                 target_total_molar_accumulation) /
+                    molar_scale,
+                (value.total_internal_energy -
+                 target_total_internal_energy) /
+                    energy_scale);
+        };
+
+    constexpr std::size_t maximum_iterations = 8U;
+    constexpr std::size_t maximum_backtracks = 10U;
+    constexpr double target_norm = 1.0e-8;
+
+    for (std::size_t iteration = 0U;
+         iteration < maximum_iterations;
+         ++iteration) {
+        const auto current =
+            evaluate(*q);
+        if (!current.has_value()) {
+            throw std::range_error(
+                "SW92 transactional conservative p/T anchor cannot evaluate target state");
+        }
+        const auto storage =
+            aggregate_storage_linearization(
+                *current,
+                porosity);
+        const double norm =
+            residual_norm(storage);
+        if (norm <= target_norm) {
+            return;
+        }
+
+        const double a =
+            storage.d_molar_dp /
+            molar_scale;
+        const double b =
+            storage.d_molar_dt /
+            molar_scale;
+        const double c =
+            storage.d_energy_dp /
+            energy_scale;
+        const double d =
+            storage.d_energy_dt /
+            energy_scale;
+        const double rhs0 =
+            -(storage.total_molar_accumulation -
+              target_total_molar_accumulation) /
+            molar_scale;
+        const double rhs1 =
+            -(storage.total_internal_energy -
+              target_total_internal_energy) /
+            energy_scale;
+        const double determinant =
+            a * d - b * c;
+        const double determinant_scale =
+            std::max(
+                {1.0,
+                 std::abs(a * d),
+                 std::abs(b * c)});
+        if (!std::isfinite(determinant) ||
+            std::abs(determinant) <=
+                4096.0 *
+                    std::numeric_limits<double>::epsilon() *
+                    determinant_scale) {
+            throw std::range_error(
+                "SW92 transactional conservative p/T anchor Jacobian is singular");
+        }
+
+        double dp =
+            (rhs0 * d - b * rhs1) /
+            determinant;
+        double dt =
+            (a * rhs1 - rhs0 * c) /
+            determinant;
+        const double pressure =
+            (*q)[0];
+        const double temperature =
+            (*q)[1];
+        if (!std::isfinite(dp) ||
+            !std::isfinite(dt) ||
+            !std::isfinite(pressure) ||
+            !(pressure > 0.0) ||
+            !std::isfinite(temperature) ||
+            !(temperature > 0.0)) {
+            throw std::range_error(
+                "SW92 transactional conservative p/T anchor step is invalid");
+        }
+
+        const double pressure_limit =
+            0.25 * pressure;
+        const double temperature_limit =
+            std::max(
+                10.0,
+                0.10 * temperature);
+        dp =
+            std::clamp(
+                dp,
+                -pressure_limit,
+                pressure_limit);
+        dt =
+            std::clamp(
+                dt,
+                -temperature_limit,
+                temperature_limit);
+
+        bool accepted = false;
+        double damping = 1.0;
+        for (std::size_t backtrack = 0U;
+             backtrack < maximum_backtracks;
+             ++backtrack) {
+            auto trial = *q;
+            trial[0] =
+                pressure +
+                damping * dp;
+            trial[1] =
+                temperature +
+                damping * dt;
+            if (!(trial[0] > 0.0) ||
+                !(trial[1] > 0.0)) {
+                damping *= 0.5;
+                continue;
+            }
+
+            const auto evaluated =
+                evaluate(trial);
+            if (evaluated.has_value()) {
+                const auto trial_storage =
+                    aggregate_storage_linearization(
+                        *evaluated,
+                        porosity);
+                if (residual_norm(
+                        trial_storage) <
+                    norm) {
+                    *q =
+                        std::move(trial);
+                    accepted = true;
+                    break;
+                }
+            }
+            damping *= 0.5;
+        }
+        if (!accepted) {
+            throw std::range_error(
+                "SW92 transactional conservative p/T anchor line search failed");
+        }
+    }
+
+    const auto final =
+        evaluate(*q);
+    if (!final.has_value() ||
+        residual_norm(
+            aggregate_storage_linearization(
+                *final,
+                porosity)) >
+            1.0e-6) {
+        throw std::range_error(
+            "SW92 transactional conservative p/T anchor did not close aggregate storage");
+    }
+}
+
 [[nodiscard]] inline bool same_vector(
     std::span<const double> first,
     std::span<const double> second) {
@@ -681,6 +1027,49 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
+                conservative_pt_anchor(
+                    &rebuilt.target_natural_variables,
+                    baseline.porosity,
+                    current_inventory.total_accumulation_mol_per_bulk_m3,
+                    current_energy_inventory(
+                        *current[local],
+                        baseline.porosity)
+                        .total_internal_energy_j_per_bulk_m3,
+                    [&](std::span<const double> q)
+                        -> std::optional<
+                            MixedCardinalityPhysicalCurrentCellLinearization3D> {
+                        std::optional<
+                            SinglePhaseCurrentCellLinearization3D>
+                            value;
+                        NaturalVariableSnesEvaluationStatus3D
+                            status =
+                                NaturalVariableSnesEvaluationStatus3D::
+                                    success;
+                        const auto typed_layout =
+                            phase_transition_outer_rebuild_detail::
+                                layout_1p(
+                                    rebuilt.target_layout);
+                        const PetscErrorCode evaluate_error =
+                            evaluate_sw92_single_phase_production_cell_3d<
+                                Closure>(
+                                    baseline.cell,
+                                    baseline.cell_global,
+                                    q,
+                                    typed_layout,
+                                    baseline.component_ids,
+                                    evaluator_ptr,
+                                    &value,
+                                    &status);
+                        if (evaluate_error != PETSC_SUCCESS ||
+                            status !=
+                                NaturalVariableSnesEvaluationStatus3D::
+                                    success ||
+                            !value.has_value()) {
+                            return std::nullopt;
+                        }
+                        return MixedCardinalityPhysicalCurrentCellLinearization3D{
+                            std::move(*value)};
+                    });
                 runtime->one_phase_contexts
                     .push_back(
                         std::move(evaluator));
@@ -705,6 +1094,49 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
+                conservative_pt_anchor(
+                    &rebuilt.target_natural_variables,
+                    baseline.porosity,
+                    current_inventory.total_accumulation_mol_per_bulk_m3,
+                    current_energy_inventory(
+                        *current[local],
+                        baseline.porosity)
+                        .total_internal_energy_j_per_bulk_m3,
+                    [&](std::span<const double> q)
+                        -> std::optional<
+                            MixedCardinalityPhysicalCurrentCellLinearization3D> {
+                        std::optional<
+                            TwoPhaseCurrentCellLinearization3D>
+                            value;
+                        NaturalVariableSnesEvaluationStatus3D
+                            status =
+                                NaturalVariableSnesEvaluationStatus3D::
+                                    success;
+                        const auto typed_layout =
+                            phase_transition_outer_rebuild_detail::
+                                layout_2p(
+                                    rebuilt.target_layout);
+                        const PetscErrorCode evaluate_error =
+                            evaluate_sw92_two_phase_production_cell_3d<
+                                Closure>(
+                                    baseline.cell,
+                                    baseline.cell_global,
+                                    q,
+                                    typed_layout,
+                                    baseline.component_ids,
+                                    evaluator_ptr,
+                                    &value,
+                                    &status);
+                        if (evaluate_error != PETSC_SUCCESS ||
+                            status !=
+                                NaturalVariableSnesEvaluationStatus3D::
+                                    success ||
+                            !value.has_value()) {
+                            return std::nullopt;
+                        }
+                        return MixedCardinalityPhysicalCurrentCellLinearization3D{
+                            std::move(*value)};
+                    });
                 runtime->two_phase_contexts
                     .push_back(
                         std::move(evaluator));
@@ -729,6 +1161,49 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
+                conservative_pt_anchor(
+                    &rebuilt.target_natural_variables,
+                    baseline.porosity,
+                    current_inventory.total_accumulation_mol_per_bulk_m3,
+                    current_energy_inventory(
+                        *current[local],
+                        baseline.porosity)
+                        .total_internal_energy_j_per_bulk_m3,
+                    [&](std::span<const double> q)
+                        -> std::optional<
+                            MixedCardinalityPhysicalCurrentCellLinearization3D> {
+                        std::optional<
+                            FixedThreePhaseCurrentCellLinearization3D>
+                            value;
+                        NaturalVariableSnesEvaluationStatus3D
+                            status =
+                                NaturalVariableSnesEvaluationStatus3D::
+                                    success;
+                        const auto typed_layout =
+                            static_cast<
+                                mpmc::flow::NaturalVariableLayout3P>(
+                                    rebuilt.target_layout);
+                        const PetscErrorCode evaluate_error =
+                            evaluate_sw92_three_phase_production_cell_3d<
+                                Closure>(
+                                    baseline.cell,
+                                    baseline.cell_global,
+                                    q,
+                                    typed_layout,
+                                    baseline.component_ids,
+                                    evaluator_ptr,
+                                    &value,
+                                    &status);
+                        if (evaluate_error != PETSC_SUCCESS ||
+                            status !=
+                                NaturalVariableSnesEvaluationStatus3D::
+                                    success ||
+                            !value.has_value()) {
+                            return std::nullopt;
+                        }
+                        return MixedCardinalityPhysicalCurrentCellLinearization3D{
+                            std::move(*value)};
+                    });
                 runtime->three_phase_contexts
                     .push_back(
                         std::move(evaluator));
