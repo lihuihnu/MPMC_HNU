@@ -64,6 +64,7 @@ bool post_snes_pt_flash_phase_transition_scanner_header();
 void post_snes_pt_flash_phase_transition_scanner_test();
 bool sw92_transactional_phase_transition_restart_header();
 void sw92_transactional_phase_transition_restart_test();
+void sw92_transactional_phase_transition_sample6_test();
 bool global_component_assembly_mapping_header();
 bool fugacity_equilibrium_global_assembly_mapping_header();
 
@@ -5595,6 +5596,7 @@ int main(int argc, char** argv) {
         adaptive_timestep_controller_test();
         post_snes_pt_flash_phase_transition_scanner_test();
         sw92_transactional_phase_transition_restart_test();
+        sw92_transactional_phase_transition_sample6_test();
         global_component_assembly_mapping();
         fugacity_global_assembly_mapping();
         invalid_collective_inputs();

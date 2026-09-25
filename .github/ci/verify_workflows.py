@@ -190,6 +190,7 @@ def main():
     petsc_entry_text = Path('tests/flow_discretization/petsc/distributed_component_conservation_test.cpp').read_text(encoding='utf-8')
     for token in (
         'sw92_transactional_phase_transition_restart_test.cpp',
+        'sw92_transactional_phase_transition_sample6_test.cpp',
         'sw92_transactional_phase_transition_restart_header.cpp',
     ):
         assert token in petsc_cmake_text, (
@@ -200,6 +201,10 @@ def main():
         r'int\s+main\s*\([^)]*\)\s*\{[\s\S]*?sw92_transactional_phase_transition_restart_test\s*\(\s*\)\s*;',
         petsc_entry_text,
     ), 'SW92 transactional restart regression is compiled but not executed'
+    assert re.search(
+        r'int\s+main\s*\([^)]*\)\s*\{[\s\S]*?sw92_transactional_phase_transition_sample6_test\s*\(\s*\)\s*;',
+        petsc_entry_text,
+    ), 'SW92 Sample-6 transactional 2P<->3P regression is compiled but not executed'
     assert re.search(
         r'void\s+headers\s*\(\s*\)\s*\{[\s\S]*?sw92_transactional_phase_transition_restart_header\s*\(\s*\)',
         petsc_entry_text,
