@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -587,9 +588,28 @@ std::vector<double> three_phase_q(
 
 struct Sample6TargetLinearDiagnostics {
     std::size_t rank{};
+    std::size_t component_count{};
+    std::size_t phase_count{};
     double minimum_pivot{};
     double residual_l2{};
     double row_scaled_residual_l2{};
+    double component_residual_l2{};
+    double energy_residual_abs{};
+    double fugacity_residual_l2{};
+    double component_row_scaled_l2{};
+    double energy_row_scaled_abs{};
+    double fugacity_row_scaled_l2{};
+    std::vector<double> raw_rows;
+    std::vector<double> row_scaled_rows;
+};
+
+struct Sample6TargetStateConsistencyDiagnostics {
+    bool checked_three_phase{};
+    double sidecar_q_max_relative_difference{};
+    double evaluator_sidecar_max_relative_difference{};
+    double component_history_max_relative_difference{};
+    double energy_history_relative_difference{};
+    double fugacity_max_abs{};
 };
 
 Sample6TargetLinearDiagnostics
@@ -725,7 +745,21 @@ sample6_target_linear_diagnostics(
                 PETSC_SUCCESS,
             "failed to read Sample-6 target dense diagnostic");
 
+        const std::size_t component_count =
+            numbering.component_count();
+        const std::size_t phase_count =
+            numbering
+                .cell(mesh::LocalIndex{0U})
+                .phase_count;
+        require_sample6_transaction(
+            n ==
+                phase_count *
+                    component_count +
+                    1U,
+            "Sample-6 target equation/cardinality diagnostic mismatch");
+
         std::vector<double> a(n * n);
+        std::vector<double> raw_r(n);
         std::vector<double> scaled_r(n);
         for (std::size_t row = 0U;
              row < n;
@@ -760,12 +794,48 @@ sample6_target_linear_diagnostics(
                 a[row * n + column] /=
                     maximum;
             }
-            scaled_r[row] =
+            raw_r[row] =
                 static_cast<double>(
                     PetscRealPart(
-                        residual_values[row])) /
+                        residual_values[row]));
+            scaled_r[row] =
+                raw_r[row] /
                 maximum;
         }
+
+        auto block_l2 =
+            [](std::span<const double> values) {
+                double sum2 = 0.0;
+                for (const double value : values) {
+                    sum2 += value * value;
+                }
+                return std::sqrt(sum2);
+            };
+
+        const auto component_raw =
+            std::span<const double>{
+                raw_r.data(),
+                component_count};
+        const auto fugacity_raw =
+            std::span<const double>{
+                raw_r.data() +
+                    component_count +
+                    1U,
+                n -
+                    component_count -
+                    1U};
+        const auto component_scaled =
+            std::span<const double>{
+                scaled_r.data(),
+                component_count};
+        const auto fugacity_scaled =
+            std::span<const double>{
+                scaled_r.data() +
+                    component_count +
+                    1U,
+                n -
+                    component_count -
+                    1U};
 
         double scaled_norm2 = 0.0;
         for (double value : scaled_r) {
@@ -839,20 +909,302 @@ sample6_target_linear_diagnostics(
             ++rank;
         }
 
-        cleanup();
-        return {
-            rank,
+        Sample6TargetLinearDiagnostics result;
+        result.rank = rank;
+        result.component_count =
+            component_count;
+        result.phase_count =
+            phase_count;
+        result.minimum_pivot =
             rank == 0U
                 ? 0.0
-                : minimum_pivot,
+                : minimum_pivot;
+        result.residual_l2 =
             static_cast<double>(
-                residual_norm),
+                residual_norm);
+        result.row_scaled_residual_l2 =
             std::sqrt(
-                scaled_norm2)};
+                scaled_norm2);
+        result.component_residual_l2 =
+            block_l2(component_raw);
+        result.energy_residual_abs =
+            std::abs(
+                raw_r[component_count]);
+        result.fugacity_residual_l2 =
+            block_l2(fugacity_raw);
+        result.component_row_scaled_l2 =
+            block_l2(component_scaled);
+        result.energy_row_scaled_abs =
+            std::abs(
+                scaled_r[component_count]);
+        result.fugacity_row_scaled_l2 =
+            block_l2(fugacity_scaled);
+        result.raw_rows =
+            std::move(raw_r);
+        result.row_scaled_rows =
+            std::move(scaled_r);
+
+        cleanup();
+        return result;
     } catch (...) {
         cleanup();
         throw;
     }
+}
+
+template <typename Provider>
+Sample6TargetStateConsistencyDiagnostics
+sample6_target_state_consistency_diagnostics(
+    fdp::PhaseTransitionRebuiltNaturalVariableSystem3D&
+        system,
+    fdp::Sw92TransactionalPhaseTransitionRebuildContext3D<
+        Provider>& context) {
+    Sample6TargetStateConsistencyDiagnostics
+        result;
+
+    const auto& numbering =
+        system.numbering();
+    const auto& record =
+        numbering.cell(mesh::LocalIndex{0U});
+    const auto* target =
+        context.scanner_context == nullptr
+        ? nullptr
+        : context.scanner_context
+              ->find_target(
+                  record.cell_global);
+    require_sample6_transaction(
+        target != nullptr,
+        "Sample-6 rebuilt target lost authoritative sidecar");
+
+    std::vector<PetscInt>
+        indices(record.scalar_count);
+    std::vector<PetscScalar>
+        petsc_values(record.scalar_count);
+    for (std::size_t slot = 0U;
+         slot < record.scalar_count;
+         ++slot) {
+        indices[slot] =
+            record.petsc_global_scalar_start +
+            static_cast<PetscInt>(slot);
+    }
+    require_sample6_transaction(
+        VecGetValues(
+            system.initial_state(),
+            static_cast<PetscInt>(
+                indices.size()),
+            indices.data(),
+            petsc_values.data()) ==
+            PETSC_SUCCESS,
+        "failed to read Sample-6 rebuilt initial q");
+
+    std::vector<double> q(
+        record.scalar_count);
+    for (std::size_t slot = 0U;
+         slot < record.scalar_count;
+         ++slot) {
+        q[slot] =
+            static_cast<double>(
+                PetscRealPart(
+                    petsc_values[slot]));
+    }
+
+    const auto authoritative_q =
+        target->projection
+            .natural_variables();
+    require_sample6_transaction(
+        q.size() ==
+            authoritative_q.size(),
+        "Sample-6 rebuilt q/sidecar shape mismatch");
+
+    auto relative_difference =
+        [](double first,
+           double second) {
+            const double scale =
+                std::max(
+                    {1.0,
+                     std::abs(first),
+                     std::abs(second)});
+            return std::abs(
+                       first - second) /
+                scale;
+        };
+
+    for (std::size_t column = 0U;
+         column < q.size();
+         ++column) {
+        result.sidecar_q_max_relative_difference =
+            std::max(
+                result
+                    .sidecar_q_max_relative_difference,
+                relative_difference(
+                    q[column],
+                    authoritative_q[column]));
+    }
+
+    if (record.phase_count != 3U) {
+        return result;
+    }
+
+    std::optional<
+        fdp::MixedCardinalityPhysicalCurrentCellLinearization3D>
+        current;
+    double porosity = 0.0;
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        status =
+            fdp::NaturalVariableSnesEvaluationStatus3D::
+                success;
+    require_sample6_transaction(
+        system
+                .evaluate_current_cell_for_phase_transition(
+                    record.cell,
+                    q,
+                    &current,
+                    &porosity,
+                    &status) ==
+                PETSC_SUCCESS &&
+            status ==
+                fdp::
+                    NaturalVariableSnesEvaluationStatus3D::
+                        success &&
+            current.has_value(),
+        "Sample-6 rebuilt evaluator cannot reproduce target q");
+
+    const auto* three =
+        std::get_if<
+            fdp::FixedThreePhaseCurrentCellLinearization3D>(
+                &*current);
+    require_sample6_transaction(
+        three != nullptr &&
+            target->phases.size() == 3U &&
+            target->projection
+                    .target_saturations()
+                    .size() == 3U,
+        "Sample-6 rebuilt evaluator/sidecar is not authoritative 3P");
+
+    for (std::size_t phase = 0U;
+         phase < 3U;
+         ++phase) {
+        const auto slot =
+            static_cast<
+                flow::PhaseSlot3>(
+                    phase);
+        result.evaluator_sidecar_max_relative_difference =
+            std::max(
+                result
+                    .evaluator_sidecar_max_relative_difference,
+                relative_difference(
+                    three->state
+                        .phase_saturation(slot),
+                    target->projection
+                        .target_saturations()[
+                            phase]));
+        result.evaluator_sidecar_max_relative_difference =
+            std::max(
+                result
+                    .evaluator_sidecar_max_relative_difference,
+                relative_difference(
+                    three->molar_density
+                        .molar_density_mol_per_m3[
+                            phase],
+                    target->phases[phase]
+                        .molar_density_mol_per_m3));
+
+        const auto composition =
+            three->state
+                .phase_composition(slot);
+        require_sample6_transaction(
+            composition.size() ==
+                target->phases[phase]
+                    .composition.size(),
+            "Sample-6 rebuilt evaluator/sidecar composition shape mismatch");
+        for (std::size_t component = 0U;
+             component <
+                 composition.size();
+             ++component) {
+            result.evaluator_sidecar_max_relative_difference =
+                std::max(
+                    result
+                        .evaluator_sidecar_max_relative_difference,
+                    relative_difference(
+                        composition[component],
+                        target->phases[phase]
+                            .composition[
+                                component]));
+        }
+    }
+
+    require_sample6_transaction(
+        context.baseline_cells.size() == 1U &&
+            context.baseline_cells[0]
+                .previous_component_accumulation
+                .has_value() &&
+            context.baseline_cells[0]
+                .previous_energy_accumulation
+                .has_value(),
+        "Sample-6 rebuilt consistency diagnostic lacks frozen history");
+
+    const auto current_component =
+        flow::build_pore_volume_component_accumulation(
+            three->state,
+            porosity);
+    const auto& previous_component =
+        *context.baseline_cells[0]
+             .previous_component_accumulation;
+    require_sample6_transaction(
+        current_component.component_ids ==
+                previous_component.component_ids &&
+            current_component
+                    .component_accumulation_mol_per_bulk_m3
+                    .size() ==
+                previous_component
+                    .component_accumulation_mol_per_bulk_m3
+                    .size(),
+        "Sample-6 rebuilt component history identity mismatch");
+    for (std::size_t component = 0U;
+         component <
+             current_component
+                 .component_accumulation_mol_per_bulk_m3
+                 .size();
+         ++component) {
+        result.component_history_max_relative_difference =
+            std::max(
+                result
+                    .component_history_max_relative_difference,
+                relative_difference(
+                    current_component
+                        .component_accumulation_mol_per_bulk_m3[
+                            component],
+                    previous_component
+                        .component_accumulation_mol_per_bulk_m3[
+                            component]));
+    }
+
+    const auto current_energy =
+        flow::build_pore_volume_energy_accumulation_snapshot(
+            three->state,
+            porosity,
+            three->transport,
+            three->caloric,
+            three->rock);
+    const auto& previous_energy =
+        *context.baseline_cells[0]
+             .previous_energy_accumulation;
+    result.energy_history_relative_difference =
+        relative_difference(
+            current_energy
+                .total_internal_energy_j_per_bulk_m3,
+            previous_energy
+                .total_internal_energy_j_per_bulk_m3);
+
+    for (const double value :
+         three->fugacity.values()) {
+        result.fugacity_max_abs =
+            std::max(
+                result.fugacity_max_abs,
+                std::abs(value));
+    }
+    result.checked_three_phase = true;
+    return result;
 }
 
 template <typename Provider>
@@ -901,6 +1253,15 @@ PetscErrorCode sample6_preflight_rebuild(
     const auto linear_diagnostics =
         sample6_target_linear_diagnostics(
             **rebuilt_system);
+    auto* rebuild_context =
+        static_cast<
+            fdp::Sw92TransactionalPhaseTransitionRebuildContext3D<
+                Provider>*>(
+                    raw_context);
+    const auto state_diagnostics =
+        sample6_target_state_consistency_diagnostics(
+            **rebuilt_system,
+            *rebuild_context);
     const PetscErrorCode solve_error =
         (*rebuilt_system)
             ->solve(
@@ -925,7 +1286,33 @@ PetscErrorCode sample6_preflight_rebuild(
             << " raw_residual_l2="
             << linear_diagnostics.residual_l2
             << " row_scaled_residual_l2="
-            << linear_diagnostics.row_scaled_residual_l2;
+            << linear_diagnostics.row_scaled_residual_l2
+            << " component_raw_l2="
+            << linear_diagnostics.component_residual_l2
+            << " energy_raw_abs="
+            << linear_diagnostics.energy_residual_abs
+            << " fugacity_raw_l2="
+            << linear_diagnostics.fugacity_residual_l2
+            << " component_scaled_l2="
+            << linear_diagnostics.component_row_scaled_l2
+            << " energy_scaled_abs="
+            << linear_diagnostics.energy_row_scaled_abs
+            << " fugacity_scaled_l2="
+            << linear_diagnostics.fugacity_row_scaled_l2
+            << " sidecar_q_max_rel_diff="
+            << state_diagnostics
+                   .sidecar_q_max_relative_difference
+            << " evaluator_sidecar_max_rel_diff="
+            << state_diagnostics
+                   .evaluator_sidecar_max_relative_difference
+            << " component_history_max_rel_diff="
+            << state_diagnostics
+                   .component_history_max_relative_difference
+            << " energy_history_rel_diff="
+            << state_diagnostics
+                   .energy_history_relative_difference
+            << " fugacity_max_abs="
+            << state_diagnostics.fugacity_max_abs;
         if (diagnostics.has_value()) {
             std::cerr
                 << " snes_reason="
@@ -965,7 +1352,31 @@ PetscErrorCode sample6_preflight_rebuild(
                 << " function_l2_norm="
                 << diagnostics->function_l2_norm;
         }
-        std::cerr << '\n';
+        std::cerr << " raw_rows=[";
+        for (std::size_t row = 0U;
+             row <
+                 linear_diagnostics.raw_rows.size();
+             ++row) {
+            if (row != 0U) {
+                std::cerr << ',';
+            }
+            std::cerr <<
+                linear_diagnostics.raw_rows[row];
+        }
+        std::cerr << "] scaled_rows=[";
+        for (std::size_t row = 0U;
+             row <
+                 linear_diagnostics
+                     .row_scaled_rows.size();
+             ++row) {
+            if (row != 0U) {
+                std::cerr << ',';
+            }
+            std::cerr <<
+                linear_diagnostics
+                    .row_scaled_rows[row];
+        }
+        std::cerr << "]\n";
         return solve_error;
     }
     return PETSC_SUCCESS;
