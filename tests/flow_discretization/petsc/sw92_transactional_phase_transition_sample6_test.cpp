@@ -632,7 +632,11 @@ void run_controller(
         " final_state=" +
         std::to_string(final_state != nullptr ? 1 : 0) +
         " report=" +
-        std::to_string(report.has_value() ? 1 : 0);
+        std::to_string(report.has_value() ? 1 : 0) +
+        " rebuild_runtimes=" +
+        std::to_string(rebuild->runtimes.size()) +
+        " scanner_targets=" +
+        std::to_string(scanner->local_owned_targets.size());
     if (report.has_value()) {
         lifecycle_diagnostic +=
             " outcome=" +
