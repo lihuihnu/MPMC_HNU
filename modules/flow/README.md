@@ -4569,8 +4569,10 @@ through the existing variable-cardinality PETSc
 `SNESNEWTONLS -> GMRES -> restricted ASM` path, and verifies that accepted
 component inventories and total internal energy are unchanged.
 
-This slice remains `pc=none` and does not add SW92 post-SNES phase scanning,
-1<->2<->3 restart, wells, brine transport, face fluxes or long-time stepping.
+That production-cell slice remains `pc=none` and did not itself add SW92
+post-SNES phase scanning, 1<->2<->3 restart, wells, brine transport, face fluxes
+or long-time stepping; the following section adds only the scanner/materializer
+boundary, not the restart.
 
 
 ## 51. SW92-aware post-SNES scan -> authoritative target materialization

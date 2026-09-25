@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 bool post_snes_sw92_profile_c_phase_transition_scanner_header();
