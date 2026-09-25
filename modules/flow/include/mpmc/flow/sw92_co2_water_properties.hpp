@@ -766,6 +766,182 @@ public:
 
     template <typename Number>
     [[nodiscard]] Number
+    sw92_attraction_temperature_derivative(
+        const thermodynamics::Sw92SelectedPhase<double>&
+            selection,
+        const Number& temperature_k,
+        std::span<const Number> composition)
+        const {
+        using namespace
+            sw92_co2_water_property_detail;
+        validate_zero_salinity(selection);
+        validate_temperature(temperature_k);
+        validate_composition(composition);
+
+        const auto& parameters =
+            model_->parameters();
+        constexpr double gas_constant =
+            8.31446261815324;
+
+        std::array<Number, 2> pure_a{};
+        std::array<Number, 2> pure_da_dt{};
+
+        using std::exp;
+        using std::sqrt;
+
+        for (std::size_t model_index = 0U;
+             model_index < 2U;
+             ++model_index) {
+            const std::size_t canonical =
+                model_to_canonical_[model_index];
+            const double tc =
+                parameters
+                    .critical_temperatures_k()[
+                        model_index];
+            const double pc =
+                parameters
+                    .critical_pressures_pa()[
+                        model_index];
+            const double rtc =
+                gas_constant * tc;
+            const double ac =
+                0.45724 * rtc * rtc / pc;
+
+            if (canonical == 0U) {
+                const double omega =
+                    parameters.acentric_factors()[
+                        model_index];
+                const double kappa =
+                    0.37464 +
+                    omega *
+                        (1.54226 -
+                         0.26992 * omega);
+                const Number root_temperature =
+                    sqrt(temperature_k);
+                const double root_tc =
+                    std::sqrt(tc);
+                const Number q =
+                    1.0 +
+                    kappa *
+                        (1.0 -
+                         root_temperature /
+                             root_tc);
+                pure_a[model_index] =
+                    ac * q * q;
+                pure_da_dt[model_index] =
+                    -ac * q * kappa /
+                    (root_temperature *
+                     root_tc);
+            } else {
+                const Number tr =
+                    temperature_k / tc;
+                const Number tr2 = tr * tr;
+                const Number tr3 = tr2 * tr;
+                const Number tr4 = tr2 * tr2;
+                const Number q =
+                    1.0 +
+                    0.4530 * (1.0 - tr) +
+                    0.0034 *
+                        (1.0 / tr3 - 1.0);
+                const Number dq_dt =
+                    (-0.4530 -
+                     0.0102 / tr4) /
+                    tc;
+                pure_a[model_index] =
+                    ac * q * q;
+                pure_da_dt[model_index] =
+                    2.0 * ac * q * dq_dt;
+            }
+            require_finite(
+                pure_a[model_index],
+                "SW92 pure attraction",
+                true);
+            require_finite(
+                pure_da_dt[model_index],
+                "SW92 pure attraction temperature derivative");
+        }
+
+        const std::size_t co2_index =
+            model_to_canonical_[0] == 0U
+                ? 0U
+                : 1U;
+        const std::size_t water_index =
+            1U - co2_index;
+
+        Number kij{0.0};
+        Number dkij_dt{0.0};
+        if (selection.family ==
+            thermodynamics::SwPhaseFamily::
+                nonaqueous) {
+            kij =
+                parameters
+                    .water_nonaqueous_constant_kij(
+                        co2_index);
+        } else if (
+            selection.family ==
+            thermodynamics::SwPhaseFamily::
+                aqueous) {
+            const double co2_tc =
+                parameters
+                    .critical_temperatures_k()[
+                        co2_index];
+            const Number tr =
+                temperature_k / co2_tc;
+            const Number exponential =
+                exp(-6.7222 * tr);
+            kij =
+                -0.31092 +
+                0.23580 * tr -
+                21.2566 * exponential;
+            dkij_dt =
+                (0.23580 +
+                 21.2566 * 6.7222 *
+                     exponential) /
+                co2_tc;
+        } else {
+            throw std::invalid_argument(
+                "mpmc::flow::SW92 CO2/H2O property provider received an invalid phase family");
+        }
+        require_finite(
+            kij,
+            "SW92 CO2/water kij");
+        require_finite(
+            dkij_dt,
+            "SW92 CO2/water dkij/dT");
+
+        const Number cross_attraction =
+            sqrt(
+                pure_a[co2_index] *
+                pure_a[water_index]);
+        const Number cross_da_dt =
+            0.5 * cross_attraction *
+            (pure_da_dt[co2_index] /
+                 pure_a[co2_index] +
+             pure_da_dt[water_index] /
+                 pure_a[water_index]);
+
+        const Number x_co2 =
+            composition[co2_index];
+        const Number x_water =
+            composition[water_index];
+        const Number derivative =
+            x_co2 * x_co2 *
+                pure_da_dt[co2_index] +
+            x_water * x_water *
+                pure_da_dt[water_index] +
+            2.0 * x_co2 * x_water *
+                (cross_da_dt *
+                     (1.0 - kij) -
+                 cross_attraction *
+                     dkij_dt);
+        require_finite(
+            derivative,
+            "SW92 mixture attraction temperature derivative");
+        return derivative;
+    }
+
+    template <typename Number>
+    [[nodiscard]] Number
     sw92_residual_molar_enthalpy_j_per_mol(
         const thermodynamics::Sw92SelectedPhase<double>&
             selection,
@@ -783,40 +959,25 @@ public:
             "pressure [Pa]",
             true);
 
-        using TemperatureDual =
-            mpmc::ad::Dual<Number, 1U>;
-        TemperatureDual nested_temperature =
-            TemperatureDual::variable(
-                temperature_k,
-                0U);
-        std::vector<TemperatureDual>
-            nested_composition;
-        nested_composition.reserve(2U);
-        for (const auto& fraction :
-             composition) {
-            nested_composition.emplace_back(
-                fraction);
-        }
-
         thermodynamics::
-            Sw92MixtureWorkspace<
-                TemperatureDual>
+            Sw92MixtureWorkspace<Number>
                 mixture_workspace;
         const auto mixed =
             mixture_.evaluate_full(
-                nested_temperature,
-                std::span<
-                    const TemperatureDual>{
-                    nested_composition},
+                temperature_k,
+                composition,
                 selection
                     .nacl_molality_mol_per_kg_water,
                 selection.family,
                 mixture_workspace);
 
-        const Number a = mixed.a.value();
-        const Number b = mixed.b.value();
+        const Number a = mixed.a;
+        const Number b = mixed.b;
         const Number da_dtemperature =
-            mixed.a.derivative(0U);
+            sw92_attraction_temperature_derivative(
+                selection,
+                temperature_k,
+                composition);
 
         thermodynamics::
             Sw92PhaseWorkspace<Number>
