@@ -4525,3 +4525,44 @@ and internal-energy derivatives against fresh central perturbations.
 
 This slice does **not** add a brine transport model, thermal conductivity,
 SW92 PETSc timestep, well coupling or phase-transition orchestration.
+
+
+## 50. SW92 production cell evaluator and stationary PETSc short-step
+
+The PETSc flow bridge now separates the model-neutral selected-phase production
+cell evaluator core from EOS-specific wrappers:
+
+- `selected_phase_production_cell_evaluator.hpp` owns the common 1P/2P/3P
+  cell-evaluation pipeline, rock-storage callback contract, two-phase
+  relative-permeability callback contract and three-phase saturation callback
+  contract;
+- the existing `pr76_production_cell_evaluator.hpp` remains source-compatible
+  as a thin PR76 traits wrapper;
+- `sw92_production_cell_evaluator.hpp` supplies the SW92 traits wrapper and
+  maps SW92 `pc=none` capability failures to `PETSC_ERR_SUP`.
+
+The SW92 wrapper also provides
+`materialize_sw92_co2_water_profile_c_frozen_cell_3d(...)`.  It consumes an
+already accepted authoritative Profile-C phase set, preserves its ordered
+components, AQ/NA family and selected algebraic root, chooses a
+well-conditioned dependent composition component per phase, converts mole
+phase fractions to volume saturations from the selected SW92 molar densities,
+and constructs the frozen 1P/2P/3P natural-variable chart.  It performs no
+flash, stability search, phase transition or phase-identity inference.
+
+The first production regression is intentionally stationary and minimal.  A
+zero-salinity CO2/H2O authoritative one-phase Profile-C state inside the
+500--1200 K sourced-property interval is materialized into the real
+`Sw92Co2WaterPropertyProvider`, inserted through
+`MixedCardinalityPhysicalSnesAssemblyContext3D`, and advanced as a 1 s
+Backward-Euler system with no faces, source or well.  The initial accepted
+state is therefore the exact nonlinear solution.
+
+The regression checks the physical residual at the frozen state, compares the
+assembled analytic/AD Jacobian against fresh pressure/temperature/composition
+central perturbations, solves through the existing variable-cardinality PETSc
+`SNESNEWTONLS -> GMRES -> restricted ASM` path, and verifies that accepted
+component inventories and total internal energy are unchanged.
+
+This slice remains `pc=none` and does not add SW92 post-SNES phase scanning,
+1<->2<->3 restart, wells, brine transport, face fluxes or long-time stepping.
