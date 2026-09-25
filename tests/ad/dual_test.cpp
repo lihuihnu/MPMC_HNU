@@ -17,6 +17,7 @@
 #include <utility>
 
 mpmc::ad::Dual<double, 2> evaluate_in_other_translation_unit();
+void test_nested_arithmetic();
 
 namespace {
 
@@ -276,6 +277,7 @@ int main() {
         TestCase{"directional_derivative", directional_derivative},
         TestCase{"extreme_scale_division", extreme_scale_division},
         TestCase{"nonfinite_values_are_not_hidden", nonfinite_values_are_not_hidden},
+        TestCase{"nested_arithmetic", test_nested_arithmetic},
         TestCase{"separate_translation_unit", separate_translation_unit},
     };
     std::size_t failures = 0;

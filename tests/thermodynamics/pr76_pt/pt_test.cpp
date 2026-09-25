@@ -1,4 +1,6 @@
 #include "test_support.hpp"
+#include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
+#include <mpmc/thermodynamics/selected_phase_density.hpp>
 #include <mpmc/ad/runtime_differentiate.hpp>
 #include <iostream>
 #include <numeric>
@@ -455,6 +457,265 @@ void derivative_guard() {
     catch(const th::Pr76PhaseError& error) { caught=error.code()==th::Pr76PhaseErrorCode::ill_conditioned_derivative; }
     require(caught,"AD must reject unreliable root slopes");
 }
+
+template <typename T>
+void nested_mixture_temperature_contract() {
+    using Outer = ad::Dual<T, 2>;
+    using Nested = ad::Dual<Outer, 1>;
+
+    const auto parameters =
+        Fixture{}.select({0, 1, 2});
+    auto mixture =
+        th::Pr76Mixture<T>::from_parameters(
+            parameters);
+
+    const Outer temperature =
+        Outer::variable(T{450}, 0);
+    const std::vector<Outer> outer_composition{
+        Outer{T{0.25}, {T{0}, T{1}}},
+        Outer{T{0.50}},
+        Outer{T{0.25}, {T{0}, T{-1}}}};
+
+    std::vector<Nested> nested_composition;
+    nested_composition.reserve(
+        outer_composition.size());
+    for (const auto& fraction :
+         outer_composition) {
+        nested_composition.emplace_back(
+            fraction);
+    }
+
+    th::Pr76MixtureWorkspace<Nested>
+        nested_workspace;
+    const auto nested =
+        mixture.evaluate_full(
+            Nested::variable(
+                temperature,
+                0U),
+            std::span<const Nested>{
+                nested_composition},
+            nested_workspace);
+
+    const Outer da_dtemperature =
+        nested.a.derivative(0U);
+
+    using First = ad::Dual<T, 1>;
+    const auto first_temperature_derivative =
+        [&](T temperature_value,
+            T x0,
+            T x2) {
+            const std::vector<First> composition{
+                First{x0},
+                First{T{0.50}},
+                First{x2}};
+            th::Pr76MixtureWorkspace<First>
+                workspace;
+            const auto value =
+                mixture.evaluate_full(
+                    First::variable(
+                        temperature_value,
+                        0U),
+                    std::span<const First>{
+                        composition},
+                    workspace);
+            return value.a.derivative(0U);
+        };
+
+    const T direct =
+        first_temperature_derivative(
+            T{450},
+            T{0.25},
+            T{0.25});
+    near(
+        da_dtemperature.value(),
+        static_cast<long double>(direct));
+
+    const T temperature_step =
+        T{1} / T{100};
+    const T d2a_dtemperature2 =
+        (first_temperature_derivative(
+             T{450} + temperature_step,
+             T{0.25},
+             T{0.25}) -
+         first_temperature_derivative(
+             T{450} - temperature_step,
+             T{0.25},
+             T{0.25})) /
+        (T{2} * temperature_step);
+
+    const T composition_step =
+        T{1} / T{100000};
+    const T mixed_tangent =
+        (first_temperature_derivative(
+             T{450},
+             T{0.25} + composition_step,
+             T{0.25} - composition_step) -
+         first_temperature_derivative(
+             T{450},
+             T{0.25} - composition_step,
+             T{0.25} + composition_step)) /
+        (T{2} * composition_step);
+
+    const auto finite_difference_close =
+        [](T actual, T expected) {
+            const T scale =
+                std::max(
+                    {T{1},
+                     std::abs(actual),
+                     std::abs(expected)});
+            return std::isfinite(actual) &&
+                std::isfinite(expected) &&
+                std::abs(actual - expected) <=
+                    (T{2} / T{100000}) * scale;
+        };
+
+    require(
+        finite_difference_close(
+            da_dtemperature.derivative(0U),
+            d2a_dtemperature2),
+        "nested PR76 mixture d2a/dT2 disagrees with fresh central perturbation");
+    require(
+        finite_difference_close(
+            da_dtemperature.derivative(1U),
+            mixed_tangent),
+        "nested PR76 mixture d(da/dT)/dx tangent disagrees with fresh central perturbation");
+
+    using InvalidNested =
+        ad::Dual<ad::Dual<T, 1>, 1>;
+    static_assert(
+        !th::detail::Pr76PhaseNumber<
+            InvalidNested,
+            T>);
+    static_assert(
+        th::detail::Pr76Number<
+            InvalidNested,
+            T>);
+}
+
+template <typename T>
+void selected_phase_fugacity_contract() {
+    auto model = kernel<T>();
+    th::Pr76PhaseWorkspace<T> direct_workspace;
+    th::Pr76PhaseWorkspace<T> facade_workspace;
+    const std::vector<T> composition{T{0.25}, T{0.50}, T{0.25}};
+    const T pressure = T{1.0e6};
+    const T temperature = T{450.0};
+    const auto roots = model.roots_full(
+        pressure, temperature, composition, direct_workspace);
+    require(
+        roots.status == th::Pr76RootStatus::success && roots.count > 0U,
+        "PR76 selected-phase fugacity fixture has no resolved root");
+    const std::size_t root_index = roots.count - 1U;
+    const auto direct = model.evaluate_full(
+        pressure, temperature, composition, root_index, direct_workspace);
+    const auto wrapped = th::evaluate_selected_phase_fugacity(
+        model, pressure, temperature,
+        std::span<const T>{composition},
+        th::Pr76SelectedPhase{root_index, {}},
+        facade_workspace);
+    require(
+        wrapped.ln_phi.size() == direct.ln_phi.size(),
+        "PR76 selected-phase fugacity size changed");
+    for (std::size_t i = 0U; i < direct.ln_phi.size(); ++i) {
+        near(wrapped.ln_phi[i], static_cast<long double>(direct.ln_phi[i]));
+    }
+    static_assert(
+        th::SelectedPhaseFugacityCapabilities<th::Pr76Phase<T>>::derivative_support ==
+        th::SelectedPhaseFugacityDerivativeSupport::scalar_generic_first_order);
+}
+
+template <typename T>
+void selected_phase_density_contract() {
+    auto model = kernel<T>();
+    th::Pr76PhaseWorkspace<T> plain_workspace;
+    const std::vector<T> composition{
+        T{0.25}, T{0.50}, T{0.25}};
+    const T pressure = T{1.0e6};
+    const T temperature = T{450.0};
+    const auto roots = model.roots_full(
+        pressure, temperature, composition,
+        plain_workspace);
+    require(
+        roots.status == th::Pr76RootStatus::success &&
+            roots.count > 0U,
+        "PR76 selected-phase density fixture has no root");
+    const std::size_t root_index =
+        roots.count - 1U;
+    const auto direct = model.evaluate_full(
+        pressure,
+        temperature,
+        composition,
+        root_index,
+        plain_workspace);
+    th::Pr76PhaseWorkspace<T> density_workspace;
+    const auto wrapped =
+        th::evaluate_selected_phase_molar_density(
+            model,
+            pressure,
+            temperature,
+            std::span<const T>{composition},
+            th::Pr76SelectedPhase{
+                root_index, {}},
+            density_workspace);
+    const long double expected =
+        static_cast<long double>(pressure) /
+        (static_cast<long double>(direct.z) *
+         8.31446261815324L *
+         static_cast<long double>(temperature));
+    near(
+        wrapped.molar_density_mol_per_m3,
+        expected);
+
+    using D = ad::Dual<T, 2>;
+    std::vector<D> x;
+    x.reserve(composition.size());
+    for (const T value : composition) {
+        x.emplace_back(value);
+    }
+    th::Pr76PhaseWorkspace<D> derivative_workspace;
+    const auto derivative =
+        th::evaluate_selected_phase_molar_density(
+            model,
+            D::variable(pressure, 0U),
+            D::variable(temperature, 1U),
+            std::span<const D>{x},
+            th::Pr76SelectedPhase{
+                root_index, {}},
+            derivative_workspace);
+    th::Pr76PhaseWorkspace<D> phase_workspace;
+    const auto phase =
+        model.evaluate_full(
+            D::variable(pressure, 0U),
+            D::variable(temperature, 1U),
+            std::span<const D>{x},
+            root_index,
+            phase_workspace);
+    const T rho =
+        derivative
+            .molar_density_mol_per_m3
+            .value();
+    for (std::size_t lane = 0U;
+         lane < 2U;
+         ++lane) {
+        const T dp =
+            lane == 0U ? T{1} : T{0};
+        const T dt =
+            lane == 1U ? T{1} : T{0};
+        const T expected_derivative =
+            rho *
+            (dp / pressure -
+             phase.z.derivative(lane) /
+                 phase.z.value() -
+             dt / temperature);
+        near(
+            derivative
+                .molar_density_mol_per_m3
+                .derivative(lane),
+            static_cast<long double>(
+                expected_derivative));
+    }
+}
+
 void headers() {
     auto model=kernel<double>();
     require(std::isfinite(pt_plain_header(model)),"plain PT header translation unit");
@@ -478,6 +739,9 @@ void run_typed(std::string_view name) {
     else if(name=="input_domains") {input_domains<T>();}
     else if(name=="ownership_recovery") {ownership_recovery<T>();}
     else if(name=="attraction_cancellation") {attraction_cancellation<T>();}
+    else if(name=="nested_mixture_temperature") {nested_mixture_temperature_contract<T>();}
+    else if(name=="selected_phase_fugacity") {selected_phase_fugacity_contract<T>();}
+    else if(name=="selected_phase_density") {selected_phase_density_contract<T>();}
     else {throw std::invalid_argument("unknown case");}
 }
 } // namespace

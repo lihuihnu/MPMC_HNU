@@ -175,21 +175,36 @@ fi
 # node. Product Shell engineering APKs expose DevTools only while debuggable, so
 # audit the live React DOM over the adb-forwarded local CDP endpoint instead of
 # weakening UI verification or using OCR.
-webview_socket=""
+app_pid=""
 for _ in $(seq 1 40); do
-  webview_socket="$(
-    "$adb" shell cat /proc/net/unix 2>/dev/null |
-      tr -d '\r' |
-      sed -n 's/.*@\(webview_devtools_remote[^ ]*\).*/\1/p' |
-      head -n 1
-  )"
-  if [[ -n "$webview_socket" ]]; then
+  app_pid="$("$adb" shell pidof org.mpmc.ptandroid 2>/dev/null | tr -d '\r' | awk '{print $1}')"
+  if [[ "$app_pid" =~ ^[0-9]+$ ]]; then
     break
   fi
   sleep 0.25
 done
-if [[ -z "$webview_socket" ]]; then
-  echo 'Debug WebView DevTools socket was not published.' >&2
+if [[ ! "$app_pid" =~ ^[0-9]+$ ]]; then
+  echo 'Android Product Shell process PID is unavailable for WebView inspection.' >&2
+  show_diagnostics
+  exit 1
+fi
+
+# A hosted emulator can expose unrelated Chromium/WebView DevTools sockets.
+# Bind CDP only to this app's WebView server instead of taking the first socket
+# from /proc/net/unix, which can point at a different process with no page.
+webview_socket="webview_devtools_remote_${app_pid}"
+webview_socket_found=0
+for _ in $(seq 1 40); do
+  if "$adb" shell cat /proc/net/unix 2>/dev/null |
+      tr -d '\r' |
+      grep -Fq "@$webview_socket"; then
+    webview_socket_found=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ $webview_socket_found -ne 1 ]]; then
+  echo "Debug WebView DevTools socket was not published for Product Shell PID $app_pid." >&2
   show_diagnostics
   exit 1
 fi

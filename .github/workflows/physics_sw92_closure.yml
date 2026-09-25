@@ -1,26 +1,10 @@
 name: SW92 physics thermodynamic closure
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/ad/**'
-      - 'modules/physics/include/mpmc/physics/thermodynamic_closure.hpp'
-      - 'modules/physics/include/mpmc/physics/sw92_thermodynamic_closure.hpp'
-      - 'modules/physics/CMakeLists.txt'
-      - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/pt_sensitivity_detail.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/sw92_profile_c_sensitivity_local.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_profile_c_sensitivity.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_*.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
-      - 'tests/physics/sw92_thermodynamic_closure/**'
-      - 'tests/flash/sw92_profile_c_sensitivity/**'
-      - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
-      - 'tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py'
-      - 'tests/support/sw92/test_support.hpp'
-      - '.github/workflows/physics_sw92_closure.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -33,7 +17,7 @@ concurrency:
 jobs:
   closure:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -41,16 +25,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'
@@ -62,8 +49,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Select Python interpreter
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Regenerate physical Sample-6 oracle
-        run: python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
 
       - name: Configure SW92 thermodynamic closure regression
         run: |

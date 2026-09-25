@@ -1,19 +1,11 @@
 name: SW92 phase-assigned AQ/NA joint
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp'
-      - 'modules/flash/sw92_phase_assigned_joint.md'
-      - 'modules/flash/sw92_phase_assigned_c2_stability_audit.md'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'tests/flash/sw92_phase_assigned_joint/**'
-      - '.github/workflows/sw92_phase_assigned_joint.yml'
+  workflow_call:
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
@@ -22,7 +14,7 @@ concurrency:
 jobs:
   c1:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -30,16 +22,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'
@@ -65,7 +60,19 @@ jobs:
       - name: Run Profile-C Gate C1
         run: ctest --test-dir build/sw92-phase-assigned-joint -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_joint[.]' --verbose --no-tests=error
 
+      - name: Select Python interpreter
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Regenerate independent Decimal references
         run: |
-          python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_joint/reference_c2_domain_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_joint/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_joint/reference_c2_domain_decimal.py

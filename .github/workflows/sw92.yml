@@ -1,17 +1,10 @@
 name: SW92 thermodynamics
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/components.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr76_roots.hpp'
-      - 'modules/thermodynamics/CMakeLists.txt'
-      - 'modules/thermodynamics/sw92.md'
-      - 'tests/thermodynamics/sw92/**'
-      - '.github/workflows/sw92.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -24,7 +17,7 @@ concurrency:
 jobs:
   sw92:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -32,16 +25,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'
@@ -66,4 +62,4 @@ jobs:
       - name: Run SW92 thermodynamics tests
         run: ctest --test-dir build/sw92 -C ${{ matrix.config }} -R '^thermo[.]sw92[.]' --verbose --no-tests=error
       - name: Independently regenerate SW92 Decimal references
-        run: python tests/thermodynamics/sw92/reference_decimal.py
+        run: python3 tests/thermodynamics/sw92/reference_decimal.py

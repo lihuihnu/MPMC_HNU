@@ -1,69 +1,112 @@
 name: PT stability
-on:
-  pull_request:
-    branches: [main, feat/pt-stability-tpd, test/pt-boundary-regression]
-    paths:
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
-      - 'modules/flash/**/CMakeLists.txt'
-      - 'tests/flash/stability/**'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'modules/thermodynamics/**/CMakeLists.txt'
-      - 'modules/ad/include/mpmc/ad/**'
-      - 'modules/ad/CMakeLists.txt'
-      - '.github/workflows/stability.yml'
-  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: pt-stability-${{ github.ref }}
+  group: pt-stability-${{ inputs.routed && github.run_id || github.ref }}
   cancel-in-progress: true
 jobs:
+  incremental-path-gate:
+    if: inputs.routed != true
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["modules/flash/include/mpmc/flash/pt_stability.hpp","modules/flash/include/mpmc/flash/pr76_stability.hpp","modules/flash/include/mpmc/flash/sw92_stability.hpp","modules/flash/**/CMakeLists.txt","tests/flash/stability/**","modules/thermodynamics/**/*.hpp","modules/thermodynamics/**/CMakeLists.txt","modules/ad/include/mpmc/ad/**","modules/ad/CMakeLists.txt",".github/workflows/stability.yml"]'
   stability:
+    needs: incremental-path-gate
+    if: ${{ always() && (inputs.routed == true || needs.incremental-path-gate.outputs.affected == 'true') }}
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            config: Debug
-            compiler: '-DCMAKE_CXX_COMPILER=g++'
-            sanitizer: 'ON'
-          - name: Clang Release
-            os: ubuntu-24.04
-            config: Release
-            compiler: '-DCMAKE_CXX_COMPILER=clang++'
-            sanitizer: 'OFF'
-          - name: MSVC Release
-            os: windows-2022
-            config: Release
-            compiler: ''
-            sanitizer: 'OFF'
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Existing audited repository pin.
-        with:
-          persist-credentials: false
-      - name: Configure only stability integration
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then
-            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
-          fi
-          cmake -S tests/flash/stability -B build/flash-stability \
-            "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_FLASH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Compile only stability integration
-        run: cmake --build build/flash-stability --target mpmc_flash_stability_tests mpmc_flash_sw92_stability_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run necessary stability increment
-        run: ctest --test-dir build/flash-stability -C ${{ matrix.config }} -R '^flash[.]stability[.]' --verbose --no-tests=error
-      - name: Regenerate independent fixed-state PR76 references
-        run: python tests/flash/stability/reference_decimal.py
-      - name: Regenerate independent fixed-state SW92 references
-        run: python tests/flash/stability/reference_sw92_decimal.py
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Select Python interpreter
+      shell: bash
+      run: "if command -v python >/dev/null 2>&1; then\n  python_cmd=\"$(command -v python)\"\nelif command -v python3 >/dev/null 2>&1; then\n  python_cmd=\"$(command\
+        \ -v python3)\"\nelse\n  echo \"Python interpreter not found\" >&2\n  exit 1\nfi\necho \"MPMC_PYTHON=$python_cmd\" >> \"$GITHUB_ENV\"\n"
+    - name: Configure only stability integration
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/stability\
+        \ -B build/flash-stability \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_FLASH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}\n"
+    - name: Compile only stability integration
+      run: cmake --build build/flash-stability --target mpmc_flash_stability_tests mpmc_flash_sw92_stability_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run necessary stability increment
+      run: ctest --test-dir build/flash-stability -C ${{ matrix.config }} -R '^flash[.]stability[.]' --verbose --no-tests=error
+    - name: Regenerate independent fixed-state PR76 references
+      run: '"$MPMC_PYTHON" tests/flash/stability/reference_decimal.py
+
+        '
+    - name: Regenerate independent fixed-state SW92 references
+      run: '"$MPMC_PYTHON" tests/flash/stability/reference_sw92_decimal.py
+
+        '
+  validation-result:
+    name: PT stability reusable result
+    needs:
+    - incremental-path-gate
+    - stability
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      validated: ${{ steps.verdict.outputs.validated }}
+    steps:
+    - name: Validate routed/manual stability result
+      id: verdict
+      shell: bash
+      env:
+        ROUTED: ${{ inputs.routed }}
+        GATE_RESULT: ${{ needs.incremental-path-gate.result }}
+        STABILITY_RESULT: ${{ needs.stability.result }}
+      run: |
+        set -euo pipefail
+        if [[ "$ROUTED" == "true" ]]; then
+          test "$STABILITY_RESULT" = "success"
+        else
+          case "$GATE_RESULT" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac
+          case "$STABILITY_RESULT" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac
+        fi
+        echo "validated=true" >> "$GITHUB_OUTPUT"
+'on':
+  workflow_call:
+    inputs:
+      routed:
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      validated:
+        description: Routed PT stability matrix completed successfully.
+        value: ${{ jobs.validation-result.outputs.validated }}
+  workflow_dispatch: null

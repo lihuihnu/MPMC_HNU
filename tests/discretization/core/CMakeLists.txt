@@ -14,6 +14,13 @@ option(
     "Use AddressSanitizer and UndefinedBehaviorSanitizer for discretization core tests"
     OFF)
 
+set(
+    MPMC_WELL_ENABLE_SANITIZERS
+    "${MPMC_DISCRETIZATION_ENABLE_SANITIZERS}")
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../well/core"
+    well-core-tests)
+
 function(configure_discretization_test_target target)
     target_link_libraries(
         ${target}
@@ -71,7 +78,8 @@ add_custom_target(
     mpmc_discretization_core_all
     DEPENDS
         mpmc_discretization_core_tests
-        mpmc_discretization_admissibility_tests)
+        mpmc_discretization_admissibility_tests
+        mpmc_well_core_all)
 
 foreach(case IN ITEMS
     tpfa_half_connection_3d
@@ -107,3 +115,4 @@ foreach(case IN ITEMS
             LABELS "discretization;discretization.core;admissibility;unit"
             TIMEOUT 30)
 endforeach()
+

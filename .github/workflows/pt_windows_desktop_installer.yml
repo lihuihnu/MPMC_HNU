@@ -1,292 +1,121 @@
 name: PT Windows desktop installer
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'api/**'
-      - 'modules/runtime/**'
-      - 'modules/runtime_grpc/**'
-      - 'modules/pt_process/**'
-      - 'modules/model_configuration/**'
-      - 'modules/model_configuration_grpc/**'
-      - 'tests/runtime/pt_grpc_adapter/**'
-      - 'products/pt/**'
-      - 'frontend/desktop/**'
-      - 'frontend/src/api/desktopBridge.ts'
-      - 'frontend/src/api/desktopBridgeContract.ts'
-      - 'frontend/src/api/flashClient.ts'
-      - 'frontend/src/api/modelSessionClient*'
-      - 'frontend/src/api/modelDesktopContract.ts'
-      - 'frontend/src/api/rendererModel*'
-      - 'frontend/src/api/modelValidationDetail*'
-      - 'frontend/buf.model.gen.yaml'
-      - 'buf.model.yaml'
-      - 'frontend/src/api/ptWire.ts'
-      - 'frontend/src/domain/flash.ts'
-      - 'frontend/src/gen/**'
-      - 'frontend/src/main.tsx'
-      - 'frontend/index.html'
-      - 'frontend/vite.config.ts'
-      - 'frontend/tsconfig.desktop.json'
-      - 'frontend/package.json'
-      - 'frontend/package-lock.json'
-      - '.github/workflows/pt_windows_desktop_installer.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: pt-windows-desktop-installer-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["api/**","modules/runtime/**","modules/runtime_grpc/**","modules/pt_process/**","modules/model_configuration/**","modules/model_configuration_grpc/**","tests/runtime/pt_grpc_adapter/**","products/pt/**","frontend/desktop/**","frontend/src/api/desktopBridge.ts","frontend/src/api/desktopBridgeContract.ts","frontend/src/api/flashClient.ts","frontend/src/api/modelSessionClient*","frontend/src/api/modelDesktopContract.ts","frontend/src/api/rendererModel*","frontend/src/api/modelValidationDetail*","frontend/buf.model.gen.yaml","buf.model.yaml","frontend/src/api/ptWire.ts","frontend/src/domain/flash.ts","frontend/src/gen/**","frontend/src/main.tsx","frontend/index.html","frontend/vite.config.ts","frontend/tsconfig.desktop.json","frontend/package.json","frontend/package-lock.json",".github/workflows/pt_windows_desktop_installer.yml"]'
   candidate:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Windows x64 Electron MSI install/solve/uninstall
     runs-on: windows-2022
     timeout-minutes: 30
     env:
       CONAN_HOME: ${{ github.workspace }}/build/conan-home
       PROFILE: windows-x86_64-release
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore staging-proven Windows dependency cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ env.PROFILE }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+        fail-on-cache-miss: true
+    - name: Resolve locked Windows graph offline
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ env.PROFILE }} --no-remote --build=never --output-folder=build/conan-generators
+        --format=json > build/conan-graph.json
+    - name: Validate restore-only dependency evidence
+      run: python products/pt/scripts/prepare_conan_metadata.py --graph=build/conan-graph.json --lockfile=products/pt/conan.lock --output=build/conan-metadata --profile-id=${{
+        env.PROFILE }} --conan-version=2.32.0
+    - name: Configure exact Windows PT runtime
+      run: cmake -C build/conan-metadata/dependency-metadata.cmake -S products/pt -B build/pt-product -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace
+        }}/build/conan-generators/conan_toolchain.cmake -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }} -DBUILD_TESTING=ON
+    - name: Build Windows PT runtime
+      run: cmake --build build/pt-product --config Release --parallel 2
+    - name: Re-run native product contracts before desktop packaging
+      run: ctest --test-dir build/pt-product -C Release --output-on-failure --no-tests=error
+    - name: Install exact native staging tree
+      run: cmake --install build/pt-product --config Release --prefix ${{ github.workspace }}/build/pt-product/stage
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact Electron and frontend dependencies
+      working-directory: frontend
+      run: npm ci --no-audit --no-fund
+    - name: Run frontend and installer contract regressions
+      shell: pwsh
+      run: 'npm --prefix frontend test -- --reporter=dot
 
-      - name: Install pinned Conan client
-        run: python -m pip install --disable-pip-version-check conan==2.32.0
+        python -m unittest discover -s products/pt/desktop_installer/tests -p ''test_*.py'' -v
 
-      - name: Restore staging-proven Windows dependency cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ env.CONAN_HOME }}
-          key: pt-product-conan-v1-${{ env.PROFILE }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
-          fail-on-cache-miss: true
-
-      - name: Resolve locked Windows graph offline
-        run: >-
-          conan install products/pt
-          --lockfile=products/pt/conan.lock
-          --profile:all=products/pt/conan/profiles/${{ env.PROFILE }}
-          --no-remote
-          --build=never
-          --output-folder=build/conan-generators
-          --format=json
-          > build/conan-graph.json
-
-      - name: Validate restore-only dependency evidence
-        run: >-
-          python products/pt/scripts/prepare_conan_metadata.py
-          --graph=build/conan-graph.json
-          --lockfile=products/pt/conan.lock
-          --output=build/conan-metadata
-          --profile-id=${{ env.PROFILE }}
-          --conan-version=2.32.0
-
-      - name: Configure exact Windows PT runtime
-        run: >-
-          cmake
-          -C build/conan-metadata/dependency-metadata.cmake
-          -S products/pt
-          -B build/pt-product
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
-          -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }}
-          -DBUILD_TESTING=ON
-
-      - name: Build Windows PT runtime
-        run: cmake --build build/pt-product --config Release --parallel 2
-
-      - name: Re-run native product contracts before desktop packaging
-        run: >-
-          ctest --test-dir build/pt-product -C Release
-          --output-on-failure --no-tests=error
-
-      - name: Install exact native staging tree
-        run: >-
-          cmake --install build/pt-product
-          --config Release
-          --prefix ${{ github.workspace }}/build/pt-product/stage
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: '24.21.0'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install exact Electron and frontend dependencies
-        working-directory: frontend
-        run: npm ci --no-audit --no-fund
-
-      - name: Run frontend and installer contract regressions
-        shell: pwsh
-        run: |
-          npm --prefix frontend test -- --reporter=dot
-          python -m unittest discover -s products/pt/desktop_installer/tests -p 'test_*.py' -v
-
-      - name: Build shared React renderer and desktop process bundles
-        working-directory: frontend
-        run: npm run build
-
-      - name: Assemble exact Windows Electron application
-        working-directory: frontend
-        run: >-
-          npm run desktop:package --
-          --native-stage ${{ github.workspace }}/build/pt-product/stage
-          --out ${{ github.workspace }}/build/pt-desktop-preview
-          --platform win32
-          --arch x64
-          --source-revision ${{ github.sha }}
-
-      - name: Configure Windows desktop MSI
-        run: >-
-          cmake
-          -S products/pt/desktop_installer
-          -B build/pt-desktop-installer
-          -DMPMC_PT_DESKTOP_PACKAGE_DIR=${{ github.workspace }}/build/pt-desktop-preview/MPMC-PT-Desktop-Preview-win32-x64
-          -DMPMC_PT_DESKTOP_EXPECTED_REVISION=${{ github.sha }}
-
-      - name: Build unsigned Windows desktop MSI
-        run: >-
-          cpack
-          --config build/pt-desktop-installer/CPackConfig.cmake
-          -B build/pt-desktop-msi
-          --verbose
-
-      - name: Write fail-closed desktop installer provenance
-        run: >-
-          python products/pt/desktop_installer/scripts/write_candidate_manifest.py
-          --package-dir build/pt-desktop-preview/MPMC-PT-Desktop-Preview-win32-x64
-          --artifact build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi
-          --expected-revision ${{ github.sha }}
-          --workflow-run-id ${{ github.run_id }}
-          --workflow-run-attempt ${{ github.run_attempt }}
-          --output build/pt-desktop-msi/windows-desktop-installer-provenance.json
-
-      - name: Verify candidate is unsigned before installation
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $package = (Resolve-Path 'build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi').Path
-          $signature = Get-AuthenticodeSignature -FilePath $package
-          if ($signature.Status -ne 'NotSigned') {
-            throw "Engineering desktop MSI unexpectedly has signature status $($signature.Status)"
-          }
-
-      - name: Real install, Start Menu, three-backend solve, and uninstall
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $package = (Resolve-Path 'build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi').Path
-
-          function Invoke-Msi([string[]] $Arguments) {
-            $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $Arguments -Wait -PassThru
-            if ($process.ExitCode -notin @(0, 3010)) {
-              throw "msiexec failed with exit code $($process.ExitCode): $($Arguments -join ' ')"
-            }
-          }
-
-          Invoke-Msi @('/i', $package, '/qn', '/norestart')
-          $installedExe = Join-Path $env:ProgramFiles 'MPMC PT Desktop\MPMC-PT-Desktop-Preview.exe'
-          if (-not (Test-Path $installedExe -PathType Leaf)) {
-            throw "Installed Electron executable is missing: $installedExe"
-          }
-
-          $shell = New-Object -ComObject WScript.Shell
-          $shortcut = Get-ChildItem (
-            Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'
-          ) -Recurse -Filter '*.lnk' | Where-Object {
-            $shell.CreateShortcut($_.FullName).TargetPath -eq $installedExe
-          } | Select-Object -First 1
-          if ($null -eq $shortcut) {
-            throw 'Start Menu shortcut does not target the installed MPMC PT Desktop executable'
-          }
-
-          $plan = Join-Path $env:RUNNER_TEMP 'mpmc-pt-desktop-install-smoke-plan.json'
-          $result = Join-Path $env:RUNNER_TEMP 'mpmc-pt-desktop-install-smoke-result.json'
-          @'
-          {
-            "convention": "MPMC/PT/windows-desktop-install-smoke-plan/v1",
-            "expectedBackendCount": 3,
-            "requests": [
-              {
-                "configuredBackendId": "pr76.methane-ethane-propane.literature-r1",
-                "pressurePa": 1000000,
-                "temperatureK": 350,
-                "feed": [
-                  {"componentId": "methane", "moleFraction": 0.8},
-                  {"componentId": "ethane", "moleFraction": 0.1},
-                  {"componentId": "propane", "moleFraction": 0.1}
-                ]
-              },
-              {
-                "configuredBackendId": "sw92.carbon-dioxide-water.freshwater.literature-r1",
-                "pressurePa": 3000000,
-                "temperatureK": 340,
-                "feed": [
-                  {"componentId": "carbon-dioxide", "moleFraction": 0.7},
-                  {"componentId": "water", "moleFraction": 0.3}
-                ]
-              },
-              {
-                "configuredBackendId": "cpa.methanol-water-333.15k.cr1.literature-r1",
-                "pressurePa": 48852,
-                "temperatureK": 333.15,
-                "feed": [
-                  {"componentId": "METHANOL", "moleFraction": 0.5},
-                  {"componentId": "WATER", "moleFraction": 0.5}
-                ]
-              }
-            ]
-          }
-          '@ | Set-Content -Path $plan -Encoding utf8
-
-          $env:MPMC_PT_DESKTOP_INSTALL_SMOKE_PLAN = $plan
-          $env:MPMC_PT_DESKTOP_INSTALL_SMOKE_RESULT = $result
-          $desktop = Start-Process -FilePath $installedExe -ArgumentList '--mpmc-install-smoke' -PassThru
-          if (-not $desktop.WaitForExit(120000)) {
-            Stop-Process -Id $desktop.Id -Force
-            throw 'Installed Electron smoke timed out'
-          }
-          if ($desktop.ExitCode -ne 0) {
-            throw "Installed Electron smoke failed with exit code $($desktop.ExitCode)"
-          }
-          if (-not (Test-Path $result -PathType Leaf)) {
-            throw 'Installed Electron smoke did not publish its result'
-          }
-          $smoke = Get-Content $result -Raw | ConvertFrom-Json
-          if ($smoke.convention -ne 'MPMC/PT/windows-desktop-install-smoke-result/v1') {
-            throw 'Installed Electron smoke result convention changed'
-          }
-          if ($smoke.discoveredBackendCount -ne 3 -or @($smoke.solves).Count -ne 3) {
-            throw 'Installed Electron smoke did not complete all three backend solves'
-          }
-          $ids = @($smoke.solves | ForEach-Object { $_.configuredBackendId })
-          foreach ($expected in @(
-            'pr76.methane-ethane-propane.literature-r1',
-            'sw92.carbon-dioxide-water.freshwater.literature-r1',
-            'cpa.methanol-water-333.15k.cr1.literature-r1'
-          )) {
-            if ($expected -notin $ids) {
-              throw "Installed Electron smoke omitted backend $expected"
-            }
-          }
-
-          Invoke-Msi @('/x', $package, '/qn', '/norestart')
-          if (Test-Path $installedExe) {
-            throw 'Desktop executable remains after MSI uninstall'
-          }
-          if (Test-Path $shortcut.FullName) {
-            throw 'Start Menu shortcut remains after MSI uninstall'
-          }
-          Write-Host 'WINDOWS_DESKTOP_INSTALL_SOLVE_UNINSTALL_OK'
-
-      - name: Upload unsigned Windows desktop MSI candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: mpmc-pt-windows-x64-unsigned-desktop-msi-candidate
-          path: build/pt-desktop-msi
-          if-no-files-found: error
-          retention-days: 7
+        '
+    - name: Build shared React renderer and desktop process bundles
+      working-directory: frontend
+      run: npm run build
+    - name: Assemble exact Windows Electron application
+      working-directory: frontend
+      run: npm run desktop:package -- --native-stage ${{ github.workspace }}/build/pt-product/stage --out ${{ github.workspace }}/build/pt-desktop-preview --platform
+        win32 --arch x64 --source-revision ${{ github.sha }}
+    - name: Configure Windows desktop MSI
+      run: cmake -S products/pt/desktop_installer -B build/pt-desktop-installer -DMPMC_PT_DESKTOP_PACKAGE_DIR=${{ github.workspace }}/build/pt-desktop-preview/MPMC-PT-Desktop-Preview-win32-x64
+        -DMPMC_PT_DESKTOP_EXPECTED_REVISION=${{ github.sha }}
+    - name: Build unsigned Windows desktop MSI
+      run: cpack --config build/pt-desktop-installer/CPackConfig.cmake -B build/pt-desktop-msi --verbose
+    - name: Write fail-closed desktop installer provenance
+      run: python products/pt/desktop_installer/scripts/write_candidate_manifest.py --package-dir build/pt-desktop-preview/MPMC-PT-Desktop-Preview-win32-x64 --artifact
+        build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi --expected-revision ${{ github.sha }} --workflow-run-id ${{ github.run_id }} --workflow-run-attempt
+        ${{ github.run_attempt }} --output build/pt-desktop-msi/windows-desktop-installer-provenance.json
+    - name: Verify candidate is unsigned before installation
+      shell: pwsh
+      run: "$ErrorActionPreference = 'Stop'\n$package = (Resolve-Path 'build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi').Path\n$signature = Get-AuthenticodeSignature\
+        \ -FilePath $package\nif ($signature.Status -ne 'NotSigned') {\n  throw \"Engineering desktop MSI unexpectedly has signature status $($signature.Status)\"\
+        \n}\n"
+    - name: Real install, Start Menu, three-backend solve, and uninstall
+      shell: pwsh
+      run: "$ErrorActionPreference = 'Stop'\n$package = (Resolve-Path 'build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi').Path\n\nfunction Invoke-Msi([string[]]\
+        \ $Arguments) {\n  $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $Arguments -Wait -PassThru\n  if ($process.ExitCode -notin @(0, 3010)) {\n\
+        \    throw \"msiexec failed with exit code $($process.ExitCode): $($Arguments -join ' ')\"\n  }\n}\n\nInvoke-Msi @('/i', $package, '/qn', '/norestart')\n\
+        $installedExe = Join-Path $env:ProgramFiles 'MPMC PT Desktop\\MPMC-PT-Desktop-Preview.exe'\nif (-not (Test-Path $installedExe -PathType Leaf)) {\n  throw\
+        \ \"Installed Electron executable is missing: $installedExe\"\n}\n\n$shell = New-Object -ComObject WScript.Shell\n$shortcut = Get-ChildItem (\n  Join-Path\
+        \ $env:ProgramData 'Microsoft\\Windows\\Start Menu\\Programs'\n) -Recurse -Filter '*.lnk' | Where-Object {\n  $shell.CreateShortcut($_.FullName).TargetPath\
+        \ -eq $installedExe\n} | Select-Object -First 1\nif ($null -eq $shortcut) {\n  throw 'Start Menu shortcut does not target the installed MPMC PT Desktop executable'\n\
+        }\n\n$plan = Join-Path $env:RUNNER_TEMP 'mpmc-pt-desktop-install-smoke-plan.json'\n$result = Join-Path $env:RUNNER_TEMP 'mpmc-pt-desktop-install-smoke-result.json'\n\
+        @'\n{\n  \"convention\": \"MPMC/PT/windows-desktop-install-smoke-plan/v1\",\n  \"expectedBackendCount\": 3,\n  \"requests\": [\n    {\n      \"configuredBackendId\"\
+        : \"pr76.methane-ethane-propane.literature-r1\",\n      \"pressurePa\": 1000000,\n      \"temperatureK\": 350,\n      \"feed\": [\n        {\"componentId\"\
+        : \"methane\", \"moleFraction\": 0.8},\n        {\"componentId\": \"ethane\", \"moleFraction\": 0.1},\n        {\"componentId\": \"propane\", \"moleFraction\"\
+        : 0.1}\n      ]\n    },\n    {\n      \"configuredBackendId\": \"sw92.carbon-dioxide-water.freshwater.literature-r1\",\n      \"pressurePa\": 3000000,\n \
+        \     \"temperatureK\": 340,\n      \"feed\": [\n        {\"componentId\": \"carbon-dioxide\", \"moleFraction\": 0.7},\n        {\"componentId\": \"water\"\
+        , \"moleFraction\": 0.3}\n      ]\n    },\n    {\n      \"configuredBackendId\": \"cpa.methanol-water-333.15k.cr1.literature-r1\",\n      \"pressurePa\":\
+        \ 48852,\n      \"temperatureK\": 333.15,\n      \"feed\": [\n        {\"componentId\": \"METHANOL\", \"moleFraction\": 0.5},\n        {\"componentId\": \"\
+        WATER\", \"moleFraction\": 0.5}\n      ]\n    }\n  ]\n}\n'@ | Set-Content -Path $plan -Encoding utf8\n\n$env:MPMC_PT_DESKTOP_INSTALL_SMOKE_PLAN = $plan\n\
+        $env:MPMC_PT_DESKTOP_INSTALL_SMOKE_RESULT = $result\n$desktop = Start-Process -FilePath $installedExe -ArgumentList '--mpmc-install-smoke' -PassThru\nif (-not\
+        \ $desktop.WaitForExit(120000)) {\n  Stop-Process -Id $desktop.Id -Force\n  throw 'Installed Electron smoke timed out'\n}\nif ($desktop.ExitCode -ne 0) {\n\
+        \  throw \"Installed Electron smoke failed with exit code $($desktop.ExitCode)\"\n}\nif (-not (Test-Path $result -PathType Leaf)) {\n  throw 'Installed Electron\
+        \ smoke did not publish its result'\n}\n$smoke = Get-Content $result -Raw | ConvertFrom-Json\nif ($smoke.convention -ne 'MPMC/PT/windows-desktop-install-smoke-result/v1')\
+        \ {\n  throw 'Installed Electron smoke result convention changed'\n}\nif ($smoke.discoveredBackendCount -ne 3 -or @($smoke.solves).Count -ne 3) {\n  throw\
+        \ 'Installed Electron smoke did not complete all three backend solves'\n}\n$ids = @($smoke.solves | ForEach-Object { $_.configuredBackendId })\nforeach ($expected\
+        \ in @(\n  'pr76.methane-ethane-propane.literature-r1',\n  'sw92.carbon-dioxide-water.freshwater.literature-r1',\n  'cpa.methanol-water-333.15k.cr1.literature-r1'\n\
+        )) {\n  if ($expected -notin $ids) {\n    throw \"Installed Electron smoke omitted backend $expected\"\n  }\n}\n\nInvoke-Msi @('/x', $package, '/qn', '/norestart')\n\
+        if (Test-Path $installedExe) {\n  throw 'Desktop executable remains after MSI uninstall'\n}\nif (Test-Path $shortcut.FullName) {\n  throw 'Start Menu shortcut\
+        \ remains after MSI uninstall'\n}\nWrite-Host 'WINDOWS_DESKTOP_INSTALL_SOLVE_UNINSTALL_OK'\n"
+    - name: Upload unsigned Windows desktop MSI candidate
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-windows-x64-unsigned-desktop-msi-candidate
+        path: build/pt-desktop-msi
+        if-no-files-found: error
+        retention-days: 7
+'on':
+  workflow_dispatch: null

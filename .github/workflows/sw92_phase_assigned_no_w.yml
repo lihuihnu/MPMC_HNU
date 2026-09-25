@@ -1,21 +1,17 @@
 name: SW92 phase-assigned no-W topology
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_split.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp'
-      - 'modules/flash/sw92_phase_assigned_no_w.md'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'tests/flash/sw92_family_vle/**'
-      - 'tests/flash/sw92_phase_assigned_joint/**'
-      - 'tests/flash/sw92_phase_assigned_no_w/**'
-      - '.github/workflows/sw92_phase_assigned_no_w.yml'
+  workflow_call:
+    inputs:
+      dependencies_prevalidated:
+        description: Central CI already validated fixed-family VLE dependency.
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
@@ -24,7 +20,7 @@ concurrency:
 jobs:
   no-w:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -32,16 +28,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'
@@ -53,11 +52,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Select Python interpreter
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Regenerate independent Decimal references
         run: |
-          python tests/flash/sw92_family_vle/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_no_w/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_family_vle/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_joint/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_no_w/reference_decimal.py
 
       - name: Configure Profile-C no-W
         run: |
@@ -74,6 +85,7 @@ jobs:
         run: ctest --test-dir build/sw92-phase-assigned-no-w -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_no_w[.]' --verbose --no-tests=error
 
       - name: Configure affected fixed-family VLE
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
@@ -83,6 +95,8 @@ jobs:
             "${config_arg[@]}" ${{ matrix.compiler }} \
             -DMPMC_SW92_FAMILY_VLE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
       - name: Build affected fixed-family VLE
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: cmake --build build/sw92-family-vle --target mpmc_sw92_family_vle_tests --config ${{ matrix.config }} --parallel 2
       - name: Run affected fixed-family VLE
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: ctest --test-dir build/sw92-family-vle -C ${{ matrix.config }} -R '^flash[.]sw92_family_vle[.]' --verbose --no-tests=error

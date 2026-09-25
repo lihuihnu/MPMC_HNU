@@ -1,15 +1,10 @@
 name: CPA PT density-root and fugacity kernel
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
-      - 'modules/thermodynamics/cpa*.md'
-      - 'tests/thermodynamics/cpa_pt_phase/**'
-      - '.github/workflows/cpa_pt_phase.yml'
-      - '.github/workflows/_cpp_ctest.yml'
-      - 'tests/support/cmake/cpp_test_options.cmake'
+  workflow_call:
   workflow_dispatch:
 
 permissions:

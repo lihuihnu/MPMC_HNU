@@ -1,74 +1,57 @@
 name: Physics PT component inventory
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/physics/**'
-      - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_*.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/**'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/**'
-      - 'modules/ad/include/mpmc/ad/**'
-      - 'tests/physics/component_inventory/**'
-      - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
-      - 'tests/support/sw92/test_support.hpp'
-      - '.github/workflows/physics_component_inventory.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: physics-component-inventory-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["modules/physics/**","modules/flash/include/mpmc/flash/pr76_*.hpp","modules/flash/include/mpmc/flash/pt_*.hpp","modules/flash/include/mpmc/flash/sw92_*.hpp","modules/flash/include/mpmc/flash/detail/**","modules/thermodynamics/include/mpmc/thermodynamics/**","modules/ad/include/mpmc/ad/**","tests/physics/component_inventory/**","tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp","tests/support/sw92/test_support.hpp",".github/workflows/physics_component_inventory.yml"]'
   inventory:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            config: Debug
-            compiler: '-DCMAKE_CXX_COMPILER=g++'
-            sanitizer: 'ON'
-          - name: Clang Release
-            os: ubuntu-24.04
-            config: Release
-            compiler: '-DCMAKE_CXX_COMPILER=clang++'
-            sanitizer: 'OFF'
-          - name: MSVC Release
-            os: windows-2022
-            config: Release
-            compiler: ''
-            sanitizer: 'OFF'
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-
-      - name: Configure PT component inventory regression
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then
-            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
-          fi
-          cmake -S tests/physics/component_inventory \
-            -B build/physics-component-inventory \
-            "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_COMPONENT_INVENTORY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-
-      - name: Build PT component inventory regression
-        run: cmake --build build/physics-component-inventory --target mpmc_component_inventory_tests --config ${{ matrix.config }} --parallel 2
-
-      - name: Run PT component inventory regression
-        run: ctest --test-dir build/physics-component-inventory -C ${{ matrix.config }} -R '^physics[.]component_inventory[.]' --verbose --no-tests=error
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure PT component inventory regression
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/physics/component_inventory\
+        \ \\\n  -B build/physics-component-inventory \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_COMPONENT_INVENTORY_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build PT component inventory regression
+      run: cmake --build build/physics-component-inventory --target mpmc_component_inventory_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run PT component inventory regression
+      run: ctest --test-dir build/physics-component-inventory -C ${{ matrix.config }} -R '^physics[.]component_inventory[.]' --verbose --no-tests=error
+'on':
+  workflow_dispatch: null

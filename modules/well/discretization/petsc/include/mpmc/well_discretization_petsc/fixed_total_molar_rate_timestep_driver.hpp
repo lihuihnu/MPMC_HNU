@@ -1,0 +1,2580 @@
+#ifndef MPMC_WELL_DISCRETIZATION_PETSC_FIXED_TOTAL_MOLAR_RATE_TIMESTEP_DRIVER_HPP
+#define MPMC_WELL_DISCRETIZATION_PETSC_FIXED_TOTAL_MOLAR_RATE_TIMESTEP_DRIVER_HPP
+
+#include <mpmc/flow_discretization_petsc/accepted_physical_time.hpp>
+#include <mpmc/flow_discretization_petsc/post_snes_phase_transition_controller.hpp>
+#include <mpmc/well/single_well_control_policy.hpp>
+#include <mpmc/well_discretization_petsc/fixed_total_molar_rate_control.hpp>
+
+#include <petscvec.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace mpmc::well_discretization_petsc {
+
+inline constexpr std::string_view
+    fixed_total_molar_rate_timestep_driver_convention =
+        "well-discretization-petsc/single-well/fixed-total-molar-rate-physical-timestep-driver/v1";
+
+struct FixedTotalMolarRatePhysicalTimestepDriverOptions3D {
+    mpmc::flow_discretization_petsc::
+        AdaptiveTimestepControllerOptions3D
+            adaptive;
+    mpmc::flow_discretization_petsc::
+        PostSnesPhaseTransitionControllerOptions3D
+            phase_transition;
+
+    /// Optional producer minimum-BHP constraint [Pa].
+    ///
+    /// A converged fixed-rate candidate with p_bhp below this limit is
+    /// discarded. The same physical timestep is then re-solved with BHP fixed
+    /// exactly at this value. Nullopt preserves the original fixed-rate-only
+    /// behavior.
+    std::optional<double>
+        minimum_bottom_hole_pressure_pa;
+
+    /// Optional minimum-BHP -> rate reactivation deadband [mol/s].
+    /// Reactivation is considered only when the p_min fixed-BHP candidate can
+    /// produce at least target + this positive margin.
+    std::optional<double>
+        minimum_bhp_release_rate_margin_mol_per_s;
+
+    /// Optional minimum-BHP -> rate reactivation deadband [Pa].
+    /// A converged augmented rate candidate must satisfy
+    /// p_bhp >= p_min + this positive margin before rate control is accepted.
+    std::optional<double>
+        minimum_bhp_release_pressure_margin_pa;
+};
+
+using FixedTotalMolarRatePhysicalTimestepControlMode3D =
+    mpmc::well::SingleWellControlMode;
+
+using AcceptedFixedTotalMolarRateWellControlState3D =
+    mpmc::well::AcceptedSingleWellControlState;
+
+struct FixedTotalMolarRatePhysicalTimestepDriverReport3D {
+    mpmc::flow_discretization_petsc::
+        AdaptiveTimestepControllerReport3D
+            adaptive;
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            AcceptedPhysicalTimestepRecord3D>
+        accepted_record;
+
+    /// Populated only when the accepted control remains fixed total molar rate.
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        accepted_solve;
+
+    /// Populated only when the accepted control is the minimum-BHP constraint.
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        accepted_fixed_bhp_solve;
+
+    /// The converged fixed-rate candidate that triggered rate -> BHP switching.
+    /// This candidate is diagnostic evidence only and is never committed.
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        discarded_rate_control_candidate;
+
+    /// Fixed-BHP feasibility probe discarded after successful BHP -> rate
+    /// reactivation. It is diagnostic only and is never committed.
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        discarded_minimum_bhp_candidate;
+
+    /// Converged augmented rate candidate rejected by the pressure-release
+    /// margin. The accepted candidate remains the fixed-BHP probe.
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        discarded_rate_reactivation_candidate;
+
+    std::optional<double>
+        minimum_bhp_probe_total_molar_rate_mol_per_s;
+    bool minimum_bhp_to_rate_reactivation_attempted{};
+    bool minimum_bhp_to_rate_reactivation_accepted{};
+
+    double entry_bottom_hole_pressure_pa{};
+    double accepted_bottom_hole_pressure_pa{};
+    FixedTotalMolarRatePhysicalTimestepControlMode3D
+        entry_control{
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                fixed_total_molar_rate};
+    FixedTotalMolarRatePhysicalTimestepControlMode3D
+        accepted_control{
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                fixed_total_molar_rate};
+    bool rate_to_bhp_switch_triggered{};
+    std::size_t phase_transition_restarts{};
+
+    [[nodiscard]] bool accepted() const noexcept {
+        if (!adaptive.accepted() ||
+            !accepted_record.has_value()) {
+            return false;
+        }
+        if (accepted_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure) {
+            return accepted_fixed_bhp_solve.has_value() &&
+                !accepted_solve.has_value();
+        }
+        return accepted_solve.has_value() &&
+            !accepted_fixed_bhp_solve.has_value();
+    }
+};
+
+namespace fixed_total_molar_rate_timestep_driver_detail {
+
+[[nodiscard]] inline bool same_timestep(
+    double first,
+    double second) noexcept {
+    if (!std::isfinite(first) ||
+        !std::isfinite(second)) {
+        return false;
+    }
+    const double scale =
+        std::max(
+            {1.0,
+             std::abs(first),
+             std::abs(second)});
+    return std::abs(first - second) <=
+        64.0 *
+            std::numeric_limits<double>::epsilon() *
+            scale;
+}
+
+struct DriverContext3D {
+    MPI_Comm comm{};
+    mpmc::flow_discretization_petsc::
+        PhaseTransitionRebuiltNaturalVariableSystem3D*
+            reservoir_system{};
+    FixedTotalMolarRateWellSourceEvaluatorContext3D*
+        source_context{};
+    mpmc::well::SingleWellControlPolicy
+        control_policy;
+    double target_total_molar_rate_mol_per_s{};
+    double entry_bottom_hole_pressure_pa{};
+    FixedTotalMolarRatePhysicalTimestepControlMode3D
+        entry_control{
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                fixed_total_molar_rate};
+    std::optional<double>
+        minimum_bottom_hole_pressure_pa;
+    std::optional<double>
+        minimum_bhp_release_rate_margin_mol_per_s;
+    std::optional<double>
+        minimum_bhp_release_pressure_margin_pa;
+    const mpmc::flow_discretization_petsc::
+        AdaptiveTimestepControllerOptions3D*
+            adaptive_options{};
+    mpmc::flow_discretization_petsc::
+        AcceptedPhysicalTimeClock3D*
+            clock{};
+    AcceptedFixedTotalMolarRateWellControlState3D*
+        accepted_control_state{};
+
+    /// Active control mode for this physical timestep. If the accepted entry
+    /// state is already minimum-BHP, the very first attempt starts here.
+    bool minimum_bhp_active{};
+
+    /// True only when this physical timestep actually switched from rate to
+    /// minimum-BHP. Entering with an already accepted BHP mode leaves it false.
+    bool rate_to_bhp_switch_triggered{};
+    bool minimum_bhp_to_rate_reactivation_attempted{};
+    bool minimum_bhp_to_rate_reactivation_accepted{};
+    std::optional<double>
+        minimum_bhp_probe_total_molar_rate_mol_per_s;
+
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        discarded_minimum_bhp_candidate;
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        discarded_rate_reactivation_candidate;
+
+    std::unique_ptr<
+        FixedTotalMolarRateWellControlSystem3D>
+        pending_control_system;
+    Vec pending_augmented_state{};
+    Vec pending_reservoir_state{};
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        pending_rate_solve_report;
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        pending_fixed_bhp_solve_report;
+
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        switch_trigger_rate_candidate;
+
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            AcceptedPhysicalTimestepRecord3D>
+        accepted_record;
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        accepted_rate_solve;
+    std::optional<
+        mpmc::flow_discretization_petsc::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        accepted_fixed_bhp_solve;
+};
+
+inline void
+reset_control_generation_to_entry(
+    DriverContext3D* context) {
+    if (context == nullptr) {
+        return;
+    }
+    context->minimum_bhp_active =
+        context->entry_control ==
+        FixedTotalMolarRatePhysicalTimestepControlMode3D::
+            minimum_bottom_hole_pressure;
+    context->rate_to_bhp_switch_triggered =
+        false;
+    context
+        ->minimum_bhp_to_rate_reactivation_attempted =
+        false;
+    context
+        ->minimum_bhp_to_rate_reactivation_accepted =
+        false;
+    context
+        ->minimum_bhp_probe_total_molar_rate_mol_per_s
+        .reset();
+    context
+        ->discarded_minimum_bhp_candidate
+        .reset();
+    context
+        ->discarded_rate_reactivation_candidate
+        .reset();
+    context
+        ->switch_trigger_rate_candidate
+        .reset();
+    context->accepted_record.reset();
+    context->accepted_rate_solve.reset();
+    context->accepted_fixed_bhp_solve.reset();
+}
+
+[[nodiscard]] inline PetscErrorCode
+clear_pending(
+    DriverContext3D* context) noexcept {
+    if (context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+    if (context->pending_augmented_state !=
+        nullptr) {
+        error =
+            VecDestroy(
+                &context
+                     ->pending_augmented_state);
+    }
+    if (context->pending_reservoir_state !=
+        nullptr) {
+        const PetscErrorCode destroy =
+            VecDestroy(
+                &context
+                     ->pending_reservoir_state);
+        if (error == PETSC_SUCCESS &&
+            destroy != PETSC_SUCCESS) {
+            error =
+                destroy;
+        }
+    }
+    context->pending_control_system.reset();
+    context->pending_rate_solve_report.reset();
+    context->pending_fixed_bhp_solve_report.reset();
+    return error;
+}
+
+[[nodiscard]] inline PetscErrorCode
+restore_entry(
+    DriverContext3D* context,
+    double entry_timestep_seconds,
+    PetscErrorCode primary_error) noexcept {
+    if (context == nullptr ||
+        context->reservoir_system == nullptr ||
+        context->source_context == nullptr) {
+        return primary_error != PETSC_SUCCESS
+            ? primary_error
+            : PETSC_ERR_ARG_NULL;
+    }
+
+    const PetscErrorCode dt_error =
+        context->reservoir_system
+            ->set_trial_timestep_seconds(
+                entry_timestep_seconds);
+
+    PetscErrorCode bhp_error =
+        PETSC_SUCCESS;
+    try {
+        if (context->entry_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure) {
+            context->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    context
+                        ->entry_bottom_hole_pressure_pa);
+        } else {
+            context->source_context
+                ->begin_evaluation(
+                    context
+                        ->entry_bottom_hole_pressure_pa);
+        }
+    } catch (...) {
+        bhp_error =
+            PETSC_ERR_ARG_INCOMP;
+    }
+
+    if (primary_error != PETSC_SUCCESS) {
+        return primary_error;
+    }
+    if (dt_error != PETSC_SUCCESS) {
+        return dt_error;
+    }
+    return bhp_error;
+}
+
+[[nodiscard]] inline bool
+minimum_bhp_reactivation_enabled(
+    const DriverContext3D& context) noexcept {
+    return context
+        .control_policy
+        .minimum_bhp_reactivation_enabled();
+}
+
+[[nodiscard]] inline PetscErrorCode
+evaluate_minimum_bhp_probe_total_molar_rate(
+    DriverContext3D* context,
+    Vec reservoir_state,
+    double* total_molar_rate_mol_per_s) {
+    namespace fdp =
+        mpmc::flow_discretization_petsc;
+
+    if (context == nullptr ||
+        context->reservoir_system == nullptr ||
+        context->source_context == nullptr ||
+        reservoir_state == nullptr ||
+        total_molar_rate_mol_per_s == nullptr ||
+        !context
+             ->minimum_bottom_hole_pressure_pa
+             .has_value()) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    *total_molar_rate_mol_per_s =
+        0.0;
+
+    const double minimum_bhp =
+        *context
+             ->minimum_bottom_hole_pressure_pa;
+    try {
+        context->source_context
+            ->begin_evaluation(
+                minimum_bhp);
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    Vec residual = nullptr;
+    PetscErrorCode error =
+        VecDuplicate(
+            reservoir_state,
+            &residual);
+    if (error == PETSC_SUCCESS) {
+        error =
+            VecSet(
+                residual,
+                PetscScalar{0.0});
+    }
+
+    auto evaluator =
+        context->reservoir_system
+            ->snes_evaluator();
+    fdp::NaturalVariableSnesEvaluationStatus3D
+        status =
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success;
+    if (error == PETSC_SUCCESS) {
+        error =
+            evaluator.function(
+                reservoir_state,
+                residual,
+                evaluator.user_context,
+                &status);
+    }
+
+    const PetscErrorCode destroy_error =
+        residual != nullptr
+            ? VecDestroy(
+                  &residual)
+            : PETSC_SUCCESS;
+    if (error == PETSC_SUCCESS &&
+        destroy_error != PETSC_SUCCESS) {
+        error =
+            destroy_error;
+    }
+    if (error == PETSC_SUCCESS &&
+        status !=
+            fdp::
+                NaturalVariableSnesEvaluationStatus3D::
+                    success) {
+        error =
+            PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    double global_total = 0.0;
+    if (error == PETSC_SUCCESS) {
+        double local_total = 0.0;
+        for (const auto& entry :
+             context->source_context
+                 ->local_authoritative_evaluations()) {
+            for (double source_rate :
+                 entry
+                     .linearization
+                     .cell_source
+                     .component_molar_rate_mol_per_s) {
+                local_total -=
+                    source_rate;
+            }
+        }
+        if (MPI_Allreduce(
+                &local_total,
+                &global_total,
+                1,
+                MPI_DOUBLE,
+                MPI_SUM,
+                context->comm) !=
+            MPI_SUCCESS) {
+            error =
+                PETSC_ERR_MPI;
+        }
+    }
+
+    PetscErrorCode restore_mode_error =
+        PETSC_SUCCESS;
+    try {
+        context->source_context
+            ->begin_fixed_bhp_reservoir_evaluation(
+                minimum_bhp);
+    } catch (...) {
+        restore_mode_error =
+            PETSC_ERR_ARG_INCOMP;
+    }
+    if (error == PETSC_SUCCESS &&
+        restore_mode_error != PETSC_SUCCESS) {
+        error =
+            restore_mode_error;
+    }
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    if (!std::isfinite(global_total)) {
+        return PETSC_ERR_FP;
+    }
+
+    *total_molar_rate_mol_per_s =
+        global_total;
+    return PETSC_SUCCESS;
+}
+
+[[nodiscard]] inline PetscErrorCode
+try_reactivate_rate_control(
+    DriverContext3D* context,
+    mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D*
+            result) {
+    if (context == nullptr ||
+        result == nullptr ||
+        context->reservoir_system == nullptr ||
+        context->source_context == nullptr ||
+        context->pending_reservoir_state ==
+            nullptr ||
+        !context
+             ->pending_fixed_bhp_solve_report
+             .has_value() ||
+        context->entry_control !=
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure ||
+        !minimum_bhp_reactivation_enabled(
+            *context) ||
+        !context
+             ->minimum_bottom_hole_pressure_pa
+             .has_value()) {
+        return PETSC_SUCCESS;
+    }
+
+    const double minimum_bhp =
+        *context
+             ->minimum_bottom_hole_pressure_pa;
+    double probe_rate = 0.0;
+    PetscErrorCode error =
+        evaluate_minimum_bhp_probe_total_molar_rate(
+            context,
+            context->pending_reservoir_state,
+            &probe_rate);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    context
+        ->minimum_bhp_probe_total_molar_rate_mol_per_s =
+        probe_rate;
+
+    mpmc::well::
+        SingleWellMinimumBhpProbeDecision
+            probe_decision;
+    try {
+        probe_decision =
+            mpmc::well::
+                decide_single_well_minimum_bhp_probe(
+                    context->control_policy,
+                    probe_rate);
+    } catch (const std::overflow_error&) {
+        return PETSC_ERR_FP;
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    if (probe_decision ==
+        mpmc::well::
+            SingleWellMinimumBhpProbeDecision::
+                accept_minimum_bottom_hole_pressure) {
+        return PETSC_SUCCESS;
+    }
+
+    context
+        ->minimum_bhp_to_rate_reactivation_attempted =
+        true;
+
+    std::unique_ptr<
+        FixedTotalMolarRateWellControlSystem3D>
+        control_system;
+    error =
+        FixedTotalMolarRateWellControlSystem3D::
+            create(
+                context->comm,
+                context->reservoir_system,
+                context->source_context,
+                minimum_bhp,
+                context
+                    ->target_total_molar_rate_mol_per_s,
+                &control_system);
+    if (error != PETSC_SUCCESS ||
+        control_system == nullptr) {
+        return error != PETSC_SUCCESS
+            ? error
+            : PETSC_ERR_PLIB;
+    }
+
+    Vec rate_solution = nullptr;
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        rate_report;
+    error =
+        control_system->solve(
+            &rate_solution,
+            &rate_report);
+
+    if (error == PETSC_ERR_NOT_CONVERGED) {
+        if (rate_solution != nullptr) {
+            (void)VecDestroy(
+                &rate_solution);
+        }
+        control_system.reset();
+        try {
+            context->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    minimum_bhp);
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        return PETSC_SUCCESS;
+    }
+    if (error != PETSC_SUCCESS) {
+        if (rate_solution != nullptr) {
+            (void)VecDestroy(
+                &rate_solution);
+        }
+        return error;
+    }
+    if (rate_solution == nullptr ||
+        !rate_report.has_value() ||
+        !rate_report->converged()) {
+        if (rate_solution != nullptr) {
+            (void)VecDestroy(
+                &rate_solution);
+        }
+        return PETSC_ERR_PLIB;
+    }
+
+    result->nonlinear_iterations +=
+        rate_report
+            ->nonlinear_iterations;
+    result
+        ->line_search_direction_changes +=
+        rate_report
+            ->line_search_direction_changes;
+
+    mpmc::well::
+        SingleWellRateReactivationDecision
+            reactivation_decision;
+    try {
+        reactivation_decision =
+            mpmc::well::
+                decide_single_well_rate_reactivation_candidate(
+                    context->control_policy,
+                    rate_report
+                        ->bottom_hole_pressure_pa);
+    } catch (const std::overflow_error&) {
+        (void)VecDestroy(
+            &rate_solution);
+        return PETSC_ERR_FP;
+    } catch (...) {
+        (void)VecDestroy(
+            &rate_solution);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    if (reactivation_decision ==
+        mpmc::well::
+            SingleWellRateReactivationDecision::
+                keep_minimum_bottom_hole_pressure) {
+        context
+            ->discarded_rate_reactivation_candidate =
+            *rate_report;
+        const PetscErrorCode destroy =
+            VecDestroy(
+                &rate_solution);
+        control_system.reset();
+        if (destroy != PETSC_SUCCESS) {
+            return destroy;
+        }
+        try {
+            context->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    minimum_bhp);
+        } catch (...) {
+            return PETSC_ERR_ARG_INCOMP;
+        }
+        return PETSC_SUCCESS;
+    }
+
+    context->discarded_minimum_bhp_candidate =
+        context
+            ->pending_fixed_bhp_solve_report;
+
+    const PetscErrorCode destroy_probe =
+        VecDestroy(
+            &context
+                 ->pending_reservoir_state);
+    if (destroy_probe != PETSC_SUCCESS) {
+        (void)VecDestroy(
+            &rate_solution);
+        return destroy_probe;
+    }
+    context
+        ->pending_fixed_bhp_solve_report
+        .reset();
+
+    context->minimum_bhp_active =
+        false;
+    context
+        ->minimum_bhp_to_rate_reactivation_accepted =
+        true;
+    context->pending_control_system =
+        std::move(
+            control_system);
+    context->pending_augmented_state =
+        rate_solution;
+    context->pending_rate_solve_report =
+        std::move(
+            rate_report);
+    return PETSC_SUCCESS;
+}
+
+[[nodiscard]] inline PetscErrorCode
+solve_minimum_bhp_attempt(
+    DriverContext3D* context,
+    mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D*
+            result) {
+    namespace fdp =
+        mpmc::flow_discretization_petsc;
+
+    if (context == nullptr ||
+        result == nullptr ||
+        context->reservoir_system == nullptr ||
+        context->source_context == nullptr ||
+        !context
+             ->minimum_bottom_hole_pressure_pa
+             .has_value() ||
+        !context->minimum_bhp_active) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    const double minimum_bhp =
+        *context
+             ->minimum_bottom_hole_pressure_pa;
+    try {
+        context->source_context
+            ->begin_fixed_bhp_reservoir_evaluation(
+                minimum_bhp);
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    Vec solution = nullptr;
+    std::optional<
+        fdp::
+            VariableCardinalityNaturalVariableSnesSolveReport3D>
+        solve_report;
+    std::optional<
+        fdp::NaturalVariableSnesFailureDiagnostics3D>
+        diagnostics;
+    PetscErrorCode error =
+        context->reservoir_system
+            ->solve(
+                &solution,
+                &solve_report,
+                &diagnostics);
+
+    if (error == PETSC_ERR_NOT_CONVERGED) {
+        if (solution != nullptr) {
+            (void)VecDestroy(
+                &solution);
+        }
+        if (diagnostics.has_value()) {
+            *result =
+                fdp::
+                    make_adaptive_timestep_attempt_result(
+                        *diagnostics);
+        } else {
+            *result = {
+                fdp::AdaptiveTimestepAttemptOutcome3D::
+                    nonlinear_solve_diverged,
+                0,
+                0,
+                0,
+                0,
+                0U};
+        }
+        return PETSC_SUCCESS;
+    }
+    if (error != PETSC_SUCCESS) {
+        if (solution != nullptr) {
+            (void)VecDestroy(
+                &solution);
+        }
+        return error;
+    }
+    if (solution == nullptr ||
+        !solve_report.has_value() ||
+        static_cast<int>(
+            solve_report
+                ->converged_reason) <=
+            0) {
+        if (solution != nullptr) {
+            (void)VecDestroy(
+                &solution);
+        }
+        return PETSC_ERR_PLIB;
+    }
+
+    try {
+        *result =
+            fdp::
+                make_adaptive_timestep_attempt_result(
+                    *solve_report,
+                    0U);
+    } catch (...) {
+        (void)VecDestroy(
+            &solution);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    context->pending_reservoir_state =
+        solution;
+    context->pending_fixed_bhp_solve_report =
+        std::move(
+            solve_report);
+
+    if (context->entry_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure &&
+        minimum_bhp_reactivation_enabled(
+            *context)) {
+        return try_reactivate_rate_control(
+            context,
+            result);
+    }
+    return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode
+attempt(
+    const mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptRequest3D&
+            request,
+    void* raw_context,
+    mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D*
+            result) {
+    namespace fdp =
+        mpmc::flow_discretization_petsc;
+
+    if (raw_context == nullptr ||
+        result == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<DriverContext3D*>(
+            raw_context);
+    if (context->reservoir_system == nullptr ||
+        context->source_context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    PetscErrorCode error =
+        clear_pending(context);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    error =
+        context->reservoir_system
+            ->set_trial_timestep_seconds(
+                request.timestep_seconds);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    if (context->minimum_bhp_active) {
+        return solve_minimum_bhp_attempt(
+            context,
+            result);
+    }
+
+    try {
+        context->source_context
+            ->begin_evaluation(
+                context
+                    ->entry_bottom_hole_pressure_pa);
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    std::unique_ptr<
+        FixedTotalMolarRateWellControlSystem3D>
+        control_system;
+    error =
+        FixedTotalMolarRateWellControlSystem3D::
+            create(
+                context->comm,
+                context->reservoir_system,
+                context->source_context,
+                context
+                    ->entry_bottom_hole_pressure_pa,
+                context
+                    ->target_total_molar_rate_mol_per_s,
+                &control_system);
+    if (error != PETSC_SUCCESS ||
+        control_system == nullptr) {
+        return error != PETSC_SUCCESS
+            ? error
+            : PETSC_ERR_PLIB;
+    }
+
+    Vec solution = nullptr;
+    std::optional<
+        FixedTotalMolarRateWellControlSolveReport3D>
+        solve_report;
+    error =
+        control_system->solve(
+            &solution,
+            &solve_report);
+
+    if (error == PETSC_ERR_NOT_CONVERGED) {
+        if (solution != nullptr) {
+            (void)VecDestroy(&solution);
+        }
+        *result = {
+            fdp::AdaptiveTimestepAttemptOutcome3D::
+                nonlinear_solve_diverged,
+            0,
+            0,
+            0,
+            0,
+            0U};
+        return PETSC_SUCCESS;
+    }
+    if (error != PETSC_SUCCESS) {
+        if (solution != nullptr) {
+            (void)VecDestroy(&solution);
+        }
+        return error;
+    }
+    if (solution == nullptr ||
+        !solve_report.has_value() ||
+        !solve_report->converged()) {
+        if (solution != nullptr) {
+            (void)VecDestroy(&solution);
+        }
+        return PETSC_ERR_PLIB;
+    }
+
+    mpmc::well::
+        SingleWellRateCandidateDecision
+            rate_candidate_decision;
+    try {
+        rate_candidate_decision =
+            mpmc::well::
+                decide_single_well_rate_candidate(
+                    context->control_policy,
+                    solve_report
+                        ->bottom_hole_pressure_pa);
+    } catch (...) {
+        (void)VecDestroy(
+            &solution);
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    if (rate_candidate_decision ==
+        mpmc::well::
+            SingleWellRateCandidateDecision::
+                solve_minimum_bottom_hole_pressure) {
+        const PetscInt rate_iterations =
+            solve_report
+                ->nonlinear_iterations;
+        const PetscInt rate_direction_changes =
+            solve_report
+                ->line_search_direction_changes;
+
+        context->switch_trigger_rate_candidate =
+            *solve_report;
+        context->minimum_bhp_active =
+            true;
+        context->rate_to_bhp_switch_triggered =
+            true;
+
+        const PetscErrorCode destroy =
+            VecDestroy(
+                &solution);
+        control_system.reset();
+        if (destroy != PETSC_SUCCESS) {
+            return destroy;
+        }
+
+        error =
+            solve_minimum_bhp_attempt(
+                context,
+                result);
+        if (error == PETSC_SUCCESS) {
+            result->nonlinear_iterations +=
+                rate_iterations;
+            result
+                ->line_search_direction_changes +=
+                rate_direction_changes;
+        }
+        return error;
+    }
+
+    *result = {
+        fdp::AdaptiveTimestepAttemptOutcome3D::
+            stable_phase_set,
+        solve_report->nonlinear_iterations,
+        solve_report->function_domain_errors,
+        solve_report->jacobian_domain_errors,
+        solve_report
+            ->line_search_direction_changes,
+        0U};
+
+    context->pending_control_system =
+        std::move(control_system);
+    context->pending_augmented_state =
+        solution;
+    context->pending_rate_solve_report =
+        std::move(solve_report);
+    return PETSC_SUCCESS;
+}
+
+inline PetscErrorCode
+commit(
+    const mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptRequest3D&
+            request,
+    const mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D&
+            result,
+    void* raw_context) {
+    namespace fdp =
+        mpmc::flow_discretization_petsc;
+
+    if (raw_context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<DriverContext3D*>(
+            raw_context);
+    if (context->reservoir_system == nullptr ||
+        context->source_context == nullptr ||
+        context->adaptive_options == nullptr ||
+        context->clock == nullptr ||
+        context
+                ->accepted_control_state ==
+            nullptr) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    const bool fixed_bhp =
+        context->minimum_bhp_active;
+    if (fixed_bhp) {
+        if (!context
+                 ->minimum_bottom_hole_pressure_pa
+                 .has_value() ||
+            context->pending_reservoir_state ==
+                nullptr ||
+            !context
+                 ->pending_fixed_bhp_solve_report
+                 .has_value() ||
+            (context
+                 ->rate_to_bhp_switch_triggered &&
+             !context
+                  ->switch_trigger_rate_candidate
+                  .has_value())) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+    } else if (
+        context->pending_control_system ==
+                nullptr ||
+        context->pending_augmented_state ==
+                nullptr ||
+        !context
+             ->pending_rate_solve_report
+             .has_value()) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    fdp::AdaptiveTimestepDecisionResult3D
+        decision;
+    try {
+        decision =
+            fdp::decide_adaptive_timestep_3d(
+                request.timestep_seconds,
+                request.retry_index,
+                result,
+                *context
+                     ->adaptive_options);
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    if (decision.decision !=
+            fdp::AdaptiveTimestepDecision3D::
+                accept_and_grow &&
+        decision.decision !=
+            fdp::AdaptiveTimestepDecision3D::
+                accept_and_hold) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    Vec copied_rate_reservoir_state =
+        nullptr;
+    Vec accepted_reservoir_state =
+        context->pending_reservoir_state;
+    PetscErrorCode error =
+        PETSC_SUCCESS;
+
+    if (!fixed_bhp) {
+        error =
+            context->pending_control_system
+                ->copy_reservoir_state(
+                    context
+                        ->pending_augmented_state,
+                    &copied_rate_reservoir_state);
+        if (error != PETSC_SUCCESS ||
+            copied_rate_reservoir_state ==
+                nullptr) {
+            if (copied_rate_reservoir_state !=
+                nullptr) {
+                (void)VecDestroy(
+                    &copied_rate_reservoir_state);
+            }
+            return error != PETSC_SUCCESS
+                ? error
+                : PETSC_ERR_PLIB;
+        }
+        accepted_reservoir_state =
+            copied_rate_reservoir_state;
+    }
+
+    const double accepted_bhp =
+        fixed_bhp
+            ? *context
+                   ->minimum_bottom_hole_pressure_pa
+            : context
+                  ->pending_rate_solve_report
+                  ->bottom_hole_pressure_pa;
+    if (!std::isfinite(accepted_bhp) ||
+        !(accepted_bhp > 0.0)) {
+        if (copied_rate_reservoir_state !=
+            nullptr) {
+            (void)VecDestroy(
+                &copied_rate_reservoir_state);
+        }
+        return PETSC_ERR_PLIB;
+    }
+
+    std::optional<
+        fdp::AcceptedPhysicalTimestepRecord3D>
+        accepted_record;
+    error =
+        fdp::commit_accepted_physical_timestep_3d(
+            *context->reservoir_system,
+            accepted_reservoir_state,
+            request.timestep_seconds,
+            result,
+            decision,
+            context->clock,
+            &accepted_record);
+
+    if (copied_rate_reservoir_state !=
+        nullptr) {
+        const PetscErrorCode destroy =
+            VecDestroy(
+                &copied_rate_reservoir_state);
+        if (error == PETSC_SUCCESS &&
+            destroy != PETSC_SUCCESS) {
+            error =
+                destroy;
+        }
+    }
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    if (!accepted_record.has_value()) {
+        return PETSC_ERR_PLIB;
+    }
+
+    try {
+        if (fixed_bhp) {
+            context->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    accepted_bhp);
+        } else {
+            context->source_context
+                ->begin_evaluation(
+                    accepted_bhp);
+        }
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    try {
+        *context
+             ->accepted_control_state =
+            mpmc::well::
+                make_accepted_single_well_control_state(
+                    context->control_policy,
+                    fixed_bhp
+                        ? mpmc::well::
+                              SingleWellControlMode::
+                                  minimum_bottom_hole_pressure
+                        : mpmc::well::
+                              SingleWellControlMode::
+                                  fixed_total_molar_rate,
+                    accepted_bhp);
+    } catch (...) {
+        return PETSC_ERR_PLIB;
+    }
+    context->accepted_record =
+        std::move(accepted_record);
+
+    if (fixed_bhp) {
+        context->accepted_fixed_bhp_solve =
+            context
+                ->pending_fixed_bhp_solve_report;
+    } else {
+        context->accepted_rate_solve =
+            context
+                ->pending_rate_solve_report;
+    }
+
+    return clear_pending(context);
+}
+
+
+
+struct PhaseTransitionDriverContext3D {
+    DriverContext3D* control{};
+    std::unique_ptr<
+        mpmc::flow_discretization_petsc::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>*
+        accepted_system{};
+    mpmc::flow_discretization_petsc::
+        PostSnesPhaseTransitionControllerBindings3D
+            transition_bindings;
+    const mpmc::flow_discretization_petsc::
+        PostSnesPhaseTransitionControllerOptions3D*
+            transition_options{};
+    std::optional<
+        FixedBhpMultiConnectionWellSourceEvaluatorContext3D>
+        entry_well;
+    std::unique_ptr<
+        mpmc::flow_discretization_petsc::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>
+        transitioned_system;
+};
+
+[[nodiscard]] inline PetscErrorCode
+restore_phase_transition_entry(
+    PhaseTransitionDriverContext3D* context,
+    double timestep_seconds,
+    PetscErrorCode primary_error) noexcept {
+    if (context == nullptr ||
+        context->control == nullptr ||
+        context->accepted_system == nullptr ||
+        *context->accepted_system == nullptr ||
+        !context->entry_well.has_value()) {
+        return primary_error != PETSC_SUCCESS
+            ? primary_error
+            : PETSC_ERR_ARG_NULL;
+    }
+
+    PetscErrorCode clear_error =
+        clear_pending(
+            context->control);
+    context->transitioned_system.reset();
+    context->control->reservoir_system =
+        context->accepted_system->get();
+
+    PetscErrorCode source_error =
+        PETSC_SUCCESS;
+    try {
+        context->control
+            ->source_context
+            ->replace_well(
+                *context->entry_well);
+        reset_control_generation_to_entry(
+            context->control);
+        if (context->control->entry_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure) {
+            context->control
+                ->source_context
+                ->begin_fixed_bhp_reservoir_evaluation(
+                    context->control
+                        ->entry_bottom_hole_pressure_pa);
+        } else {
+            context->control
+                ->source_context
+                ->begin_evaluation(
+                    context->control
+                        ->entry_bottom_hole_pressure_pa);
+        }
+    } catch (...) {
+        source_error =
+            PETSC_ERR_ARG_INCOMP;
+    }
+
+    const PetscErrorCode dt_error =
+        context->control
+            ->reservoir_system
+            ->set_trial_timestep_seconds(
+                timestep_seconds);
+
+    if (primary_error != PETSC_SUCCESS) {
+        return primary_error;
+    }
+    if (clear_error != PETSC_SUCCESS) {
+        return clear_error;
+    }
+    if (source_error != PETSC_SUCCESS) {
+        return source_error;
+    }
+    return dt_error;
+}
+
+[[nodiscard]] inline PetscErrorCode
+pending_reservoir_candidate(
+    DriverContext3D* context,
+    Vec* reservoir_state,
+    bool* owns_state,
+    const mpmc::flow_discretization_petsc::
+        VariableCardinalityNaturalVariableSnesSolveReport3D**
+            reservoir_report) {
+    if (context == nullptr ||
+        reservoir_state == nullptr ||
+        owns_state == nullptr ||
+        reservoir_report == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    *reservoir_state = nullptr;
+    *owns_state = false;
+    *reservoir_report = nullptr;
+
+    if (context->minimum_bhp_active) {
+        if (context->pending_reservoir_state ==
+                nullptr ||
+            !context
+                 ->pending_fixed_bhp_solve_report
+                 .has_value()) {
+            return PETSC_ERR_ARG_WRONGSTATE;
+        }
+        *reservoir_state =
+            context->pending_reservoir_state;
+        *reservoir_report =
+            &*context
+                 ->pending_fixed_bhp_solve_report;
+        return PETSC_SUCCESS;
+    }
+
+    if (context->pending_control_system ==
+            nullptr ||
+        context->pending_augmented_state ==
+            nullptr ||
+        !context
+             ->pending_rate_solve_report
+             .has_value() ||
+        !context
+             ->pending_rate_solve_report
+             ->reservoir_nonlinear_solve
+             .has_value()) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    PetscErrorCode error =
+        context->pending_control_system
+            ->copy_reservoir_state(
+                context->pending_augmented_state,
+                reservoir_state);
+    if (error != PETSC_SUCCESS ||
+        *reservoir_state == nullptr) {
+        if (*reservoir_state != nullptr) {
+            (void)VecDestroy(
+                reservoir_state);
+        }
+        return error != PETSC_SUCCESS
+            ? error
+            : PETSC_ERR_PLIB;
+    }
+    *owns_state = true;
+    *reservoir_report =
+        &*context
+             ->pending_rate_solve_report
+             ->reservoir_nonlinear_solve;
+    return PETSC_SUCCESS;
+}
+
+inline void
+accumulate_generation_effort(
+    const mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D&
+            generation,
+    mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D*
+            total) {
+    if (total == nullptr) {
+        return;
+    }
+    total->nonlinear_iterations =
+        std::max(
+            total->nonlinear_iterations,
+            generation
+                .nonlinear_iterations);
+    total->function_domain_errors +=
+        generation.function_domain_errors;
+    total->jacobian_domain_errors +=
+        generation.jacobian_domain_errors;
+    total->line_search_direction_changes +=
+        generation
+            .line_search_direction_changes;
+}
+
+[[nodiscard]] inline PetscErrorCode
+rebind_transitioned_connections(
+    DriverContext3D* context,
+    const mpmc::flow_discretization_petsc::
+        PhaseTransitionRebuiltNaturalVariableSystem3D&
+            rebuilt,
+    std::span<
+        const mpmc::flow_discretization_petsc::
+            AcceptedPhaseTransitionSummary3D>
+        accepted_batch) {
+    if (context == nullptr ||
+        context->source_context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    try {
+        for (const auto& transition :
+             accepted_batch) {
+            if (context->source_context
+                    ->well()
+                    .find_connection(
+                        transition.cell_global) ==
+                nullptr) {
+                continue;
+            }
+            const auto& active_phases =
+                rebuilt
+                    .coordinate_registry()
+                    .cell(
+                        transition.cell_global)
+                    .active_phases;
+            context->source_context
+                ->rebind_connection(
+                    transition.cell_global,
+                    active_phases);
+        }
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    return PETSC_SUCCESS;
+}
+
+[[nodiscard]] inline PetscErrorCode
+attempt_with_phase_transitions(
+    const mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptRequest3D&
+            request,
+    void* raw_context,
+    mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D*
+            result) {
+    namespace fdp =
+        mpmc::flow_discretization_petsc;
+    using namespace
+        fdp::post_snes_transition_detail;
+
+    if (raw_context == nullptr ||
+        result == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* phase =
+        static_cast<
+            PhaseTransitionDriverContext3D*>(
+                raw_context);
+    if (phase->control == nullptr ||
+        phase->accepted_system == nullptr ||
+        *phase->accepted_system == nullptr ||
+        phase->transition_options == nullptr ||
+        phase->transition_bindings.scanner ==
+            nullptr ||
+        phase->transition_bindings.rebuild_factory ==
+            nullptr ||
+        !phase->entry_well.has_value()) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    PetscErrorCode error =
+        restore_phase_transition_entry(
+            phase,
+            request.timestep_seconds,
+            PETSC_SUCCESS);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    std::vector<
+        std::vector<
+            fdp::GlobalPhaseSetSignatureEntry3D>>
+        seen_signatures;
+    std::vector<
+        fdp::GlobalPhaseSetSignatureEntry3D>
+        signature;
+    error =
+        gather_phase_signature(
+            phase->control->comm,
+            *phase->control
+                 ->reservoir_system,
+            &signature);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+    seen_signatures.push_back(
+        signature);
+
+    fdp::AdaptiveTimestepAttemptResult3D
+        total;
+    total.outcome =
+        fdp::AdaptiveTimestepAttemptOutcome3D::
+            stable_phase_set;
+    std::size_t restarts = 0U;
+
+    for (;;) {
+        fdp::AdaptiveTimestepAttemptResult3D
+            generation;
+        error =
+            attempt(
+                request,
+                phase->control,
+                &generation);
+        if (error != PETSC_SUCCESS) {
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+        accumulate_generation_effort(
+            generation,
+            &total);
+
+        if (generation.outcome !=
+            fdp::AdaptiveTimestepAttemptOutcome3D::
+                stable_phase_set) {
+            total.outcome =
+                generation.outcome;
+            total.phase_transition_restarts =
+                restarts;
+            *result =
+                total;
+            return PETSC_SUCCESS;
+        }
+
+        Vec reservoir_state = nullptr;
+        bool owns_reservoir_state = false;
+        const fdp::
+            VariableCardinalityNaturalVariableSnesSolveReport3D*
+                reservoir_report = nullptr;
+        error =
+            pending_reservoir_candidate(
+                phase->control,
+                &reservoir_state,
+                &owns_reservoir_state,
+                &reservoir_report);
+        if (error != PETSC_SUCCESS) {
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+
+        auto destroy_scan_state =
+            [&]() {
+                if (owns_reservoir_state &&
+                    reservoir_state != nullptr) {
+                    const PetscErrorCode destroy =
+                        VecDestroy(
+                            &reservoir_state);
+                    owns_reservoir_state = false;
+                    return destroy;
+                }
+                return PETSC_SUCCESS;
+            };
+
+        fdp::PostSnesPhaseTransitionScanStatus3D
+            scan_status =
+                fdp::PostSnesPhaseTransitionScanStatus3D::
+                    complete;
+        std::vector<
+            fdp::PostSnesPhaseTransitionProposal3D>
+            local_proposals;
+        PetscErrorCode local_error =
+            phase->transition_bindings.scanner(
+                *phase->control
+                     ->reservoir_system,
+                reservoir_state,
+                *reservoir_report,
+                phase->transition_bindings
+                    .scanner_context,
+                &scan_status,
+                &local_proposals);
+        error =
+            collective_error(
+                phase->control->comm,
+                local_error);
+        if (error != PETSC_SUCCESS) {
+            (void)destroy_scan_state();
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+
+        const int local_indeterminate =
+            scan_status ==
+                    fdp::PostSnesPhaseTransitionScanStatus3D::
+                        indeterminate
+                ? 1
+                : 0;
+        int global_indeterminate = 0;
+        if (MPI_Allreduce(
+                &local_indeterminate,
+                &global_indeterminate,
+                1,
+                MPI_INT,
+                MPI_MAX,
+                phase->control->comm) !=
+            MPI_SUCCESS) {
+            (void)destroy_scan_state();
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                PETSC_ERR_MPI);
+        }
+        if (global_indeterminate != 0) {
+            (void)destroy_scan_state();
+            (void)clear_pending(
+                phase->control);
+            total.outcome =
+                fdp::AdaptiveTimestepAttemptOutcome3D::
+                    phase_set_scan_indeterminate;
+            total.phase_transition_restarts =
+                restarts;
+            *result =
+                total;
+            return PETSC_SUCCESS;
+        }
+
+        local_error =
+            validate_local_proposals(
+                phase->control
+                    ->reservoir_system
+                    ->numbering(),
+                &local_proposals);
+        error =
+            collective_error(
+                phase->control->comm,
+                local_error);
+        if (error != PETSC_SUCCESS) {
+            (void)destroy_scan_state();
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+
+        std::vector<
+            fdp::AcceptedPhaseTransitionSummary3D>
+            accepted_batch;
+        error =
+            gather_accepted_batch(
+                phase->control->comm,
+                phase->control
+                    ->reservoir_system
+                    ->numbering(),
+                local_proposals,
+                &accepted_batch);
+        if (error != PETSC_SUCCESS) {
+            (void)destroy_scan_state();
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+
+        if (accepted_batch.empty()) {
+            const PetscErrorCode destroy =
+                destroy_scan_state();
+            if (destroy != PETSC_SUCCESS) {
+                return restore_phase_transition_entry(
+                    phase,
+                    request.timestep_seconds,
+                    destroy);
+            }
+            total.outcome =
+                fdp::AdaptiveTimestepAttemptOutcome3D::
+                    stable_phase_set;
+            total.phase_transition_restarts =
+                restarts;
+            *result =
+                total;
+            return PETSC_SUCCESS;
+        }
+
+        if (restarts >=
+            phase->transition_options
+                ->max_transition_restarts) {
+            (void)destroy_scan_state();
+            (void)clear_pending(
+                phase->control);
+            total.outcome =
+                fdp::AdaptiveTimestepAttemptOutcome3D::
+                    transition_restart_budget_exhausted;
+            total.phase_transition_restarts =
+                restarts;
+            *result =
+                total;
+            return PETSC_SUCCESS;
+        }
+
+        std::unique_ptr<
+            fdp::
+                PhaseTransitionRebuiltNaturalVariableSystem3D>
+            rebuilt;
+        local_error =
+            phase->transition_bindings
+                .rebuild_factory(
+                    *phase->control
+                         ->reservoir_system,
+                    reservoir_state,
+                    *reservoir_report,
+                    local_proposals,
+                    accepted_batch,
+                    phase->transition_bindings
+                        .rebuild_context,
+                    &rebuilt);
+        error =
+            collective_error(
+                phase->control->comm,
+                local_error);
+        if (error != PETSC_SUCCESS ||
+            rebuilt == nullptr) {
+            (void)destroy_scan_state();
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error != PETSC_SUCCESS
+                    ? error
+                    : PETSC_ERR_PLIB);
+        }
+
+        std::vector<
+            fdp::GlobalPhaseSetSignatureEntry3D>
+            rebuilt_signature;
+        error =
+            gather_phase_signature(
+                phase->control->comm,
+                *rebuilt,
+                &rebuilt_signature);
+        if (error == PETSC_SUCCESS) {
+            error =
+                validate_rebuilt_signature_against_batch(
+                    signature,
+                    accepted_batch,
+                    rebuilt_signature);
+        }
+        if (error != PETSC_SUCCESS) {
+            (void)destroy_scan_state();
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+
+        if (signature_seen(
+                seen_signatures,
+                rebuilt_signature)) {
+            (void)destroy_scan_state();
+            (void)clear_pending(
+                phase->control);
+            total.outcome =
+                fdp::AdaptiveTimestepAttemptOutcome3D::
+                    phase_set_cycle_detected;
+            total.phase_transition_restarts =
+                restarts;
+            *result =
+                total;
+            return PETSC_SUCCESS;
+        }
+
+        error =
+            rebind_transitioned_connections(
+                phase->control,
+                *rebuilt,
+                accepted_batch);
+        if (error != PETSC_SUCCESS) {
+            (void)destroy_scan_state();
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+
+        const PetscErrorCode destroy =
+            destroy_scan_state();
+        if (destroy != PETSC_SUCCESS) {
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                destroy);
+        }
+        error =
+            clear_pending(
+                phase->control);
+        if (error != PETSC_SUCCESS) {
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+
+        phase->transitioned_system =
+            std::move(rebuilt);
+        phase->control->reservoir_system =
+            phase->transitioned_system.get();
+        error =
+            phase->control
+                ->reservoir_system
+                ->set_trial_timestep_seconds(
+                    request.timestep_seconds);
+        if (error != PETSC_SUCCESS) {
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                error);
+        }
+
+        reset_control_generation_to_entry(
+            phase->control);
+        try {
+            if (phase->control->entry_control ==
+                FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                    minimum_bottom_hole_pressure) {
+                phase->control
+                    ->source_context
+                    ->begin_fixed_bhp_reservoir_evaluation(
+                        phase->control
+                            ->entry_bottom_hole_pressure_pa);
+            } else {
+                phase->control
+                    ->source_context
+                    ->begin_evaluation(
+                        phase->control
+                            ->entry_bottom_hole_pressure_pa);
+            }
+        } catch (...) {
+            return restore_phase_transition_entry(
+                phase,
+                request.timestep_seconds,
+                PETSC_ERR_ARG_INCOMP);
+        }
+
+        ++restarts;
+        seen_signatures.push_back(
+            rebuilt_signature);
+        signature =
+            std::move(
+                rebuilt_signature);
+    }
+}
+
+inline PetscErrorCode
+commit_with_phase_transitions(
+    const mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptRequest3D&
+            request,
+    const mpmc::flow_discretization_petsc::
+        AdaptiveTimestepAttemptResult3D&
+            result,
+    void* raw_context) {
+    if (raw_context == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* phase =
+        static_cast<
+            PhaseTransitionDriverContext3D*>(
+                raw_context);
+    if (phase->control == nullptr ||
+        phase->accepted_system == nullptr ||
+        *phase->accepted_system == nullptr) {
+        return PETSC_ERR_ARG_WRONGSTATE;
+    }
+
+    PetscErrorCode error =
+        commit(
+            request,
+            result,
+            phase->control);
+    if (error != PETSC_SUCCESS) {
+        return error;
+    }
+
+    if (phase->transitioned_system !=
+        nullptr) {
+        *phase->accepted_system =
+            std::move(
+                phase->transitioned_system);
+        phase->control->reservoir_system =
+            phase->accepted_system->get();
+    }
+    return PETSC_SUCCESS;
+}
+
+} // namespace fixed_total_molar_rate_timestep_driver_detail
+
+/// Advance one frozen-phase physical timestep under a fixed whole-well total
+/// molar production-rate target.
+///
+/// The reservoir state/history and physical clock retain their existing
+/// ownership. BHP is a nonlinear unknown only inside each augmented rate
+/// trial and is committed separately as the next timestep's initial guess.
+/// Every rejected retry is rebuilt from the same accepted reservoir baseline
+/// and entry BHP. No BHP value is inserted into backward-Euler accumulation
+/// history.
+///
+/// When minimum_bottom_hole_pressure_pa is configured and a converged rate
+/// candidate violates it, that augmented candidate is destroyed without
+/// commit. The source BHP is fixed to the minimum and the reservoir-only
+/// nonlinear system is solved again at the same dt from the accepted baseline.
+/// Once triggered, minimum-BHP mode is sticky for all retries of this physical
+/// timestep. If that timestep is accepted, the mode and p_min become the
+/// accepted well-control state, so the next physical timestep starts directly
+/// in reservoir-only fixed-BHP mode.
+///
+/// If both minimum-BHP release margins are configured, an entry minimum-BHP
+/// timestep uses its converged fixed-BHP solution as a feasibility probe.
+/// Reactivation is attempted only when the probe capacity exceeds the rate
+/// target by the configured molar-rate deadband. The augmented rate candidate
+/// then must clear the configured pressure deadband above p_min. Only after
+/// both guards pass is the fixed-BHP probe discarded and rate control accepted.
+/// A terminal rejection leaves the accepted well-control state unchanged.
+///
+/// A terminal adaptive rejection is reported with PETSC_SUCCESS and
+/// report->accepted()==false, matching the model-neutral adaptive controller.
+/// The entry trial timestep and BHP evaluator state are restored in that case.
+inline PetscErrorCode
+advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+    MPI_Comm comm,
+    mpmc::flow_discretization_petsc::
+        PhaseTransitionRebuiltNaturalVariableSystem3D*
+            reservoir_system,
+    FixedTotalMolarRateWellSourceEvaluatorContext3D*
+        source_context,
+    double target_total_molar_rate_mol_per_s,
+    const FixedTotalMolarRatePhysicalTimestepDriverOptions3D&
+        options,
+    mpmc::flow_discretization_petsc::
+        AcceptedPhysicalTimeClock3D*
+            clock,
+    AcceptedFixedTotalMolarRateWellControlState3D*
+        accepted_control_state,
+    std::optional<
+        FixedTotalMolarRatePhysicalTimestepDriverReport3D>*
+            report) {
+    namespace fdp =
+        mpmc::flow_discretization_petsc;
+    using namespace
+        fixed_total_molar_rate_timestep_driver_detail;
+
+    if (reservoir_system == nullptr ||
+        source_context == nullptr ||
+        clock == nullptr ||
+        accepted_control_state ==
+            nullptr ||
+        report == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    report->reset();
+
+    const double entry_bhp =
+        accepted_control_state
+            ->bottom_hole_pressure_pa;
+    const auto entry_control =
+        accepted_control_state
+            ->control;
+    const double entry_dt =
+        clock->next_timestep_seconds();
+    if (!accepted_control_state->valid()) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    const auto policy_validation =
+        mpmc::well::
+            validate_single_well_control_policy(
+                target_total_molar_rate_mol_per_s,
+                options
+                    .minimum_bottom_hole_pressure_pa,
+                options
+                    .minimum_bhp_release_rate_margin_mol_per_s,
+                options
+                    .minimum_bhp_release_pressure_margin_pa);
+    if (policy_validation ==
+        mpmc::well::
+            SingleWellControlPolicyValidationStatus::
+                value_out_of_range) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    if (policy_validation ==
+        mpmc::well::
+            SingleWellControlPolicyValidationStatus::
+                inconsistent_configuration) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    mpmc::well::SingleWellControlPolicy
+        control_policy;
+    try {
+        control_policy =
+            mpmc::well::
+                make_single_well_control_policy(
+                    target_total_molar_rate_mol_per_s,
+                    options
+                        .minimum_bottom_hole_pressure_pa,
+                    options
+                        .minimum_bhp_release_rate_margin_mol_per_s,
+                    options
+                        .minimum_bhp_release_pressure_margin_pa);
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    if (entry_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure &&
+        (!options
+              .minimum_bottom_hole_pressure_pa
+              .has_value() ||
+         !same_timestep(
+             entry_bhp,
+             *options
+                  .minimum_bottom_hole_pressure_pa))) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    if (!same_timestep(
+            reservoir_system
+                ->time_step_seconds(),
+            entry_dt)) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    DriverContext3D context;
+    context.comm =
+        comm;
+    context.control_policy =
+        control_policy;
+    context.reservoir_system =
+        reservoir_system;
+    context.source_context =
+        source_context;
+    context.target_total_molar_rate_mol_per_s =
+        target_total_molar_rate_mol_per_s;
+    context.entry_bottom_hole_pressure_pa =
+        entry_bhp;
+    context.entry_control =
+        entry_control;
+    context.minimum_bottom_hole_pressure_pa =
+        options
+            .minimum_bottom_hole_pressure_pa;
+    context.minimum_bhp_release_rate_margin_mol_per_s =
+        options
+            .minimum_bhp_release_rate_margin_mol_per_s;
+    context.minimum_bhp_release_pressure_margin_pa =
+        options
+            .minimum_bhp_release_pressure_margin_pa;
+    context.adaptive_options =
+        &options.adaptive;
+    context.clock =
+        clock;
+    context.accepted_control_state =
+        accepted_control_state;
+    context.minimum_bhp_active =
+        entry_control ==
+        FixedTotalMolarRatePhysicalTimestepControlMode3D::
+            minimum_bottom_hole_pressure;
+
+    std::optional<
+        fdp::AdaptiveTimestepControllerReport3D>
+        adaptive_report;
+    PetscErrorCode error =
+        fdp::solve_adaptive_timestep_3d(
+            entry_dt,
+            options.adaptive,
+            {
+                &attempt,
+                &context,
+                &commit,
+                &context},
+            &adaptive_report);
+
+    const PetscErrorCode clear_error =
+        clear_pending(&context);
+    if (error == PETSC_SUCCESS &&
+        clear_error != PETSC_SUCCESS) {
+        error =
+            clear_error;
+    }
+
+    if (error != PETSC_SUCCESS) {
+        return restore_entry(
+            &context,
+            entry_dt,
+            error);
+    }
+    if (!adaptive_report.has_value()) {
+        return restore_entry(
+            &context,
+            entry_dt,
+            PETSC_ERR_PLIB);
+    }
+
+    if (!adaptive_report->accepted()) {
+        const PetscErrorCode restore_error =
+            restore_entry(
+                &context,
+                entry_dt,
+                PETSC_SUCCESS);
+        if (restore_error != PETSC_SUCCESS) {
+            return restore_error;
+        }
+        FixedTotalMolarRatePhysicalTimestepDriverReport3D
+            completed;
+        completed.adaptive =
+            std::move(
+                *adaptive_report);
+        completed.discarded_rate_control_candidate =
+            context
+                .switch_trigger_rate_candidate;
+        completed.discarded_minimum_bhp_candidate =
+            context
+                .discarded_minimum_bhp_candidate;
+        completed.discarded_rate_reactivation_candidate =
+            context
+                .discarded_rate_reactivation_candidate;
+        completed.minimum_bhp_probe_total_molar_rate_mol_per_s =
+            context
+                .minimum_bhp_probe_total_molar_rate_mol_per_s;
+        completed.minimum_bhp_to_rate_reactivation_attempted =
+            context
+                .minimum_bhp_to_rate_reactivation_attempted;
+        completed.minimum_bhp_to_rate_reactivation_accepted =
+            context
+                .minimum_bhp_to_rate_reactivation_accepted;
+        completed.entry_bottom_hole_pressure_pa =
+            entry_bhp;
+        completed.accepted_bottom_hole_pressure_pa =
+            entry_bhp;
+        completed.entry_control =
+            entry_control;
+        completed.accepted_control =
+            entry_control;
+        completed.rate_to_bhp_switch_triggered =
+            context
+                .rate_to_bhp_switch_triggered;
+        report->emplace(
+            std::move(completed));
+        return PETSC_SUCCESS;
+    }
+
+    if (!context.accepted_record.has_value() ||
+        !accepted_control_state->valid() ||
+        (context.minimum_bhp_active
+             ? !context
+                    .accepted_fixed_bhp_solve
+                    .has_value()
+             : !context
+                    .accepted_rate_solve
+                    .has_value())) {
+        return PETSC_ERR_PLIB;
+    }
+
+    FixedTotalMolarRatePhysicalTimestepDriverReport3D
+        completed;
+    completed.adaptive =
+        std::move(
+            *adaptive_report);
+    completed.accepted_record =
+        std::move(
+            context.accepted_record);
+    completed.accepted_solve =
+        std::move(
+            context.accepted_rate_solve);
+    completed.accepted_fixed_bhp_solve =
+        std::move(
+            context.accepted_fixed_bhp_solve);
+    completed.discarded_rate_control_candidate =
+        context
+            .switch_trigger_rate_candidate;
+    completed.discarded_minimum_bhp_candidate =
+        context
+            .discarded_minimum_bhp_candidate;
+    completed.discarded_rate_reactivation_candidate =
+        context
+            .discarded_rate_reactivation_candidate;
+    completed.minimum_bhp_probe_total_molar_rate_mol_per_s =
+        context
+            .minimum_bhp_probe_total_molar_rate_mol_per_s;
+    completed.minimum_bhp_to_rate_reactivation_attempted =
+        context
+            .minimum_bhp_to_rate_reactivation_attempted;
+    completed.minimum_bhp_to_rate_reactivation_accepted =
+        context
+            .minimum_bhp_to_rate_reactivation_accepted;
+    completed.entry_bottom_hole_pressure_pa =
+        entry_bhp;
+    completed.accepted_bottom_hole_pressure_pa =
+        accepted_control_state
+            ->bottom_hole_pressure_pa;
+    completed.entry_control =
+        entry_control;
+    completed.accepted_control =
+        accepted_control_state
+            ->control;
+    completed.rate_to_bhp_switch_triggered =
+        context
+            .rate_to_bhp_switch_triggered;
+    report->emplace(
+        std::move(completed));
+    return PETSC_SUCCESS;
+}
+
+/// Advance one controlled physical timestep with post-SNES phase-transition
+/// outer restart.
+///
+/// The caller-owned accepted system is the rollback anchor. Selected rate/BHP
+/// candidates are scanned before commit. Any accepted 1P/2P/3P transition
+/// rebuilds a disposable system, rebinds matching completions by stable cell
+/// and physical phase identity, resets well-control arbitration to the entry
+/// accepted control state, and resolves the same dt again. Only a stable final
+/// candidate may commit reservoir history, physical time and accepted control.
+inline PetscErrorCode
+advance_fixed_total_molar_rate_controlled_physical_timestep_with_phase_transitions_3d(
+    MPI_Comm comm,
+    std::unique_ptr<
+        mpmc::flow_discretization_petsc::
+            PhaseTransitionRebuiltNaturalVariableSystem3D>*
+        accepted_system,
+    FixedTotalMolarRateWellSourceEvaluatorContext3D*
+        source_context,
+    double target_total_molar_rate_mol_per_s,
+    mpmc::flow_discretization_petsc::
+        PostSnesPhaseTransitionControllerBindings3D
+            transition_bindings,
+    const FixedTotalMolarRatePhysicalTimestepDriverOptions3D&
+        options,
+    mpmc::flow_discretization_petsc::
+        AcceptedPhysicalTimeClock3D*
+            clock,
+    AcceptedFixedTotalMolarRateWellControlState3D*
+        accepted_control_state,
+    std::optional<
+        FixedTotalMolarRatePhysicalTimestepDriverReport3D>*
+            report) {
+    namespace fdp =
+        mpmc::flow_discretization_petsc;
+    using namespace
+        fixed_total_molar_rate_timestep_driver_detail;
+
+    if (accepted_system == nullptr ||
+        *accepted_system == nullptr ||
+        source_context == nullptr ||
+        transition_bindings.scanner == nullptr ||
+        transition_bindings.rebuild_factory ==
+            nullptr ||
+        clock == nullptr ||
+        accepted_control_state == nullptr ||
+        report == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    report->reset();
+
+    const double entry_bhp =
+        accepted_control_state
+            ->bottom_hole_pressure_pa;
+    const auto entry_control =
+        accepted_control_state
+            ->control;
+    const double entry_dt =
+        clock->next_timestep_seconds();
+    if (!accepted_control_state->valid()) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    const auto policy_validation =
+        mpmc::well::
+            validate_single_well_control_policy(
+                target_total_molar_rate_mol_per_s,
+                options
+                    .minimum_bottom_hole_pressure_pa,
+                options
+                    .minimum_bhp_release_rate_margin_mol_per_s,
+                options
+                    .minimum_bhp_release_pressure_margin_pa);
+    if (policy_validation ==
+        mpmc::well::
+            SingleWellControlPolicyValidationStatus::
+                value_out_of_range) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+    if (policy_validation ==
+        mpmc::well::
+            SingleWellControlPolicyValidationStatus::
+                inconsistent_configuration) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    mpmc::well::SingleWellControlPolicy
+        control_policy;
+    try {
+        control_policy =
+            mpmc::well::
+                make_single_well_control_policy(
+                    target_total_molar_rate_mol_per_s,
+                    options
+                        .minimum_bottom_hole_pressure_pa,
+                    options
+                        .minimum_bhp_release_rate_margin_mol_per_s,
+                    options
+                        .minimum_bhp_release_pressure_margin_pa);
+    } catch (...) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    if (entry_control ==
+            FixedTotalMolarRatePhysicalTimestepControlMode3D::
+                minimum_bottom_hole_pressure &&
+        (!control_policy
+              .minimum_bhp_constraint
+              .has_value() ||
+         !same_timestep(
+             entry_bhp,
+             control_policy
+                 .minimum_bhp_constraint
+                 ->minimum_bottom_hole_pressure_pa))) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    if (!same_timestep(
+            (*accepted_system)
+                ->time_step_seconds(),
+            entry_dt)) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+
+    DriverContext3D control;
+    control.comm =
+        comm;
+    control.reservoir_system =
+        accepted_system->get();
+    control.source_context =
+        source_context;
+    control.control_policy =
+        control_policy;
+    control.target_total_molar_rate_mol_per_s =
+        target_total_molar_rate_mol_per_s;
+    control.entry_bottom_hole_pressure_pa =
+        entry_bhp;
+    control.entry_control =
+        entry_control;
+    control.minimum_bottom_hole_pressure_pa =
+        options.minimum_bottom_hole_pressure_pa;
+    control.minimum_bhp_release_rate_margin_mol_per_s =
+        options
+            .minimum_bhp_release_rate_margin_mol_per_s;
+    control.minimum_bhp_release_pressure_margin_pa =
+        options
+            .minimum_bhp_release_pressure_margin_pa;
+    control.adaptive_options =
+        &options.adaptive;
+    control.clock =
+        clock;
+    control.accepted_control_state =
+        accepted_control_state;
+    reset_control_generation_to_entry(
+        &control);
+
+    PhaseTransitionDriverContext3D phase;
+    phase.control =
+        &control;
+    phase.accepted_system =
+        accepted_system;
+    phase.transition_bindings =
+        transition_bindings;
+    phase.transition_options =
+        &options.phase_transition;
+    phase.entry_well =
+        source_context->well();
+
+    std::optional<
+        fdp::AdaptiveTimestepControllerReport3D>
+        adaptive_report;
+    PetscErrorCode error =
+        fdp::solve_adaptive_timestep_3d(
+            entry_dt,
+            options.adaptive,
+            {
+                &attempt_with_phase_transitions,
+                &phase,
+                &commit_with_phase_transitions,
+                &phase},
+            &adaptive_report);
+
+    const PetscErrorCode clear_error =
+        clear_pending(
+            &control);
+    if (error == PETSC_SUCCESS &&
+        clear_error != PETSC_SUCCESS) {
+        error =
+            clear_error;
+    }
+
+    if (error != PETSC_SUCCESS) {
+        return restore_phase_transition_entry(
+            &phase,
+            entry_dt,
+            error);
+    }
+    if (!adaptive_report.has_value()) {
+        return restore_phase_transition_entry(
+            &phase,
+            entry_dt,
+            PETSC_ERR_PLIB);
+    }
+
+    if (!adaptive_report->accepted()) {
+        const PetscErrorCode restore =
+            restore_phase_transition_entry(
+                &phase,
+                entry_dt,
+                PETSC_SUCCESS);
+        if (restore != PETSC_SUCCESS) {
+            return restore;
+        }
+
+        FixedTotalMolarRatePhysicalTimestepDriverReport3D
+            completed;
+        completed.adaptive =
+            std::move(
+                *adaptive_report);
+        completed.entry_bottom_hole_pressure_pa =
+            entry_bhp;
+        completed.accepted_bottom_hole_pressure_pa =
+            entry_bhp;
+        completed.entry_control =
+            entry_control;
+        completed.accepted_control =
+            entry_control;
+        if (!completed.adaptive
+                 .attempts.empty()) {
+            completed.phase_transition_restarts =
+                completed.adaptive
+                    .attempts.back()
+                    .result
+                    .phase_transition_restarts;
+        }
+        report->emplace(
+            std::move(completed));
+        return PETSC_SUCCESS;
+    }
+
+    if (!control.accepted_record.has_value() ||
+        !accepted_control_state->valid() ||
+        (control.minimum_bhp_active
+             ? !control
+                    .accepted_fixed_bhp_solve
+                    .has_value()
+             : !control
+                    .accepted_rate_solve
+                    .has_value())) {
+        return PETSC_ERR_PLIB;
+    }
+
+    FixedTotalMolarRatePhysicalTimestepDriverReport3D
+        completed;
+    completed.adaptive =
+        std::move(
+            *adaptive_report);
+    completed.accepted_record =
+        std::move(
+            control.accepted_record);
+    completed.accepted_solve =
+        std::move(
+            control.accepted_rate_solve);
+    completed.accepted_fixed_bhp_solve =
+        std::move(
+            control.accepted_fixed_bhp_solve);
+    completed.discarded_rate_control_candidate =
+        control.switch_trigger_rate_candidate;
+    completed.discarded_minimum_bhp_candidate =
+        control.discarded_minimum_bhp_candidate;
+    completed.discarded_rate_reactivation_candidate =
+        control.discarded_rate_reactivation_candidate;
+    completed.minimum_bhp_probe_total_molar_rate_mol_per_s =
+        control
+            .minimum_bhp_probe_total_molar_rate_mol_per_s;
+    completed.minimum_bhp_to_rate_reactivation_attempted =
+        control
+            .minimum_bhp_to_rate_reactivation_attempted;
+    completed.minimum_bhp_to_rate_reactivation_accepted =
+        control
+            .minimum_bhp_to_rate_reactivation_accepted;
+    completed.entry_bottom_hole_pressure_pa =
+        entry_bhp;
+    completed.accepted_bottom_hole_pressure_pa =
+        accepted_control_state
+            ->bottom_hole_pressure_pa;
+    completed.entry_control =
+        entry_control;
+    completed.accepted_control =
+        accepted_control_state
+            ->control;
+    completed.rate_to_bhp_switch_triggered =
+        control
+            .rate_to_bhp_switch_triggered;
+    completed.phase_transition_restarts =
+        completed.accepted_record
+            ->phase_transition_restarts;
+    report->emplace(
+        std::move(completed));
+    return PETSC_SUCCESS;
+}
+
+/// Compatibility single-step entry retaining the former accepted-BHP scalar
+/// contract. It intentionally reconstructs fixed-rate mode for every call.
+/// Callers that need control-mode persistence across physical timesteps must
+/// use AcceptedFixedTotalMolarRateWellControlState3D.
+inline PetscErrorCode
+advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+    MPI_Comm comm,
+    mpmc::flow_discretization_petsc::
+        PhaseTransitionRebuiltNaturalVariableSystem3D*
+            reservoir_system,
+    FixedTotalMolarRateWellSourceEvaluatorContext3D*
+        source_context,
+    double target_total_molar_rate_mol_per_s,
+    const FixedTotalMolarRatePhysicalTimestepDriverOptions3D&
+        options,
+    mpmc::flow_discretization_petsc::
+        AcceptedPhysicalTimeClock3D*
+            clock,
+    double* accepted_bottom_hole_pressure_pa,
+    std::optional<
+        FixedTotalMolarRatePhysicalTimestepDriverReport3D>*
+            report) {
+    if (accepted_bottom_hole_pressure_pa ==
+        nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    AcceptedFixedTotalMolarRateWellControlState3D
+        accepted_state;
+    try {
+        accepted_state =
+            AcceptedFixedTotalMolarRateWellControlState3D::
+                fixed_total_molar_rate(
+                    *accepted_bottom_hole_pressure_pa);
+    } catch (...) {
+        return PETSC_ERR_ARG_OUTOFRANGE;
+    }
+
+    const PetscErrorCode error =
+        advance_fixed_total_molar_rate_controlled_physical_timestep_3d(
+            comm,
+            reservoir_system,
+            source_context,
+            target_total_molar_rate_mol_per_s,
+            options,
+            clock,
+            &accepted_state,
+            report);
+    if (error == PETSC_SUCCESS) {
+        *accepted_bottom_hole_pressure_pa =
+            accepted_state
+                .bottom_hole_pressure_pa;
+    }
+    return error;
+}
+
+} // namespace mpmc::well_discretization_petsc
+
+#endif // MPMC_WELL_DISCRETIZATION_PETSC_FIXED_TOTAL_MOLAR_RATE_TIMESTEP_DRIVER_HPP

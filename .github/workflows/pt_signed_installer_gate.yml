@@ -1,214 +1,135 @@
 name: PT signed installer gate
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'products/pt/CMakeLists.txt'
-      - 'products/pt/product-staging-manifest.json.in'
-      - 'products/pt/installer/**'
-      - 'products/pt/tests/test_product_boundary.py'
-      - '.github/workflows/pt_signed_installer_gate.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: pt-signed-installer-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["products/pt/CMakeLists.txt","products/pt/product-staging-manifest.json.in","products/pt/installer/**","products/pt/tests/test_product_boundary.py",".github/workflows/pt_signed_installer_gate.yml"]'
   candidate:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }} unsigned candidate + signing readiness
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x64 DEB
-            os: ubuntu-24.04
-            profile: linux-x86_64-release
-            target: linux-x86_64
-            extension: deb
-          - name: Windows x64 MSI
-            os: windows-2022
-            profile: windows-x86_64-release
-            target: windows-x86_64
-            extension: msi
-          - name: macOS arm64 PKG
-            os: macos-15
-            profile: macos-armv8-release
-            target: macos-arm64
-            extension: pkg
-
+        - name: Linux x64 DEB
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          profile: linux-x86_64-release
+          target: linux-x86_64
+          extension: deb
+        - name: Windows x64 MSI
+          os: windows-2022
+          runner: windows-2022
+          profile: windows-x86_64-release
+          target: windows-x86_64
+          extension: msi
+        - name: macOS arm64 PKG
+          os: macos-15
+          runner: macos-15
+          profile: macos-armv8-release
+          target: macos-arm64
+          extension: pkg
     env:
       CONAN_HOME: ${{ github.workspace }}/build/conan-home
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore staging-proven dependency cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+        fail-on-cache-miss: true
+    - name: Resolve locked graph offline
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ matrix.profile }} --no-remote --build=never --output-folder=build/conan-generators
+        --format=json > build/conan-graph.json
+    - name: Validate restore-only dependency evidence (RESTORE_ONLY_DEPENDENCIES_OK)
+      run: python products/pt/scripts/prepare_conan_metadata.py --graph=build/conan-graph.json --lockfile=products/pt/conan.lock --output=build/conan-metadata --profile-id=${{
+        matrix.profile }} --conan-version=2.32.0
+    - name: Configure exact PT staging payload
+      run: cmake -C build/conan-metadata/dependency-metadata.cmake -S products/pt -B build/pt-product -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace
+        }}/build/conan-generators/conan_toolchain.cmake -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }} -DBUILD_TESTING=ON
+    - name: Build PT payload and staging probes
+      run: cmake --build build/pt-product --config Release --parallel 2
+    - name: Re-run installed mTLS and contract regressions before packaging
+      run: ctest --test-dir build/pt-product -C Release --output-on-failure --no-tests=error
+    - name: Configure opaque staging-tree packager
+      run: cmake -S products/pt/installer -B build/pt-installer -DMPMC_PT_STAGING_DIR=${{ github.workspace }}/build/pt-product/stage -DMPMC_PT_INSTALLER_TARGET=${{
+        matrix.target }}
+    - name: Build native installer candidate
+      run: cpack --config build/pt-installer/CPackConfig.cmake -B build/pt-installer-package --verbose
+    - name: Write fail-closed installer candidate provenance
+      run: python products/pt/installer/scripts/write_candidate_manifest.py --stage build/pt-product/stage --artifact build/pt-installer-package/mpmc-pt-0.1.0-${{
+        matrix.target }}.${{ matrix.extension }} --target ${{ matrix.target }} --expected-revision ${{ github.sha }} --workflow-run-id ${{ github.run_id }} --workflow-run-attempt
+        ${{ github.run_attempt }} --output build/pt-installer-package/installer-candidate-provenance.json
+    - name: Validate DEB payload and Linux release-signing tools
+      if: runner.os == 'Linux'
+      shell: bash
+      run: 'set -euo pipefail
 
-      - name: Install pinned Conan client
-        run: python -m pip install --disable-pip-version-check conan==2.32.0
+        package=build/pt-installer-package/mpmc-pt-0.1.0-linux-x86_64.deb
 
-      - name: Restore staging-proven dependency cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ env.CONAN_HOME }}
-          key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
-          fail-on-cache-miss: true
+        dpkg-deb --info "$package"
 
-      - name: Resolve locked graph offline
-        run: >-
-          conan install products/pt
-          --lockfile=products/pt/conan.lock
-          --profile:all=products/pt/conan/profiles/${{ matrix.profile }}
-          --no-remote
-          --build=never
-          --output-folder=build/conan-generators
-          --format=json
-          > build/conan-graph.json
+        test "$(dpkg-deb --field "$package" Package)" = ''mpmc-pt''
 
-      - name: Validate restore-only dependency evidence (RESTORE_ONLY_DEPENDENCIES_OK)
-        run: >-
-          python products/pt/scripts/prepare_conan_metadata.py
-          --graph=build/conan-graph.json
-          --lockfile=products/pt/conan.lock
-          --output=build/conan-metadata
-          --profile-id=${{ matrix.profile }}
-          --conan-version=2.32.0
+        dpkg-deb --contents "$package" | tee build/deb-payload.txt
 
-      - name: Configure exact PT staging payload
-        run: >-
-          cmake
-          -C build/conan-metadata/dependency-metadata.cmake
-          -S products/pt
-          -B build/pt-product
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
-          -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }}
-          -DBUILD_TESTING=ON
+        grep --fixed-strings ''mpmc_pt_service_host'' build/deb-payload.txt
 
-      - name: Build PT payload and staging probes
-        run: cmake --build build/pt-product --config Release --parallel 2
+        grep --fixed-strings ''product-staging-manifest.json'' build/deb-payload.txt
 
-      - name: Re-run installed mTLS and contract regressions before packaging
-        run: >-
-          ctest --test-dir build/pt-product -C Release
-          --output-on-failure --no-tests=error
+        grep --fixed-strings ''candidate-notice.txt'' build/deb-payload.txt
 
-      - name: Configure opaque staging-tree packager
-        run: >-
-          cmake
-          -S products/pt/installer
-          -B build/pt-installer
-          -DMPMC_PT_STAGING_DIR=${{ github.workspace }}/build/pt-product/stage
-          -DMPMC_PT_INSTALLER_TARGET=${{ matrix.target }}
+        extracted=$(mktemp -d)
 
-      - name: Build native installer candidate
-        run: >-
-          cpack
-          --config build/pt-installer/CPackConfig.cmake
-          -B build/pt-installer-package
-          --verbose
+        dpkg-deb --extract "$package" "$extracted"
 
-      - name: Write fail-closed installer candidate provenance
-        run: >-
-          python products/pt/installer/scripts/write_candidate_manifest.py
-          --stage build/pt-product/stage
-          --artifact build/pt-installer-package/mpmc-pt-0.1.0-${{ matrix.target }}.${{ matrix.extension }}
-          --target ${{ matrix.target }}
-          --expected-revision ${{ github.sha }}
-          --workflow-run-id ${{ github.run_id }}
-          --workflow-run-attempt ${{ github.run_attempt }}
-          --output build/pt-installer-package/installer-candidate-provenance.json
+        test -x "$extracted/opt/mpmc-pt/bin/mpmc_pt_service_host"
 
-      - name: Validate DEB payload and Linux release-signing tools
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          package=build/pt-installer-package/mpmc-pt-0.1.0-linux-x86_64.deb
-          dpkg-deb --info "$package"
-          test "$(dpkg-deb --field "$package" Package)" = 'mpmc-pt'
-          dpkg-deb --contents "$package" | tee build/deb-payload.txt
-          grep --fixed-strings 'mpmc_pt_service_host' build/deb-payload.txt
-          grep --fixed-strings 'product-staging-manifest.json' build/deb-payload.txt
-          grep --fixed-strings 'candidate-notice.txt' build/deb-payload.txt
-          extracted=$(mktemp -d)
-          dpkg-deb --extract "$package" "$extracted"
-          test -x "$extracted/opt/mpmc-pt/bin/mpmc_pt_service_host"
-          gpg --version
+        gpg --version
 
-      - name: Validate MSI payload and Windows release-signing tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $package = (Resolve-Path 'build/pt-installer-package/mpmc-pt-0.1.0-windows-x86_64.msi').Path
-          $signature = Get-AuthenticodeSignature -FilePath $package
-          if ($signature.Status -ne 'NotSigned') {
-            throw "Engineering candidate unexpectedly has signature status $($signature.Status)"
-          }
-          $signTool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
-          if ($null -eq $signTool) {
-            throw 'Windows SDK SignTool is unavailable'
-          }
-          Write-Host "WINDOWS_SIGNTOOL_READY=$($signTool.FullName)"
-          $destination = Join-Path $env:RUNNER_TEMP 'mpmc-pt-msi-administrative-image'
-          New-Item -ItemType Directory -Force -Path $destination | Out-Null
-          $arguments = @('/a', $package, '/qn', "TARGETDIR=$destination")
-          $process = Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            throw "MSI administrative extraction failed: $($process.ExitCode)"
-          }
-          foreach ($name in @(
-            'mpmc_pt_service_host.exe',
-            'product-staging-manifest.json',
-            'candidate-notice.txt'
-          )) {
-            $matches = @(Get-ChildItem -Path $destination -Recurse -File -Filter $name)
-            if ($matches.Count -ne 1) {
-              throw "MSI payload expected one $name, found $($matches.Count)"
-            }
-          }
-
-      - name: Validate PKG payload and macOS release-signing tools
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          package=build/pt-installer-package/mpmc-pt-0.1.0-macos-arm64.pkg
-          xar -tf "$package" | tee build/pkg-archive.txt
-          grep --fixed-strings 'Distribution' build/pkg-archive.txt
-          grep --fixed-strings 'Resources/License.txt' build/pkg-archive.txt
-          component=$(find \
-            build/pt-installer-package/_CPack_Packages/Darwin/productbuild \
-            -path '*/Contents/Packages/*' -type f \
-            -name 'MPMC PT Runtime' -print -quit)
-          test -n "$component"
-          expanded="$RUNNER_TEMP/mpmc-pt-component-expanded"
-          test ! -e "$expanded"
-          pkgutil --expand-full "$component" "$expanded"
-          find "$expanded" -type f | sort | tee build/pkg-payload.txt
-          grep --fixed-strings 'mpmc_pt_service_host' build/pkg-payload.txt
-          grep --fixed-strings 'product-staging-manifest.json' build/pkg-payload.txt
-          grep --fixed-strings 'candidate-notice.txt' build/pkg-payload.txt
-          host=$(find "$expanded" -type f -name mpmc_pt_service_host -print -quit)
-          test -n "$host"
-          test -x "$host"
-          command -v codesign
-          command -v productsign
-          xcrun --find notarytool
-          xcrun --find stapler
-
-      - name: Upload non-release installer evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: mpmc-pt-${{ matrix.target }}-unsigned-installer-candidate
-          path: build/pt-installer-package
-          if-no-files-found: error
-          retention-days: 7
+        '
+    - name: Validate MSI payload and Windows release-signing tools
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: "$ErrorActionPreference = 'Stop'\n$package = (Resolve-Path 'build/pt-installer-package/mpmc-pt-0.1.0-windows-x86_64.msi').Path\n$signature = Get-AuthenticodeSignature\
+        \ -FilePath $package\nif ($signature.Status -ne 'NotSigned') {\n  throw \"Engineering candidate unexpectedly has signature status $($signature.Status)\"\n\
+        }\n$signTool = Get-ChildItem -Path \"${env:ProgramFiles(x86)}\\Windows Kits\\10\\bin\\*\\x64\\signtool.exe\" | Sort-Object FullName -Descending | Select-Object\
+        \ -First 1\nif ($null -eq $signTool) {\n  throw 'Windows SDK SignTool is unavailable'\n}\nWrite-Host \"WINDOWS_SIGNTOOL_READY=$($signTool.FullName)\"\n$destination\
+        \ = Join-Path $env:RUNNER_TEMP 'mpmc-pt-msi-administrative-image'\nNew-Item -ItemType Directory -Force -Path $destination | Out-Null\n$arguments = @('/a',\
+        \ $package, '/qn', \"TARGETDIR=$destination\")\n$process = Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -PassThru\nif ($process.ExitCode\
+        \ -ne 0) {\n  throw \"MSI administrative extraction failed: $($process.ExitCode)\"\n}\nforeach ($name in @(\n  'mpmc_pt_service_host.exe',\n  'product-staging-manifest.json',\n\
+        \  'candidate-notice.txt'\n)) {\n  $matches = @(Get-ChildItem -Path $destination -Recurse -File -Filter $name)\n  if ($matches.Count -ne 1) {\n    throw \"\
+        MSI payload expected one $name, found $($matches.Count)\"\n  }\n}\n"
+    - name: Validate PKG payload and macOS release-signing tools
+      if: runner.os == 'macOS'
+      shell: bash
+      run: "set -euo pipefail\npackage=build/pt-installer-package/mpmc-pt-0.1.0-macos-arm64.pkg\nxar -tf \"$package\" | tee build/pkg-archive.txt\ngrep --fixed-strings\
+        \ 'Distribution' build/pkg-archive.txt\ngrep --fixed-strings 'Resources/License.txt' build/pkg-archive.txt\ncomponent=$(find \\\n  build/pt-installer-package/_CPack_Packages/Darwin/productbuild\
+        \ \\\n  -path '*/Contents/Packages/*' -type f \\\n  -name 'MPMC PT Runtime' -print -quit)\ntest -n \"$component\"\nexpanded=\"$RUNNER_TEMP/mpmc-pt-component-expanded\"\
+        \ntest ! -e \"$expanded\"\npkgutil --expand-full \"$component\" \"$expanded\"\nfind \"$expanded\" -type f | sort | tee build/pkg-payload.txt\ngrep --fixed-strings\
+        \ 'mpmc_pt_service_host' build/pkg-payload.txt\ngrep --fixed-strings 'product-staging-manifest.json' build/pkg-payload.txt\ngrep --fixed-strings 'candidate-notice.txt'\
+        \ build/pkg-payload.txt\nhost=$(find \"$expanded\" -type f -name mpmc_pt_service_host -print -quit)\ntest -n \"$host\"\ntest -x \"$host\"\ncommand -v codesign\n\
+        command -v productsign\nxcrun --find notarytool\nxcrun --find stapler\n"
+    - name: Upload non-release installer evidence
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-${{ matrix.target }}-unsigned-installer-candidate
+        path: build/pt-installer-package
+        if-no-files-found: error
+        retention-days: 7
+'on':
+  workflow_dispatch: null

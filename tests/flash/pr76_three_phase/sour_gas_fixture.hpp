@@ -34,6 +34,12 @@ inline constexpr std::array<double, 6> critical_pressures_pa{
 inline constexpr std::array<double, 6> acentric_factors{
     0.225, 0.039, 0.081, 0.01141, 0.10574, 0.15813};
 
+/// NIST Chemistry WebBook SRD 69 molecular weights converted g/mol -> kg/mol.
+/// These records are transport/caloric prerequisites only; they do not alter
+/// the Li-Firoozabadi PR76 EOS parameter snapshot.
+inline constexpr std::array<double, 6> molar_mass_kg_per_mol{
+    0.0440095, 0.0280134, 0.034081, 0.0160425, 0.0300690, 0.0440956};
+
 inline th::Provenance literature_source(std::string locator) {
     return {
         th::SourceKind::literature,
@@ -43,6 +49,17 @@ inline th::Provenance literature_source(std::string locator) {
         "PR76 acid-gas three-phase model benchmark; literature-defined engineering state, not experimental validation",
         "Table values transcribed exactly; critical pressures bar * 100000 -> Pa",
         "Table 3 supplies component data/nonzero kij; Table 9 selects T=178.8 K, P=20 bar, n(CO2)=0.5"};
+}
+
+inline th::Provenance nist_molar_mass_source() {
+    return {
+        th::SourceKind::database,
+        "https://webbook.nist.gov/chemistry/",
+        "NIST Chemistry WebBook SRD 69",
+        "Molecular weight records for CO2, N2, H2S, CH4, C2H6 and C3H8",
+        "Transport/caloric prerequisite; not a Li-Firoozabadi Table-3 EOS datum",
+        "NIST SRD 69 values transcribed in canonical component order",
+        "NIST Standard Reference Database citation retained in repository provenance"};
 }
 
 inline th::SourcedScalar scalar(
@@ -99,6 +116,7 @@ inline th::Pr76Phase<double> model(const std::vector<std::string>& order) {
         "Table 3: columns labelled nonzero binary interaction coefficients");
     const auto zero_source = literature_source(
         "Table 3 lists nonzero kij only; every unlisted selected pair is recorded explicitly as zero");
+    const auto mass_source = nist_molar_mass_source();
 
     std::vector<th::Component> catalog;
     catalog.reserve(canonical_ids.size());
@@ -111,7 +129,16 @@ inline th::Pr76Phase<double> model(const std::vector<std::string>& order) {
     for (std::size_t i = 0; i < canonical_ids.size(); ++i) {
         const std::string id{canonical_ids[i]};
         catalog.push_back({
-            id, id, th::ComponentKind::pure, pure_source, {}});
+            id,
+            id,
+            th::ComponentKind::pure,
+            pure_source,
+            scalar(
+                molar_mass_kg_per_mol[i],
+                th::Unit::kilogram_per_mole,
+                mass_source,
+                "g/mol",
+                "g/mol * 1e-3 -> kg/mol")});
         input.pure.push_back({
             id,
             scalar(critical_temperatures[i], th::Unit::kelvin, pure_source),

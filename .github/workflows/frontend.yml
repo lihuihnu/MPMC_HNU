@@ -1,22 +1,18 @@
 name: Frontend
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'api/**'
-      - 'frontend/**'
-      - 'modules/model_configuration_grpc/proto/**'
-      - 'buf.model.yaml'
-      - '.github/workflows/frontend.yml'
-      - '.gitignore'
-  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: frontend-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["api/**","frontend/**","modules/model_configuration_grpc/proto/**","buf.model.yaml",".github/workflows/frontend.yml",".gitignore"]'
   verify:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Node 24 · typecheck, test, build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -24,34 +20,33 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact frontend dependencies
+      run: npm ci --ignore-scripts --no-audit --no-fund
+    - name: Lint Protobuf contract
+      run: 'npm run proto:format-check
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: '24.21.0'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+        npm run proto:lint
 
-      - name: Install exact frontend dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        '
+    - name: Verify generated TypeScript
+      run: 'npm run proto:generate
 
-      - name: Lint Protobuf contract
-        run: |
-          npm run proto:format-check
-          npm run proto:lint
+        git diff --exit-code -- src/gen
 
-      - name: Verify generated TypeScript
-        run: |
-          npm run proto:generate
-          git diff --exit-code -- src/gen
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
+        '
+    - name: Typecheck
+      run: npm run typecheck
+    - name: Test
+      run: npm test
+    - name: Build
+      run: npm run build
+'on':
+  workflow_dispatch: null

@@ -7,7 +7,7 @@ project(mpmc_ad_jacobian_tests LANGUAGES CXX)
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../modules/ad" ad-library)
 enable_testing()
 
-add_executable(mpmc_ad_jacobian_tests jacobian_test.cpp header_self_contained.cpp)
+add_executable(mpmc_ad_jacobian_tests jacobian_test.cpp nested_hessian_test.cpp header_self_contained.cpp)
 target_link_libraries(mpmc_ad_jacobian_tests PRIVATE mpmc::ad)
 set_target_properties(mpmc_ad_jacobian_tests PROPERTIES CXX_EXTENSIONS OFF)
 if(MSVC)
@@ -32,7 +32,7 @@ endif()
 set(jacobian_cases
     identity_seeds rectangular_analytic constants_unused_inputs single_input_output
     callable_forwarding repeated_calls_ownership exception_propagation
-    nonfinite_inputs output_passthrough header_odr)
+    nonfinite_inputs output_passthrough nested_hessian header_odr)
 foreach(case IN LISTS jacobian_cases)
     add_test(NAME ad.jacobian.${case} COMMAND mpmc_ad_jacobian_tests ${case})
     set_tests_properties(ad.jacobian.${case} PROPERTIES LABELS "ad;ad.jacobian;unit" TIMEOUT 30)

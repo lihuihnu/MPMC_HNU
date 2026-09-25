@@ -1,30 +1,11 @@
 name: SW92 Profile-C top-level PT
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_split.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase_closure.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_pt.hpp'
-      - 'modules/flash/sw92_phase_assigned_pt.md'
-      - 'modules/flash/sw92_authoritative_three_phase_audit.md'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'tests/flash/sw92_family_vle/**'
-      - 'tests/flash/sw92_phase_assigned_joint/**'
-      - 'tests/flash/sw92_phase_assigned_h_side_witness/**'
-      - 'tests/flash/sw92_phase_assigned_three_phase/**'
-      - 'tests/flash/sw92_phase_assigned_three_phase_closure/**'
-      - 'tests/flash/sw92_phase_assigned_no_w/**'
-      - 'tests/flash/sw92_phase_assigned_pt/**'
-      - '.github/workflows/sw92_phase_assigned_pt.yml'
+  workflow_call:
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
@@ -33,7 +14,7 @@ concurrency:
 jobs:
   pt:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -41,16 +22,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'
@@ -62,16 +46,28 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Select Python interpreter
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Regenerate independent Decimal references
         run: |
-          python tests/flash/sw92_family_vle/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_joint/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_joint/reference_c2_domain_decimal.py
-          python tests/flash/sw92_phase_assigned_h_side_witness/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_three_phase/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_three_phase_closure/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_no_w/reference_decimal.py
-          python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_family_vle/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_joint/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_joint/reference_c2_domain_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_h_side_witness/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_three_phase/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_three_phase_closure/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_no_w/reference_decimal.py
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
 
       - name: Configure top-level Profile-C PT
         run: |

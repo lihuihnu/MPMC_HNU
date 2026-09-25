@@ -1,0 +1,51 @@
+name: Flow-discretization PETSc/MPI owner exchange
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-discretization-petsc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  distributed:
+    name: PETSc 3.19.6 distributed conservation 2-rank
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned PETSc and MPI runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpetsc-real3.19-dev=3.19.6+dfsg1-2.2ubuntu2 \
+            openmpi-bin
+          test "$(pkg-config --modversion PETSc)" = "3.19.6"
+          command -v mpiexec
+
+      - name: Configure flow-discretization PETSc tests
+        run: |
+          cmake -S tests/flow_discretization/petsc \
+            -B build/flow-discretization-petsc \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++
+
+      - name: Build flow-discretization PETSc tests
+        run: |
+          cmake --build build/flow-discretization-petsc \
+            --target mpmc_flow_discretization_petsc_tests \
+            --parallel 2
+
+      - name: Run distributed conservation test
+        run: |
+          ctest --test-dir build/flow-discretization-petsc \
+            -R '^flow_discretization[.]petsc[.]distributed_owner_targeted_conservation$' \
+            --verbose \
+            --no-tests=error

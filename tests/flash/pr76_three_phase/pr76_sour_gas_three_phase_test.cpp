@@ -2,6 +2,7 @@
 #include <mpmc/flash/pr76_pt_flash_backend.hpp>
 
 #include "sour_gas_fixture.hpp"
+#include <fugacity_adapter_regression.hpp>
 
 #include <algorithm>
 #include <array>
@@ -16,6 +17,8 @@
 
 namespace {
 namespace fl = mpmc::flash;
+namespace fo = mpmc::flow;
+namespace fa = mpmc::test::flow_adapter;
 namespace fx = pr76_sour_gas_test;
 namespace ref = pr76_sour_gas_reference;
 using Vec = std::vector<double>;
@@ -355,6 +358,41 @@ void component_permutation() {
     require_closed_max3(second, second_order);
 }
 
+
+void flow_fugacity_adapter_on_accepted_three_phase() {
+    const auto order = fx::canonical_order();
+    const auto result = solve_max3(order, fx::feed(order));
+    require_closed_max3(result, order);
+    const auto& state = *result.three_phase_candidate();
+
+    const auto model = fx::model(order);
+    std::array<
+        fo::Pr76SelectedPhaseFugacityEvaluator3P<double>::Selection,
+        3>
+        selections{};
+    std::array<double, 3> fractions{};
+    std::array<Vec, 3> compositions;
+    for (std::size_t phase = 0U; phase < 3U; ++phase) {
+        selections[phase].root_index =
+            state.phases[phase].activity.branch;
+        fractions[phase] =
+            state.phases[phase].mole_phase_fraction;
+        compositions[phase] =
+            state.phases[phase].composition;
+    }
+
+    fo::Pr76SelectedPhaseFugacityEvaluator3P<double>
+        adapter{model, selections};
+    fa::verify_accepted_state_and_jacobian(
+        ref::pressure_pa,
+        ref::temperature_k,
+        fractions,
+        compositions,
+        adapter,
+        2.0e-9,
+        {5.0e-10, 2.0e-5, 5.0e-5, 2.0e-3});
+}
+
 void backend_publication() {
     const auto order = fx::canonical_order();
     const auto model = fx::model(order);
@@ -437,6 +475,7 @@ int main(int argc, char** argv) {
         else if (name == "interior_reweighted") interior_reweighted_three_phase();
         else if (name == "component_permutation") component_permutation();
         else if (name == "backend_publication") backend_publication();
+        else if (name == "flow_fugacity_adapter") flow_fugacity_adapter_on_accepted_three_phase();
         else throw std::invalid_argument("unknown test name");
         std::cout << "[PASS] " << name << '\n';
         return 0;

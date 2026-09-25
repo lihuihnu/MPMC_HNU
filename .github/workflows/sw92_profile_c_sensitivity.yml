@@ -1,22 +1,16 @@
 name: SW92 Profile-C implicit sensitivity
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/ad/**'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/sw92_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/pt_sensitivity_detail.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/sw92_profile_c_sensitivity_local.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_profile_c_sensitivity.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp'
-      - 'tests/flash/sw92_profile_c_sensitivity/**'
-      - 'tests/flash/sw92_phase_assigned_pt/physical_sample6.hpp'
-      - 'tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py'
-      - 'tests/thermodynamics/sw92/**'
-      - '.github/workflows/sw92_profile_c_sensitivity.yml'
+  workflow_call:
+    inputs:
+      dependencies_prevalidated:
+        description: Central CI already validated audited downstream dependencies.
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -29,7 +23,7 @@ concurrency:
 jobs:
   sensitivity:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -37,16 +31,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'
@@ -58,8 +55,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Select Python interpreter
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Regenerate physical Sample-6 oracle
-        run: python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
+        if: ${{ !inputs.dependencies_prevalidated }}
+        run: |
+          "$MPMC_PYTHON" tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
 
       - name: Configure SW92 Profile-C sensitivity regression
         run: |
@@ -77,6 +88,7 @@ jobs:
         run: ctest --test-dir build/sw92-profile-c-sensitivity -C ${{ matrix.config }} -R '^flash[.]sw92_profile_c_sensitivity[.]' --verbose --no-tests=error
 
       - name: Configure affected SW92 thermodynamics regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
@@ -85,11 +97,14 @@ jobs:
           cmake -S tests/thermodynamics/sw92 -B build/sw92-thermodynamics \
             "${config_arg[@]}" ${{ matrix.compiler }}
       - name: Build affected SW92 thermodynamics regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: cmake --build build/sw92-thermodynamics --config ${{ matrix.config }} --parallel 2
       - name: Run affected SW92 thermodynamics regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: ctest --test-dir build/sw92-thermodynamics -C ${{ matrix.config }} --verbose --no-tests=error
 
       - name: Configure affected Profile-C publication regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: |
           config_arg=()
           if [ "${{ runner.os }}" != Windows ]; then
@@ -99,6 +114,8 @@ jobs:
             -B build/sw92-profile-c-phase-set \
             "${config_arg[@]}" ${{ matrix.compiler }}
       - name: Build affected Profile-C publication regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: cmake --build build/sw92-profile-c-phase-set --config ${{ matrix.config }} --parallel 2
       - name: Run affected Profile-C publication regression
+        if: ${{ !inputs.dependencies_prevalidated }}
         run: ctest --test-dir build/sw92-profile-c-phase-set -C ${{ matrix.config }} -R '^flash[.]sw92_profile_c_phase_set[.]' --verbose --no-tests=error

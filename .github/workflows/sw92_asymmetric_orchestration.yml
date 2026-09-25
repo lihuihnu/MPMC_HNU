@@ -1,103 +1,79 @@
 name: SW92 asymmetric orchestration
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp'
-      - 'modules/flash/CMakeLists.txt'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'modules/thermodynamics/**/CMakeLists.txt'
-      - 'tests/flash/sw92_asymmetric_stability/**'
-      - 'tests/flash/sw92_asymmetric_fixed_pair/**'
-      - 'tests/flash/sw92_asymmetric_orchestration/**'
-      - '.github/workflows/sw92_asymmetric_orchestration.yml'
-  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: sw92-asymmetric-orchestration-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["tests/support/sw92/test_support.hpp","modules/flash/include/mpmc/flash/pt_stability.hpp","modules/flash/include/mpmc/flash/rachford_rice.hpp","modules/flash/include/mpmc/flash/sw92_stability.hpp","modules/flash/include/mpmc/flash/sw92_asymmetric_stability.hpp","modules/flash/include/mpmc/flash/sw92_asymmetric_fixed_pair.hpp","modules/flash/include/mpmc/flash/sw92_asymmetric_orchestration.hpp","modules/flash/CMakeLists.txt","modules/thermodynamics/**/*.hpp","modules/thermodynamics/**/CMakeLists.txt","tests/flash/sw92_asymmetric_stability/**","tests/flash/sw92_asymmetric_fixed_pair/**","tests/flash/sw92_asymmetric_orchestration/**",".github/workflows/sw92_asymmetric_orchestration.yml"]'
   orchestration:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            config: Debug
-            compiler: '-DCMAKE_CXX_COMPILER=g++'
-            sanitizer: 'ON'
-          - name: Clang Release
-            os: ubuntu-24.04
-            config: Release
-            compiler: '-DCMAKE_CXX_COMPILER=clang++'
-            sanitizer: 'OFF'
-          - name: MSVC Release
-            os: windows-2022
-            config: Release
-            compiler: ''
-            sanitizer: 'OFF'
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure Gate 3B.2 orchestration increment
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_orchestration\
+        \ -B build/sw92-asymmetric-orchestration \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_ORCHESTRATION_ENABLE_SANITIZERS=${{\
+        \ matrix.sanitizer }}\n"
+    - name: Build Gate 3B.2 orchestration regression
+      run: cmake --build build/sw92-asymmetric-orchestration --target mpmc_sw92_asymmetric_orchestration_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run Gate 3B.2 orchestration increment
+      run: ctest --test-dir build/sw92-asymmetric-orchestration -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_orchestration[.]' --verbose --no-tests=error
+    - name: Configure affected Gate 3B.1 fixed pair
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_fixed_pair\
+        \ -B build/sw92-asymmetric-fixed-pair \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_FIXED_PAIR_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build affected Gate 3B.1 fixed pair
+      run: cmake --build build/sw92-asymmetric-fixed-pair --target mpmc_sw92_asymmetric_fixed_pair_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected Gate 3B.1 fixed pair
+      run: ctest --test-dir build/sw92-asymmetric-fixed-pair -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_fixed_pair[.]' --verbose --no-tests=error
+    - name: Configure affected Gate 3A asymmetric stability
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_stability\
+        \ -B build/sw92-asymmetric-stability \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build affected Gate 3A asymmetric stability
+      run: cmake --build build/sw92-asymmetric-stability --target mpmc_sw92_asymmetric_stability_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected Gate 3A asymmetric stability
+      run: ctest --test-dir build/sw92-asymmetric-stability -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_stability[.]' --verbose --no-tests=error
+    - name: Regenerate independent Decimal references
+      run: 'python tests/flash/sw92_asymmetric_stability/reference_decimal.py
 
-      - name: Configure Gate 3B.2 orchestration increment
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then
-            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
-          fi
-          cmake -S tests/flash/sw92_asymmetric_orchestration -B build/sw92-asymmetric-orchestration \
-            "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_ASYMMETRIC_ORCHESTRATION_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build Gate 3B.2 orchestration regression
-        run: cmake --build build/sw92-asymmetric-orchestration --target mpmc_sw92_asymmetric_orchestration_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run Gate 3B.2 orchestration increment
-        run: ctest --test-dir build/sw92-asymmetric-orchestration -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_orchestration[.]' --verbose --no-tests=error
+        python tests/flash/sw92_asymmetric_fixed_pair/reference_decimal.py
 
-      - name: Configure affected Gate 3B.1 fixed pair
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then
-            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
-          fi
-          cmake -S tests/flash/sw92_asymmetric_fixed_pair -B build/sw92-asymmetric-fixed-pair \
-            "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_ASYMMETRIC_FIXED_PAIR_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build affected Gate 3B.1 fixed pair
-        run: cmake --build build/sw92-asymmetric-fixed-pair --target mpmc_sw92_asymmetric_fixed_pair_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run affected Gate 3B.1 fixed pair
-        run: ctest --test-dir build/sw92-asymmetric-fixed-pair -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_fixed_pair[.]' --verbose --no-tests=error
-
-      - name: Configure affected Gate 3A asymmetric stability
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then
-            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
-          fi
-          cmake -S tests/flash/sw92_asymmetric_stability -B build/sw92-asymmetric-stability \
-            "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_ASYMMETRIC_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build affected Gate 3A asymmetric stability
-        run: cmake --build build/sw92-asymmetric-stability --target mpmc_sw92_asymmetric_stability_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run affected Gate 3A asymmetric stability
-        run: ctest --test-dir build/sw92-asymmetric-stability -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_stability[.]' --verbose --no-tests=error
-
-      - name: Regenerate independent Decimal references
-        run: |
-          python tests/flash/sw92_asymmetric_stability/reference_decimal.py
-          python tests/flash/sw92_asymmetric_fixed_pair/reference_decimal.py
+        '
+'on':
+  workflow_dispatch: null

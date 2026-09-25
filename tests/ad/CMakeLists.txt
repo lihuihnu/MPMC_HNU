@@ -1,4 +1,4 @@
-add_executable(mpmc_ad_tests dual_test.cpp header_self_contained.cpp)
+add_executable(mpmc_ad_tests dual_test.cpp nested_arithmetic_test.cpp header_self_contained.cpp)
 target_link_libraries(mpmc_ad_tests PRIVATE mpmc::ad)
 set_target_properties(mpmc_ad_tests PROPERTIES CXX_EXTENSIONS OFF)
 

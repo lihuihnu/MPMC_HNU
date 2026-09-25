@@ -18,6 +18,7 @@
 #include <utility>
 
 mpmc::ad::ValueAndJacobian<double, 1, 1> jacobian_from_separate_translation_unit();
+void test_nested_hessian_driver();
 
 namespace {
 namespace ad = mpmc::ad;
@@ -317,6 +318,8 @@ int main(int argc, char** argv) {
         const std::string_view name{argv[1]};
         if (name == "header_odr") {
             test_header_odr();
+        } else if (name == "nested_hessian") {
+            test_nested_hessian_driver();
         } else {
             run_typed_case<float>(name);
             run_typed_case<double>(name);

@@ -1,5 +1,5 @@
 #include <mpmc/thermodynamics/pr76_phase.hpp>
-#include <mpmc/thermodynamics/pr76_phase.hpp>
+#include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
 #include <array>
 
 double pt_plain_header(const mpmc::thermodynamics::Pr76Phase<double>& model) {

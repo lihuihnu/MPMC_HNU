@@ -1,19 +1,11 @@
 name: SW92 one-family VLE
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_split.hpp'
-      - 'modules/flash/CMakeLists.txt'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'modules/thermodynamics/**/CMakeLists.txt'
-      - 'tests/flash/sw92_family_vle/**'
-      - '.github/workflows/sw92_family_vle.yml'
+  workflow_call:
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
@@ -22,7 +14,7 @@ concurrency:
 jobs:
   family-vle:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -30,16 +22,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'
@@ -50,6 +45,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Select Python interpreter
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
+
       - name: Configure only SW92 one-family VLE integration
         run: |
           config_arg=()
@@ -64,4 +71,5 @@ jobs:
       - name: Run SW92 one-family VLE increment
         run: ctest --test-dir build/sw92-family-vle -C ${{ matrix.config }} -R '^flash[.]sw92_family_vle[.]' --verbose --no-tests=error
       - name: Regenerate independent Decimal(80) one-family VLE references
-        run: python tests/flash/sw92_family_vle/reference_decimal.py
+        run: |
+          "$MPMC_PYTHON" tests/flash/sw92_family_vle/reference_decimal.py

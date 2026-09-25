@@ -1,20 +1,9 @@
 name: PR76 PT continuation scan
 
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# only executes the routed matrix or an explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flash/include/mpmc/flash/pr76_pt_continuation.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_split.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp'
-      - 'tests/flash/pr76_pt_continuation/**'
-      - 'tests/flash/pr76_three_phase/synthetic_fixture.hpp'
-      - '.github/workflows/pr76_pt_continuation.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -27,7 +16,7 @@ concurrency:
 jobs:
   continuation:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -35,16 +24,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'

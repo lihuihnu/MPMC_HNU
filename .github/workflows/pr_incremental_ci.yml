@@ -1,0 +1,2829 @@
+name: CI - affected tests v2
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pr-incremental-ci-v3-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  impact:
+    name: Compute current PR update impact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      flow_core: ${{ steps.route.outputs.flow_core }}
+      flow_discretization: ${{ steps.route.outputs.flow_discretization }}
+      flow_discretization_petsc: ${{ steps.route.outputs.flow_discretization_petsc }}
+      ad_has_work: ${{ steps.route.outputs.ad_has_work }}
+      ad_matrix: ${{ steps.route.outputs.ad_matrix }}
+      pt_flash_backend: ${{ steps.route.outputs.pt_flash_backend }}
+      pt_stability: ${{ steps.route.outputs.pt_stability }}
+      pt_split: ${{ steps.route.outputs.pt_split }}
+      pr76_pt_continuation: ${{ steps.route.outputs.pr76_pt_continuation }}
+      pr76_max3: ${{ steps.route.outputs.pr76_max3 }}
+      cpa_stability: ${{ steps.route.outputs.cpa_stability }}
+      cpa_split: ${{ steps.route.outputs.cpa_split }}
+      cpa_max3: ${{ steps.route.outputs.cpa_max3 }}
+      cpa_baseline: ${{ steps.route.outputs.cpa_baseline }}
+      cpa_pt_phase: ${{ steps.route.outputs.cpa_pt_phase }}
+      cpa_physical_validation: ${{ steps.route.outputs.cpa_physical_validation }}
+      thermo_has_work: ${{ steps.route.outputs.thermo_has_work }}
+      thermo_matrix: ${{ steps.route.outputs.thermo_matrix }}
+      physics_closure: ${{ steps.route.outputs.physics_closure }}
+      model_configuration: ${{ steps.route.outputs.model_configuration }}
+      sw92_thermodynamics: ${{ steps.route.outputs.sw92_thermodynamics }}
+      sw92_family_vle: ${{ steps.route.outputs.sw92_family_vle }}
+      sw92_profile_c_pt: ${{ steps.route.outputs.sw92_profile_c_pt }}
+      sw92_profile_c_phase_set: ${{ steps.route.outputs.sw92_profile_c_phase_set }}
+      sw92_profile_c_sensitivity: ${{ steps.route.outputs.sw92_profile_c_sensitivity }}
+      sw92_physics_closure: ${{ steps.route.outputs.sw92_physics_closure }}
+      sw92_phase_assigned_joint: ${{ steps.route.outputs.sw92_phase_assigned_joint }}
+      sw92_phase_assigned_h_side_witness: ${{ steps.route.outputs.sw92_phase_assigned_h_side_witness }}
+      sw92_phase_assigned_no_w: ${{ steps.route.outputs.sw92_phase_assigned_no_w }}
+      sw92_phase_assigned_three_phase: ${{ steps.route.outputs.sw92_phase_assigned_three_phase }}
+      sw92_phase_assigned_three_phase_closure: ${{ steps.route.outputs.sw92_phase_assigned_three_phase_closure }}
+      sw92_phase_assigned_boundary: ${{ steps.route.outputs.sw92_phase_assigned_boundary }}
+      trusted: ${{ steps.route.outputs.trusted }}
+      legacy_cpa_clapeyron_oracle: ${{ steps.route.outputs.legacy_cpa_clapeyron_oracle }}
+      legacy_cpa_performance_audit: ${{ steps.route.outputs.legacy_cpa_performance_audit }}
+      legacy_cpa_thermopack_oracle: ${{ steps.route.outputs.legacy_cpa_thermopack_oracle }}
+      legacy_discretization_core: ${{ steps.route.outputs.legacy_discretization_core }}
+      legacy_frontend: ${{ steps.route.outputs.legacy_frontend }}
+      legacy_hosted_web_model_product: ${{ steps.route.outputs.legacy_hosted_web_model_product }}
+      legacy_mesh_baseline_benchmark: ${{ steps.route.outputs.legacy_mesh_baseline_benchmark }}
+      legacy_mesh_core: ${{ steps.route.outputs.legacy_mesh_core }}
+      legacy_mesh_external_compatibility: ${{ steps.route.outputs.legacy_mesh_external_compatibility }}
+      legacy_mesh_petsc: ${{ steps.route.outputs.legacy_mesh_petsc }}
+      legacy_model_configuration_grpc: ${{ steps.route.outputs.legacy_model_configuration_grpc }}
+      legacy_physics_component_inventory: ${{ steps.route.outputs.legacy_physics_component_inventory }}
+      legacy_pt_android_jni_emulator: ${{ steps.route.outputs.legacy_pt_android_jni_emulator }}
+      legacy_pt_android_ndk_portability: ${{ steps.route.outputs.legacy_pt_android_ndk_portability }}
+      legacy_pt_android_product_shell: ${{ steps.route.outputs.legacy_pt_android_product_shell }}
+      legacy_pt_process_adapter: ${{ steps.route.outputs.legacy_pt_process_adapter }}
+      legacy_pt_product_staging: ${{ steps.route.outputs.legacy_pt_product_staging }}
+      legacy_pt_service: ${{ steps.route.outputs.legacy_pt_service }}
+      legacy_pt_signed_installer_gate: ${{ steps.route.outputs.legacy_pt_signed_installer_gate }}
+      legacy_pt_split: ${{ steps.route.outputs.legacy_pt_split }}
+      legacy_pt_windows_desktop_installer: ${{ steps.route.outputs.legacy_pt_windows_desktop_installer }}
+      legacy_stability: ${{ steps.route.outputs.legacy_stability }}
+      legacy_sw92_asymmetric_fixed_pair: ${{ steps.route.outputs.legacy_sw92_asymmetric_fixed_pair }}
+      legacy_sw92_asymmetric_max2: ${{ steps.route.outputs.legacy_sw92_asymmetric_max2 }}
+      legacy_sw92_asymmetric_max2_physical_ternary: ${{ steps.route.outputs.legacy_sw92_asymmetric_max2_physical_ternary }}
+      legacy_sw92_asymmetric_max2_validation: ${{ steps.route.outputs.legacy_sw92_asymmetric_max2_validation }}
+      legacy_sw92_asymmetric_orchestration: ${{ steps.route.outputs.legacy_sw92_asymmetric_orchestration }}
+      legacy_sw92_asymmetric_stability: ${{ steps.route.outputs.legacy_sw92_asymmetric_stability }}
+      legacy_sw92_dual_model: ${{ steps.route.outputs.legacy_sw92_dual_model }}
+      legacy_sw92_three_phase_experimental_line: ${{ steps.route.outputs.legacy_sw92_three_phase_experimental_line }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Install pinned metadata validator
+      run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+    - name: Verify workflow mapping and selection contracts
+      run: python3 .github/ci/verify_workflows.py
+    - name: Select affected gates from verified checkpoint
+      id: route
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 .github/ci/plan.py
+    permissions:
+      contents: read
+      actions: read
+  flow-core:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.flow_core == 'true')
+    uses: ./.github/workflows/flow_core.yml
+  flow-discretization:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.flow_discretization == 'true')
+    uses: ./.github/workflows/flow_discretization.yml
+  flow-discretization-petsc:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.flow_discretization_petsc == 'true')
+    uses: ./.github/workflows/flow_discretization_petsc.yml
+  pt-flash-backend:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.pt_flash_backend == 'true')
+    uses: ./.github/workflows/pt_flash_backend.yml
+  pt-stability:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.pt_stability == 'true')
+    uses: ./.github/workflows/stability.yml
+    with:
+      routed: true
+  pt-split:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.pt_split == 'true')
+    uses: ./.github/workflows/pt_split.yml
+    with:
+      routed: true
+  pr76-pt-continuation:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.pr76_pt_continuation == 'true')
+    uses: ./.github/workflows/pr76_pt_continuation.yml
+  pr76-max3:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.pr76_max3 == 'true')
+    uses: ./.github/workflows/pr76_three_phase.yml
+  cpa-stability:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.cpa_stability == 'true')
+    uses: ./.github/workflows/cpa_stability.yml
+  cpa-split:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.cpa_split == 'true')
+    uses: ./.github/workflows/cpa_split.yml
+  cpa-max3:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.cpa_max3 == 'true')
+    uses: ./.github/workflows/cpa_max3.yml
+  cpa-baseline:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.cpa_baseline == 'true')
+    uses: ./.github/workflows/cpa_baseline.yml
+  cpa-pt-phase:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.cpa_pt_phase == 'true')
+    uses: ./.github/workflows/cpa_pt_phase.yml
+  cpa-physical-validation:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.cpa_physical_validation == 'true')
+    uses: ./.github/workflows/cpa_physical_validation.yml
+  thermodynamics:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.thermo_has_work == 'true')
+    uses: ./.github/workflows/thermodynamics.yml
+    with:
+      matrix_json: ${{ needs.impact.outputs.thermo_matrix }}
+  physics-closure:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.physics_closure == 'true')
+    uses: ./.github/workflows/physics_closure.yml
+  model-configuration:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.model_configuration == 'true')
+    uses: ./.github/workflows/model_configuration.yml
+  sw92-thermodynamics:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_thermodynamics == 'true')
+    uses: ./.github/workflows/sw92.yml
+  sw92-family-vle:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_family_vle == 'true')
+    uses: ./.github/workflows/sw92_family_vle.yml
+  sw92-profile-c-phase-set:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_phase_set == 'true')
+    uses: ./.github/workflows/sw92_profile_c_phase_set.yml
+    with:
+      dependencies_prevalidated: true
+  sw92-profile-c-sensitivity:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_sensitivity == 'true')
+    uses: ./.github/workflows/sw92_profile_c_sensitivity.yml
+    with:
+      dependencies_prevalidated: true
+  sw92-physics-closure:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_physics_closure == 'true')
+    uses: ./.github/workflows/physics_sw92_closure.yml
+  sw92-phase-assigned-joint:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_joint == 'true' && needs.impact.outputs.sw92_phase_assigned_h_side_witness != 'true' && needs.impact.outputs.sw92_profile_c_pt != 'true' && needs.impact.outputs.sw92_phase_assigned_three_phase != 'true' && needs.impact.outputs.sw92_phase_assigned_three_phase_closure != 'true' && needs.impact.outputs.sw92_phase_assigned_boundary != 'true')
+    uses: ./.github/workflows/sw92_phase_assigned_joint.yml
+  sw92-phase-assigned-h-side-witness:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_h_side_witness == 'true' && needs.impact.outputs.sw92_profile_c_pt != 'true' && needs.impact.outputs.sw92_phase_assigned_three_phase != 'true' && needs.impact.outputs.sw92_phase_assigned_three_phase_closure != 'true' && needs.impact.outputs.sw92_phase_assigned_boundary != 'true')
+    uses: ./.github/workflows/sw92_phase_assigned_h_side_witness.yml
+  sw92-phase-assigned-no-w:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_phase_assigned_no_w == 'true' && needs.impact.outputs.sw92_profile_c_pt != 'true' && needs.impact.outputs.sw92_phase_assigned_boundary != 'true')
+    uses: ./.github/workflows/sw92_phase_assigned_no_w.yml
+    with:
+      dependencies_prevalidated: true
+  sw92-phase-assigned-three-phase-topology:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.sw92_profile_c_pt == 'true' || needs.impact.outputs.sw92_profile_c_phase_set == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' || needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' || needs.impact.outputs.sw92_phase_assigned_boundary == 'true')
+    uses: ./.github/workflows/_sw92_phase_assigned_topology.yml
+    with:
+      run_three_phase: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase == 'true' }}
+      run_three_phase_closure: ${{ needs.impact.outputs.sw92_phase_assigned_three_phase_closure == 'true' }}
+      run_boundary: ${{ needs.impact.outputs.sw92_phase_assigned_boundary == 'true' }}
+      run_pt: ${{ needs.impact.outputs.sw92_profile_c_pt == 'true' }}
+      run_phase_set_dependencies: ${{ needs.impact.outputs.sw92_profile_c_phase_set == 'true' }}
+  ad:
+    needs: impact
+    if: needs.impact.outputs.trusted == 'true' && (needs.impact.outputs.ad_has_work == 'true')
+    uses: ./.github/workflows/ad.yml
+    with:
+      matrix_json: ${{ needs.impact.outputs.ad_matrix }}
+  legacy_cpa_clapeyron_oracle__pinned-clapeyron-oracle:
+    needs:
+    - impact
+    name: CPA Clapeyron external oracle / Pinned Clapeyron sCPA oracle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - name: Checkout MPMC_HNU
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
+      with:
+        version: 1.10.12
+    - name: Checkout pinned Clapeyron
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: ClapeyronThermo/Clapeyron.jl
+        ref: 229b09452f36c2f812486150df0bb43b197bb4e5
+        path: _external/Clapeyron.jl
+        persist-credentials: false
+        fetch-depth: 1
+    - name: Verify pinned source
+      shell: bash
+      run: 'set -euo pipefail
+
+        actual="$(git -C _external/Clapeyron.jl rev-parse HEAD)"
+
+        expected="229b09452f36c2f812486150df0bb43b197bb4e5"
+
+        test "${actual}" = "${expected}"
+
+        test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
+
+        echo "CLAPEYRON_PIN_OK commit=${actual}"
+
+        '
+    - name: Instantiate pinned Clapeyron
+      env:
+        JULIA_PKG_PRECOMPILE_AUTO: '0'
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  -e 'using Pkg; Pkg.instantiate()'\n"
+    - name: Audit formulation and generate ten-state oracle
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\nmkdir -p build/cpa-clapeyron-oracle\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/generate_oracle.jl\
+        \ \\\n  --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \\\n  --out build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\n\
+        test -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\ncat build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\n"
+    - name: Verify frozen oracle reproduction
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\ngenerated = json.loads(Path(\n    \"build/cpa-clapeyron-oracle/\"\n    \"\
+        clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\"\n).read_text(encoding=\"utf-8\"))\nfrozen = json.loads(Path(\n    \"tests/flash/cpa_clapeyron_oracle/\"\
+        \n    \"clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\"\n).read_text(encoding=\"utf-8\"))\nif generated != frozen:\n    raise SystemExit(\"generated\
+        \ Clapeyron oracle differs from frozen reference\")\nprint(\"CLAPEYRON_ORACLE_FREEZE_MATCH_OK states=\", len(generated[\"states\"]))\nPY\n"
+    - name: Audit pinned Clapeyron derivative floor
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/derivative_floor_audit.jl \\\n  --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \\\n  --out build/cpa-clapeyron-oracle/clapeyron_derivative_floor_audit.json\n\
+        test -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n   \
+        \ \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_derivative_floor_audit.json\"\n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_DERIVATIVE_FLOOR_ARTIFACT\"\
+        ,\n      \"states=\", len(audit[\"states\"]),\n      \"steps=\", len(audit[\"frozen_relative_volume_steps\"]))\nPY\n"
+    - name: Audit pinned Clapeyron BigFloat derivative floor
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/bigfloat_derivative_audit.jl \\\n  --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \\\n  --out build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json\n\
+        test -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n   \
+        \ \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_bigfloat_derivative_audit.json\"\n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_BIGFLOAT_DERIVATIVE_ARTIFACT\"\
+        ,\n      \"records=\", len(audit[\"records\"]),\n      \"precisions=\", audit[\"precision_bits\"],\n      \"states=\", audit[\"problem_states\"])\nPY\n"
+    - name: Audit state-4 association stationarity floor
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/association_stationarity_floor_audit.jl \\\n  --states\
+        \ tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --out build/cpa-clapeyron-oracle/clapeyron_association_stationarity_floor_audit.json\ntest -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\
+        \npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n    \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_association_stationarity_floor_audit.json\"\
+        \n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_ASSOC_STATIONARITY_ARTIFACT\",\n      \"records=\", len(audit[\"records\"]),\n      \"precisions=\"\
+        , audit[\"precision_bits\"],\n      \"state=\", audit[\"state\"][\"label\"])\nPY\n"
+    - name: Audit pinned compressed exact2 independently
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/independent_exact2_audit.jl \\\n  --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \\\n  --out build/cpa-clapeyron-oracle/clapeyron_independent_exact2_audit.json\n\
+        test -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n   \
+        \ \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_independent_exact2_audit.json\"\n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_INDEPENDENT_EXACT2_ARTIFACT\"\
+        ,\n      \"records=\", len(audit[\"records\"]),\n      \"precisions=\", audit[\"precision_bits\"],\n      \"state=\", audit[\"state\"][\"label\"])\nPY\n"
+    - name: Audit ten-state independent compressed association
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/ten_state_independent_compressed_diagnostic.jl \\\n \
+        \ --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --out build/cpa-clapeyron-oracle/clapeyron_ten_state_independent_compressed_diagnostic.json\ntest -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\
+        \npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n    \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_ten_state_independent_compressed_diagnostic.json\"\
+        \n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_TEN_STATE_COMPRESSED_ARTIFACT\",\n      \"precisions=\", audit[\"precision_bits\"],\n      \"summaries=\"\
+        , len(audit[\"summaries\"]))\nPY\n"
+    - name: Upload generated oracle
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-oracle
+        path: build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload derivative-floor audit
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-derivative-floor-audit
+        path: build/cpa-clapeyron-oracle/clapeyron_derivative_floor_audit.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload BigFloat derivative audit
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-bigfloat-derivative-audit
+        path: build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload association stationarity audit
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-association-stationarity-audit
+        path: build/cpa-clapeyron-oracle/clapeyron_association_stationarity_floor_audit.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload independent exact2 audit
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-independent-exact2-audit
+        path: build/cpa-clapeyron-oracle/clapeyron_independent_exact2_audit.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload ten-state compressed diagnostic
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-ten-state-compressed-diagnostic
+        path: build/cpa-clapeyron-oracle/clapeyron_ten_state_independent_compressed_diagnostic.json
+        if-no-files-found: error
+        retention-days: 7
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_cpa_clapeyron_oracle
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_cpa_performance_audit__paired-baseline:
+    needs:
+    - impact
+    name: CPA flash performance audit / main vs PR head / private Linux x64
+    runs-on:
+    - self-hosted
+    - linux
+    - x64
+    - mpmc_hnu
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - name: Checkout PR head
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Record compared revisions and create main worktree
+      run: "set -euo pipefail\ngit fetch origin main:refs/remotes/origin/main\nhead_sha=\"$(git rev-parse HEAD)\"\nmain_sha=\"$(git rev-parse origin/main)\"\nmain_root=\"\
+        ${RUNNER_TEMP}/mpmc-main-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"\nrm -rf \"${main_root}\"\ngit worktree prune\ngit worktree add --detach \"${main_root}\" \"${main_sha}\"\n{\n  echo \"CPA_PERF_HEAD_SHA=${head_sha}\"\n  echo \"CPA_PERF_MAIN_SHA=${main_sha}\"\
+        \n  echo \"CPA_PERF_MAIN_ROOT=${main_root}\"\n} >> \"${GITHUB_ENV}\"\necho \"head=${head_sha}\"\necho \"main=${main_sha}\"\nclang++ --version | head -n 1\n\
+        g++ --version | head -n 1\ncmake --version | head -n 1\n"
+    - name: Configure paired Clang Release binaries
+      run: "set -euo pipefail\ncmake -S tests/flash/cpa_performance_baseline \\\n  -B build/cpa-perf-head \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DCMAKE_CXX_COMPILER=clang++\
+        \ \\\n  -DMPMC_SOURCE_ROOT=\"${GITHUB_WORKSPACE}\"\ncmake -S tests/flash/cpa_performance_baseline \\\n  -B build/cpa-perf-main \\\n  -DCMAKE_BUILD_TYPE=Release\
+        \ \\\n  -DCMAKE_CXX_COMPILER=clang++ \\\n  -DMPMC_SOURCE_ROOT=\"${CPA_PERF_MAIN_ROOT}\"\n"
+    - name: Build paired Clang Release binaries
+      run: 'cmake --build build/cpa-perf-head --parallel 2
+
+        cmake --build build/cpa-perf-main --parallel 2
+
+        '
+    - name: Capture deterministic high-level solver counts
+      run: "set -euo pipefail\nmkdir -p build/cpa-perf-results\nbuild/cpa-perf-main/mpmc_cpa_performance_baseline structure \\\n  | tee build/cpa-perf-results/structure-main.log\n\
+        build/cpa-perf-head/mpmc_cpa_performance_baseline structure \\\n  | tee build/cpa-perf-results/structure-head.log\n"
+    - name: Measure repeated micro hot-path timings
+      run: "set -euo pipefail\nlog=build/cpa-perf-results/micro.log\n: > \"${log}\"\nfor sample in 1 2 3 4 5; do\n  if (( sample % 2 == 1 )); then refs=(main head);\
+        \ else refs=(head main); fi\n  for ref in \"${refs[@]}\"; do\n    exe=\"build/cpa-perf-${ref}/mpmc_cpa_performance_baseline\"\n    line=\"$(\"${exe}\" micro)\"\
+        \n    echo \"ref=${ref} sample=${sample} ${line}\" | tee -a \"${log}\"\n  done\ndone\n"
+    - name: Measure repeated five-state full-flash timings
+      run: "set -euo pipefail\nlog=build/cpa-perf-results/full.log\n: > \"${log}\"\nfor sample in 1 2 3; do\n  if (( sample % 2 == 1 )); then refs=(main head); else\
+        \ refs=(head main); fi\n  for ref in \"${refs[@]}\"; do\n    exe=\"build/cpa-perf-${ref}/mpmc_cpa_performance_baseline\"\n    line=\"$(\"${exe}\" full)\"\n\
+        \    echo \"ref=${ref} sample=${sample} ${line}\" | tee -a \"${log}\"\n  done\ndone\n"
+    - name: Configure paired GCC Release coverage counters
+      run: "set -euo pipefail\ncmake -S tests/flash/cpa_performance_baseline \\\n  -B build/cpa-perf-head-coverage \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DCMAKE_CXX_COMPILER=g++\
+        \ \\\n  -DMPMC_CPA_PERF_ENABLE_COVERAGE=ON \\\n  -DMPMC_SOURCE_ROOT=\"${GITHUB_WORKSPACE}\"\ncmake -S tests/flash/cpa_performance_baseline \\\n  -B build/cpa-perf-main-coverage\
+        \ \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DCMAKE_CXX_COMPILER=g++ \\\n  -DMPMC_CPA_PERF_ENABLE_COVERAGE=ON \\\n  -DMPMC_SOURCE_ROOT=\"${CPA_PERF_MAIN_ROOT}\"\
+        \ncmake --build build/cpa-perf-head-coverage --parallel 2\ncmake --build build/cpa-perf-main-coverage --parallel 2\n"
+    - name: Count exact production hot-path executions with gcov
+      run: "set -euo pipefail\nbuild/cpa-perf-main-coverage/mpmc_cpa_performance_baseline structure \\\n  > build/cpa-perf-results/coverage-workload-main.log\npython3\
+        \ tests/flash/cpa_performance_baseline/collect_gcov_counts.py \\\n  --object-dir build/cpa-perf-main-coverage/CMakeFiles/mpmc_cpa_performance_baseline.dir\
+        \ \\\n  --benchmark-source tests/flash/cpa_performance_baseline/benchmark.cpp \\\n  --source-root \"${CPA_PERF_MAIN_ROOT}\" \\\n  --label main \\\n  --output\
+        \ build/cpa-perf-results/coverage-main.json\n\nbuild/cpa-perf-head-coverage/mpmc_cpa_performance_baseline structure \\\n  > build/cpa-perf-results/coverage-workload-head.log\n\
+        python3 tests/flash/cpa_performance_baseline/collect_gcov_counts.py \\\n  --object-dir build/cpa-perf-head-coverage/CMakeFiles/mpmc_cpa_performance_baseline.dir\
+        \ \\\n  --benchmark-source tests/flash/cpa_performance_baseline/benchmark.cpp \\\n  --source-root \"${GITHUB_WORKSPACE}\" \\\n  --label head \\\n  --output\
+        \ build/cpa-perf-results/coverage-head.json\n"
+    - name: Summarize baseline without creating a performance gate
+      run: "set -euo pipefail\npython3 tests/flash/cpa_performance_baseline/summarize.py \\\n  --full-log build/cpa-perf-results/full.log \\\n  --micro-log build/cpa-perf-results/micro.log\
+        \ \\\n  --main-structure build/cpa-perf-results/structure-main.log \\\n  --head-structure build/cpa-perf-results/structure-head.log \\\n  --main-coverage\
+        \ build/cpa-perf-results/coverage-main.json \\\n  --head-coverage build/cpa-perf-results/coverage-head.json \\\n  --main-sha \"${CPA_PERF_MAIN_SHA}\" \\\n\
+        \  --head-sha \"${CPA_PERF_HEAD_SHA}\" \\\n  --markdown build/cpa-perf-results/report.md \\\n  --json build/cpa-perf-results/report.json \\\n  | tee build/cpa-perf-results/summary.log\n\
+        cat build/cpa-perf-results/report.md >> \"${GITHUB_STEP_SUMMARY}\"\n"
+    - name: Cleanup main comparison worktree
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${CPA_PERF_MAIN_ROOT:-}" ]; then
+          git worktree remove --force "${CPA_PERF_MAIN_ROOT}" 2>/dev/null || rm -rf "${CPA_PERF_MAIN_ROOT}"
+        fi
+        git worktree prune
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_cpa_performance_audit
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_cpa_thermopack_oracle__pinned-thermopack-oracle:
+    needs:
+    - impact
+    name: CPA ThermoPack external oracle / Pinned ThermoPack SRK-CPA oracle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - name: Checkout MPMC_HNU
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Prepare hosted ThermoPack build prerequisites
+      shell: bash
+      run: 'set -euo pipefail
+
+        gfortran --version | head -n 1
+
+        cmake --version | head -n 1
+
+        python3 --version
+
+        sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends liblapack-dev libblas-dev
+
+        '
+    - name: Fetch pinned ThermoPack source
+      shell: bash
+      run: "set -euo pipefail\nrevision=d68c794c7342bfc6938eb424a1fbb88b7780b738\nrm -rf build/thermopack\ngit init build/thermopack\ngit -C build/thermopack remote\
+        \ add origin https://github.com/thermotools/thermopack.git\nfor attempt in 1 2 3; do\n  if git -C build/thermopack \\\n      -c http.version=HTTP/1.1 \\\n\
+        \      fetch --no-tags --depth=1 origin \"$revision\"; then\n    break\n  fi\n  if [ \"$attempt\" -eq 3 ]; then\n    echo \"Pinned ThermoPack fetch failed\
+        \ after 3 attempts\" >&2\n    exit 1\n  fi\n  rm -rf build/thermopack/.git/objects/pack/*\n  sleep $((attempt * 5))\ndone\ngit -C build/thermopack checkout\
+        \ --detach FETCH_HEAD\ntest \"$(git -C build/thermopack rev-parse HEAD)\" = \"$revision\"\n"
+    - name: Build pinned ThermoPack
+      shell: bash
+      run: 'set -euo pipefail
+
+        cmake -S build/thermopack -B build/thermopack-build -DCMAKE_BUILD_TYPE=Release
+
+        cmake --build build/thermopack-build --parallel 2
+
+        cmake --install build/thermopack-build
+
+        '
+    - name: Configure ThermoPack Python wrapper
+      shell: bash
+      run: 'set -euo pipefail
+
+        python3 -m pip install --disable-pip-version-check --user numpy
+
+        python3 build/thermopack/addon/pycThermopack/map_platform_specifics.py --diffs=v3
+
+        python3 -m pip install --disable-pip-version-check --user --no-deps build/thermopack/addon/pycThermopack/
+
+        '
+    - name: Generate formulation-matched CPA oracle
+      shell: bash
+      run: "set -euo pipefail\npython3 tests/flash/cpa_thermopack_oracle/generate_oracle.py \\\n  --out build/cpa-thermopack-oracle.json\ntest -s build/cpa-thermopack-oracle.json\n"
+    - name: Verify frozen external oracle reproducibility
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nimport json\nimport math\nfrom pathlib import Path\n\nactual = json.loads(Path(\"build/cpa-thermopack-oracle.json\"\
+        ).read_text())\nfrozen = json.loads(Path(\n    \"tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json\"\n).read_text())\n\nfor key in\
+        \ (\"schema\", \"generator\", \"model\"):\n    if actual[key] != frozen[key]:\n        raise SystemExit(f\"frozen ThermoPack oracle metadata drifted at {key}\"\
+        )\nif len(actual[\"states\"]) != len(frozen[\"states\"]):\n    raise SystemExit(\"frozen ThermoPack oracle state count drifted\")\n\nexact_keys = (\"phase_code\"\
+        , \"pressure_pa\", \"temperature_k\")\nscalar_keys = (\"beta_liquid\", \"beta_vapor\", \"extraction_material_balance_max_abs\")\nmaps = (\"feed\", \"liquid\"\
+        , \"vapor\")\nfor index, (got, ref) in enumerate(zip(actual[\"states\"], frozen[\"states\"])):\n    for key in exact_keys:\n        if got[key] != ref[key]:\n\
+        \            raise SystemExit(f\"oracle state {index} exact field drifted: {key}\")\n    for key in scalar_keys:\n        if not math.isclose(got[key], ref[key],\
+        \ rel_tol=2e-12, abs_tol=2e-12):\n            raise SystemExit(f\"oracle state {index} scalar drifted: {key}\")\n    for group in maps:\n        if got[group].keys()\
+        \ != ref[group].keys():\n            raise SystemExit(f\"oracle state {index} component keys drifted: {group}\")\n        for component in got[group]:\n \
+        \           if not math.isclose(got[group][component], ref[group][component],\n                                rel_tol=2e-12, abs_tol=2e-12):\n          \
+        \      raise SystemExit(f\"oracle state {index} {group}/{component} drifted\")\nprint(\"THERMOPACK_CPA_FROZEN_ORACLE_OK states=5 tolerance=2e-12\")\nPY\n"
+    - name: Generate phase-kernel decomposition audit
+      shell: bash
+      run: "set -euo pipefail\npython3 tests/flash/cpa_thermopack_oracle/generate_phase_kernel_audit.py \\\n  --thermopack-source build/thermopack \\\n  --out build/cpa-thermopack-phase-kernel-audit.json\n\
+        test -s build/cpa-thermopack-phase-kernel-audit.json\n"
+    - name: Verify frozen phase-kernel reference
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nimport json\nimport math\nfrom pathlib import Path\n\nactual = json.loads(Path(\"build/cpa-thermopack-phase-kernel-audit.json\"\
+        ).read_text())\nfrozen = json.loads(Path(\n    \"tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json\"\n).read_text())\n\
+        \nif frozen[\"schema\"] != \"MPMC_HNU/CPA/ThermoPack-phase-kernel-reference/v2\":\n    raise SystemExit(\"unexpected frozen phase-kernel reference schema\"\
+        )\nif actual[\"schema\"] != frozen[\"source\"][\"generated_schema\"]:\n    raise SystemExit(\"phase-kernel generated schema drifted\")\nif actual[\"generator\"\
+        ][\"commit\"] != frozen[\"source\"][\"commit\"]:\n    raise SystemExit(\"phase-kernel ThermoPack revision drifted\")\nif actual[\"generator\"][\"software\"\
+        ] != frozen[\"source\"][\"software\"]:\n    raise SystemExit(\"phase-kernel software identity drifted\")\nif len(actual[\"states\"]) != len(frozen[\"states\"\
+        ]):\n    raise SystemExit(\"phase-kernel state count drifted\")\n\ndef close(got, ref, where):\n    if not math.isclose(float(got), float(ref), rel_tol=2e-12,\
+        \ abs_tol=2e-12):\n        raise SystemExit(f\"phase-kernel frozen reference drifted at {where}: {got} vs {ref}\")\n\nclose(actual[\"gas_constant_j_per_mol_k\"\
+        ], frozen[\"gas_constant_j_per_mol_k\"], \"R\")\nfor component in (\"MEOH\", \"H2O\"):\n    got_tc = actual[\"alpha_critical_temperature_source\"][component]\n\
+        \    ref_tc = frozen[\"alpha_critical_temperature_source\"][component]\n    close(got_tc[\"temperature_k\"], ref_tc[\"temperature_k\"], f\"Tc/{component}\"\
+        )\n    if got_tc[\"ref\"] != ref_tc[\"ref\"] or got_tc[\"source_file\"] != ref_tc[\"source_file\"]:\n        raise SystemExit(f\"phase-kernel Tc provenance\
+        \ drifted for {component}\")\n\nscalar_fields = (\n    \"molar_density_mol_per_m3\", \"compressibility_factor\",\n    \"pressure_physical_pa\", \"pressure_association_pa\"\
+        ,\n)\nmaps = (\"composition\", \"ln_phi\", \"mu_cubic_over_rt\", \"mu_association_over_rt\")\nfor index, (got_state, ref_state) in enumerate(zip(actual[\"\
+        states\"], frozen[\"states\"])):\n    close(got_state[\"temperature_k\"], ref_state[\"temperature_k\"], f\"{index}/T\")\n    close(got_state[\"pressure_pa\"\
+        ], ref_state[\"pressure_pa\"], f\"{index}/P\")\n    for phase in (\"liquid\", \"vapor\"):\n        got = got_state[phase]\n        ref = ref_state[phase]\n\
+        \        for key in scalar_fields:\n            close(got[key], ref[key], f\"{index}/{phase}/{key}\")\n        for group in maps:\n            for component\
+        \ in (\"MEOH\", \"H2O\"):\n                close(got[group][component], ref[group][component],\n                      f\"{index}/{phase}/{group}/{component}\"\
+        )\nprint(\"THERMOPACK_CPA_PHASE_KERNEL_REFERENCE_OK states=5 phase_states=10 tolerance=2e-12\")\nPY\n"
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_cpa_thermopack_oracle
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_discretization_core__core:
+    needs:
+    - impact
+    name: Discretization core correctness / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          build_type: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          build_type: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          build_type: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure discretization core tests
+      run: "cmake -S tests/discretization/core -B build/discretization-core \\\n  -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \\\n  ${{ matrix.compiler }} \\\n  -DMPMC_DISCRETIZATION_ENABLE_SANITIZERS=${{\
+        \ matrix.sanitizer }}\n"
+    - name: Build discretization core tests
+      run: "cmake --build build/discretization-core \\\n  --target mpmc_discretization_core_all \\\n  --config ${{ matrix.build_type }} \\\n  --parallel 2\n"
+    - name: Run discretization core tests
+      run: "ctest --test-dir build/discretization-core \\\n  -C ${{ matrix.build_type }} \\\n  -R '^(discretization[.]core[.]|well[.]core[.])' \\\n  --verbose \\\n  --no-tests=error\n"
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_discretization_core
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_frontend__verify:
+    needs:
+    - impact
+    name: Frontend / Node 24 · typecheck, test, build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact frontend dependencies
+      run: npm ci --ignore-scripts --no-audit --no-fund
+    - name: Lint Protobuf contract
+      run: 'npm run proto:format-check
+
+        npm run proto:lint
+
+        '
+    - name: Verify generated TypeScript
+      run: 'npm run proto:generate
+
+        git diff --exit-code -- src/gen
+
+        '
+    - name: Typecheck
+      run: npm run typecheck
+    - name: Test
+      run: npm test
+    - name: Build
+      run: npm run build
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_frontend ==
+      'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_hosted_web_model_product__hosted-web-model:
+    needs:
+    - impact
+    name: Hosted Web model product / Chrome → trusted edge → native Classic PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned native model-service dependencies
+      run: "sudo apt-get update\nsudo apt-get install --yes --no-install-recommends \\\n  libgrpc++-dev=1.51.1-4.1build5 \\\n  protobuf-compiler-grpc=1.51.1-4.1build5\
+        \ \\\n  libprotobuf-dev=3.21.12-8.2ubuntu0.3 \\\n  protobuf-compiler=3.21.12-8.2ubuntu0.3\n"
+    - name: Generate isolated edge/backend test identities
+      run: "set -euo pipefail\ncert_dir=\"${PWD}/build/hosted-web-certs\"\nmkdir -p \"${cert_dir}\"\n\nissue_ca() {\n  local name=$1\n  openssl req -x509 -newkey\
+        \ rsa:2048 -nodes -sha256 -days 1 \\\n    -subj \"/CN=${name}\" \\\n    -keyout \"${cert_dir}/${name}.key\" \\\n    -out \"${cert_dir}/${name}.crt\"\n}\n\
+        issue_identity() {\n  local name=$1\n  local common_name=$2\n  local authority=$3\n  local extension=$4\n  openssl req -newkey rsa:2048 -nodes -sha256 \\\n\
+        \    -subj \"/CN=${common_name}\" -addext \"${extension}\" \\\n    -keyout \"${cert_dir}/${name}.key\" \\\n    -out \"${cert_dir}/${name}.csr\"\n  openssl\
+        \ x509 -req -sha256 -days 1 -copy_extensions copy \\\n    -in \"${cert_dir}/${name}.csr\" \\\n    -CA \"${cert_dir}/${authority}.crt\" \\\n    -CAkey \"${cert_dir}/${authority}.key\"\
+        \ \\\n    -CAcreateserial -out \"${cert_dir}/${name}.crt\"\n}\n\nissue_ca backend-ca\nissue_ca edge-ca\nissue_ca public-ca\nissue_ca browser-ca\nissue_identity\
+        \ backend pt-backend.internal backend-ca \\\n  \"subjectAltName=DNS:pt-backend.internal\"\nissue_identity edge envoy-edge edge-ca \\\n  \"extendedKeyUsage=clientAuth\"\
+        \nissue_identity public api.example.test public-ca \\\n  \"subjectAltName=DNS:api.example.test\"\nissue_identity browser browser-test-client browser-ca \\\
+        \n  \"extendedKeyUsage=clientAuth\"\nchmod 0644 \"${cert_dir}\"/*.crt \"${cert_dir}\"/*.key\n"
+    - name: Configure and build production model-session host
+      run: "cmake -S tests/runtime/pt_process_host \\\n  -B build/hosted-web-process-host \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DCMAKE_CXX_COMPILER=g++ \\\n  -DMPMC_PT_PROCESS_ENABLE_SANITIZERS=OFF\
+        \ \\\n  -DMPMC_PT_PROCESS_TEST_CERT_DIR=\"${PWD}/build/hosted-web-certs\"\ncmake --build build/hosted-web-process-host \\\n  --target mpmc_pt_service_host\
+        \ --parallel 2\n"
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Build shared hosted Classic PR frontend
+      working-directory: frontend
+      run: 'npm ci --ignore-scripts --no-audit --no-fund
+
+        npm run proto:model:generate
+
+        ./node_modules/.bin/vite build
+
+        '
+    - name: Verify hosted browser runtime
+      run: 'google-chrome --version
+
+        test -x "${CHROMEWEBDRIVER}/chromedriver"
+
+        "${CHROMEWEBDRIVER}/chromedriver" --version
+
+        '
+    - name: Validate model-enabled production edge
+      run: "set -euo pipefail\ncert_dir=\"${PWD}/build/hosted-web-certs\"\npython3 deploy/pt-grpc-web/render_production_config.py \\\n  --public-host api.example.test\
+        \ \\\n  --public-origin https://ui.example.test \\\n  --downstream-certificate-chain /run/secrets/public.crt \\\n  --downstream-private-key /run/secrets/public.key\
+        \ \\\n  --downstream-client-ca /run/secrets/browser-ca.crt \\\n  --upstream-port 50053 \\\n  --upstream-server-name pt-backend.internal \\\n  --upstream-client-certificate-chain\
+        \ /run/secrets/edge.crt \\\n  --upstream-client-private-key /run/secrets/edge.key \\\n  --upstream-server-ca /run/secrets/backend-ca.crt \\\n  --public-port\
+        \ 8444 \\\n  --admin-port 9902 \\\n  --model-authz-loopback-port 10003 \\\n  > build/hosted-web-envoy.yaml\ndocker run --rm \\\n  --volume \"${PWD}/build/hosted-web-envoy.yaml:/etc/envoy/envoy.yaml:ro\"\
+        \ \\\n  --volume \"${cert_dir}:/run/secrets:ro\" \\\n  envoyproxy/envoy:v1.36.9 \\\n  --mode validate -c /etc/envoy/envoy.yaml\n"
+    - name: Run real hosted browser model ownership regression
+      run: "set -euo pipefail\ncert_dir=\"${PWD}/build/hosted-web-certs\"\nhost_log=\"${PWD}/build/hosted-web-host.log\"\nauthz_log=\"${PWD}/build/hosted-web-authz.log\"\
+        \nenvoy_name=\"mpmc-hosted-web-envoy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"\n\nsudo sh -c \"printf '%s\\n' '127.0.0.1 api.example.test' >> /etc/hosts\"\n\
+        \n./build/hosted-web-process-host/pt-process-library/mpmc_pt_service_host \\\n  --listen-address 127.0.0.1:50053 \\\n  --tls-certificate-chain \"${cert_dir}/backend.crt\"\
+        \ \\\n  --tls-private-key \"${cert_dir}/backend.key\" \\\n  --trusted-edge-client-ca \"${cert_dir}/edge-ca.crt\" \\\n  --enable-model-sessions \\\n  >\"${host_log}\"\
+        \ 2>&1 &\nhost_pid=$!\n\npython3 deploy/pt-grpc-web/tests/web_identity_authz_fixture.py \\\n  --port 10003 >\"${authz_log}\" 2>&1 &\nauthz_pid=$!\n\ncleanup()\
+        \ {\n  docker rm --force \"${envoy_name}\" >/dev/null 2>&1 || true\n  kill -TERM \"${authz_pid}\" 2>/dev/null || true\n  kill -TERM \"${host_pid}\" 2>/dev/null\
+        \ || true\n  wait \"${authz_pid}\" 2>/dev/null || true\n  wait \"${host_pid}\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n\nfor attempt in {1..100}; do\n\
+        \  if grep --quiet '\"event\":\"pt_process_ready\"' \"${host_log}\" &&\n     curl --fail --silent http://127.0.0.1:10003/healthz >/dev/null; then\n    break\n\
+        \  fi\n  if ! kill -0 \"${host_pid}\" 2>/dev/null; then\n    cat \"${host_log}\"\n    exit 1\n  fi\n  if ! kill -0 \"${authz_pid}\" 2>/dev/null; then\n  \
+        \  cat \"${authz_log}\"\n    exit 1\n  fi\n  sleep 0.1\ndone\ngrep --quiet '\"configured_backends\":3' \"${host_log}\"\ncurl --fail --silent http://127.0.0.1:10003/healthz\
+        \ >/dev/null\n\ndocker run --detach --rm --network host \\\n  --name \"${envoy_name}\" \\\n  --volume \"${PWD}/build/hosted-web-envoy.yaml:/etc/envoy/envoy.yaml:ro\"\
+        \ \\\n  --volume \"${cert_dir}:/run/secrets:ro\" \\\n  envoyproxy/envoy:v1.36.9 \\\n  -c /etc/envoy/envoy.yaml\n\nfor attempt in {1..100}; do\n  if curl --fail\
+        \ --silent http://127.0.0.1:9902/ready >/dev/null; then\n    break\n  fi\n  sleep 0.1\ndone\nif ! curl --fail --silent http://127.0.0.1:9902/ready >/dev/null;\
+        \ then\n  docker logs \"${envoy_name}\" || true\n  exit 1\nfi\n\npython3 deploy/pt-grpc-web/tests/hosted_web_product_smoke.py \\\n  --dist frontend/dist \\\
+        \n  --edge-host api.example.test \\\n  --edge-port 8444 \\\n  --public-ca \"${cert_dir}/public-ca.crt\" \\\n  --client-cert \"${cert_dir}/browser.crt\" \\\
+        \n  --client-key \"${cert_dir}/browser.key\" \\\n  --chromedriver \"${CHROMEWEBDRIVER}/chromedriver\"\n\nkill -TERM \"${host_pid}\"\nwait \"${host_pid}\"\n\
+        grep --quiet '\"event\":\"pt_process_stopped\"' \"${host_log}\"\ntrap - EXIT\ndocker rm --force \"${envoy_name}\" >/dev/null 2>&1 || true\nkill -TERM \"${authz_pid}\"\
+        \ 2>/dev/null || true\nwait \"${authz_pid}\" 2>/dev/null || true\n"
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_hosted_web_model_product
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_mesh_baseline_benchmark__baseline:
+    needs:
+    - impact
+    name: Mesh baseline benchmark / GitHub-hosted Linux x64 GCC Release fixed workload
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Record benchmark environment
+      run: 'echo "runner_image=ubuntu-24.04"
+
+        uname -a
+
+        g++ --version
+
+        lscpu | grep -E ''^(Architecture|CPU\(s\)|Model name|Thread|Core|Socket):'' || true
+
+        '
+    - name: Configure fixed mesh benchmark
+      run: "cmake -S tests/mesh/benchmark -B build/mesh-benchmark \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DCMAKE_CXX_COMPILER=g++\n"
+    - name: Build fixed mesh benchmark
+      run: "cmake --build build/mesh-benchmark \\\n  --target mpmc_mesh_baseline_benchmark \\\n  --parallel 2\n"
+    - name: Run fixed mesh benchmark
+      run: 'build/mesh-benchmark/mpmc_mesh_baseline_benchmark | tee mesh-baseline.txt
+
+        grep -q ''^benchmark_schema=mpmc.mesh.baseline.v1$'' mesh-baseline.txt
+
+        grep -q ''^logical_total_bytes='' mesh-baseline.txt
+
+        grep -q ''^peak_rss_kib='' mesh-baseline.txt
+
+        grep -q ''^topology_median_gib_s='' mesh-baseline.txt
+
+        grep -q ''^field_median_gib_s='' mesh-baseline.txt
+
+        '
+    - name: Publish benchmark summary
+      run: "{\n  echo '## Mesh fixed-workload baseline'\n  echo\n  echo '```text'\n  cat mesh-baseline.txt\n  echo '```'\n} >> \"$GITHUB_STEP_SUMMARY\"\n"
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_mesh_baseline_benchmark
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_mesh_core__core:
+    needs:
+    - impact
+    name: Mesh core correctness / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          build_type: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          build_type: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          build_type: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure mesh core tests
+      run: "cmake -S tests/mesh/core -B build/mesh-core \\\n  -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \\\n  ${{ matrix.compiler }} \\\n  -DMPMC_MESH_ENABLE_SANITIZERS=${{\
+        \ matrix.sanitizer }}\n"
+    - name: Build mesh core tests
+      run: cmake --build build/mesh-core --target mpmc_mesh_core_all --config ${{ matrix.build_type }} --parallel 2
+    - name: Run mesh core tests
+      run: ctest --test-dir build/mesh-core -C ${{ matrix.build_type }} -R '^mesh[.]core[.]' --verbose --no-tests=error
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_mesh_core ==
+      'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_mesh_external_compatibility__compatibility:
+    needs:
+    - impact
+    name: Mesh external format compatibility / Pinned public Gmsh VTU GRDECL samples
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Download pinned external mesh samples
+      shell: bash
+      run: 'set -euo pipefail
+
+        mkdir -p build/external-samples
+
+
+        curl -fsSL --retry 3 https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/grid/grids/grid_in_msh_01.2d.v41.msh -o
+        build/external-samples/dealii-2d.msh
+
+        test "$(git hash-object build/external-samples/dealii-2d.msh)" = "638a419514f00782902edb5abbfbabfd5118c9ce"
+
+
+        curl -fsSL --retry 3 https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/grid/grids/grid_in_msh_01.3d.v41.msh -o
+        build/external-samples/dealii-3d.msh
+
+        test "$(git hash-object build/external-samples/dealii-3d.msh)" = "7ef8ec2c29d1ce8076629b6ff3da413773e28725"
+
+
+        curl -fsSL --retry 3 https://raw.githubusercontent.com/dealii/dealii/ba22b5843ef01bd0ac5c16a180983b0de61e3a4f/tests/data_out/data_out_12.with_zlib=off.output
+        -o build/external-samples/dealii-vtu-bundle.txt
+
+        test "$(git hash-object build/external-samples/dealii-vtu-bundle.txt)" = "8a758d03cc098b09f128b7c798651ae867253633"
+
+
+        curl -fsSL --retry 3 https://raw.githubusercontent.com/OPM/opm-verteq/33db570bc86b54593fa351fbb28044b51d2a3238/examples/3d/data/tube.grdecl -o build/external-samples/opm-tube.grdecl
+
+        test "$(git hash-object build/external-samples/opm-tube.grdecl)" = "d6e5ed9993f59b5c432e009289cd5228e76d46fd"
+
+
+        curl -fsSL --retry 3 https://raw.githubusercontent.com/OPM/opm-upscaling/69fb6d4e38d06bd75a00ffab0368ff79cb2196f0/tests/input_data/grids/27cellsAniso.grdecl
+        -o build/external-samples/opm-27cellsAniso.grdecl
+
+        test "$(git hash-object build/external-samples/opm-27cellsAniso.grdecl)" = "c427da4f83663b071c657ecded06bea30da50415"
+
+        '
+    - name: Configure external compatibility test
+      run: 'cmake -S tests/mesh/external_compatibility -B build/mesh-external -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
+
+        '
+    - name: Build external compatibility test
+      run: 'cmake --build build/mesh-external --target mpmc_mesh_external_compatibility --parallel 2
+
+        '
+    - name: Read export and re-read external meshes
+      shell: bash
+      run: 'set -euo pipefail
+
+        build/mesh-external/mpmc_mesh_external_compatibility build/external-samples/dealii-2d.msh build/external-samples/dealii-3d.msh build/external-samples/dealii-vtu-bundle.txt
+        build/external-samples/opm-tube.grdecl build/external-samples/opm-27cellsAniso.grdecl | tee build/external-compatibility.txt
+
+        grep -Fqx ''[PASS] external.mesh.compatibility'' build/external-compatibility.txt
+
+        grep -Fqx ''[PASS] external.grdecl.opm_tube_native_roundtrip'' build/external-compatibility.txt
+
+        grep -Fqx ''[PASS] external.grdecl.opm_tube_to_gmsh'' build/external-compatibility.txt
+
+        grep -Fqx ''matrix.gmsh3d.vtu=lossy'' build/external-compatibility.txt
+
+        grep -Fqx ''matrix.gmsh3d.grdecl=lossy'' build/external-compatibility.txt
+
+        grep -Fqx ''matrix.vtu3d.gmsh=lossy'' build/external-compatibility.txt
+
+        grep -Fqx ''matrix.vtu3d.grdecl=lossy'' build/external-compatibility.txt
+
+        grep -Fqx ''matrix.grdecl.grdecl=lossless'' build/external-compatibility.txt
+
+        grep -Fqx ''grdecl_native_export=implemented_minimal_baseline'' build/external-compatibility.txt
+
+        '
+    - name: Publish compatibility summary
+      shell: bash
+      run: "{\n  echo '## External mesh compatibility'\n  echo\n  echo 'Pinned upstream samples are downloaded only for this run and verified by Git blob SHA.'\n\
+        \  echo\n  echo '~~~text'\n  cat build/external-compatibility.txt\n  echo '~~~'\n} >> \"$GITHUB_STEP_SUMMARY\"\n"
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_mesh_external_compatibility
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_mesh_petsc__petsc:
+    needs:
+    - impact
+    name: Mesh/discretization PETSc adapter correctness / PETSc 3.19.6 mesh/discretization synthetic MPI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned PETSc and MPI runtime
+      run: "sudo apt-get update\nsudo apt-get install -y \\\n  libpetsc-real3.19-dev=3.19.6+dfsg1-2.2ubuntu2 \\\n  openmpi-bin\ntest \"$(pkg-config --modversion PETSc)\"\
+        \ = \"3.19.6\"\ncommand -v mpiexec\n"
+    - name: Configure mesh/discretization PETSc tests
+      run: "cmake -S tests/mesh/petsc -B build/mesh-petsc \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DCMAKE_CXX_COMPILER=g++\n"
+    - name: Build mesh/discretization PETSc tests
+      run: "cmake --build build/mesh-petsc \\\n  --target mpmc_mesh_discretization_petsc_tests \\\n  --parallel 2\n"
+    - name: Run PETSc MPI integration tests
+      run: "ctest --test-dir build/mesh-petsc \\\n  -R '^(mesh|discretization)[.]petsc[.]' \\\n  --verbose \\\n  --no-tests=error\n"
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_mesh_petsc ==
+      'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_model_configuration_grpc__linux:
+    needs:
+    - impact
+    name: Versioned model configuration service / ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: Model RPC GCC + ASan/UBSan
+          compiler: g++
+          config: Debug
+          sanitizers: 'ON'
+        - name: Model RPC Clang Release
+          compiler: clang++
+          config: Release
+          sanitizers: 'OFF'
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install existing pinned Ubuntu gRPC and Protobuf dependencies
+      run: "sudo apt-get update\nsudo apt-get install --yes --no-install-recommends \\\n  libgrpc++-dev=1.51.1-4.1build5 \\\n  protobuf-compiler-grpc=1.51.1-4.1build5\
+        \ \\\n  libprotobuf-dev=3.21.12-8.2ubuntu0.3 \\\n  protobuf-compiler=3.21.12-8.2ubuntu0.3\n"
+    - name: Configure model RPC and unchanged v1 regressions
+      run: "python tests/model_configuration/grpc/generate_certificates.py build/model-session-certs\ncmake -S tests/model_configuration/grpc -B build/model-grpc\
+        \ \\\n  -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \\\n  -DMPMC_MODEL_SESSION_CERT_DIR=${{ github.workspace }}/build/model-session-certs\
+        \ \\\n  -DMPMC_MODEL_GRPC_ENABLE_SANITIZERS=${{ matrix.sanitizers }}\n"
+    - name: Build model RPC and unchanged v1 regressions
+      run: cmake --build build/model-grpc --parallel 2
+    - name: Run real gRPC roundtrips and v1 compatibility
+      run: ctest --test-dir build/model-grpc -R '^model[.]grpc' --verbose --no-tests=error
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      if: matrix.sanitizers == 'ON'
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact shared-client dependencies
+      if: matrix.sanitizers == 'ON'
+      working-directory: frontend
+      run: npm ci --ignore-scripts --no-audit --no-fund
+    - name: Export native fixture for shared-client verification
+      if: matrix.sanitizers == 'ON'
+      run: python tests/model_configuration/grpc/prepare_shared_client.py build/model-grpc/model-client-paths-${{ matrix.config }}.json
+    - name: Verify shared client types and real native session lifecycle
+      if: matrix.sanitizers == 'ON'
+      working-directory: frontend
+      run: 'npm run typecheck
+
+        npm run desktop:typecheck
+
+        npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts src/api/modelValidationDetail.test.ts desktop/modelDesktopSession.test.ts
+        desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts desktop/tests/modelCleanupProbe.test.ts
+
+        '
+    - name: Install pinned Electron binary for actual window IPC verification
+      if: matrix.sanitizers == 'ON'
+      working-directory: frontend
+      run: node node_modules/electron/install.js
+    - name: Prepare existing Electron sandbox under Xvfb
+      if: matrix.sanitizers == 'ON'
+      working-directory: frontend
+      run: 'sudo chown root:root node_modules/electron/dist/chrome-sandbox
+
+        sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+
+        test "$(stat -c ''%U:%G %a'' node_modules/electron/dist/chrome-sandbox)" = "root:root 4755"
+
+        '
+    - name: Build renderer and versioned model IPC smoke
+      if: matrix.sanitizers == 'ON'
+      working-directory: frontend
+      run: 'npm run build
+
+        npm run desktop:model-bundle
+
+        '
+    - name: Verify real window isolation and close reclamation
+      if: matrix.sanitizers == 'ON'
+      working-directory: frontend
+      run: xvfb-run --auto-servernum npm run desktop:model-smoke
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_model_configuration_grpc
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_model_configuration_grpc__windows:
+    needs:
+    - impact
+    name: Versioned model configuration service / Model RPC MSVC Release
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+      PROFILE: windows-x86_64-release
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install existing pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore staging-proven Windows dependencies
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ env.PROFILE }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+        fail-on-cache-miss: true
+    - name: Resolve existing locked dependency graph offline
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ env.PROFILE }} --no-remote --build=never --output-folder=build/conan-generators
+    - name: Configure model RPC and unchanged v1 regressions
+      run: 'python tests/model_configuration/grpc/generate_certificates.py build/model-session-certs
+
+        cmake -S tests/model_configuration/grpc -B build/model-grpc -DCMAKE_BUILD_TYPE=Release -DMPMC_MODEL_SESSION_CERT_DIR=${{ github.workspace }}/build/model-session-certs
+        -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
+
+        '
+    - name: Build model RPC and unchanged v1 regressions
+      run: cmake --build build/model-grpc --config Release --parallel 2
+    - name: Run real gRPC roundtrips and v1 compatibility
+      run: ctest --test-dir build/model-grpc -C Release -R '^model[.]grpc' --verbose --no-tests=error
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact shared-client dependencies
+      working-directory: frontend
+      run: npm ci --ignore-scripts --no-audit --no-fund
+    - name: Export native fixture for shared-client verification
+      run: python tests/model_configuration/grpc/prepare_shared_client.py build/model-grpc/model-client-paths-Release.json
+    - name: Verify shared client types and real native session lifecycle
+      working-directory: frontend
+      run: 'npm run typecheck
+
+        npm run desktop:typecheck
+
+        npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts src/api/modelValidationDetail.test.ts desktop/modelDesktopSession.test.ts
+        desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts desktop/tests/modelCleanupProbe.test.ts
+
+        '
+    - name: Install pinned Electron binary for actual window IPC verification
+      working-directory: frontend
+      run: node node_modules/electron/install.js
+    - name: Build renderer and versioned model IPC smoke
+      working-directory: frontend
+      run: 'npm run build
+
+        npm run desktop:model-bundle
+
+        '
+    - name: Verify real window isolation and close reclamation
+      working-directory: frontend
+      run: npm run desktop:model-smoke
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_model_configuration_grpc
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_model_configuration_grpc__macos:
+    needs:
+    - impact
+    name: Versioned model configuration service / Model RPC macOS arm64 Release
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+      PROFILE: macos-armv8-release
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install existing pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore staging-proven macOS dependencies
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ env.PROFILE }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+        fail-on-cache-miss: true
+    - name: Resolve existing locked dependency graph offline
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ env.PROFILE }} --no-remote --build=never --output-folder=build/conan-generators
+    - name: Configure model RPC and unchanged v1 regressions
+      run: "python tests/model_configuration/grpc/generate_certificates.py build/model-session-certs\ncmake -S tests/model_configuration/grpc -B build/model-grpc\
+        \ \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DMPMC_MODEL_SESSION_CERT_DIR=${{ github.workspace }}/build/model-session-certs \\\n  -DCMAKE_TOOLCHAIN_FILE=${{\
+        \ github.workspace }}/build/conan-generators/conan_toolchain.cmake\n"
+    - name: Build model RPC and unchanged v1 regressions
+      run: cmake --build build/model-grpc --parallel 2
+    - name: Run real gRPC creation, isolation and process disconnect regressions
+      run: ctest --test-dir build/model-grpc -R '^model[.]grpc' --verbose --no-tests=error
+    - name: Repeat the observed cancellation synchronization regression
+      run: ctest --test-dir build/model-grpc -R '^model[.]grpc[.]cancellation_and_admission$' --repeat until-fail:20 --verbose --no-tests=error
+    - name: Configure and build standalone registry regressions
+      run: 'cmake -S tests/model_configuration/registry -B build/model-registry -DCMAKE_BUILD_TYPE=Release
+
+        cmake --build build/model-registry --parallel 2
+
+        '
+    - name: Run registry entropy, isolation and lifetime regressions
+      run: ctest --test-dir build/model-registry -R '^model[.]registry[.]' --verbose --no-tests=error
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact shared-client dependencies
+      working-directory: frontend
+      run: npm ci --ignore-scripts --no-audit --no-fund
+    - name: Export native fixture for shared-client verification
+      run: python tests/model_configuration/grpc/prepare_shared_client.py build/model-grpc/model-client-paths-Release.json
+    - name: Verify shared client types and real native session lifecycle
+      working-directory: frontend
+      run: 'npm run typecheck
+
+        npm run desktop:typecheck
+
+        npm test -- src/api/modelSessionClient.test.ts src/api/rendererModelClient.test.ts src/api/modelValidationDetail.test.ts desktop/modelDesktopSession.test.ts
+        desktop/modelDesktopIpc.test.ts desktop/tests/modelSessionLive.test.ts desktop/tests/modelCleanupProbe.test.ts
+
+        '
+    - name: Install pinned Electron binary for actual window IPC verification
+      working-directory: frontend
+      run: node node_modules/electron/install.js
+    - name: Build renderer and versioned model IPC smoke
+      working-directory: frontend
+      run: 'npm run build
+
+        npm run desktop:model-bundle
+
+        '
+    - name: Verify real window isolation and close reclamation
+      working-directory: frontend
+      run: npm run desktop:model-smoke
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_model_configuration_grpc
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_physics_component_inventory__inventory:
+    needs:
+    - impact
+    name: Physics PT component inventory / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure PT component inventory regression
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/physics/component_inventory\
+        \ \\\n  -B build/physics-component-inventory \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_COMPONENT_INVENTORY_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build PT component inventory regression
+      run: cmake --build build/physics-component-inventory --target mpmc_component_inventory_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run PT component inventory regression
+      run: ctest --test-dir build/physics-component-inventory -C ${{ matrix.config }} -R '^physics[.]component_inventory[.]' --verbose --no-tests=error
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_physics_component_inventory
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_pt_android_jni_emulator__boundary:
+    needs:
+    - impact
+    name: PT Android JNI emulator / Android JNI isolation contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Validate Android JNI and emulator boundary
+      run: python3 -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_android_jni_emulator
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_pt_android_jni_emulator__emulator:
+    name: PT Android JNI emulator / Android x86_64 JNI PtService discovery/solve
+    needs:
+    - impact
+    - legacy_pt_android_jni_emulator__boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      NDK_VERSION: 30.0.16248370
+      MPMC_ANDROID_MIN_API: 26
+      MPMC_ANDROID_EMULATOR_API: 35
+      MPMC_ANDROID_BUILD_TOOLS_VERSION: 35.0.0
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Ensure exact NDK, Android platform, build tools, and emulator image
+      shell: bash
+      run: "set -euo pipefail\nsdk_root=\"${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}\"\nif [[ -z \"$sdk_root\" ]]; then\n  echo 'Android SDK root is unavailable on the\
+        \ hosted runner.' >&2\n  exit 1\nfi\nsdkmanager=\"$sdk_root/cmdline-tools/latest/bin/sdkmanager\"\ntest -x \"$sdkmanager\"\nyes | \"$sdkmanager\" --licenses\
+        \ >/dev/null || true\n\"$sdkmanager\" --install \\\n  \"ndk;$NDK_VERSION\" \\\n  \"platforms;android-$MPMC_ANDROID_EMULATOR_API\" \\\n  \"build-tools;$MPMC_ANDROID_BUILD_TOOLS_VERSION\"\
+        \ \\\n  'platform-tools' \\\n  'emulator' \\\n  \"system-images;android-$MPMC_ANDROID_EMULATOR_API;google_apis;x86_64\"\nndk_home=\"$sdk_root/ndk/$NDK_VERSION\"\
+        \ntest -f \"$ndk_home/build/cmake/android.toolchain.cmake\"\ntest -f \"$sdk_root/platforms/android-$MPMC_ANDROID_EMULATOR_API/android.jar\"\necho \"MPMC_ANDROID_NDK_HOME=$ndk_home\"\
+        \ >> \"$GITHUB_ENV\"\njavac -version\nkeytool -help >/dev/null\n"
+    - name: Configure x86_64 Android JNI runtime
+      shell: bash
+      run: "set -euo pipefail\ncmake \\\n  -S products/pt_android \\\n  -B build/pt-android-emulator \\\n  -DCMAKE_TOOLCHAIN_FILE=\"$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake\"\
+        \ \\\n  -DANDROID_ABI=x86_64 \\\n  -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \\\n  -DANDROID_STL=c++_static \\\n  -DCMAKE_BUILD_TYPE=Release\n"
+    - name: Build JNI runtime from canonical PT snapshots
+      shell: bash
+      run: "set -euo pipefail\ncmake --build build/pt-android-emulator --config Release --parallel 2\nmapfile -t libraries < <(\n  find build/pt-android-emulator\
+        \ -type f -name 'libmpmc_pt_android_core.so' -print\n)\nif [[ ${#libraries[@]} -ne 1 ]]; then\n  echo \"Expected one Android JNI library, found ${#libraries[@]}\"\
+        \ >&2\n  exit 1\nfi\ncore=\"$(realpath \"${libraries[0]}\")\"\ntoolchain=\"$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin\"\n\"$toolchain/llvm-readelf\"\
+        \ -h \"$core\" | grep -F 'Advanced Micro Devices X86-64'\n\"$toolchain/llvm-nm\" -D --defined-only \"$core\" |\n  grep -F 'Java_org_mpmc_ptandroid_NativeBridge_runSmoke'\n\
+        echo \"MPMC_ANDROID_CORE_LIBRARY=$core\" >> \"$GITHUB_ENV\"\n"
+    - name: Build minimal signed emulator APK without Gradle product coupling
+      shell: bash
+      run: bash products/pt_android/emulator/build_smoke_apk.sh --core-library "$MPMC_ANDROID_CORE_LIBRARY" --out build/pt-android-smoke-apk
+    - name: Boot emulator, load JNI library, discover capabilities, and solve three backends
+      shell: bash
+      run: bash products/pt_android/emulator/run_emulator_smoke.sh --apk build/pt-android-smoke-apk/mpmc-pt-android-emulator-smoke.apk --out build/pt-android-emulator-evidence
+    - name: Upload Android emulator evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-android-jni-emulator-v1
+        path: 'build/pt-android-smoke-apk/mpmc-pt-android-emulator-smoke.apk
+
+          build/pt-android-emulator-evidence/emulator.txt
+
+          build/pt-android-emulator-evidence/logcat.txt
+
+          '
+        if-no-files-found: warn
+        retention-days: 7
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_android_jni_emulator
+      == 'true' && (true)
+    permissions:
+      contents: read
+  legacy_pt_android_ndk_portability__boundary:
+    needs:
+    - impact
+    name: PT Android NDK portability / Android isolation contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Validate isolated Android boundary
+      run: python3 -m unittest discover -s products/pt_android/tests -p 'test_*.py' -v
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_android_ndk_portability
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_pt_android_ndk_portability__build:
+    name: PT Android NDK portability / Android ${{ matrix.abi }} native runtime
+    needs:
+    - impact
+    - legacy_pt_android_ndk_portability__boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - abi: arm64-v8a
+          machine: AArch64
+        - abi: x86_64
+          machine: Advanced Micro Devices X86-64
+    env:
+      NDK_VERSION: 30.0.16248370
+      ANDROID_API: 26
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Ensure exact Android NDK
+      shell: bash
+      run: "set -euo pipefail\nsdk_root=\"${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}\"\nif [[ -z \"$sdk_root\" ]]; then\n  echo 'Android SDK root is unavailable on the\
+        \ hosted runner.' >&2\n  exit 1\nfi\nsdkmanager=\"$sdk_root/cmdline-tools/latest/bin/sdkmanager\"\nif [[ ! -x \"$sdkmanager\" ]]; then\n  echo \"sdkmanager\
+        \ is unavailable: $sdkmanager\" >&2\n  exit 1\nfi\nndk_home=\"$sdk_root/ndk/$NDK_VERSION\"\nif [[ ! -d \"$ndk_home\" ]]; then\n  yes | \"$sdkmanager\" --licenses\
+        \ >/dev/null || true\n  \"$sdkmanager\" --install \"ndk;$NDK_VERSION\"\nfi\ntest -f \"$ndk_home/build/cmake/android.toolchain.cmake\"\necho \"MPMC_ANDROID_NDK_HOME=$ndk_home\"\
+        \ >> \"$GITHUB_ENV\"\n"
+    - name: Configure isolated Android core
+      shell: bash
+      run: "set -euo pipefail\ncmake \\\n  -S products/pt_android \\\n  -B \"build/pt-android-${{ matrix.abi }}\" \\\n  -DCMAKE_TOOLCHAIN_FILE=\"$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake\"\
+        \ \\\n  -DANDROID_ABI=${{ matrix.abi }} \\\n  -DANDROID_PLATFORM=android-26 \\\n  -DANDROID_STL=c++_static \\\n  -DCMAKE_BUILD_TYPE=Release\n"
+    - name: Build Android shared core
+      run: cmake --build "build/pt-android-${{ matrix.abi }}" --config Release --parallel 2
+    - name: Validate ELF architecture and exported ABI
+      shell: bash
+      run: "set -euo pipefail\nmapfile -t libraries < <(\n  find \"build/pt-android-${{ matrix.abi }}\" \\\n    -type f -name 'libmpmc_pt_android_core.so' -print\n\
+        )\nif [[ ${#libraries[@]} -ne 1 ]]; then\n  printf 'Expected exactly one Android core library, found %s\\n' \"${#libraries[@]}\" >&2\n  exit 1\nfi\nlibrary=\"\
+        ${libraries[0]}\"\ntoolchain=\"$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin\"\n\"$toolchain/llvm-readelf\" -h \"$library\" | tee \"build/android-${{\
+        \ matrix.abi }}-elf.txt\"\n\"$toolchain/llvm-readelf\" -h \"$library\" | grep -F \"Machine:\" | grep -F '${{ matrix.machine }}'\n\"$toolchain/llvm-nm\" -D\
+        \ --defined-only \"$library\" | grep -F 'mpmc_pt_android_core_abi_version'\n\"$toolchain/llvm-nm\" -D --defined-only \"$library\" | grep -F 'mpmc_pt_android_core_convention'\n\
+        \"$toolchain/llvm-nm\" -D --defined-only \"$library\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_runSmoke'\n\"$toolchain/llvm-nm\" -D --defined-only\
+        \ \"$library\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_discoverJson'\n\"$toolchain/llvm-nm\" -D --defined-only \"$library\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_solveJson'\n\
+        \"$toolchain/llvm-nm\" -D --defined-only \"$library\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelApplyRecords'\n\"$toolchain/llvm-nm\" -D --defined-only\
+        \ \"$library\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelSolveRecords'\n\"$toolchain/llvm-nm\" -D --defined-only \"$library\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelReleaseRecords'\n\
+        \"$toolchain/llvm-nm\" -D --defined-only \"$library\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelCancel'\ncp \"$library\" \"build/libmpmc_pt_android_core-${{\
+        \ matrix.abi }}.so\"\necho 'ANDROID_NDK_PT_CORE_PORTABILITY_OK abi=${{ matrix.abi }}'\n"
+    - name: Upload Android portability library
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-android-${{ matrix.abi }}-native-v3
+        path: 'build/libmpmc_pt_android_core-${{ matrix.abi }}.so
+
+          build/android-${{ matrix.abi }}-elf.txt
+
+          '
+        if-no-files-found: error
+        retention-days: 7
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_android_ndk_portability
+      == 'true' && (true)
+    permissions:
+      contents: read
+  legacy_pt_android_product_shell__product-shell:
+    needs:
+    - impact
+    name: PT Android Product Shell / Android universal React + Capacitor + JNI product shell
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      NDK_VERSION: 30.0.16248370
+      MPMC_ANDROID_MIN_API: 26
+      MPMC_ANDROID_EMULATOR_API: 35
+      MPMC_ANDROID_BUILD_TOOLS_VERSION: 35.0.0
+      CAPACITOR_VERSION: 8.5.2
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Select hosted JDK 21
+      shell: bash
+      run: "set -euo pipefail\nif [[ -z \"${JAVA_HOME_21_X64:-}\" || ! -x \"$JAVA_HOME_21_X64/bin/java\" ]]; then\n  echo 'Hosted JDK 21 is unavailable on ubuntu-24.04.'\
+        \ >&2\n  exit 1\nfi\necho \"JAVA_HOME=$JAVA_HOME_21_X64\" >> \"$GITHUB_ENV\"\necho \"$JAVA_HOME_21_X64/bin\" >> \"$GITHUB_PATH\"\n\"$JAVA_HOME_21_X64/bin/java\"\
+        \ -version\n"
+    - name: Install exact frontend dependencies
+      run: npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
+    - name: Generate model configuration TypeScript
+      run: npm --prefix frontend run proto:model:generate
+    - name: Install isolated Capacitor 8.5.2 shell
+      run: npm install --prefix products/pt_android/shell --ignore-scripts --no-audit --no-fund --no-package-lock
+    - name: Verify exact Capacitor shell versions
+      shell: bash
+      run: "set -euo pipefail\nnode - <<'NODE'\nconst fs = require('fs');\nconst root = 'products/pt_android/shell/node_modules';\nfor (const name of ['@capacitor/core',\
+        \ '@capacitor/android', '@capacitor/cli']) {\n  const pkg = JSON.parse(fs.readFileSync(`${root}/${name}/package.json`, 'utf8'));\n  if (pkg.version !== '8.5.2')\
+        \ {\n    throw new Error(`${name} resolved to ${pkg.version}, expected 8.5.2`);\n  }\n}\nNODE\n"
+    - name: Typecheck shared React Android shell
+      run: ./frontend/node_modules/.bin/tsc --noEmit -p products/pt_android/shell/tsconfig.json
+    - name: Build shared React shell for Capacitor
+      shell: bash
+      env:
+        VITE_MPMC_ANDROID_PRODUCT_SHELL_SMOKE: '1'
+      run: ./frontend/node_modules/.bin/vite build --config products/pt_android/shell/vite.config.mjs
+    - name: Ensure exact Android SDK and NDK inputs
+      shell: bash
+      run: "set -euo pipefail\nsdk_root=\"${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}\"\nif [[ -z \"$sdk_root\" ]]; then\n  echo 'Android SDK root is unavailable on the\
+        \ hosted runner.' >&2\n  exit 1\nfi\nsdkmanager=\"$sdk_root/cmdline-tools/latest/bin/sdkmanager\"\ntest -x \"$sdkmanager\"\nyes | \"$sdkmanager\" --licenses\
+        \ >/dev/null || true\n\"$sdkmanager\" --install \\\n  \"ndk;$NDK_VERSION\" \\\n  'platforms;android-36' \\\n  'build-tools;36.0.0' \\\n  \"platforms;android-$MPMC_ANDROID_EMULATOR_API\"\
+        \ \\\n  \"build-tools;$MPMC_ANDROID_BUILD_TOOLS_VERSION\" \\\n  'platform-tools' \\\n  'emulator' \\\n  \"system-images;android-$MPMC_ANDROID_EMULATOR_API;google_apis;x86_64\"\
+        \nndk_home=\"$sdk_root/ndk/$NDK_VERSION\"\ntest -f \"$ndk_home/build/cmake/android.toolchain.cmake\"\necho \"MPMC_ANDROID_NDK_HOME=$ndk_home\" >> \"$GITHUB_ENV\"\
+        \n"
+    - name: Configure Android x86_64 native PT runtime
+      shell: bash
+      run: "set -euo pipefail\ncmake \\\n  -S products/pt_android \\\n  -B build/pt-android-product-shell-native-x86_64 \\\n  -DCMAKE_TOOLCHAIN_FILE=\"$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake\"\
+        \ \\\n  -DANDROID_ABI=x86_64 \\\n  -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \\\n  -DANDROID_STL=c++_static \\\n  -DCMAKE_BUILD_TYPE=Release\n"
+    - name: Configure Android arm64-v8a native PT runtime
+      shell: bash
+      run: "set -euo pipefail\ncmake \\\n  -S products/pt_android \\\n  -B build/pt-android-product-shell-native-arm64-v8a \\\n  -DCMAKE_TOOLCHAIN_FILE=\"$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake\"\
+        \ \\\n  -DANDROID_ABI=arm64-v8a \\\n  -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \\\n  -DANDROID_STL=c++_static \\\n  -DCMAKE_BUILD_TYPE=Release\n"
+    - name: Build and audit universal product JNI cores
+      shell: bash
+      run: "set -euo pipefail\ncmake --build build/pt-android-product-shell-native-x86_64 --config Release --parallel 2\ncmake --build build/pt-android-product-shell-native-arm64-v8a\
+        \ --config Release --parallel 2\n\nx86_core=\"$(realpath build/pt-android-product-shell-native-x86_64/libmpmc_pt_android_core.so)\"\narm64_core=\"$(realpath\
+        \ build/pt-android-product-shell-native-arm64-v8a/libmpmc_pt_android_core.so)\"\ntest -f \"$x86_core\"\ntest -f \"$arm64_core\"\n\ntoolchain=\"$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin\"\
+        \n\"$toolchain/llvm-readelf\" -h \"$x86_core\" | grep -F 'Advanced Micro Devices X86-64'\n\"$toolchain/llvm-readelf\" -h \"$arm64_core\" | grep -F 'AArch64'\n\
+        for core in \"$x86_core\" \"$arm64_core\"; do\n  \"$toolchain/llvm-nm\" -D --defined-only \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_discoverJson'\n\
+        \  \"$toolchain/llvm-nm\" -D --defined-only \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_solveJson'\n  \"$toolchain/llvm-nm\" -D --defined-only\
+        \ \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelApplyRecords'\n  \"$toolchain/llvm-nm\" -D --defined-only \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelSolveRecords'\n\
+        \  \"$toolchain/llvm-nm\" -D --defined-only \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelReleaseRecords'\n  \"$toolchain/llvm-nm\" -D --defined-only\
+        \ \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelCancel'\ndone\n\necho \"MPMC_ANDROID_CORE_X86_64=$x86_core\" >> \"$GITHUB_ENV\"\necho \"\
+        MPMC_ANDROID_CORE_ARM64_V8A=$arm64_core\" >> \"$GITHUB_ENV\"\n"
+    - name: Generate Capacitor Android project and build universal debug APK
+      shell: bash
+      run: bash products/pt_android/shell/build_product_shell.sh --core-library-x86_64 "$MPMC_ANDROID_CORE_X86_64" --core-library-arm64-v8a "$MPMC_ANDROID_CORE_ARM64_V8A"
+        --out build/pt-android-product-shell
+    - name: Boot x86_64 emulator and exercise universal React to JNI PT path
+      shell: bash
+      run: bash products/pt_android/shell/run_product_shell_emulator.sh --apk build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-universal-debug.apk
+        --out build/pt-android-product-shell-evidence
+    - name: Upload Android Product Shell evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-android-product-shell-v1-universal-debug
+        path: 'build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-universal-debug.apk
+
+          build/pt-android-product-shell-evidence/emulator.txt
+
+          build/pt-android-product-shell-evidence/logcat.txt
+
+          build/pt-android-product-shell-evidence/dom.json
+
+          '
+        if-no-files-found: warn
+        retention-days: 7
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_android_product_shell
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_pt_process_adapter__adapter:
+    needs:
+    - impact
+    name: PT gRPC process adapter / ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan + TS golden
+          compiler: g++
+          config: Debug
+          sanitizers: 'ON'
+          cross_language: true
+        - name: Clang Release
+          compiler: clang++
+          config: Release
+          sanitizers: 'OFF'
+          cross_language: false
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Ubuntu 24.04 Protobuf and gRPC packages
+      run: "sudo apt-get update\nsudo apt-get install --yes --no-install-recommends \\\n  libgrpc++-dev=1.51.1-4.1build5 \\\n  protobuf-compiler-grpc=1.51.1-4.1build5\
+        \ \\\n  libprotobuf-dev=3.21.12-8.2ubuntu0.3 \\\n  protobuf-compiler=3.21.12-8.2ubuntu0.3\nprotoc --version\ngrpc_cpp_plugin --version || true\n"
+    - name: Configure PT process adapter
+      run: "cmake -S tests/runtime/pt_grpc_adapter \\\n  -B build/pt-grpc-adapter \\\n  -DCMAKE_BUILD_TYPE=${{ matrix.config }} \\\n  -DCMAKE_CXX_COMPILER=${{ matrix.compiler\
+        \ }} \\\n  -DMPMC_PT_GRPC_ENABLE_SANITIZERS=${{ matrix.sanitizers }}\n"
+    - name: Generate isolated mTLS test authorities and identities
+      run: "set -euo pipefail\ncert_dir=\"${PWD}/build/pt-process-certs\"\nmkdir -p \"${cert_dir}\"\n\nissue_ca() {\n  local name=$1\n  openssl req -x509 -newkey\
+        \ rsa:2048 -nodes -sha256 -days 1 \\\n    -subj \"/CN=${name}\" \\\n    -keyout \"${cert_dir}/${name}.key\" \\\n    -out \"${cert_dir}/${name}.crt\"\n}\n\
+        issue_identity() {\n  local name=$1\n  local common_name=$2\n  local authority=$3\n  local extension=$4\n  openssl req -newkey rsa:2048 -nodes -sha256 \\\n\
+        \    -subj \"/CN=${common_name}\" -addext \"${extension}\" \\\n    -keyout \"${cert_dir}/${name}.key\" \\\n    -out \"${cert_dir}/${name}.csr\"\n  openssl\
+        \ x509 -req -sha256 -days 1 -copy_extensions copy \\\n    -in \"${cert_dir}/${name}.csr\" \\\n    -CA \"${cert_dir}/${authority}.crt\" \\\n    -CAkey \"${cert_dir}/${authority}.key\"\
+        \ \\\n    -CAcreateserial -out \"${cert_dir}/${name}.crt\"\n}\n\nissue_ca backend-ca\nissue_ca edge-ca\nissue_ca public-ca\nissue_ca browser-ca\nissue_identity\
+        \ backend pt-backend.internal backend-ca \\\n  \"subjectAltName=DNS:pt-backend.internal\"\nissue_identity edge envoy-edge edge-ca \\\n  \"extendedKeyUsage=clientAuth\"\
+        \nissue_identity public api.example.test public-ca \\\n  \"subjectAltName=DNS:api.example.test\"\nissue_identity browser browser-test-client browser-ca \\\
+        \n  \"extendedKeyUsage=clientAuth\"\n# These one-day identities are job-local test material; the Envoy\n# container runs under a different UID and needs read-only\
+        \ access.\nchmod 0644 \"${cert_dir}\"/*.crt \"${cert_dir}\"/*.key\n"
+    - name: Configure secure PT composition/process host
+      run: "cmake -S tests/runtime/pt_process_host \\\n  -B build/pt-process-host \\\n  -DCMAKE_BUILD_TYPE=${{ matrix.config }} \\\n  -DCMAKE_CXX_COMPILER=${{ matrix.compiler\
+        \ }} \\\n  -DMPMC_PT_PROCESS_ENABLE_SANITIZERS=${{ matrix.sanitizers }} \\\n  -DMPMC_PT_PROCESS_TEST_CERT_DIR=\"${PWD}/build/pt-process-certs\"\n"
+    - name: Build PT process adapter
+      run: cmake --build build/pt-grpc-adapter --target mpmc_pt_grpc_adapter_tests mpmc_pt_grpc_golden_server --parallel 2
+    - name: Build secure PT composition/process host
+      run: cmake --build build/pt-process-host --target mpmc_pt_process_tests mpmc_pt_service_host mpmc_pt_secure_test_server mpmc_pt_secure_client --parallel 2
+    - name: Run native adapter resource and lifecycle regression
+      run: ctest --test-dir build/pt-grpc-adapter -R '^runtime[.]pt_grpc_adapter[.]' --verbose --no-tests=error
+    - name: Run composition ownership, observability, and native mTLS regression
+      run: ctest --test-dir build/pt-process-host -R '^runtime[.]pt_process[.]' --verbose --no-tests=error
+    - name: Start repository-curated production entry and discover three backends
+      run: "set -euo pipefail\ncert_dir=\"$PWD/build/pt-process-certs\"\nhost_log=\"$PWD/build/pt-process-host/production-host.log\"\nASAN_OPTIONS=detect_leaks=0\
+        \ \\\n  ./build/pt-process-host/pt-process-library/mpmc_pt_service_host \\\n  --listen-address 127.0.0.1:50052 \\\n  --tls-certificate-chain \"$cert_dir/backend.crt\"\
+        \ \\\n  --tls-private-key \"$cert_dir/backend.key\" \\\n  --trusted-edge-client-ca \"$cert_dir/edge-ca.crt\" \\\n  >\"$host_log\" 2>&1 &\nhost_pid=$!\ncleanup()\
+        \ {\n  kill -TERM \"$host_pid\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n\nfor attempt in {1..100}; do\n  if grep --quiet '\"event\":\"pt_process_ready\"\
+        ' \"$host_log\"; then\n    break\n  fi\n  if ! kill -0 \"$host_pid\" 2>/dev/null; then\n    cat \"$host_log\"\n    exit 1\n  fi\n  sleep 0.1\ndone\ngrep --quiet\
+        \ '\"configured_backends\":3' \"$host_log\"\n./build/pt-process-host/mpmc_pt_secure_client \\\n  127.0.0.1:50052 pt-backend.internal \\\n  \"$cert_dir/backend-ca.crt\"\
+        \ \\\n  \"$cert_dir/edge.crt\" \\\n  \"$cert_dir/edge.key\" \\\n  3 pr76.methane-ethane-propane.literature-r1\nkill -TERM \"$host_pid\"\nwait \"$host_pid\"\
+        \ntrap - EXIT\ngrep --quiet '\"event\":\"pt_process_stopped\"' \"$host_log\"\n"
+    - name: Run production edge renderer regression
+      run: python3 -m unittest discover -s deploy/pt-grpc-web/tests -v
+    - name: Enforce model-neutral host and adapter boundary
+      run: python3 -m unittest discover -s tests/runtime/pt_process_host -p 'test_*.py' -v
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      if: matrix.cross_language
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact TypeScript golden-test dependencies
+      if: matrix.cross_language
+      working-directory: frontend
+      run: npm ci --ignore-scripts --no-audit --no-fund
+    - name: Validate Envoy gRPC-Web and CORS configuration
+      if: matrix.cross_language
+      run: docker run --rm --volume "${PWD}/deploy/pt-grpc-web/envoy.yaml:/etc/envoy/envoy.yaml:ro" envoyproxy/envoy:v1.36.9 --mode validate -c /etc/envoy/envoy.yaml
+    - name: Render and validate production mTLS edge
+      if: matrix.cross_language
+      run: "set -euo pipefail\ncert_dir=\"${PWD}/build/pt-process-certs\"\npython3 deploy/pt-grpc-web/render_production_config.py \\\n  --public-host api.example.test\
+        \ \\\n  --public-origin https://ui.example.test \\\n  --downstream-certificate-chain /run/secrets/public.crt \\\n  --downstream-private-key /run/secrets/public.key\
+        \ \\\n  --downstream-client-ca /run/secrets/browser-ca.crt \\\n  --upstream-server-name pt-backend.internal \\\n  --upstream-client-certificate-chain /run/secrets/edge.crt\
+        \ \\\n  --upstream-client-private-key /run/secrets/edge.key \\\n  --upstream-server-ca /run/secrets/backend-ca.crt \\\n  > build/pt-envoy-production.yaml\n\
+        docker run --rm \\\n  --volume \"${PWD}/build/pt-envoy-production.yaml:/etc/envoy/envoy.yaml:ro\" \\\n  --volume \"${cert_dir}:/run/secrets:ro\" \\\n  envoyproxy/envoy:v1.36.9\
+        \ \\\n  --mode validate -c /etc/envoy/envoy.yaml\n"
+    - name: Run TypeScript to C++ gRPC-Web golden
+      if: matrix.cross_language
+      run: "set -euo pipefail\nserver_log=\"${PWD}/build/pt-grpc-adapter/golden-server.log\"\nASAN_OPTIONS=detect_leaks=0 \\\n  ./build/pt-grpc-adapter/mpmc_pt_grpc_golden_server\
+        \ \\\n  127.0.0.1:50051 >\"${server_log}\" 2>&1 &\nserver_pid=$!\ncontainer_name=\"mpmc-pt-envoy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"\ncleanup() {\n \
+        \ kill \"${server_pid}\" 2>/dev/null || true\n  docker rm --force \"${container_name}\" >/dev/null 2>&1 || true\n}\ntrap cleanup EXIT\n\nfor attempt in {1..50};\
+        \ do\n  if grep --quiet '^READY ' \"${server_log}\"; then break; fi\n  sleep 0.1\ndone\nif ! grep '^READY ' \"${server_log}\"; then\n  tail -200 \"${server_log}\"\
+        \ || true\n  exit 1\nfi\n\ndocker run --detach --rm --network host \\\n  --name \"${container_name}\" \\\n  --volume \"${PWD}/deploy/pt-grpc-web/envoy.yaml:/etc/envoy/envoy.yaml:ro\"\
+        \ \\\n  envoyproxy/envoy:v1.36.9 \\\n  -c /etc/envoy/envoy.yaml\nfor attempt in {1..100}; do\n  if curl --fail --silent http://127.0.0.1:9901/ready >/dev/null;\
+        \ then\n    break\n  fi\n  sleep 0.1\ndone\nif ! curl --fail --silent http://127.0.0.1:9901/ready; then\n  docker logs \"${container_name}\" || true\n  exit\
+        \ 1\nfi\n\nif ! (cd frontend && \\\n  MPMC_PT_GOLDEN_ENDPOINT=http://127.0.0.1:8080 \\\n  npm test -- src/api/ptProcessGolden.test.ts); then\n  docker logs\
+        \ \"${container_name}\" || true\n  tail -200 \"${server_log}\" || true\n  exit 1\nfi\n"
+    - name: Run production edge mutual-TLS, CORS, health, and metrics regression
+      if: matrix.cross_language
+      run: "set -euo pipefail\ncert_dir=\"${PWD}/build/pt-process-certs\"\nserver_log=\"${PWD}/build/pt-process-host/secure-server.log\"\nASAN_OPTIONS=detect_leaks=0\
+        \ \\\n  ./build/pt-process-host/mpmc_pt_secure_test_server \\\n  127.0.0.1:50051 \\\n  \"${cert_dir}/backend.crt\" \\\n  \"${cert_dir}/backend.key\" \\\n\
+        \  \"${cert_dir}/edge-ca.crt\" >\"${server_log}\" 2>&1 &\nserver_pid=$!\ncontainer_name=\"mpmc-pt-production-envoy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"\
+        \ncleanup() {\n  kill \"${server_pid}\" 2>/dev/null || true\n  docker rm --force \"${container_name}\" >/dev/null 2>&1 || true\n}\ntrap cleanup EXIT\n\nfor\
+        \ attempt in {1..50}; do\n  if grep --quiet '^READY ' \"${server_log}\"; then break; fi\n  sleep 0.1\ndone\nif ! grep '^READY ' \"${server_log}\"; then\n\
+        \  tail -200 \"${server_log}\" || true\n  exit 1\nfi\n\ndocker run --detach --rm --network host \\\n  --name \"${container_name}\" \\\n  --volume \"${PWD}/build/pt-envoy-production.yaml:/etc/envoy/envoy.yaml:ro\"\
+        \ \\\n  --volume \"${cert_dir}:/run/secrets:ro\" \\\n  envoyproxy/envoy:v1.36.9 \\\n  -c /etc/envoy/envoy.yaml\nfor attempt in {1..100}; do\n  if curl --fail\
+        \ --silent http://127.0.0.1:9901/ready >/dev/null; then\n    break\n  fi\n  sleep 0.1\ndone\ncurl --fail --silent http://127.0.0.1:9901/ready >/dev/null\n\
+        \ncluster_state=\"${PWD}/build/pt-production-clusters.txt\"\nfor attempt in {1..100}; do\n  curl --fail --silent http://127.0.0.1:9901/clusters \\\n    -o\
+        \ \"${cluster_state}\"\n  if grep --quiet \\\n    'pt_service_native_grpc::127.0.0.1:50051::health_flags::healthy' \\\n    \"${cluster_state}\"; then\n  \
+        \  break\n  fi\n  sleep 0.1\ndone\ngrep --quiet \\\n  'pt_service_native_grpc::127.0.0.1:50051::health_flags::healthy' \\\n  \"${cluster_state}\"\n\nif curl\
+        \ --silent --show-error --noproxy '*' \\\n  --cacert \"${cert_dir}/public-ca.crt\" \\\n  --resolve api.example.test:8443:127.0.0.1 \\\n  https://api.example.test:8443/\
+        \ >/dev/null 2>&1; then\n  echo \"production edge accepted a client without a certificate\"\n  exit 1\nfi\n\n./build/pt-process-host/mpmc_pt_secure_client\
+        \ \\\n  127.0.0.1:8443 api.example.test \\\n  \"${cert_dir}/public-ca.crt\" \\\n  \"${cert_dir}/browser.crt\" \\\n  \"${cert_dir}/browser.key\"\n\nallowed_headers=\"\
+        ${PWD}/build/cors-allowed.headers\"\ncurl --fail --silent --show-error --noproxy '*' \\\n  --cacert \"${cert_dir}/public-ca.crt\" \\\n  --cert \"${cert_dir}/browser.crt\"\
+        \ \\\n  --key \"${cert_dir}/browser.key\" \\\n  --resolve api.example.test:8443:127.0.0.1 \\\n  -H 'Origin: https://ui.example.test' \\\n  -H 'Access-Control-Request-Method:\
+        \ POST' \\\n  -H 'Host: api.example.test' \\\n  -X OPTIONS -D \"${allowed_headers}\" -o /dev/null \\\n  https://api.example.test:8443/mpmc.runtime.v1.PtFlashService/DiscoverPtCapabilities\n\
+        grep --ignore-case --quiet \\\n  '^access-control-allow-origin: https://ui.example.test' \\\n  \"${allowed_headers}\"\ngrep --ignore-case --quiet \\\n  '^access-control-allow-credentials:\
+        \ true' \"${allowed_headers}\"\n\ndenied_headers=\"${PWD}/build/cors-denied.headers\"\ncurl --silent --show-error --noproxy '*' \\\n  --cacert \"${cert_dir}/public-ca.crt\"\
+        \ \\\n  --cert \"${cert_dir}/browser.crt\" \\\n  --key \"${cert_dir}/browser.key\" \\\n  --resolve api.example.test:8443:127.0.0.1 \\\n  -H 'Origin: https://denied.example.test'\
+        \ \\\n  -H 'Access-Control-Request-Method: POST' \\\n  -H 'Host: api.example.test' \\\n  -X OPTIONS -D \"${denied_headers}\" -o /dev/null \\\n  https://api.example.test:8443/mpmc.runtime.v1.PtFlashService/DiscoverPtCapabilities\n\
+        if grep --ignore-case --quiet '^access-control-allow-origin:' \\\n  \"${denied_headers}\"; then\n  echo \"production edge emitted CORS approval for a denied\
+        \ origin\"\n  exit 1\nfi\n\nmetrics_file=\"${PWD}/build/envoy-prometheus.txt\"\ncurl --fail --silent \\\n  http://127.0.0.1:9901/stats/prometheus -o \"${metrics_file}\"\
+        \ngrep --quiet '^envoy_' \"${metrics_file}\"\nedge_log=\"${PWD}/build/pt-production-envoy.log\"\ndocker logs \"${container_name}\" >\"${edge_log}\" 2>&1\n\
+        grep --quiet 'pt_edge_request' \"${edge_log}\"\n"
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_process_adapter
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_pt_product_staging__seed:
+    needs:
+    - impact
+    name: PT cross-platform product staging / Seed ${{ matrix.name }} dependencies
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: Linux x64 Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          profile: linux-x86_64-release
+        - name: Windows x64 Release
+          os: windows-2022
+          runner: windows-2022
+          profile: windows-x86_64-release
+        - name: macOS arm64 Release
+          os: macos-15
+          runner: macos-15
+          profile: macos-armv8-release
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore exact Conan dependency cache
+      id: conan-cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+    - name: Download published binaries on cache miss
+      if: steps.conan-cache.outputs.cache-hit != 'true'
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ matrix.profile }} --build=never --output-folder=build/conan-seed
+    - name: Verify seed from cache with source builds disabled
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ matrix.profile }} --no-remote --build=never --output-folder=build/conan-seed-verify
+    - name: Save only the completed Conan dependency cache
+      if: steps.conan-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_product_staging
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_pt_product_staging__stage:
+    name: PT cross-platform product staging / ${{ matrix.name }}
+    needs:
+    - impact
+    - legacy_pt_product_staging__seed
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: Linux x64 Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          profile: linux-x86_64-release
+        - name: Windows x64 Release
+          os: windows-2022
+          runner: windows-2022
+          profile: windows-x86_64-release
+        - name: macOS arm64 Release
+          os: macos-15
+          runner: macos-15
+          profile: macos-armv8-release
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore seeded Conan dependency cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+        fail-on-cache-miss: true
+    - name: Resolve locked graph offline
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ matrix.profile }} --no-remote --build=never --output-folder=build/conan-generators
+        --format=json > build/conan-graph.json
+    - name: Validate restore-only dependency evidence (RESTORE_ONLY_DEPENDENCIES_OK)
+      run: python products/pt/scripts/prepare_conan_metadata.py --graph=build/conan-graph.json --lockfile=products/pt/conan.lock --output=build/conan-metadata --profile-id=${{
+        matrix.profile }} --conan-version=2.32.0
+    - name: Configure locked PT product
+      run: cmake -C build/conan-metadata/dependency-metadata.cmake -S products/pt -B build/pt-product -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace
+        }}/build/conan-generators/conan_toolchain.cmake -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }} -DBUILD_TESTING=ON
+    - name: Build PT product and staging probes
+      run: cmake --build build/pt-product --config Release --parallel 2
+    - name: Run contract and installed-product regression
+      run: ctest --test-dir build/pt-product -C Release --output-on-failure --no-tests=error
+    - name: Preserve native staging permissions for desktop handoff
+      run: tar -cf build/mpmc-pt-${{ matrix.profile }}-desktop-native.tar -C build/pt-product/stage .
+    - name: Upload unsigned staging tree
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-${{ matrix.profile }}-unsigned-staging
+        path: build/pt-product/stage
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload permission-preserving desktop native handoff
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-${{ matrix.profile }}-desktop-native
+        path: build/mpmc-pt-${{ matrix.profile }}-desktop-native.tar
+        if-no-files-found: error
+        retention-days: 7
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_product_staging
+      == 'true' && (true)
+    permissions:
+      contents: read
+  legacy_pt_product_staging__desktop:
+    name: PT cross-platform product staging / ${{ matrix.name }} Electron vertical slice
+    needs:
+    - impact
+    - legacy_pt_product_staging__stage
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: Linux x64
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          profile: linux-x86_64-release
+          electron_platform: linux
+          electron_arch: x64
+          host_executable: mpmc_pt_service_host
+        - name: Windows x64
+          os: windows-2022
+          runner: windows-2022
+          profile: windows-x86_64-release
+          electron_platform: win32
+          electron_arch: x64
+          host_executable: mpmc_pt_service_host.exe
+        - name: macOS arm64
+          os: macos-15
+          runner: macos-15
+          profile: macos-armv8-release
+          electron_platform: darwin
+          electron_arch: arm64
+          host_executable: mpmc_pt_service_host
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Restore exact native staging evidence
+      uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+      with:
+        name: mpmc-pt-${{ matrix.profile }}-desktop-native
+        path: build/desktop-native-handoff
+    - name: Create desktop native staging directory
+      run: cmake -E make_directory build/pt-product/stage
+    - name: Extract permission-preserving native staging evidence
+      run: tar -xf build/desktop-native-handoff/mpmc-pt-${{ matrix.profile }}-desktop-native.tar -C build/pt-product/stage
+    - name: Restore executable permission from staging metadata
+      if: runner.os != 'Windows'
+      run: chmod 0755 build/pt-product/stage/bin/mpmc_pt_service_host
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact Electron and frontend dependencies
+      working-directory: frontend
+      run: npm ci --no-audit --no-fund
+    - name: Prepare Electron sandbox helper on Linux
+      if: runner.os == 'Linux'
+      working-directory: frontend
+      shell: bash
+      run: 'node node_modules/electron/install.js
+
+        sudo chown root:root node_modules/electron/dist/chrome-sandbox
+
+        sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+
+        test "$(stat -c ''%U:%G %a'' node_modules/electron/dist/chrome-sandbox)" = "root:root 4755"
+
+        '
+    - name: Build shared React renderer and desktop process bundles
+      working-directory: frontend
+      run: npm run build
+    - name: Run embedded-React discovery and three-backend real solve
+      if: runner.os != 'Linux'
+      working-directory: frontend
+      env:
+        MPMC_PT_DESKTOP_HOST_BINARY: ${{ github.workspace }}/build/pt-product/stage/bin/${{ matrix.host_executable }}
+      run: npm run desktop:real-smoke
+    - name: Run embedded-React discovery and three-backend real solve under Xvfb
+      if: runner.os == 'Linux'
+      working-directory: frontend
+      env:
+        MPMC_PT_DESKTOP_HOST_BINARY: ${{ github.workspace }}/build/pt-product/stage/bin/mpmc_pt_service_host
+      run: xvfb-run --auto-servernum npm run desktop:real-smoke
+    - name: Assemble unsigned desktop engineering preview
+      working-directory: frontend
+      run: npm run desktop:package -- --native-stage ${{ github.workspace }}/build/pt-product/stage --out ${{ github.workspace }}/build/pt-desktop-preview --platform
+        ${{ matrix.electron_platform }} --arch ${{ matrix.electron_arch }} --source-revision ${{ github.sha }}
+    - name: Upload unsigned desktop vertical-slice preview
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-desktop-${{ matrix.profile }}-unsigned-preview
+        path: build/pt-desktop-preview
+        if-no-files-found: error
+        retention-days: 7
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_product_staging
+      == 'true' && (true)
+    permissions:
+      contents: read
+  legacy_pt_service__service:
+    needs:
+    - impact
+    name: Model-neutral PT service boundary / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure PT service boundary
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/runtime/pt_service\
+        \ \\\n  -B build/pt-service \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_PT_SERVICE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}\n"
+    - name: Build PT service boundary
+      run: cmake --build build/pt-service --target mpmc_pt_service_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run PT service boundary
+      run: ctest --test-dir build/pt-service -C ${{ matrix.config }} -R '^runtime[.]pt_service[.]' --verbose --no-tests=error
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_service ==
+      'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_pt_signed_installer_gate__candidate:
+    needs:
+    - impact
+    name: PT signed installer gate / ${{ matrix.name }} unsigned candidate + signing readiness
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: Linux x64 DEB
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          profile: linux-x86_64-release
+          target: linux-x86_64
+          extension: deb
+        - name: Windows x64 MSI
+          os: windows-2022
+          runner: windows-2022
+          profile: windows-x86_64-release
+          target: windows-x86_64
+          extension: msi
+        - name: macOS arm64 PKG
+          os: macos-15
+          runner: macos-15
+          profile: macos-armv8-release
+          target: macos-arm64
+          extension: pkg
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore staging-proven dependency cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+        fail-on-cache-miss: true
+    - name: Resolve locked graph offline
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ matrix.profile }} --no-remote --build=never --output-folder=build/conan-generators
+        --format=json > build/conan-graph.json
+    - name: Validate restore-only dependency evidence (RESTORE_ONLY_DEPENDENCIES_OK)
+      run: python products/pt/scripts/prepare_conan_metadata.py --graph=build/conan-graph.json --lockfile=products/pt/conan.lock --output=build/conan-metadata --profile-id=${{
+        matrix.profile }} --conan-version=2.32.0
+    - name: Configure exact PT staging payload
+      run: cmake -C build/conan-metadata/dependency-metadata.cmake -S products/pt -B build/pt-product -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace
+        }}/build/conan-generators/conan_toolchain.cmake -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }} -DBUILD_TESTING=ON
+    - name: Build PT payload and staging probes
+      run: cmake --build build/pt-product --config Release --parallel 2
+    - name: Re-run installed mTLS and contract regressions before packaging
+      run: ctest --test-dir build/pt-product -C Release --output-on-failure --no-tests=error
+    - name: Configure opaque staging-tree packager
+      run: cmake -S products/pt/installer -B build/pt-installer -DMPMC_PT_STAGING_DIR=${{ github.workspace }}/build/pt-product/stage -DMPMC_PT_INSTALLER_TARGET=${{
+        matrix.target }}
+    - name: Build native installer candidate
+      run: cpack --config build/pt-installer/CPackConfig.cmake -B build/pt-installer-package --verbose
+    - name: Write fail-closed installer candidate provenance
+      run: python products/pt/installer/scripts/write_candidate_manifest.py --stage build/pt-product/stage --artifact build/pt-installer-package/mpmc-pt-0.1.0-${{
+        matrix.target }}.${{ matrix.extension }} --target ${{ matrix.target }} --expected-revision ${{ github.sha }} --workflow-run-id ${{ github.run_id }} --workflow-run-attempt
+        ${{ github.run_attempt }} --output build/pt-installer-package/installer-candidate-provenance.json
+    - name: Validate DEB payload and Linux release-signing tools
+      if: runner.os == 'Linux'
+      shell: bash
+      run: 'set -euo pipefail
+
+        package=build/pt-installer-package/mpmc-pt-0.1.0-linux-x86_64.deb
+
+        dpkg-deb --info "$package"
+
+        test "$(dpkg-deb --field "$package" Package)" = ''mpmc-pt''
+
+        dpkg-deb --contents "$package" | tee build/deb-payload.txt
+
+        grep --fixed-strings ''mpmc_pt_service_host'' build/deb-payload.txt
+
+        grep --fixed-strings ''product-staging-manifest.json'' build/deb-payload.txt
+
+        grep --fixed-strings ''candidate-notice.txt'' build/deb-payload.txt
+
+        extracted=$(mktemp -d)
+
+        dpkg-deb --extract "$package" "$extracted"
+
+        test -x "$extracted/opt/mpmc-pt/bin/mpmc_pt_service_host"
+
+        gpg --version
+
+        '
+    - name: Validate MSI payload and Windows release-signing tools
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: "$ErrorActionPreference = 'Stop'\n$package = (Resolve-Path 'build/pt-installer-package/mpmc-pt-0.1.0-windows-x86_64.msi').Path\n$signature = Get-AuthenticodeSignature\
+        \ -FilePath $package\nif ($signature.Status -ne 'NotSigned') {\n  throw \"Engineering candidate unexpectedly has signature status $($signature.Status)\"\n\
+        }\n$signTool = Get-ChildItem -Path \"${env:ProgramFiles(x86)}\\Windows Kits\\10\\bin\\*\\x64\\signtool.exe\" | Sort-Object FullName -Descending | Select-Object\
+        \ -First 1\nif ($null -eq $signTool) {\n  throw 'Windows SDK SignTool is unavailable'\n}\nWrite-Host \"WINDOWS_SIGNTOOL_READY=$($signTool.FullName)\"\n$destination\
+        \ = Join-Path $env:RUNNER_TEMP 'mpmc-pt-msi-administrative-image'\nNew-Item -ItemType Directory -Force -Path $destination | Out-Null\n$arguments = @('/a',\
+        \ $package, '/qn', \"TARGETDIR=$destination\")\n$process = Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -PassThru\nif ($process.ExitCode\
+        \ -ne 0) {\n  throw \"MSI administrative extraction failed: $($process.ExitCode)\"\n}\nforeach ($name in @(\n  'mpmc_pt_service_host.exe',\n  'product-staging-manifest.json',\n\
+        \  'candidate-notice.txt'\n)) {\n  $matches = @(Get-ChildItem -Path $destination -Recurse -File -Filter $name)\n  if ($matches.Count -ne 1) {\n    throw \"\
+        MSI payload expected one $name, found $($matches.Count)\"\n  }\n}\n"
+    - name: Validate PKG payload and macOS release-signing tools
+      if: runner.os == 'macOS'
+      shell: bash
+      run: "set -euo pipefail\npackage=build/pt-installer-package/mpmc-pt-0.1.0-macos-arm64.pkg\nxar -tf \"$package\" | tee build/pkg-archive.txt\ngrep --fixed-strings\
+        \ 'Distribution' build/pkg-archive.txt\ngrep --fixed-strings 'Resources/License.txt' build/pkg-archive.txt\ncomponent=$(find \\\n  build/pt-installer-package/_CPack_Packages/Darwin/productbuild\
+        \ \\\n  -path '*/Contents/Packages/*' -type f \\\n  -name 'MPMC PT Runtime' -print -quit)\ntest -n \"$component\"\nexpanded=\"$RUNNER_TEMP/mpmc-pt-component-expanded\"\
+        \ntest ! -e \"$expanded\"\npkgutil --expand-full \"$component\" \"$expanded\"\nfind \"$expanded\" -type f | sort | tee build/pkg-payload.txt\ngrep --fixed-strings\
+        \ 'mpmc_pt_service_host' build/pkg-payload.txt\ngrep --fixed-strings 'product-staging-manifest.json' build/pkg-payload.txt\ngrep --fixed-strings 'candidate-notice.txt'\
+        \ build/pkg-payload.txt\nhost=$(find \"$expanded\" -type f -name mpmc_pt_service_host -print -quit)\ntest -n \"$host\"\ntest -x \"$host\"\ncommand -v codesign\n\
+        command -v productsign\nxcrun --find notarytool\nxcrun --find stapler\n"
+    - name: Upload non-release installer evidence
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-${{ matrix.target }}-unsigned-installer-candidate
+        path: build/pt-installer-package
+        if-no-files-found: error
+        retention-days: 7
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_signed_installer_gate
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_pt_split__split:
+    needs:
+    - impact
+    name: PT phase split / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Select Python interpreter
+      shell: bash
+      run: "if command -v python >/dev/null 2>&1; then\n  python_cmd=\"$(command -v python)\"\nelif command -v python3 >/dev/null 2>&1; then\n  python_cmd=\"$(command\
+        \ -v python3)\"\nelse\n  echo \"Python interpreter not found\" >&2\n  exit 1\nfi\necho \"MPMC_PYTHON=$python_cmd\" >> \"$GITHUB_ENV\"\n"
+    - name: Configure only phase split integration
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/pt_split\
+        \ -B build/pt-split \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}\n"
+    - name: Compile phase split, boundary, ternary, sensitivity and phase-set regression
+      run: cmake --build build/pt-split --target mpmc_pt_split_tests mpmc_pt_boundary_tests mpmc_tpd_stagnation_tests mpmc_dew_limit_tests mpmc_pt_diagnostic_tests
+        mpmc_pt_ternary_tests mpmc_pt_sensitivity_tests mpmc_pt_phase_set_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run phase split increment
+      run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
+    - name: Independently regenerate binary equilibrium references
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_split_decimal.py
+
+        '
+    - name: Independently regenerate ternary equilibrium references
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_ternary_decimal.py
+
+        '
+    - name: Independently regenerate converged-solution sensitivity references
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_sensitivity_decimal.py
+
+        '
+    - name: Independently check saturation and continuous boundary references
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py
+
+        '
+    - name: Cross-check boundary reference precision on the sanitizer configuration
+      if: matrix.sanitizer == 'ON'
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py --precision 96
+
+        '
+    - name: Independently audit near-dew input resolution and phase gate
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py
+
+        '
+    - name: Cross-check near-dew reference precision
+      if: matrix.sanitizer == 'ON'
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
+
+        '
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_split ==
+      'true' && (always() && ('' == true || 'true' == 'true'))
+    permissions:
+      contents: read
+  legacy_pt_windows_desktop_installer__candidate:
+    needs:
+    - impact
+    name: PT Windows desktop installer / Windows x64 Electron MSI install/solve/uninstall
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CONAN_HOME: ${{ github.workspace }}/build/conan-home
+      PROFILE: windows-x86_64-release
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore staging-proven Windows dependency cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ env.PROFILE }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+        fail-on-cache-miss: true
+    - name: Resolve locked Windows graph offline
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ env.PROFILE }} --no-remote --build=never --output-folder=build/conan-generators
+        --format=json > build/conan-graph.json
+    - name: Validate restore-only dependency evidence
+      run: python products/pt/scripts/prepare_conan_metadata.py --graph=build/conan-graph.json --lockfile=products/pt/conan.lock --output=build/conan-metadata --profile-id=${{
+        env.PROFILE }} --conan-version=2.32.0
+    - name: Configure exact Windows PT runtime
+      run: cmake -C build/conan-metadata/dependency-metadata.cmake -S products/pt -B build/pt-product -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace
+        }}/build/conan-generators/conan_toolchain.cmake -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }} -DBUILD_TESTING=ON
+    - name: Build Windows PT runtime
+      run: cmake --build build/pt-product --config Release --parallel 2
+    - name: Re-run native product contracts before desktop packaging
+      run: ctest --test-dir build/pt-product -C Release --output-on-failure --no-tests=error
+    - name: Install exact native staging tree
+      run: cmake --install build/pt-product --config Release --prefix ${{ github.workspace }}/build/pt-product/stage
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact Electron and frontend dependencies
+      working-directory: frontend
+      run: npm ci --no-audit --no-fund
+    - name: Run frontend and installer contract regressions
+      shell: pwsh
+      run: 'npm --prefix frontend test -- --reporter=dot
+
+        python -m unittest discover -s products/pt/desktop_installer/tests -p ''test_*.py'' -v
+
+        '
+    - name: Build shared React renderer and desktop process bundles
+      working-directory: frontend
+      run: npm run build
+    - name: Assemble exact Windows Electron application
+      working-directory: frontend
+      run: npm run desktop:package -- --native-stage ${{ github.workspace }}/build/pt-product/stage --out ${{ github.workspace }}/build/pt-desktop-preview --platform
+        win32 --arch x64 --source-revision ${{ github.sha }}
+    - name: Configure Windows desktop MSI
+      run: cmake -S products/pt/desktop_installer -B build/pt-desktop-installer -DMPMC_PT_DESKTOP_PACKAGE_DIR=${{ github.workspace }}/build/pt-desktop-preview/MPMC-PT-Desktop-Preview-win32-x64
+        -DMPMC_PT_DESKTOP_EXPECTED_REVISION=${{ github.sha }}
+    - name: Build unsigned Windows desktop MSI
+      run: cpack --config build/pt-desktop-installer/CPackConfig.cmake -B build/pt-desktop-msi --verbose
+    - name: Write fail-closed desktop installer provenance
+      run: python products/pt/desktop_installer/scripts/write_candidate_manifest.py --package-dir build/pt-desktop-preview/MPMC-PT-Desktop-Preview-win32-x64 --artifact
+        build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi --expected-revision ${{ github.sha }} --workflow-run-id ${{ github.run_id }} --workflow-run-attempt
+        ${{ github.run_attempt }} --output build/pt-desktop-msi/windows-desktop-installer-provenance.json
+    - name: Verify candidate is unsigned before installation
+      shell: pwsh
+      run: "$ErrorActionPreference = 'Stop'\n$package = (Resolve-Path 'build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi').Path\n$signature = Get-AuthenticodeSignature\
+        \ -FilePath $package\nif ($signature.Status -ne 'NotSigned') {\n  throw \"Engineering desktop MSI unexpectedly has signature status $($signature.Status)\"\
+        \n}\n"
+    - name: Real install, Start Menu, three-backend solve, and uninstall
+      shell: pwsh
+      run: "$ErrorActionPreference = 'Stop'\n$package = (Resolve-Path 'build/pt-desktop-msi/mpmc-pt-desktop-0.1.0-windows-x86_64.msi').Path\n\nfunction Invoke-Msi([string[]]\
+        \ $Arguments) {\n  $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $Arguments -Wait -PassThru\n  if ($process.ExitCode -notin @(0, 3010)) {\n\
+        \    throw \"msiexec failed with exit code $($process.ExitCode): $($Arguments -join ' ')\"\n  }\n}\n\nInvoke-Msi @('/i', $package, '/qn', '/norestart')\n\
+        $installedExe = Join-Path $env:ProgramFiles 'MPMC PT Desktop\\MPMC-PT-Desktop-Preview.exe'\nif (-not (Test-Path $installedExe -PathType Leaf)) {\n  throw\
+        \ \"Installed Electron executable is missing: $installedExe\"\n}\n\n$shell = New-Object -ComObject WScript.Shell\n$shortcut = Get-ChildItem (\n  Join-Path\
+        \ $env:ProgramData 'Microsoft\\Windows\\Start Menu\\Programs'\n) -Recurse -Filter '*.lnk' | Where-Object {\n  $shell.CreateShortcut($_.FullName).TargetPath\
+        \ -eq $installedExe\n} | Select-Object -First 1\nif ($null -eq $shortcut) {\n  throw 'Start Menu shortcut does not target the installed MPMC PT Desktop executable'\n\
+        }\n\n$plan = Join-Path $env:RUNNER_TEMP 'mpmc-pt-desktop-install-smoke-plan.json'\n$result = Join-Path $env:RUNNER_TEMP 'mpmc-pt-desktop-install-smoke-result.json'\n\
+        @'\n{\n  \"convention\": \"MPMC/PT/windows-desktop-install-smoke-plan/v1\",\n  \"expectedBackendCount\": 3,\n  \"requests\": [\n    {\n      \"configuredBackendId\"\
+        : \"pr76.methane-ethane-propane.literature-r1\",\n      \"pressurePa\": 1000000,\n      \"temperatureK\": 350,\n      \"feed\": [\n        {\"componentId\"\
+        : \"methane\", \"moleFraction\": 0.8},\n        {\"componentId\": \"ethane\", \"moleFraction\": 0.1},\n        {\"componentId\": \"propane\", \"moleFraction\"\
+        : 0.1}\n      ]\n    },\n    {\n      \"configuredBackendId\": \"sw92.carbon-dioxide-water.freshwater.literature-r1\",\n      \"pressurePa\": 3000000,\n \
+        \     \"temperatureK\": 340,\n      \"feed\": [\n        {\"componentId\": \"carbon-dioxide\", \"moleFraction\": 0.7},\n        {\"componentId\": \"water\"\
+        , \"moleFraction\": 0.3}\n      ]\n    },\n    {\n      \"configuredBackendId\": \"cpa.methanol-water-333.15k.cr1.literature-r1\",\n      \"pressurePa\":\
+        \ 48852,\n      \"temperatureK\": 333.15,\n      \"feed\": [\n        {\"componentId\": \"METHANOL\", \"moleFraction\": 0.5},\n        {\"componentId\": \"\
+        WATER\", \"moleFraction\": 0.5}\n      ]\n    }\n  ]\n}\n'@ | Set-Content -Path $plan -Encoding utf8\n\n$env:MPMC_PT_DESKTOP_INSTALL_SMOKE_PLAN = $plan\n\
+        $env:MPMC_PT_DESKTOP_INSTALL_SMOKE_RESULT = $result\n$desktop = Start-Process -FilePath $installedExe -ArgumentList '--mpmc-install-smoke' -PassThru\nif (-not\
+        \ $desktop.WaitForExit(120000)) {\n  Stop-Process -Id $desktop.Id -Force\n  throw 'Installed Electron smoke timed out'\n}\nif ($desktop.ExitCode -ne 0) {\n\
+        \  throw \"Installed Electron smoke failed with exit code $($desktop.ExitCode)\"\n}\nif (-not (Test-Path $result -PathType Leaf)) {\n  throw 'Installed Electron\
+        \ smoke did not publish its result'\n}\n$smoke = Get-Content $result -Raw | ConvertFrom-Json\nif ($smoke.convention -ne 'MPMC/PT/windows-desktop-install-smoke-result/v1')\
+        \ {\n  throw 'Installed Electron smoke result convention changed'\n}\nif ($smoke.discoveredBackendCount -ne 3 -or @($smoke.solves).Count -ne 3) {\n  throw\
+        \ 'Installed Electron smoke did not complete all three backend solves'\n}\n$ids = @($smoke.solves | ForEach-Object { $_.configuredBackendId })\nforeach ($expected\
+        \ in @(\n  'pr76.methane-ethane-propane.literature-r1',\n  'sw92.carbon-dioxide-water.freshwater.literature-r1',\n  'cpa.methanol-water-333.15k.cr1.literature-r1'\n\
+        )) {\n  if ($expected -notin $ids) {\n    throw \"Installed Electron smoke omitted backend $expected\"\n  }\n}\n\nInvoke-Msi @('/x', $package, '/qn', '/norestart')\n\
+        if (Test-Path $installedExe) {\n  throw 'Desktop executable remains after MSI uninstall'\n}\nif (Test-Path $shortcut.FullName) {\n  throw 'Start Menu shortcut\
+        \ remains after MSI uninstall'\n}\nWrite-Host 'WINDOWS_DESKTOP_INSTALL_SOLVE_UNINSTALL_OK'\n"
+    - name: Upload unsigned Windows desktop MSI candidate
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-windows-x64-unsigned-desktop-msi-candidate
+        path: build/pt-desktop-msi
+        if-no-files-found: error
+        retention-days: 7
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_pt_windows_desktop_installer
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_stability__stability:
+    needs:
+    - impact
+    name: PT stability / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Select Python interpreter
+      shell: bash
+      run: "if command -v python >/dev/null 2>&1; then\n  python_cmd=\"$(command -v python)\"\nelif command -v python3 >/dev/null 2>&1; then\n  python_cmd=\"$(command\
+        \ -v python3)\"\nelse\n  echo \"Python interpreter not found\" >&2\n  exit 1\nfi\necho \"MPMC_PYTHON=$python_cmd\" >> \"$GITHUB_ENV\"\n"
+    - name: Configure only stability integration
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/stability\
+        \ -B build/flash-stability \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_FLASH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}\n"
+    - name: Compile only stability integration
+      run: cmake --build build/flash-stability --target mpmc_flash_stability_tests mpmc_flash_sw92_stability_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run necessary stability increment
+      run: ctest --test-dir build/flash-stability -C ${{ matrix.config }} -R '^flash[.]stability[.]' --verbose --no-tests=error
+    - name: Regenerate independent fixed-state PR76 references
+      run: '"$MPMC_PYTHON" tests/flash/stability/reference_decimal.py
+
+        '
+    - name: Regenerate independent fixed-state SW92 references
+      run: '"$MPMC_PYTHON" tests/flash/stability/reference_sw92_decimal.py
+
+        '
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_stability ==
+      'true' && (always() && ('' == true || 'true' == 'true'))
+    permissions:
+      contents: read
+  legacy_sw92_asymmetric_fixed_pair__fixed-pair:
+    needs:
+    - impact
+    name: SW92 asymmetric fixed pair / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure Gate 3B.1 fixed-pair increment
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_fixed_pair\
+        \ -B build/sw92-asymmetric-fixed-pair \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_FIXED_PAIR_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build Gate 3B.1 fixed-pair regression
+      run: cmake --build build/sw92-asymmetric-fixed-pair --target mpmc_sw92_asymmetric_fixed_pair_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run Gate 3B.1 fixed-pair increment
+      run: ctest --test-dir build/sw92-asymmetric-fixed-pair -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_fixed_pair[.]' --verbose --no-tests=error
+    - name: Configure affected SW92 fixed-family stability
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/stability\
+        \ -B build/stability \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_FLASH_ENABLE_SANITIZERS=${{ matrix.sanitizer }}\n"
+    - name: Build affected SW92 fixed-family stability
+      run: cmake --build build/stability --target mpmc_flash_sw92_stability_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected SW92 fixed-family stability
+      run: ctest --test-dir build/stability -C ${{ matrix.config }} -R '^flash[.]stability[.]sw92[.]' --verbose --no-tests=error
+    - name: Configure affected SW92 one-family VLE
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_family_vle\
+        \ -B build/sw92-family-vle \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_FAMILY_VLE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}\n"
+    - name: Build affected SW92 one-family VLE
+      run: cmake --build build/sw92-family-vle --target mpmc_sw92_family_vle_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected SW92 one-family VLE
+      run: ctest --test-dir build/sw92-family-vle -C ${{ matrix.config }} -R '^flash[.]sw92_family_vle[.]' --verbose --no-tests=error
+    - name: Configure affected Gate 3A asymmetric stability
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_stability\
+        \ -B build/sw92-asymmetric-stability \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build affected Gate 3A asymmetric stability
+      run: cmake --build build/sw92-asymmetric-stability --target mpmc_sw92_asymmetric_stability_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected Gate 3A asymmetric stability
+      run: ctest --test-dir build/sw92-asymmetric-stability -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_stability[.]' --verbose --no-tests=error
+    - name: Regenerate independent Decimal references
+      run: 'python tests/flash/stability/reference_sw92_decimal.py
+
+        python tests/flash/sw92_family_vle/reference_decimal.py
+
+        python tests/flash/sw92_asymmetric_stability/reference_decimal.py
+
+        python tests/flash/sw92_asymmetric_fixed_pair/reference_decimal.py
+
+        '
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_sw92_asymmetric_fixed_pair
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_sw92_asymmetric_max2__max2:
+    needs:
+    - impact
+    name: SW92 asymmetric max2 / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure Gate 3B.3 max2 increment
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_max2\
+        \ -B build/sw92-asymmetric-max2 \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_MAX2_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build Gate 3B.3 max2 regression
+      run: cmake --build build/sw92-asymmetric-max2 --target mpmc_sw92_asymmetric_max2_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run Gate 3B.3 max2 increment
+      run: ctest --test-dir build/sw92-asymmetric-max2 -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_max2[.]' --verbose --no-tests=error
+    - name: Configure affected Gate 3B.2 orchestration
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_orchestration\
+        \ -B build/sw92-asymmetric-orchestration \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_ORCHESTRATION_ENABLE_SANITIZERS=${{\
+        \ matrix.sanitizer }}\n"
+    - name: Build affected Gate 3B.2 orchestration
+      run: cmake --build build/sw92-asymmetric-orchestration --target mpmc_sw92_asymmetric_orchestration_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected Gate 3B.2 orchestration
+      run: ctest --test-dir build/sw92-asymmetric-orchestration -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_orchestration[.]' --verbose --no-tests=error
+    - name: Configure affected Gate 3B.1 fixed pair
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_fixed_pair\
+        \ -B build/sw92-asymmetric-fixed-pair \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_FIXED_PAIR_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build affected Gate 3B.1 fixed pair
+      run: cmake --build build/sw92-asymmetric-fixed-pair --target mpmc_sw92_asymmetric_fixed_pair_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected Gate 3B.1 fixed pair
+      run: ctest --test-dir build/sw92-asymmetric-fixed-pair -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_fixed_pair[.]' --verbose --no-tests=error
+    - name: Configure affected Gate 3A asymmetric stability
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_stability\
+        \ -B build/sw92-asymmetric-stability \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build affected Gate 3A asymmetric stability
+      run: cmake --build build/sw92-asymmetric-stability --target mpmc_sw92_asymmetric_stability_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected Gate 3A asymmetric stability
+      run: ctest --test-dir build/sw92-asymmetric-stability -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_stability[.]' --verbose --no-tests=error
+    - name: Regenerate independent Decimal references
+      run: 'python tests/flash/sw92_asymmetric_stability/reference_decimal.py
+
+        python tests/flash/sw92_asymmetric_fixed_pair/reference_decimal.py
+
+        python tests/flash/sw92_asymmetric_max2/reference_decimal.py
+
+        '
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_sw92_asymmetric_max2
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_sw92_asymmetric_max2_physical_ternary__ternary:
+    needs:
+    - impact
+    name: SW92 asymmetric max2 physical ternary / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure traceable physical-parameter ternary regression
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_max2_physical_ternary\
+        \ -B build/sw92-max2-physical-ternary \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_MAX2_PHYSICAL_TERNARY_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build traceable ternary regression
+      run: cmake --build build/sw92-max2-physical-ternary --target mpmc_sw92_asymmetric_max2_physical_ternary_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run traceable ternary regression
+      run: ctest --test-dir build/sw92-max2-physical-ternary -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_max2_physical_ternary[.]' --verbose --no-tests=error
+    - name: Configure existing Gate 3B.3 max2 baseline
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_max2\
+        \ -B build/sw92-asymmetric-max2 \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_MAX2_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build existing Gate 3B.3 max2 baseline
+      run: cmake --build build/sw92-asymmetric-max2 --target mpmc_sw92_asymmetric_max2_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run existing Gate 3B.3 max2 baseline
+      run: ctest --test-dir build/sw92-asymmetric-max2 -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_max2[.]' --verbose --no-tests=error
+    - name: Regenerate independent Decimal references
+      run: 'python tests/flash/sw92_asymmetric_max2_physical_ternary/reference_decimal.py
+
+        python tests/flash/sw92_asymmetric_max2/reference_decimal.py
+
+        '
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_sw92_asymmetric_max2_physical_ternary
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_sw92_asymmetric_max2_validation__validation:
+    needs:
+    - impact
+    name: SW92 asymmetric max2 validation / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure expanded max2 validation
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_max2_validation\
+        \ -B build/sw92-asymmetric-max2-validation \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_MAX2_VALIDATION_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build expanded max2 validation
+      run: cmake --build build/sw92-asymmetric-max2-validation --target mpmc_sw92_asymmetric_max2_validation_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run expanded max2 validation
+      run: ctest --test-dir build/sw92-asymmetric-max2-validation -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_max2_validation[.]' --verbose --no-tests=error
+    - name: Configure existing Gate 3B.3 max2 baseline
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_max2\
+        \ -B build/sw92-asymmetric-max2 \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_MAX2_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build existing Gate 3B.3 max2 baseline
+      run: cmake --build build/sw92-asymmetric-max2 --target mpmc_sw92_asymmetric_max2_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run existing Gate 3B.3 max2 baseline
+      run: ctest --test-dir build/sw92-asymmetric-max2 -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_max2[.]' --verbose --no-tests=error
+    - name: Regenerate independent Decimal references
+      run: 'python tests/flash/sw92_asymmetric_max2_validation/reference_decimal.py
+
+        python tests/flash/sw92_asymmetric_max2/reference_decimal.py
+
+        '
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_sw92_asymmetric_max2_validation
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_sw92_asymmetric_orchestration__orchestration:
+    needs:
+    - impact
+    name: SW92 asymmetric orchestration / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure Gate 3B.2 orchestration increment
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_orchestration\
+        \ -B build/sw92-asymmetric-orchestration \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_ORCHESTRATION_ENABLE_SANITIZERS=${{\
+        \ matrix.sanitizer }}\n"
+    - name: Build Gate 3B.2 orchestration regression
+      run: cmake --build build/sw92-asymmetric-orchestration --target mpmc_sw92_asymmetric_orchestration_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run Gate 3B.2 orchestration increment
+      run: ctest --test-dir build/sw92-asymmetric-orchestration -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_orchestration[.]' --verbose --no-tests=error
+    - name: Configure affected Gate 3B.1 fixed pair
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_fixed_pair\
+        \ -B build/sw92-asymmetric-fixed-pair \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_FIXED_PAIR_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build affected Gate 3B.1 fixed pair
+      run: cmake --build build/sw92-asymmetric-fixed-pair --target mpmc_sw92_asymmetric_fixed_pair_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected Gate 3B.1 fixed pair
+      run: ctest --test-dir build/sw92-asymmetric-fixed-pair -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_fixed_pair[.]' --verbose --no-tests=error
+    - name: Configure affected Gate 3A asymmetric stability
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_stability\
+        \ -B build/sw92-asymmetric-stability \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Build affected Gate 3A asymmetric stability
+      run: cmake --build build/sw92-asymmetric-stability --target mpmc_sw92_asymmetric_stability_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run affected Gate 3A asymmetric stability
+      run: ctest --test-dir build/sw92-asymmetric-stability -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_stability[.]' --verbose --no-tests=error
+    - name: Regenerate independent Decimal references
+      run: 'python tests/flash/sw92_asymmetric_stability/reference_decimal.py
+
+        python tests/flash/sw92_asymmetric_fixed_pair/reference_decimal.py
+
+        '
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_sw92_asymmetric_orchestration
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_sw92_asymmetric_stability__asymmetric-stability:
+    needs:
+    - impact
+    name: SW92 asymmetric stability / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure only SW92 asymmetric stability integration
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_asymmetric_stability\
+        \ -B build/sw92-asymmetric-stability \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_ASYMMETRIC_STABILITY_ENABLE_SANITIZERS=${{ matrix.sanitizer\
+        \ }}\n"
+    - name: Compile only SW92 asymmetric stability regression
+      run: cmake --build build/sw92-asymmetric-stability --target mpmc_sw92_asymmetric_stability_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run SW92 asymmetric stability increment
+      run: ctest --test-dir build/sw92-asymmetric-stability -C ${{ matrix.config }} -R '^flash[.]sw92_asymmetric_stability[.]' --verbose --no-tests=error
+    - name: Regenerate independent Decimal(80) asymmetric stability references
+      run: python tests/flash/sw92_asymmetric_stability/reference_decimal.py
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_sw92_asymmetric_stability
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_sw92_dual_model__dual-model:
+    needs:
+    - impact
+    name: SW92 Whitson dual-model / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Configure only SW92 dual-model integration
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_dual_model\
+        \ -B build/sw92-dual-model \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_DUAL_MODEL_ENABLE_SANITIZERS=${{ matrix.sanitizer }}\n"
+    - name: Compile only SW92 dual-model regression
+      run: cmake --build build/sw92-dual-model --target mpmc_sw92_dual_model_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run SW92 dual-model increment
+      run: ctest --test-dir build/sw92-dual-model -C ${{ matrix.config }} -R '^flash[.]sw92_dual_model[.]' --verbose --no-tests=error
+    - name: Regenerate independent Decimal(80) dual-model references
+      run: python tests/flash/sw92_dual_model/reference_decimal.py
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_sw92_dual_model
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  legacy_sw92_three_phase_experimental_line__experimental-line:
+    needs:
+    - impact
+    name: SW92 experimental three-phase line / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Independently solve and compare experimental triple line
+      run: python tests/flash/sw92_three_phase_experimental_line/reference_decimal.py
+    - name: Configure experimental three-phase regression
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/sw92_three_phase_experimental_line\
+        \ \\\n  -B build/sw92-three-phase-experimental-line \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SW92_THREE_PHASE_EXPERIMENTAL_LINE_ENABLE_SANITIZERS=${{\
+        \ matrix.sanitizer }}\n"
+    - name: Build experimental three-phase regression
+      run: cmake --build build/sw92-three-phase-experimental-line --target mpmc_sw92_three_phase_experimental_line_tests --config ${{ matrix.config }} --parallel
+        2
+    - name: Run experimental three-phase regression
+      run: ctest --test-dir build/sw92-three-phase-experimental-line -C ${{ matrix.config }} -R '^flash[.]sw92_three_phase_experimental_line[.]' --verbose --no-tests=error
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_sw92_three_phase_experimental_line
+      == 'true' && ('true' == 'true')
+    permissions:
+      contents: read
+  result:
+    name: Required CI result
+    if: ${{ always() }}
+    needs:
+    - impact
+    - flow-core
+    - flow-discretization
+    - flow-discretization-petsc
+    - pt-flash-backend
+    - pt-stability
+    - pt-split
+    - pr76-pt-continuation
+    - pr76-max3
+    - cpa-stability
+    - cpa-split
+    - cpa-max3
+    - cpa-baseline
+    - cpa-pt-phase
+    - cpa-physical-validation
+    - thermodynamics
+    - physics-closure
+    - model-configuration
+    - sw92-thermodynamics
+    - sw92-family-vle
+    - sw92-profile-c-phase-set
+    - sw92-profile-c-sensitivity
+    - sw92-physics-closure
+    - sw92-phase-assigned-joint
+    - sw92-phase-assigned-h-side-witness
+    - sw92-phase-assigned-no-w
+    - sw92-phase-assigned-three-phase-topology
+    - ad
+    - legacy_cpa_clapeyron_oracle__pinned-clapeyron-oracle
+    - legacy_cpa_performance_audit__paired-baseline
+    - legacy_cpa_thermopack_oracle__pinned-thermopack-oracle
+    - legacy_discretization_core__core
+    - legacy_frontend__verify
+    - legacy_hosted_web_model_product__hosted-web-model
+    - legacy_mesh_baseline_benchmark__baseline
+    - legacy_mesh_core__core
+    - legacy_mesh_external_compatibility__compatibility
+    - legacy_mesh_petsc__petsc
+    - legacy_model_configuration_grpc__linux
+    - legacy_model_configuration_grpc__windows
+    - legacy_model_configuration_grpc__macos
+    - legacy_physics_component_inventory__inventory
+    - legacy_pt_android_jni_emulator__boundary
+    - legacy_pt_android_jni_emulator__emulator
+    - legacy_pt_android_ndk_portability__boundary
+    - legacy_pt_android_ndk_portability__build
+    - legacy_pt_android_product_shell__product-shell
+    - legacy_pt_process_adapter__adapter
+    - legacy_pt_product_staging__seed
+    - legacy_pt_product_staging__stage
+    - legacy_pt_product_staging__desktop
+    - legacy_pt_service__service
+    - legacy_pt_signed_installer_gate__candidate
+    - legacy_pt_split__split
+    - legacy_pt_windows_desktop_installer__candidate
+    - legacy_stability__stability
+    - legacy_sw92_asymmetric_fixed_pair__fixed-pair
+    - legacy_sw92_asymmetric_max2__max2
+    - legacy_sw92_asymmetric_max2_physical_ternary__ternary
+    - legacy_sw92_asymmetric_max2_validation__validation
+    - legacy_sw92_asymmetric_orchestration__orchestration
+    - legacy_sw92_asymmetric_stability__asymmetric-stability
+    - legacy_sw92_dual_model__dual-model
+    - legacy_sw92_three_phase_experimental_line__experimental-line
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Reject failures, cancellations, missing and selected-but-skipped jobs
+      env:
+        NEEDS_JSON: ${{ toJSON(needs) }}
+        IMPACT_JSON: ${{ toJSON(needs.impact.outputs) }}
+      run: python3 .github/ci/verify_result.py
+
+'on':
+  pull_request:
+    types:
+    - opened
+    - reopened
+    - synchronize
+    - ready_for_review
+  workflow_dispatch: null
+  push:
+    branches:
+    - main
+    paths:
+    - .github/workflows/pt_android_jni_emulator.yml
+    - .github/workflows/pt_android_ndk_portability.yml
+    - .github/workflows/pt_android_product_shell.yml
+    - .github/workflows/pt_product_staging.yml
+    - frontend/**
+    - modules/ad/**
+    - modules/flash/**
+    - modules/model_configuration/**
+    - modules/pt_process/include/mpmc/pt_process/configured_backends.hpp
+    - modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp
+    - modules/pt_process/src/configured_backends.cpp
+    - modules/pt_process/src/parameter_snapshot_supplier.cpp
+    - modules/runtime/**
+    - modules/thermodynamics/**
+    - products/pt/conan.lock
+    - products/pt/conan/profiles/**
+    - products/pt/conanfile.txt
+    - products/pt_android/**

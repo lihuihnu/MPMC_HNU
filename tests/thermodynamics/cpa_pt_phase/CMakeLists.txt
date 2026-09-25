@@ -23,6 +23,9 @@ foreach(case IN ITEMS
         nonassociating_three_roots
         associating_helmholtz
         component_permutation
+        selected_phase_fugacity
+        selected_phase_density
+        selected_phase_derivatives
         evaluation_budget)
     add_test(NAME thermodynamics.cpa_pt_phase.${case}
              COMMAND mpmc_cpa_pt_phase_tests ${case})

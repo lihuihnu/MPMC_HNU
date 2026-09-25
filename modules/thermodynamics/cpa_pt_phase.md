@@ -191,8 +191,58 @@ so Gate F is not described as bit-for-bit structural identity.
 
 ### Remaining scope limits
 
-This completion authorizes only the reviewed **first-derivative** source of truth for the
-frozen SRK+sCPA profile. It does not establish second derivatives, caloric APIs, new CPA
-formulations or parameter sets, association continuation/caching, a performance
-optimization, or a physical three-phase VLLE oracle. Finite density-root and finite TPD
+PR #115 authorized only the reviewed **first-derivative** Helmholtz source of truth at that time. The later selected-root derivative gate documented above adds the specific second-directional Helmholtz/association information required for local `d ln(phi)/d(p,T,x)` on a fixed smooth PT root. It still does not establish a general public Hessian API, caloric APIs, new CPA formulations or parameter sets, association continuation/caching, a performance optimization, or a physical three-phase VLLE oracle. Finite density-root and finite TPD
 searches retain their existing non-global-proof semantics.
+
+## Selected-root first derivatives for natural-variable flow
+
+The selected PT phase now exposes first derivatives of `ln(phi_i)` with respect to arbitrary tangent directions in `(p,T,x)` through `cpa_pt_phase_ad.hpp`. This is a fixed-branch local derivative. It does not perform stability analysis, phase selection or root switching.
+
+The implementation follows the stationary-`Q` treatment used for CPA association derivatives. For the site-fraction stationarity equations
+
+```text
+g(X,z) = 0
+```
+
+with `z in {T,V,n_i}`, site sensitivities are obtained from
+
+```text
+(dg/dX) dX/dz = - dg/dz .
+```
+
+The association Jacobian is factorized with partial pivoting and an explicit ill-conditioning guard. No derivative of the fixed-point iteration is taken.
+
+The minimized residual Helmholtz second directional derivative uses
+
+```text
+d2F/dz1dz2
+  = Q_z1z2 + Q_z1X X_z2 + X_z1^T Q_Xz2
+    + X_z1^T Q_XX X_z2
+```
+
+at the stationary association state. The selected PT density root then satisfies
+
+```text
+P_EOS(T,V,n) - p = 0,
+```
+
+so its local volume/density derivative is obtained from the corresponding pressure IFT. Finally,
+
+```text
+ln(phi_i) = dF_res/dn_i - ln(Z)
+```
+
+is differentiated on the same selected root.
+
+This route is consistent with the ThermoPack CPA memo's stationary-`Q` Hessian construction and Michelsen-style association derivative treatment:
+`https://github.com/thermotools/thermopack/blob/main/docs/memo/CPA/cpa.tex`.
+
+The derivative path rejects:
+
+- non-tangent mole-fraction derivative directions;
+- near-multiple/tangent PT roots;
+- an ill-conditioned pressure root;
+- singular/ill-conditioned association Jacobians;
+- non-finite association, pressure or fugacity derivatives.
+
+The production derivative contains no finite-difference fallback. Focused tests compare the analytic/IFT derivative against fresh independently re-solved PT perturbations of the associating binary structural fixture. Those perturbations are test-only numerical cross-checks, not production differentiation and not physical validation.

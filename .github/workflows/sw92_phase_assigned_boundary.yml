@@ -1,131 +1,20 @@
 name: SW92 three-phase boundary re-solve
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. Manual and
+# reusable entry points delegate to the shared topology closure so dependency
+# gates execute at most once per platform.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/support/sw92/test_support.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_boundary.hpp'
-      - 'modules/flash/sw92_phase_assigned_boundary.md'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_pt.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_three_phase_closure.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_no_w.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_joint.hpp'
-      - 'modules/flash/include/mpmc/flash/sw92_phase_assigned_h_side_witness.hpp'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'tests/flash/sw92_phase_assigned_boundary/**'
-      - 'tests/flash/sw92_phase_assigned_pt/**'
-      - 'tests/flash/sw92_phase_assigned_three_phase_closure/**'
-      - 'tests/flash/sw92_phase_assigned_no_w/**'
-      - 'tests/flash/sw92_phase_assigned_joint/**'
-      - 'tests/flash/sw92_phase_assigned_h_side_witness/**'
-      - '.github/workflows/sw92_phase_assigned_boundary.yml'
+  workflow_call:
   workflow_dispatch:
+
 permissions:
   contents: read
 concurrency:
   group: sw92-three-phase-boundary-${{ github.ref }}
   cancel-in-progress: true
+
 jobs:
   boundary:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            config: Debug
-            compiler: '-DCMAKE_CXX_COMPILER=g++'
-            sanitizer: 'ON'
-          - name: Clang Release
-            os: ubuntu-24.04
-            config: Release
-            compiler: '-DCMAKE_CXX_COMPILER=clang++'
-            sanitizer: 'OFF'
-          - name: MSVC Release
-            os: windows-2022
-            config: Release
-            compiler: ''
-            sanitizer: 'OFF'
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-
-      - name: Regenerate physical three-phase oracle
-        run: python tests/flash/sw92_phase_assigned_pt/reference_physical_sample6_decimal.py
-
-      - name: Configure boundary re-solve
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then
-            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
-          fi
-          cmake -S tests/flash/sw92_phase_assigned_boundary -B build/sw92-boundary \
-            "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_PHASE_ASSIGNED_BOUNDARY_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build boundary re-solve
-        run: cmake --build build/sw92-boundary --target mpmc_sw92_phase_assigned_boundary_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run boundary re-solve
-        run: ctest --test-dir build/sw92-boundary -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_boundary[.]' --verbose --no-tests=error
-
-      - name: Configure affected top-level PT
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
-          cmake -S tests/flash/sw92_phase_assigned_pt -B build/sw92-pt "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_PHASE_ASSIGNED_PT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build affected top-level PT
-        run: cmake --build build/sw92-pt --target mpmc_sw92_phase_assigned_pt_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run affected top-level PT
-        run: ctest --test-dir build/sw92-pt -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_pt[.]' --verbose --no-tests=error
-
-      - name: Configure affected C2b2
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
-          cmake -S tests/flash/sw92_phase_assigned_three_phase_closure -B build/sw92-c2b2 "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_PHASE_ASSIGNED_THREE_PHASE_CLOSURE_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build affected C2b2
-        run: cmake --build build/sw92-c2b2 --target mpmc_sw92_phase_assigned_three_phase_closure_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run affected C2b2
-        run: ctest --test-dir build/sw92-c2b2 -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_three_phase_closure[.]' --verbose --no-tests=error
-
-      - name: Configure affected no-W
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
-          cmake -S tests/flash/sw92_phase_assigned_no_w -B build/sw92-no-w "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_PHASE_ASSIGNED_NO_W_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build affected no-W
-        run: cmake --build build/sw92-no-w --target mpmc_sw92_phase_assigned_no_w_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run affected no-W
-        run: ctest --test-dir build/sw92-no-w -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_no_w[.]' --verbose --no-tests=error
-
-      - name: Configure affected C2a1
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
-          cmake -S tests/flash/sw92_phase_assigned_h_side_witness -B build/sw92-c2a1 "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_PHASE_ASSIGNED_H_SIDE_WITNESS_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build affected C2a1
-        run: cmake --build build/sw92-c2a1 --target mpmc_sw92_phase_assigned_h_side_witness_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run affected C2a1
-        run: ctest --test-dir build/sw92-c2a1 -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_h_side_witness[.]' --verbose --no-tests=error
-
-      - name: Configure affected C1
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }}); fi
-          cmake -S tests/flash/sw92_phase_assigned_joint -B build/sw92-c1 "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SW92_PHASE_ASSIGNED_JOINT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Build affected C1
-        run: cmake --build build/sw92-c1 --target mpmc_sw92_phase_assigned_joint_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run affected C1
-        run: ctest --test-dir build/sw92-c1 -C ${{ matrix.config }} -R '^flash[.]sw92_phase_assigned_joint[.]' --verbose --no-tests=error
+    uses: ./.github/workflows/_sw92_phase_assigned_topology.yml
+    with:
+      run_boundary: true

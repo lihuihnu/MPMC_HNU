@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <span>
 #include <stdexcept>
 
@@ -153,13 +154,14 @@ template <class Scalar>
 // V and n_i may be active scalar variables. At the stationary point,
 // dF_assoc/dz = partial Q/partial z for every first-order z in {T,V,n_i}; no
 // differentiation through the fixed-point iteration is required.
-template <class Scalar>
-[[nodiscard]] Scalar cpa_association_q_reduced(
+template <class Scalar, class SiteFraction>
+[[nodiscard]] Scalar cpa_association_q_reduced_impl(
     const Scalar& temperature_k,
     const Scalar& volume_m3,
     std::span<const Scalar> mole_numbers,
     const CpaParameterSet& parameters,
-    const CpaAssociationResult& primal_association) {
+    const CpaAssociationResult& primal_association,
+    SiteFraction&& site_fraction) {
     if (mole_numbers.size() != parameters.size() || mole_numbers.empty()) {
         throw std::invalid_argument(
             "CPA Helmholtz: nonempty mole-number vector must match parameter set");
@@ -169,8 +171,11 @@ template <class Scalar>
     if (primal_association.sites.empty()) { return Scalar{}; }
 
     Scalar first_term{};
-    for (const auto& site : primal_association.sites) {
-        const Scalar x_site{site.unbonded_fraction};
+    for (std::size_t site_index = 0U;
+         site_index < primal_association.sites.size();
+         ++site_index) {
+        const auto& site = primal_association.sites[site_index];
+        const Scalar x_site = std::invoke(site_fraction, site_index);
         const Scalar site_count{static_cast<double>(site.multiplicity)};
         first_term += mole_numbers[site.component_index] * site_count *
             (cpa_detail::cpa_scalar_log(x_site) - x_site + Scalar{1.0});
@@ -183,8 +188,15 @@ template <class Scalar>
     const Scalar rt = Scalar{cpa_gas_constant_j_per_mol_k} * temperature_k;
 
     Scalar pair_sum{};
-    for (const auto& first : primal_association.sites) {
-        for (const auto& second : primal_association.sites) {
+    for (std::size_t first_index = 0U;
+         first_index < primal_association.sites.size();
+         ++first_index) {
+        const auto& first = primal_association.sites[first_index];
+        const Scalar first_x = std::invoke(site_fraction, first_index);
+        for (std::size_t second_index = 0U;
+             second_index < primal_association.sites.size();
+             ++second_index) {
+            const auto& second = primal_association.sites[second_index];
             const auto* pair = parameters.association_pair(
                 first.component_index, first.site_id,
                 second.component_index, second.site_id);
@@ -204,12 +216,55 @@ template <class Scalar>
                 mole_numbers[first.component_index] *
                 mole_numbers[second.component_index] *
                 first_site_count * second_site_count *
-                Scalar{first.unbonded_fraction} *
-                Scalar{second.unbonded_fraction} * delta;
+                first_x *
+                std::invoke(site_fraction, second_index) *
+                delta;
         }
     }
 
     return first_term - pair_sum / (Scalar{2.0} * volume_m3);
+}
+
+template <class Scalar>
+[[nodiscard]] Scalar cpa_association_q_reduced(
+    const Scalar& temperature_k,
+    const Scalar& volume_m3,
+    std::span<const Scalar> mole_numbers,
+    const CpaParameterSet& parameters,
+    const CpaAssociationResult& primal_association) {
+    return cpa_association_q_reduced_impl(
+        temperature_k,
+        volume_m3,
+        mole_numbers,
+        parameters,
+        primal_association,
+        [&](std::size_t site_index) {
+            return Scalar{
+                primal_association.sites[site_index].unbonded_fraction};
+        });
+}
+
+template <class Scalar>
+[[nodiscard]] Scalar cpa_association_q_reduced_with_site_fractions(
+    const Scalar& temperature_k,
+    const Scalar& volume_m3,
+    std::span<const Scalar> mole_numbers,
+    const CpaParameterSet& parameters,
+    const CpaAssociationResult& primal_association,
+    std::span<const Scalar> site_fractions) {
+    if (site_fractions.size() != primal_association.sites.size()) {
+        throw std::invalid_argument(
+            "CPA Helmholtz: association site-fraction dimension mismatch");
+    }
+    return cpa_association_q_reduced_impl(
+        temperature_k,
+        volume_m3,
+        mole_numbers,
+        parameters,
+        primal_association,
+        [&](std::size_t site_index) {
+            return site_fractions[site_index];
+        });
 }
 
 // Canonical first-order CPA residual potential for the current SRK+sCPA

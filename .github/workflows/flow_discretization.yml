@@ -1,0 +1,75 @@
+name: Flow-discretization TPFA phase flux
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-discretization-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug + ASan/UBSan
+            os: ubuntu-24.04
+            runner: ubuntu-24.04
+            config: Debug
+            compiler: '-DCMAKE_CXX_COMPILER=g++'
+            sanitizer: 'ON'
+          - name: Clang Release
+            os: ubuntu-24.04
+            runner: ubuntu-24.04
+            config: Release
+            compiler: '-DCMAKE_CXX_COMPILER=clang++'
+            sanitizer: 'OFF'
+          - name: MSVC Release
+            os: windows-2022
+            runner: windows-2022
+            config: Release
+            compiler: ''
+            sanitizer: 'OFF'
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Configure flow-discretization contract
+        run: |
+          config_arg=()
+          if [ "${{ runner.os }}" != Windows ]; then
+            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
+          fi
+          cmake -S tests/flow_discretization/core \
+            -B build/flow-discretization \
+            "${config_arg[@]}" ${{ matrix.compiler }} \
+            -DMPMC_FLOW_DISCRETIZATION_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
+
+      - name: Build flow-discretization contract
+        run: |
+          cmake --build build/flow-discretization \
+            --target mpmc_flow_discretization_tests mpmc_flow_discretization_component_flux_tests mpmc_flow_discretization_scatter_tests mpmc_flow_discretization_normalized_spatial_tests mpmc_flow_discretization_local_conservation_tests mpmc_flow_discretization_multi_cell_conservation_tests mpmc_flow_discretization_energy_tests mpmc_flow_discretization_cell_source_tests mpmc_well_discretization_tests mpmc_well_discretization_header_self_contained \
+            --config ${{ matrix.config }} \
+            --parallel 2
+
+      - name: Run flow-discretization contract
+        run: |
+          ctest --test-dir build/flow-discretization \
+            -C ${{ matrix.config }} \
+            -R '^flow_discretization[.](tpfa_phase_flux|component_flux|scatter|normalized_spatial|local_conservation|multi_cell_conservation|energy_conservation|cell_source|well)[.]' \
+            --verbose \
+            --no-tests=error

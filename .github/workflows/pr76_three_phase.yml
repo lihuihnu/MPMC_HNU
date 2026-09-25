@@ -1,18 +1,9 @@
 name: PR76 PT max-three-phase baseline
 
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# only executes the routed matrix or an explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flash/include/mpmc/flash/pt_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_three_phase.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_max3_phase_set.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_pt_flash_backend.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/pr*.hpp'
-      - 'tests/flash/pr76_three_phase/**'
-      - '.github/workflows/pr76_three_phase.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -25,7 +16,7 @@ concurrency:
 jobs:
   max3:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -33,16 +24,19 @@ jobs:
         include:
           - name: GCC Debug + ASan/UBSan
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Debug
             compiler: '-DCMAKE_CXX_COMPILER=g++'
             sanitizer: 'ON'
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'
@@ -53,6 +47,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+
+      - name: Select Python interpreter
+        shell: bash
+        run: |
+          if command -v python >/dev/null 2>&1; then
+            python_cmd="$(command -v python)"
+          elif command -v python3 >/dev/null 2>&1; then
+            python_cmd="$(command -v python3)"
+          else
+            echo "Python interpreter not found" >&2
+            exit 1
+          fi
+          echo "MPMC_PYTHON=$python_cmd" >> "$GITHUB_ENV"
 
       - name: Configure PR76 max3
         run: |
@@ -72,8 +79,10 @@ jobs:
         run: ctest --test-dir build/pr76-three-phase -C ${{ matrix.config }} -R '^flash[.]pr76_three_phase[.]' --verbose --no-tests=error
 
       - name: Independently verify PR76 sour-gas three-phase reference
-        run: python tests/flash/pr76_three_phase/reference_sour_gas_decimal.py --precision 80
+        run: |
+          "$MPMC_PYTHON" tests/flash/pr76_three_phase/reference_sour_gas_decimal.py --precision 80
 
       - name: Cross-check PR76 sour-gas reference precision
         if: matrix.sanitizer == 'ON'
-        run: python tests/flash/pr76_three_phase/reference_sour_gas_decimal.py --precision 96
+        run: |
+          "$MPMC_PYTHON" tests/flash/pr76_three_phase/reference_sour_gas_decimal.py --precision 96

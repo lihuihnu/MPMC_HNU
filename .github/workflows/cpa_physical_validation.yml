@@ -1,17 +1,10 @@
 name: CPA associating physical validation
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_33315k.json'
-      - 'tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json'
-      - 'tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
-      - 'modules/flash/include/mpmc/flash/cpa_*.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_*.hpp'
-      - 'tests/flash/cpa_physical_validation/**'
-      - '.github/workflows/cpa_physical_validation.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -24,7 +17,7 @@ concurrency:
 jobs:
   full-physical-regression:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -32,11 +25,13 @@ jobs:
         include:
           - name: Clang Release
             os: ubuntu-24.04
+            runner: ubuntu-24.04
             config: Release
             compiler: '-DCMAKE_CXX_COMPILER=clang++'
             sanitizer: 'OFF'
           - name: MSVC Release
             os: windows-2022
+            runner: windows-2022
             config: Release
             compiler: ''
             sanitizer: 'OFF'

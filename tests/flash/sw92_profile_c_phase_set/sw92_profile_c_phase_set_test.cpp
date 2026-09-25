@@ -1,6 +1,7 @@
 #include <mpmc/flash/sw92_profile_c_phase_set.hpp>
 
 #include "../sw92_phase_assigned_pt/physical_sample6.hpp"
+#include <fugacity_adapter_regression.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,8 @@ bool sw92_profile_c_phase_set_header();
 
 namespace {
 namespace fl = mpmc::flash;
+namespace fo = mpmc::flow;
+namespace fa = mpmc::test::flow_adapter;
 namespace th = mpmc::thermodynamics;
 namespace sample6 = sw92_profile_c_sample6;
 using Vec = std::vector<double>;
@@ -166,6 +169,50 @@ void publish_sample6_three_phase() {
                  static_cast<double>(sample6::golden.common[i]), 8e-8, 4e-10);
         }
     }
+}
+
+
+void flow_fugacity_adapter_on_sample6_three_phase() {
+    // Keep the authoritative Sample-6 component order. The natural-variable
+    // composition pivot must choose a well-conditioned dependent component
+    // rather than forcing the trace final component to be reconstructed.
+    const auto model = sample6::model();
+    const auto result = fl::solve_sw92_profile_c_pt_phase_set(
+        1.0e7, 350.0, sample6::feed(), model, 0.0);
+    require_publication_basics(result, 3U);
+
+    const auto& phases =
+        result.solution.accepted_phase_set()->phases;
+    std::array<
+        fo::Sw92SelectedPhaseFugacityEvaluator3P<double>::Selection,
+        3>
+        selections{};
+    std::array<double, 3> fractions{};
+    std::array<Vec, 3> compositions;
+
+    for (std::size_t phase = 0U; phase < 3U; ++phase) {
+        selections[phase].nacl_molality_mol_per_kg_water =
+            result.nacl_molality_mol_per_kg_water;
+        selections[phase].family =
+            result.phase_metadata[phase].thermodynamic_family;
+        selections[phase].root_index =
+            phases[phase].activity.branch;
+        fractions[phase] =
+            phases[phase].mole_phase_fraction;
+        compositions[phase] =
+            phases[phase].composition;
+    }
+
+    fo::Sw92SelectedPhaseFugacityEvaluator3P<double>
+        adapter{model, selections};
+    fa::verify_accepted_state_and_jacobian(
+        1.0e7,
+        350.0,
+        fractions,
+        compositions,
+        adapter,
+        2.0e-7,
+        {2.0e-9, 1.0e-4, 5.0e-4, 1.0e-2});
 }
 
 void fresh_disappearance_neighbors() {
@@ -334,6 +381,7 @@ int main(int argc, char** argv) {
         if (name == "publish_one_phase") publish_one_phase();
         else if (name == "publish_two_phase") publish_two_phase();
         else if (name == "publish_sample6_three_phase") publish_sample6_three_phase();
+        else if (name == "flow_fugacity_adapter") flow_fugacity_adapter_on_sample6_three_phase();
         else if (name == "fresh_disappearance_neighbors") fresh_disappearance_neighbors();
         else if (name == "provenance_guard") provenance_guard();
         else if (name == "component_permutation") component_permutation();

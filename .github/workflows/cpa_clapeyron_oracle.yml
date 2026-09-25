@@ -1,270 +1,159 @@
 name: CPA Clapeyron external oracle
-
-on:
-  pull_request:
-    paths:
-      - ".github/workflows/cpa_clapeyron_oracle.yml"
-      - "tests/flash/cpa_clapeyron_oracle/**"
-      - "tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json"
-
 permissions:
   contents: read
-
 concurrency:
   group: cpa-clapeyron-oracle-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '[".github/workflows/cpa_clapeyron_oracle.yml","tests/flash/cpa_clapeyron_oracle/**","tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json"]'
   pinned-clapeyron-oracle:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Pinned Clapeyron sCPA oracle
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - name: Checkout MPMC_HNU
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - name: Checkout MPMC_HNU
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
+      with:
+        version: 1.10.12
+    - name: Checkout pinned Clapeyron
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: ClapeyronThermo/Clapeyron.jl
+        ref: 229b09452f36c2f812486150df0bb43b197bb4e5
+        path: _external/Clapeyron.jl
+        persist-credentials: false
+        fetch-depth: 1
+    - name: Verify pinned source
+      shell: bash
+      run: 'set -euo pipefail
 
-      - name: Setup Julia
-        uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
-        with:
-          version: "1.10.12"
+        actual="$(git -C _external/Clapeyron.jl rev-parse HEAD)"
 
-      - name: Checkout pinned Clapeyron
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ClapeyronThermo/Clapeyron.jl
-          ref: 229b09452f36c2f812486150df0bb43b197bb4e5
-          path: _external/Clapeyron.jl
-          persist-credentials: false
-          fetch-depth: 1
+        expected="229b09452f36c2f812486150df0bb43b197bb4e5"
 
-      - name: Verify pinned source
-        shell: bash
-        run: |
-          set -euo pipefail
-          actual="$(git -C _external/Clapeyron.jl rev-parse HEAD)"
-          expected="229b09452f36c2f812486150df0bb43b197bb4e5"
-          test "${actual}" = "${expected}"
-          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
-          echo "CLAPEYRON_PIN_OK commit=${actual}"
+        test "${actual}" = "${expected}"
 
-      - name: Instantiate pinned Clapeyron
-        env:
-          JULIA_PKG_PRECOMPILE_AUTO: "0"
-        shell: bash
-        run: |
-          set -euo pipefail
-          julia --project=_external/Clapeyron.jl \
-            -e 'using Pkg; Pkg.instantiate()'
+        test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
 
-      - name: Audit formulation and generate ten-state oracle
-        env:
-          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build/cpa-clapeyron-oracle
-          julia --project=_external/Clapeyron.jl \
-            tests/flash/cpa_clapeyron_oracle/generate_oracle.jl \
-            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
-            --out build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
-          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
-          cat build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
+        echo "CLAPEYRON_PIN_OK commit=${actual}"
 
-      - name: Verify frozen oracle reproduction
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          generated = json.loads(Path(
-              "build/cpa-clapeyron-oracle/"
-              "clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json"
-          ).read_text(encoding="utf-8"))
-          frozen = json.loads(Path(
-              "tests/flash/cpa_clapeyron_oracle/"
-              "clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json"
-          ).read_text(encoding="utf-8"))
-          if generated != frozen:
-              raise SystemExit("generated Clapeyron oracle differs from frozen reference")
-          print("CLAPEYRON_ORACLE_FREEZE_MATCH_OK states=", len(generated["states"]))
-          PY
-
-      - name: Audit pinned Clapeyron derivative floor
-        env:
-          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
-        shell: bash
-        run: |
-          set -euo pipefail
-          julia --project=_external/Clapeyron.jl \
-            tests/flash/cpa_clapeyron_oracle/derivative_floor_audit.jl \
-            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
-            --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \
-            --out build/cpa-clapeyron-oracle/clapeyron_derivative_floor_audit.json
-          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          audit = json.loads(Path(
-              "build/cpa-clapeyron-oracle/"
-              "clapeyron_derivative_floor_audit.json"
-          ).read_text(encoding="utf-8"))
-          print("CLAPEYRON_DERIVATIVE_FLOOR_ARTIFACT",
-                "states=", len(audit["states"]),
-                "steps=", len(audit["frozen_relative_volume_steps"]))
-          PY
-
-      - name: Audit pinned Clapeyron BigFloat derivative floor
-        env:
-          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
-        shell: bash
-        run: |
-          set -euo pipefail
-          julia --project=_external/Clapeyron.jl \
-            tests/flash/cpa_clapeyron_oracle/bigfloat_derivative_audit.jl \
-            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
-            --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \
-            --out build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json
-          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          audit = json.loads(Path(
-              "build/cpa-clapeyron-oracle/"
-              "clapeyron_bigfloat_derivative_audit.json"
-          ).read_text(encoding="utf-8"))
-          print("CLAPEYRON_BIGFLOAT_DERIVATIVE_ARTIFACT",
-                "records=", len(audit["records"]),
-                "precisions=", audit["precision_bits"],
-                "states=", audit["problem_states"])
-          PY
-
-      - name: Audit state-4 association stationarity floor
-        env:
-          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
-        shell: bash
-        run: |
-          set -euo pipefail
-          julia --project=_external/Clapeyron.jl \
-            tests/flash/cpa_clapeyron_oracle/association_stationarity_floor_audit.jl \
-            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
-            --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \
-            --out build/cpa-clapeyron-oracle/clapeyron_association_stationarity_floor_audit.json
-          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          audit = json.loads(Path(
-              "build/cpa-clapeyron-oracle/"
-              "clapeyron_association_stationarity_floor_audit.json"
-          ).read_text(encoding="utf-8"))
-          print("CLAPEYRON_ASSOC_STATIONARITY_ARTIFACT",
-                "records=", len(audit["records"]),
-                "precisions=", audit["precision_bits"],
-                "state=", audit["state"]["label"])
-          PY
-
-      - name: Audit pinned compressed exact2 independently
-        env:
-          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
-        shell: bash
-        run: |
-          set -euo pipefail
-          julia --project=_external/Clapeyron.jl \
-            tests/flash/cpa_clapeyron_oracle/independent_exact2_audit.jl \
-            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
-            --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \
-            --out build/cpa-clapeyron-oracle/clapeyron_independent_exact2_audit.json
-          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          audit = json.loads(Path(
-              "build/cpa-clapeyron-oracle/"
-              "clapeyron_independent_exact2_audit.json"
-          ).read_text(encoding="utf-8"))
-          print("CLAPEYRON_INDEPENDENT_EXACT2_ARTIFACT",
-                "records=", len(audit["records"]),
-                "precisions=", audit["precision_bits"],
-                "state=", audit["state"]["label"])
-          PY
-
-      - name: Audit ten-state independent compressed association
-        env:
-          CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
-        shell: bash
-        run: |
-          set -euo pipefail
-          julia --project=_external/Clapeyron.jl \
-            tests/flash/cpa_clapeyron_oracle/ten_state_independent_compressed_diagnostic.jl \
-            --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \
-            --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \
-            --out build/cpa-clapeyron-oracle/clapeyron_ten_state_independent_compressed_diagnostic.json
-          test -z "$(git -C _external/Clapeyron.jl status --porcelain)"
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          audit = json.loads(Path(
-              "build/cpa-clapeyron-oracle/"
-              "clapeyron_ten_state_independent_compressed_diagnostic.json"
-          ).read_text(encoding="utf-8"))
-          print("CLAPEYRON_TEN_STATE_COMPRESSED_ARTIFACT",
-                "precisions=", audit["precision_bits"],
-                "summaries=", len(audit["summaries"]))
-          PY
-
-      - name: Upload generated oracle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cpa-clapeyron-oracle
-          path: build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload derivative-floor audit
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cpa-clapeyron-derivative-floor-audit
-          path: build/cpa-clapeyron-oracle/clapeyron_derivative_floor_audit.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload BigFloat derivative audit
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cpa-clapeyron-bigfloat-derivative-audit
-          path: build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload association stationarity audit
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cpa-clapeyron-association-stationarity-audit
-          path: build/cpa-clapeyron-oracle/clapeyron_association_stationarity_floor_audit.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload independent exact2 audit
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cpa-clapeyron-independent-exact2-audit
-          path: build/cpa-clapeyron-oracle/clapeyron_independent_exact2_audit.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload ten-state compressed diagnostic
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: cpa-clapeyron-ten-state-compressed-diagnostic
-          path: build/cpa-clapeyron-oracle/clapeyron_ten_state_independent_compressed_diagnostic.json
-          if-no-files-found: error
-          retention-days: 7
+        '
+    - name: Instantiate pinned Clapeyron
+      env:
+        JULIA_PKG_PRECOMPILE_AUTO: '0'
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  -e 'using Pkg; Pkg.instantiate()'\n"
+    - name: Audit formulation and generate ten-state oracle
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\nmkdir -p build/cpa-clapeyron-oracle\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/generate_oracle.jl\
+        \ \\\n  --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \\\n  --out build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\n\
+        test -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\ncat build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\n"
+    - name: Verify frozen oracle reproduction
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\ngenerated = json.loads(Path(\n    \"build/cpa-clapeyron-oracle/\"\n    \"\
+        clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\"\n).read_text(encoding=\"utf-8\"))\nfrozen = json.loads(Path(\n    \"tests/flash/cpa_clapeyron_oracle/\"\
+        \n    \"clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\"\n).read_text(encoding=\"utf-8\"))\nif generated != frozen:\n    raise SystemExit(\"generated\
+        \ Clapeyron oracle differs from frozen reference\")\nprint(\"CLAPEYRON_ORACLE_FREEZE_MATCH_OK states=\", len(generated[\"states\"]))\nPY\n"
+    - name: Audit pinned Clapeyron derivative floor
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/derivative_floor_audit.jl \\\n  --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \\\n  --out build/cpa-clapeyron-oracle/clapeyron_derivative_floor_audit.json\n\
+        test -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n   \
+        \ \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_derivative_floor_audit.json\"\n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_DERIVATIVE_FLOOR_ARTIFACT\"\
+        ,\n      \"states=\", len(audit[\"states\"]),\n      \"steps=\", len(audit[\"frozen_relative_volume_steps\"]))\nPY\n"
+    - name: Audit pinned Clapeyron BigFloat derivative floor
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/bigfloat_derivative_audit.jl \\\n  --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \\\n  --out build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json\n\
+        test -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n   \
+        \ \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_bigfloat_derivative_audit.json\"\n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_BIGFLOAT_DERIVATIVE_ARTIFACT\"\
+        ,\n      \"records=\", len(audit[\"records\"]),\n      \"precisions=\", audit[\"precision_bits\"],\n      \"states=\", audit[\"problem_states\"])\nPY\n"
+    - name: Audit state-4 association stationarity floor
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/association_stationarity_floor_audit.jl \\\n  --states\
+        \ tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --out build/cpa-clapeyron-oracle/clapeyron_association_stationarity_floor_audit.json\ntest -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\
+        \npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n    \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_association_stationarity_floor_audit.json\"\
+        \n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_ASSOC_STATIONARITY_ARTIFACT\",\n      \"records=\", len(audit[\"records\"]),\n      \"precisions=\"\
+        , audit[\"precision_bits\"],\n      \"state=\", audit[\"state\"][\"label\"])\nPY\n"
+    - name: Audit pinned compressed exact2 independently
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/independent_exact2_audit.jl \\\n  --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json \\\n  --out build/cpa-clapeyron-oracle/clapeyron_independent_exact2_audit.json\n\
+        test -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n   \
+        \ \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_independent_exact2_audit.json\"\n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_INDEPENDENT_EXACT2_ARTIFACT\"\
+        ,\n      \"records=\", len(audit[\"records\"]),\n      \"precisions=\", audit[\"precision_bits\"],\n      \"state=\", audit[\"state\"][\"label\"])\nPY\n"
+    - name: Audit ten-state independent compressed association
+      env:
+        CLAPEYRON_COMMIT: 229b09452f36c2f812486150df0bb43b197bb4e5
+      shell: bash
+      run: "set -euo pipefail\njulia --project=_external/Clapeyron.jl \\\n  tests/flash/cpa_clapeyron_oracle/ten_state_independent_compressed_diagnostic.jl \\\n \
+        \ --states tests/flash/cpa_thermopack_oracle/thermopack_d68c794_meoh_h2o_phase_kernel_33315k.json \\\n  --oracle tests/flash/cpa_clapeyron_oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json\
+        \ \\\n  --out build/cpa-clapeyron-oracle/clapeyron_ten_state_independent_compressed_diagnostic.json\ntest -z \"$(git -C _external/Clapeyron.jl status --porcelain)\"\
+        \npython3 - <<'PY'\nimport json\nfrom pathlib import Path\n\naudit = json.loads(Path(\n    \"build/cpa-clapeyron-oracle/\"\n    \"clapeyron_ten_state_independent_compressed_diagnostic.json\"\
+        \n).read_text(encoding=\"utf-8\"))\nprint(\"CLAPEYRON_TEN_STATE_COMPRESSED_ARTIFACT\",\n      \"precisions=\", audit[\"precision_bits\"],\n      \"summaries=\"\
+        , len(audit[\"summaries\"]))\nPY\n"
+    - name: Upload generated oracle
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-oracle
+        path: build/cpa-clapeyron-oracle/clapeyron_229b094_meoh_h2o_phase_kernel_33315k.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload derivative-floor audit
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-derivative-floor-audit
+        path: build/cpa-clapeyron-oracle/clapeyron_derivative_floor_audit.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload BigFloat derivative audit
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-bigfloat-derivative-audit
+        path: build/cpa-clapeyron-oracle/clapeyron_bigfloat_derivative_audit.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload association stationarity audit
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-association-stationarity-audit
+        path: build/cpa-clapeyron-oracle/clapeyron_association_stationarity_floor_audit.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload independent exact2 audit
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-independent-exact2-audit
+        path: build/cpa-clapeyron-oracle/clapeyron_independent_exact2_audit.json
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload ten-state compressed diagnostic
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: cpa-clapeyron-ten-state-compressed-diagnostic
+        path: build/cpa-clapeyron-oracle/clapeyron_ten_state_independent_compressed_diagnostic.json
+        if-no-files-found: error
+        retention-days: 7
+'on':
+  workflow_dispatch: null

@@ -1,47 +1,18 @@
 name: PT Android Product Shell
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/ad/**'
-      - 'modules/thermodynamics/**'
-      - 'modules/flash/**'
-      - 'modules/runtime/**'
-      - 'modules/model_configuration/**'
-      - 'modules/pt_process/src/configured_backends.cpp'
-      - 'modules/pt_process/src/parameter_snapshot_supplier.cpp'
-      - 'modules/pt_process/include/mpmc/pt_process/configured_backends.hpp'
-      - 'modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp'
-      - 'frontend/**'
-      - 'products/pt_android/**'
-      - '.github/workflows/pt_android_product_shell.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'modules/ad/**'
-      - 'modules/thermodynamics/**'
-      - 'modules/flash/**'
-      - 'modules/runtime/**'
-      - 'modules/model_configuration/**'
-      - 'modules/pt_process/src/configured_backends.cpp'
-      - 'modules/pt_process/src/parameter_snapshot_supplier.cpp'
-      - 'modules/pt_process/include/mpmc/pt_process/configured_backends.hpp'
-      - 'modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp'
-      - 'frontend/**'
-      - 'products/pt_android/**'
-      - '.github/workflows/pt_android_product_shell.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: pt-android-product-shell-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["modules/ad/**","modules/thermodynamics/**","modules/flash/**","modules/runtime/**","modules/model_configuration/**","modules/pt_process/src/configured_backends.cpp","modules/pt_process/src/parameter_snapshot_supplier.cpp","modules/pt_process/include/mpmc/pt_process/configured_backends.hpp","modules/pt_process/include/mpmc/pt_process/parameter_snapshot_supplier.hpp","frontend/**","products/pt_android/**",".github/workflows/pt_android_product_shell.yml"]'
   product-shell:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Android universal React + Capacitor + JNI product shell
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -51,171 +22,89 @@ jobs:
       MPMC_ANDROID_EMULATOR_API: 35
       MPMC_ANDROID_BUILD_TOOLS_VERSION: 35.0.0
       CAPACITOR_VERSION: 8.5.2
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Select hosted JDK 21
+      shell: bash
+      run: "set -euo pipefail\nif [[ -z \"${JAVA_HOME_21_X64:-}\" || ! -x \"$JAVA_HOME_21_X64/bin/java\" ]]; then\n  echo 'Hosted JDK 21 is unavailable on ubuntu-24.04.'\
+        \ >&2\n  exit 1\nfi\necho \"JAVA_HOME=$JAVA_HOME_21_X64\" >> \"$GITHUB_ENV\"\necho \"$JAVA_HOME_21_X64/bin\" >> \"$GITHUB_PATH\"\n\"$JAVA_HOME_21_X64/bin/java\"\
+        \ -version\n"
+    - name: Install exact frontend dependencies
+      run: npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
+    - name: Generate model configuration TypeScript
+      run: npm --prefix frontend run proto:model:generate
+    - name: Install isolated Capacitor 8.5.2 shell
+      run: npm install --prefix products/pt_android/shell --ignore-scripts --no-audit --no-fund --no-package-lock
+    - name: Verify exact Capacitor shell versions
+      shell: bash
+      run: "set -euo pipefail\nnode - <<'NODE'\nconst fs = require('fs');\nconst root = 'products/pt_android/shell/node_modules';\nfor (const name of ['@capacitor/core',\
+        \ '@capacitor/android', '@capacitor/cli']) {\n  const pkg = JSON.parse(fs.readFileSync(`${root}/${name}/package.json`, 'utf8'));\n  if (pkg.version !== '8.5.2')\
+        \ {\n    throw new Error(`${name} resolved to ${pkg.version}, expected 8.5.2`);\n  }\n}\nNODE\n"
+    - name: Typecheck shared React Android shell
+      run: ./frontend/node_modules/.bin/tsc --noEmit -p products/pt_android/shell/tsconfig.json
+    - name: Build shared React shell for Capacitor
+      shell: bash
+      env:
+        VITE_MPMC_ANDROID_PRODUCT_SHELL_SMOKE: '1'
+      run: ./frontend/node_modules/.bin/vite build --config products/pt_android/shell/vite.config.mjs
+    - name: Ensure exact Android SDK and NDK inputs
+      shell: bash
+      run: "set -euo pipefail\nsdk_root=\"${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}\"\nif [[ -z \"$sdk_root\" ]]; then\n  echo 'Android SDK root is unavailable on the\
+        \ hosted runner.' >&2\n  exit 1\nfi\nsdkmanager=\"$sdk_root/cmdline-tools/latest/bin/sdkmanager\"\ntest -x \"$sdkmanager\"\nyes | \"$sdkmanager\" --licenses\
+        \ >/dev/null || true\n\"$sdkmanager\" --install \\\n  \"ndk;$NDK_VERSION\" \\\n  'platforms;android-36' \\\n  'build-tools;36.0.0' \\\n  \"platforms;android-$MPMC_ANDROID_EMULATOR_API\"\
+        \ \\\n  \"build-tools;$MPMC_ANDROID_BUILD_TOOLS_VERSION\" \\\n  'platform-tools' \\\n  'emulator' \\\n  \"system-images;android-$MPMC_ANDROID_EMULATOR_API;google_apis;x86_64\"\
+        \nndk_home=\"$sdk_root/ndk/$NDK_VERSION\"\ntest -f \"$ndk_home/build/cmake/android.toolchain.cmake\"\necho \"MPMC_ANDROID_NDK_HOME=$ndk_home\" >> \"$GITHUB_ENV\"\
+        \n"
+    - name: Configure Android x86_64 native PT runtime
+      shell: bash
+      run: "set -euo pipefail\ncmake \\\n  -S products/pt_android \\\n  -B build/pt-android-product-shell-native-x86_64 \\\n  -DCMAKE_TOOLCHAIN_FILE=\"$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake\"\
+        \ \\\n  -DANDROID_ABI=x86_64 \\\n  -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \\\n  -DANDROID_STL=c++_static \\\n  -DCMAKE_BUILD_TYPE=Release\n"
+    - name: Configure Android arm64-v8a native PT runtime
+      shell: bash
+      run: "set -euo pipefail\ncmake \\\n  -S products/pt_android \\\n  -B build/pt-android-product-shell-native-arm64-v8a \\\n  -DCMAKE_TOOLCHAIN_FILE=\"$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake\"\
+        \ \\\n  -DANDROID_ABI=arm64-v8a \\\n  -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \\\n  -DANDROID_STL=c++_static \\\n  -DCMAKE_BUILD_TYPE=Release\n"
+    - name: Build and audit universal product JNI cores
+      shell: bash
+      run: "set -euo pipefail\ncmake --build build/pt-android-product-shell-native-x86_64 --config Release --parallel 2\ncmake --build build/pt-android-product-shell-native-arm64-v8a\
+        \ --config Release --parallel 2\n\nx86_core=\"$(realpath build/pt-android-product-shell-native-x86_64/libmpmc_pt_android_core.so)\"\narm64_core=\"$(realpath\
+        \ build/pt-android-product-shell-native-arm64-v8a/libmpmc_pt_android_core.so)\"\ntest -f \"$x86_core\"\ntest -f \"$arm64_core\"\n\ntoolchain=\"$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin\"\
+        \n\"$toolchain/llvm-readelf\" -h \"$x86_core\" | grep -F 'Advanced Micro Devices X86-64'\n\"$toolchain/llvm-readelf\" -h \"$arm64_core\" | grep -F 'AArch64'\n\
+        for core in \"$x86_core\" \"$arm64_core\"; do\n  \"$toolchain/llvm-nm\" -D --defined-only \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_discoverJson'\n\
+        \  \"$toolchain/llvm-nm\" -D --defined-only \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_solveJson'\n  \"$toolchain/llvm-nm\" -D --defined-only\
+        \ \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelApplyRecords'\n  \"$toolchain/llvm-nm\" -D --defined-only \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelSolveRecords'\n\
+        \  \"$toolchain/llvm-nm\" -D --defined-only \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelReleaseRecords'\n  \"$toolchain/llvm-nm\" -D --defined-only\
+        \ \"$core\" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelCancel'\ndone\n\necho \"MPMC_ANDROID_CORE_X86_64=$x86_core\" >> \"$GITHUB_ENV\"\necho \"\
+        MPMC_ANDROID_CORE_ARM64_V8A=$arm64_core\" >> \"$GITHUB_ENV\"\n"
+    - name: Generate Capacitor Android project and build universal debug APK
+      shell: bash
+      run: bash products/pt_android/shell/build_product_shell.sh --core-library-x86_64 "$MPMC_ANDROID_CORE_X86_64" --core-library-arm64-v8a "$MPMC_ANDROID_CORE_ARM64_V8A"
+        --out build/pt-android-product-shell
+    - name: Boot x86_64 emulator and exercise universal React to JNI PT path
+      shell: bash
+      run: bash products/pt_android/shell/run_product_shell_emulator.sh --apk build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-universal-debug.apk
+        --out build/pt-android-product-shell-evidence
+    - name: Upload Android Product Shell evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-android-product-shell-v1-universal-debug
+        path: 'build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-universal-debug.apk
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: '24.21.0'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          build/pt-android-product-shell-evidence/emulator.txt
 
-      - name: Select hosted JDK 21
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${JAVA_HOME_21_X64:-}" || ! -x "$JAVA_HOME_21_X64/bin/java" ]]; then
-            echo 'Hosted JDK 21 is unavailable on ubuntu-24.04.' >&2
-            exit 1
-          fi
-          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
-          echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
-          "$JAVA_HOME_21_X64/bin/java" -version
+          build/pt-android-product-shell-evidence/logcat.txt
 
-      - name: Install exact frontend dependencies
-        run: npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
+          build/pt-android-product-shell-evidence/dom.json
 
-      - name: Generate model configuration TypeScript
-        run: npm --prefix frontend run proto:model:generate
-
-      - name: Install isolated Capacitor 8.5.2 shell
-        run: >-
-          npm install --prefix products/pt_android/shell
-          --ignore-scripts --no-audit --no-fund --no-package-lock
-
-      - name: Verify exact Capacitor shell versions
-        shell: bash
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require('fs');
-          const root = 'products/pt_android/shell/node_modules';
-          for (const name of ['@capacitor/core', '@capacitor/android', '@capacitor/cli']) {
-            const pkg = JSON.parse(fs.readFileSync(`${root}/${name}/package.json`, 'utf8'));
-            if (pkg.version !== '8.5.2') {
-              throw new Error(`${name} resolved to ${pkg.version}, expected 8.5.2`);
-            }
-          }
-          NODE
-
-      - name: Typecheck shared React Android shell
-        run: >-
-          ./frontend/node_modules/.bin/tsc --noEmit
-          -p products/pt_android/shell/tsconfig.json
-
-      - name: Build shared React shell for Capacitor
-        shell: bash
-        env:
-          VITE_MPMC_ANDROID_PRODUCT_SHELL_SMOKE: '1'
-        run: >-
-          ./frontend/node_modules/.bin/vite build
-          --config products/pt_android/shell/vite.config.mjs
-
-      - name: Ensure exact Android SDK and NDK inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-          if [[ -z "$sdk_root" ]]; then
-            echo 'Android SDK root is unavailable on the hosted runner.' >&2
-            exit 1
-          fi
-          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$sdkmanager"
-          yes | "$sdkmanager" --licenses >/dev/null || true
-          "$sdkmanager" --install \
-            "ndk;$NDK_VERSION" \
-            'platforms;android-36' \
-            'build-tools;36.0.0' \
-            "platforms;android-$MPMC_ANDROID_EMULATOR_API" \
-            "build-tools;$MPMC_ANDROID_BUILD_TOOLS_VERSION" \
-            'platform-tools' \
-            'emulator' \
-            "system-images;android-$MPMC_ANDROID_EMULATOR_API;google_apis;x86_64"
-          ndk_home="$sdk_root/ndk/$NDK_VERSION"
-          test -f "$ndk_home/build/cmake/android.toolchain.cmake"
-          echo "MPMC_ANDROID_NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
-
-      - name: Configure Android x86_64 native PT runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake \
-            -S products/pt_android \
-            -B build/pt-android-product-shell-native-x86_64 \
-            -DCMAKE_TOOLCHAIN_FILE="$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=x86_64 \
-            -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \
-            -DANDROID_STL=c++_static \
-            -DCMAKE_BUILD_TYPE=Release
-
-      - name: Configure Android arm64-v8a native PT runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake \
-            -S products/pt_android \
-            -B build/pt-android-product-shell-native-arm64-v8a \
-            -DCMAKE_TOOLCHAIN_FILE="$MPMC_ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-$MPMC_ANDROID_MIN_API \
-            -DANDROID_STL=c++_static \
-            -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build and audit universal product JNI cores
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build build/pt-android-product-shell-native-x86_64 --config Release --parallel 2
-          cmake --build build/pt-android-product-shell-native-arm64-v8a --config Release --parallel 2
-
-          x86_core="$(realpath build/pt-android-product-shell-native-x86_64/libmpmc_pt_android_core.so)"
-          arm64_core="$(realpath build/pt-android-product-shell-native-arm64-v8a/libmpmc_pt_android_core.so)"
-          test -f "$x86_core"
-          test -f "$arm64_core"
-
-          toolchain="$MPMC_ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          "$toolchain/llvm-readelf" -h "$x86_core" | grep -F 'Advanced Micro Devices X86-64'
-          "$toolchain/llvm-readelf" -h "$arm64_core" | grep -F 'AArch64'
-          for core in "$x86_core" "$arm64_core"; do
-            "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_discoverJson'
-            "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_solveJson'
-            "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelApplyRecords'
-            "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelSolveRecords'
-            "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelReleaseRecords'
-            "$toolchain/llvm-nm" -D --defined-only "$core" | grep -F 'Java_org_mpmc_ptandroid_NativeBridge_modelCancel'
-          done
-
-          echo "MPMC_ANDROID_CORE_X86_64=$x86_core" >> "$GITHUB_ENV"
-          echo "MPMC_ANDROID_CORE_ARM64_V8A=$arm64_core" >> "$GITHUB_ENV"
-
-      - name: Generate Capacitor Android project and build universal debug APK
-        shell: bash
-        run: >-
-          bash products/pt_android/shell/build_product_shell.sh
-          --core-library-x86_64 "$MPMC_ANDROID_CORE_X86_64"
-          --core-library-arm64-v8a "$MPMC_ANDROID_CORE_ARM64_V8A"
-          --out build/pt-android-product-shell
-
-      - name: Boot x86_64 emulator and exercise universal React to JNI PT path
-        shell: bash
-        run: >-
-          bash products/pt_android/shell/run_product_shell_emulator.sh
-          --apk build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-universal-debug.apk
-          --out build/pt-android-product-shell-evidence
-
-      - name: Upload Android Product Shell evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: mpmc-pt-android-product-shell-v1-universal-debug
-          path: |
-            build/pt-android-product-shell/mpmc-pt-android-product-shell-v1-universal-debug.apk
-            build/pt-android-product-shell-evidence/emulator.txt
-            build/pt-android-product-shell-evidence/logcat.txt
-            build/pt-android-product-shell-evidence/dom.json
-          if-no-files-found: warn
-          retention-days: 7
+          '
+        if-no-files-found: warn
+        retention-days: 7
+'on':
+  workflow_dispatch: null

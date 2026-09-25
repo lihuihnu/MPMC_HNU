@@ -1,318 +1,218 @@
 name: PT cross-platform product staging
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'api/**'
-      - 'modules/ad/**'
-      - 'modules/thermodynamics/**'
-      - 'modules/flash/**'
-      - 'modules/runtime/**'
-      - 'modules/runtime_grpc/**'
-      - 'modules/pt_process/**'
-      - 'modules/model_configuration/**'
-      - 'modules/model_configuration_grpc/**'
-      - 'tests/runtime/pt_grpc_adapter/**'
-      - 'products/pt/**'
-      - 'frontend/desktop/**'
-      - 'frontend/src/api/desktopBridge.ts'
-      - 'frontend/src/api/desktopBridgeContract.ts'
-      - 'frontend/src/api/flashClient.ts'
-      - 'frontend/src/api/modelSessionClient*'
-      - 'frontend/src/api/modelDesktopContract.ts'
-      - 'frontend/src/api/rendererModel*'
-      - 'frontend/src/api/modelValidationDetail*'
-      - 'frontend/buf.model.gen.yaml'
-      - 'buf.model.yaml'
-      - 'frontend/src/api/ptWire.ts'
-      - 'frontend/src/domain/flash.ts'
-      - 'frontend/src/gen/**'
-      - 'frontend/src/main.tsx'
-      - 'frontend/index.html'
-      - 'frontend/vite.config.ts'
-      - 'frontend/tsconfig.desktop.json'
-      - 'frontend/package.json'
-      - 'frontend/package-lock.json'
-      - '.github/workflows/pt_product_staging.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'products/pt/conanfile.txt'
-      - 'products/pt/conan.lock'
-      - 'products/pt/conan/profiles/**'
-      - '.github/workflows/pt_product_staging.yml'
-  workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: pt-product-staging-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
+  incremental-path-gate:
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["api/**","modules/ad/**","modules/thermodynamics/**","modules/flash/**","modules/runtime/**","modules/runtime_grpc/**","modules/pt_process/**","modules/model_configuration/**","modules/model_configuration_grpc/**","tests/runtime/pt_grpc_adapter/**","products/pt/**","frontend/desktop/**","frontend/src/api/desktopBridge.ts","frontend/src/api/desktopBridgeContract.ts","frontend/src/api/flashClient.ts","frontend/src/api/modelSessionClient*","frontend/src/api/modelDesktopContract.ts","frontend/src/api/rendererModel*","frontend/src/api/modelValidationDetail*","frontend/buf.model.gen.yaml","buf.model.yaml","frontend/src/api/ptWire.ts","frontend/src/domain/flash.ts","frontend/src/gen/**","frontend/src/main.tsx","frontend/index.html","frontend/vite.config.ts","frontend/tsconfig.desktop.json","frontend/package.json","frontend/package-lock.json",".github/workflows/pt_product_staging.yml"]'
   seed:
+    needs: incremental-path-gate
+    if: needs.incremental-path-gate.outputs.affected == 'true'
     name: Seed ${{ matrix.name }} dependencies
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x64 Release
-            os: ubuntu-24.04
-            profile: linux-x86_64-release
-          - name: Windows x64 Release
-            os: windows-2022
-            profile: windows-x86_64-release
-          - name: macOS arm64 Release
-            os: macos-15
-            profile: macos-armv8-release
-
+        - name: Linux x64 Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          profile: linux-x86_64-release
+        - name: Windows x64 Release
+          os: windows-2022
+          runner: windows-2022
+          profile: windows-x86_64-release
+        - name: macOS arm64 Release
+          os: macos-15
+          runner: macos-15
+          profile: macos-armv8-release
     env:
       CONAN_HOME: ${{ github.workspace }}/build/conan-home
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-
-      - name: Install pinned Conan client
-        run: python -m pip install --disable-pip-version-check conan==2.32.0
-
-      - name: Restore exact Conan dependency cache
-        id: conan-cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ env.CONAN_HOME }}
-          key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
-
-      - name: Download published binaries on cache miss
-        if: steps.conan-cache.outputs.cache-hit != 'true'
-        run: >-
-          conan install products/pt
-          --lockfile=products/pt/conan.lock
-          --profile:all=products/pt/conan/profiles/${{ matrix.profile }}
-          --build=never
-          --output-folder=build/conan-seed
-
-      - name: Verify seed from cache with source builds disabled
-        run: >-
-          conan install products/pt
-          --lockfile=products/pt/conan.lock
-          --profile:all=products/pt/conan/profiles/${{ matrix.profile }}
-          --no-remote
-          --build=never
-          --output-folder=build/conan-seed-verify
-
-      - name: Save only the completed Conan dependency cache
-        if: steps.conan-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ env.CONAN_HOME }}
-          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore exact Conan dependency cache
+      id: conan-cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+    - name: Download published binaries on cache miss
+      if: steps.conan-cache.outputs.cache-hit != 'true'
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ matrix.profile }} --build=never --output-folder=build/conan-seed
+    - name: Verify seed from cache with source builds disabled
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ matrix.profile }} --no-remote --build=never --output-folder=build/conan-seed-verify
+    - name: Save only the completed Conan dependency cache
+      if: steps.conan-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: ${{ steps.conan-cache.outputs.cache-primary-key }}
   stage:
     name: ${{ matrix.name }}
     needs: seed
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x64 Release
-            os: ubuntu-24.04
-            profile: linux-x86_64-release
-          - name: Windows x64 Release
-            os: windows-2022
-            profile: windows-x86_64-release
-          - name: macOS arm64 Release
-            os: macos-15
-            profile: macos-armv8-release
-
+        - name: Linux x64 Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          profile: linux-x86_64-release
+        - name: Windows x64 Release
+          os: windows-2022
+          runner: windows-2022
+          profile: windows-x86_64-release
+        - name: macOS arm64 Release
+          os: macos-15
+          runner: macos-15
+          profile: macos-armv8-release
     env:
       CONAN_HOME: ${{ github.workspace }}/build/conan-home
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-
-      - name: Install pinned Conan client
-        run: python -m pip install --disable-pip-version-check conan==2.32.0
-
-      - name: Restore seeded Conan dependency cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ env.CONAN_HOME }}
-          key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
-          fail-on-cache-miss: true
-
-      - name: Resolve locked graph offline
-        run: >-
-          conan install products/pt
-          --lockfile=products/pt/conan.lock
-          --profile:all=products/pt/conan/profiles/${{ matrix.profile }}
-          --no-remote
-          --build=never
-          --output-folder=build/conan-generators
-          --format=json
-          > build/conan-graph.json
-
-      - name: Validate restore-only dependency evidence (RESTORE_ONLY_DEPENDENCIES_OK)
-        run: >-
-          python products/pt/scripts/prepare_conan_metadata.py
-          --graph=build/conan-graph.json
-          --lockfile=products/pt/conan.lock
-          --output=build/conan-metadata
-          --profile-id=${{ matrix.profile }}
-          --conan-version=2.32.0
-
-      - name: Configure locked PT product
-        run: >-
-          cmake
-          -C build/conan-metadata/dependency-metadata.cmake
-          -S products/pt
-          -B build/pt-product
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan-generators/conan_toolchain.cmake
-          -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }}
-          -DBUILD_TESTING=ON
-
-      - name: Build PT product and staging probes
-        run: cmake --build build/pt-product --config Release --parallel 2
-
-      - name: Run contract and installed-product regression
-        run: >-
-          ctest --test-dir build/pt-product -C Release
-          --output-on-failure --no-tests=error
-
-      - name: Preserve native staging permissions for desktop handoff
-        run: >-
-          tar -cf build/mpmc-pt-${{ matrix.profile }}-desktop-native.tar
-          -C build/pt-product/stage .
-
-      - name: Upload unsigned staging tree
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: mpmc-pt-${{ matrix.profile }}-unsigned-staging
-          path: build/pt-product/stage
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload permission-preserving desktop native handoff
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: mpmc-pt-${{ matrix.profile }}-desktop-native
-          path: build/mpmc-pt-${{ matrix.profile }}-desktop-native.tar
-          if-no-files-found: error
-          retention-days: 7
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install pinned Conan client
+      run: python -m pip install --disable-pip-version-check conan==2.32.0
+    - name: Restore seeded Conan dependency cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ env.CONAN_HOME }}
+        key: pt-product-conan-v1-${{ matrix.profile }}-${{ hashFiles('products/pt/conanfile.txt', 'products/pt/conan.lock', 'products/pt/conan/profiles/*') }}
+        fail-on-cache-miss: true
+    - name: Resolve locked graph offline
+      run: conan install products/pt --lockfile=products/pt/conan.lock --profile:all=products/pt/conan/profiles/${{ matrix.profile }} --no-remote --build=never --output-folder=build/conan-generators
+        --format=json > build/conan-graph.json
+    - name: Validate restore-only dependency evidence (RESTORE_ONLY_DEPENDENCIES_OK)
+      run: python products/pt/scripts/prepare_conan_metadata.py --graph=build/conan-graph.json --lockfile=products/pt/conan.lock --output=build/conan-metadata --profile-id=${{
+        matrix.profile }} --conan-version=2.32.0
+    - name: Configure locked PT product
+      run: cmake -C build/conan-metadata/dependency-metadata.cmake -S products/pt -B build/pt-product -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace
+        }}/build/conan-generators/conan_toolchain.cmake -DMPMC_PT_PRODUCT_BUILD_REVISION=${{ github.sha }} -DBUILD_TESTING=ON
+    - name: Build PT product and staging probes
+      run: cmake --build build/pt-product --config Release --parallel 2
+    - name: Run contract and installed-product regression
+      run: ctest --test-dir build/pt-product -C Release --output-on-failure --no-tests=error
+    - name: Preserve native staging permissions for desktop handoff
+      run: tar -cf build/mpmc-pt-${{ matrix.profile }}-desktop-native.tar -C build/pt-product/stage .
+    - name: Upload unsigned staging tree
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-${{ matrix.profile }}-unsigned-staging
+        path: build/pt-product/stage
+        if-no-files-found: error
+        retention-days: 7
+    - name: Upload permission-preserving desktop native handoff
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-${{ matrix.profile }}-desktop-native
+        path: build/mpmc-pt-${{ matrix.profile }}-desktop-native.tar
+        if-no-files-found: error
+        retention-days: 7
   desktop:
     name: ${{ matrix.name }} Electron vertical slice
     needs: stage
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x64
-            os: ubuntu-24.04
-            profile: linux-x86_64-release
-            electron_platform: linux
-            electron_arch: x64
-            host_executable: mpmc_pt_service_host
-          - name: Windows x64
-            os: windows-2022
-            profile: windows-x86_64-release
-            electron_platform: win32
-            electron_arch: x64
-            host_executable: mpmc_pt_service_host.exe
-          - name: macOS arm64
-            os: macos-15
-            profile: macos-armv8-release
-            electron_platform: darwin
-            electron_arch: arm64
-            host_executable: mpmc_pt_service_host
-
+        - name: Linux x64
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          profile: linux-x86_64-release
+          electron_platform: linux
+          electron_arch: x64
+          host_executable: mpmc_pt_service_host
+        - name: Windows x64
+          os: windows-2022
+          runner: windows-2022
+          profile: windows-x86_64-release
+          electron_platform: win32
+          electron_arch: x64
+          host_executable: mpmc_pt_service_host.exe
+        - name: macOS arm64
+          os: macos-15
+          runner: macos-15
+          profile: macos-armv8-release
+          electron_platform: darwin
+          electron_arch: arm64
+          host_executable: mpmc_pt_service_host
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Restore exact native staging evidence
+      uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+      with:
+        name: mpmc-pt-${{ matrix.profile }}-desktop-native
+        path: build/desktop-native-handoff
+    - name: Create desktop native staging directory
+      run: cmake -E make_directory build/pt-product/stage
+    - name: Extract permission-preserving native staging evidence
+      run: tar -xf build/desktop-native-handoff/mpmc-pt-${{ matrix.profile }}-desktop-native.tar -C build/pt-product/stage
+    - name: Restore executable permission from staging metadata
+      if: runner.os != 'Windows'
+      run: chmod 0755 build/pt-product/stage/bin/mpmc_pt_service_host
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.21.0
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install exact Electron and frontend dependencies
+      working-directory: frontend
+      run: npm ci --no-audit --no-fund
+    - name: Prepare Electron sandbox helper on Linux
+      if: runner.os == 'Linux'
+      working-directory: frontend
+      shell: bash
+      run: 'node node_modules/electron/install.js
 
-      - name: Restore exact native staging evidence
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
-        with:
-          name: mpmc-pt-${{ matrix.profile }}-desktop-native
-          path: build/desktop-native-handoff
+        sudo chown root:root node_modules/electron/dist/chrome-sandbox
 
-      - name: Create desktop native staging directory
-        run: cmake -E make_directory build/pt-product/stage
+        sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
 
-      - name: Extract permission-preserving native staging evidence
-        run: >-
-          tar -xf build/desktop-native-handoff/mpmc-pt-${{ matrix.profile }}-desktop-native.tar
-          -C build/pt-product/stage
+        test "$(stat -c ''%U:%G %a'' node_modules/electron/dist/chrome-sandbox)" = "root:root 4755"
 
-      - name: Restore executable permission from staging metadata
-        if: runner.os != 'Windows'
-        run: chmod 0755 build/pt-product/stage/bin/mpmc_pt_service_host
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: '24.21.0'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install exact Electron and frontend dependencies
-        working-directory: frontend
-        run: npm ci --no-audit --no-fund
-
-      - name: Prepare Electron sandbox helper on Linux
-        if: runner.os == 'Linux'
-        working-directory: frontend
-        shell: bash
-        run: |
-          node node_modules/electron/install.js
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
-          test "$(stat -c '%U:%G %a' node_modules/electron/dist/chrome-sandbox)" = "root:root 4755"
-
-      - name: Build shared React renderer and desktop process bundles
-        working-directory: frontend
-        run: npm run build
-
-      - name: Run embedded-React discovery and three-backend real solve
-        if: runner.os != 'Linux'
-        working-directory: frontend
-        env:
-          MPMC_PT_DESKTOP_HOST_BINARY: ${{ github.workspace }}/build/pt-product/stage/bin/${{ matrix.host_executable }}
-        run: npm run desktop:real-smoke
-
-      - name: Run embedded-React discovery and three-backend real solve under Xvfb
-        if: runner.os == 'Linux'
-        working-directory: frontend
-        env:
-          MPMC_PT_DESKTOP_HOST_BINARY: ${{ github.workspace }}/build/pt-product/stage/bin/mpmc_pt_service_host
-        run: xvfb-run --auto-servernum npm run desktop:real-smoke
-
-      - name: Assemble unsigned desktop engineering preview
-        working-directory: frontend
-        run: >-
-          npm run desktop:package --
-          --native-stage ${{ github.workspace }}/build/pt-product/stage
-          --out ${{ github.workspace }}/build/pt-desktop-preview
-          --platform ${{ matrix.electron_platform }}
-          --arch ${{ matrix.electron_arch }}
-          --source-revision ${{ github.sha }}
-
-      - name: Upload unsigned desktop vertical-slice preview
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: mpmc-pt-desktop-${{ matrix.profile }}-unsigned-preview
-          path: build/pt-desktop-preview
-          if-no-files-found: error
-          retention-days: 7
+        '
+    - name: Build shared React renderer and desktop process bundles
+      working-directory: frontend
+      run: npm run build
+    - name: Run embedded-React discovery and three-backend real solve
+      if: runner.os != 'Linux'
+      working-directory: frontend
+      env:
+        MPMC_PT_DESKTOP_HOST_BINARY: ${{ github.workspace }}/build/pt-product/stage/bin/${{ matrix.host_executable }}
+      run: npm run desktop:real-smoke
+    - name: Run embedded-React discovery and three-backend real solve under Xvfb
+      if: runner.os == 'Linux'
+      working-directory: frontend
+      env:
+        MPMC_PT_DESKTOP_HOST_BINARY: ${{ github.workspace }}/build/pt-product/stage/bin/mpmc_pt_service_host
+      run: xvfb-run --auto-servernum npm run desktop:real-smoke
+    - name: Assemble unsigned desktop engineering preview
+      working-directory: frontend
+      run: npm run desktop:package -- --native-stage ${{ github.workspace }}/build/pt-product/stage --out ${{ github.workspace }}/build/pt-desktop-preview --platform
+        ${{ matrix.electron_platform }} --arch ${{ matrix.electron_arch }} --source-revision ${{ github.sha }}
+    - name: Upload unsigned desktop vertical-slice preview
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mpmc-pt-desktop-${{ matrix.profile }}-unsigned-preview
+        path: build/pt-desktop-preview
+        if-no-files-found: error
+        retention-days: 7
+'on':
+  workflow_dispatch: null

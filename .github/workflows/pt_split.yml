@@ -1,90 +1,98 @@
 name: PT phase split
-on:
-  pull_request:
-    branches: [main, feat/pt-stability-tpd, feat/pt-vle-split, test/pt-boundary-regression, fix/tpd-flat-descent, test/pt-dew-limit-audit]
-    paths:
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/rachford_rice.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_split.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_split.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_phase_set.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_phase_set.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_sensitivity.hpp'
-      - 'modules/flash/include/mpmc/flash/pr76_sensitivity.hpp'
-      - 'modules/flash/include/mpmc/flash/detail/**'
-      - 'modules/flash/CMakeLists.txt'
-      - 'modules/flash/sensitivity/CMakeLists.txt'
-      - 'modules/thermodynamics/**/*.hpp'
-      - 'modules/thermodynamics/**/CMakeLists.txt'
-      - 'modules/ad/**/*.hpp'
-      - 'modules/ad/**/CMakeLists.txt'
-      - 'tests/flash/pt_split/**'
-      - '.github/workflows/pt_split.yml'
-  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: pt-phase-split-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  incremental-path-gate:
+    if: inputs.routed != true
+    name: Incremental path gate
+    uses: ./.github/workflows/_incremental_path_gate.yml
+    with:
+      paths_json: '["modules/flash/include/mpmc/flash/pt_stability.hpp","modules/flash/include/mpmc/flash/pr76_stability.hpp","modules/flash/include/mpmc/flash/rachford_rice.hpp","modules/flash/include/mpmc/flash/pt_split.hpp","modules/flash/include/mpmc/flash/pr76_split.hpp","modules/flash/include/mpmc/flash/pt_phase_set.hpp","modules/flash/include/mpmc/flash/pt_vle_phase_set.hpp","modules/flash/include/mpmc/flash/pr76_phase_set.hpp","modules/flash/include/mpmc/flash/pt_sensitivity.hpp","modules/flash/include/mpmc/flash/pr76_sensitivity.hpp","modules/flash/include/mpmc/flash/detail/**","modules/flash/CMakeLists.txt","modules/flash/sensitivity/CMakeLists.txt","modules/thermodynamics/**/*.hpp","modules/thermodynamics/**/CMakeLists.txt","modules/ad/**/*.hpp","modules/ad/**/CMakeLists.txt","tests/flash/pt_split/**",".github/workflows/pt_split.yml"]'
   split:
+    needs: incremental-path-gate
+    if: ${{ always() && (inputs.routed == true || needs.incremental-path-gate.outputs.affected == 'true') }}
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: GCC Debug + ASan/UBSan
-            os: ubuntu-24.04
-            config: Debug
-            compiler: '-DCMAKE_CXX_COMPILER=g++'
-            sanitizer: 'ON'
-          - name: Clang Release
-            os: ubuntu-24.04
-            config: Release
-            compiler: '-DCMAKE_CXX_COMPILER=clang++'
-            sanitizer: 'OFF'
-          - name: MSVC Release
-            os: windows-2022
-            config: Release
-            compiler: ''
-            sanitizer: 'OFF'
+        - name: GCC Debug + ASan/UBSan
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Debug
+          compiler: -DCMAKE_CXX_COMPILER=g++
+          sanitizer: 'ON'
+        - name: Clang Release
+          os: ubuntu-24.04
+          runner: ubuntu-24.04
+          config: Release
+          compiler: -DCMAKE_CXX_COMPILER=clang++
+          sanitizer: 'OFF'
+        - name: MSVC Release
+          os: windows-2022
+          runner: windows-2022
+          config: Release
+          compiler: ''
+          sanitizer: 'OFF'
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Configure only phase split integration
-        run: |
-          config_arg=()
-          if [ "${{ runner.os }}" != Windows ]; then
-            config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})
-          fi
-          cmake -S tests/flash/pt_split -B build/pt-split \
-            "${config_arg[@]}" ${{ matrix.compiler }} \
-            -DMPMC_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}
-      - name: Compile phase split, boundary, ternary, sensitivity and phase-set regression
-        run: cmake --build build/pt-split --target mpmc_pt_split_tests mpmc_pt_boundary_tests mpmc_tpd_stagnation_tests mpmc_dew_limit_tests mpmc_pt_diagnostic_tests mpmc_pt_ternary_tests mpmc_pt_sensitivity_tests mpmc_pt_phase_set_tests --config ${{ matrix.config }} --parallel 2
-      - name: Run phase split increment
-        run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
-      - name: Independently regenerate binary equilibrium references
-        run: python tests/flash/pt_split/reference_split_decimal.py
-      - name: Independently regenerate ternary equilibrium references
-        run: python tests/flash/pt_split/reference_ternary_decimal.py
-      - name: Independently regenerate converged-solution sensitivity references
-        run: python tests/flash/pt_split/reference_sensitivity_decimal.py
-      - name: Independently check saturation and continuous boundary references
-        run: python tests/flash/pt_split/reference_boundary_decimal.py
-      - name: Cross-check boundary reference precision on the sanitizer configuration
-        if: matrix.sanitizer == 'ON'
-        run: python tests/flash/pt_split/reference_boundary_decimal.py --precision 96
-      - name: Independently audit near-dew input resolution and phase gate
-        run: python tests/flash/pt_split/reference_dew_limit_decimal.py
-      - name: Cross-check near-dew reference precision
-        if: matrix.sanitizer == 'ON'
-        run: python tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Select Python interpreter
+      shell: bash
+      run: "if command -v python >/dev/null 2>&1; then\n  python_cmd=\"$(command -v python)\"\nelif command -v python3 >/dev/null 2>&1; then\n  python_cmd=\"$(command\
+        \ -v python3)\"\nelse\n  echo \"Python interpreter not found\" >&2\n  exit 1\nfi\necho \"MPMC_PYTHON=$python_cmd\" >> \"$GITHUB_ENV\"\n"
+    - name: Configure only phase split integration
+      run: "config_arg=()\nif [ \"${{ runner.os }}\" != Windows ]; then\n  config_arg=(-DCMAKE_BUILD_TYPE=${{ matrix.config }})\nfi\ncmake -S tests/flash/pt_split\
+        \ -B build/pt-split \\\n  \"${config_arg[@]}\" ${{ matrix.compiler }} \\\n  -DMPMC_SPLIT_ENABLE_SANITIZERS=${{ matrix.sanitizer }}\n"
+    - name: Compile phase split, boundary, ternary, sensitivity and phase-set regression
+      run: cmake --build build/pt-split --target mpmc_pt_split_tests mpmc_pt_boundary_tests mpmc_tpd_stagnation_tests mpmc_dew_limit_tests mpmc_pt_diagnostic_tests
+        mpmc_pt_ternary_tests mpmc_pt_sensitivity_tests mpmc_pt_phase_set_tests --config ${{ matrix.config }} --parallel 2
+    - name: Run phase split increment
+      run: ctest --test-dir build/pt-split -C ${{ matrix.config }} -R '^flash[.]pt_split[.]' --verbose --no-tests=error
+    - name: Independently regenerate binary equilibrium references
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_split_decimal.py
+
+        '
+    - name: Independently regenerate ternary equilibrium references
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_ternary_decimal.py
+
+        '
+    - name: Independently regenerate converged-solution sensitivity references
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_sensitivity_decimal.py
+
+        '
+    - name: Independently check saturation and continuous boundary references
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py
+
+        '
+    - name: Cross-check boundary reference precision on the sanitizer configuration
+      if: matrix.sanitizer == 'ON'
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_boundary_decimal.py --precision 96
+
+        '
+    - name: Independently audit near-dew input resolution and phase gate
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py
+
+        '
+    - name: Cross-check near-dew reference precision
+      if: matrix.sanitizer == 'ON'
+      run: '"$MPMC_PYTHON" tests/flash/pt_split/reference_dew_limit_decimal.py --precision 96
+
+        '
+'on':
+  workflow_call:
+    inputs:
+      routed:
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch: null

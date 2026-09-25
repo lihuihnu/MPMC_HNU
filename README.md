@@ -77,7 +77,7 @@
 
 根 [CMakeLists.txt](CMakeLists.txt) 和 [CMakePresets.json](CMakePresets.json) 当前只配置 AD；热力学、闪蒸、physics、服务和产品采用各自独立入口。请从上述模块文档选择构建命令，避免把根目录构建误认为整个项目的验证。
 
-开发流程以 [AGENTS.md](AGENTS.md) 为唯一规则入口：先审计，做可回退增量，再按受影响依赖选择测试。正式自动化使用 GitHub 官方托管 runner；纯文档核对内容、相对引用和差异范围，代码变更运行必要增量及受影响下游。解析/数值回归、synthetic fixture、实验验证与性能基准分别报告，不把已有工作流当作已经通过的证据。
+开发流程以 [AGENTS.md](AGENTS.md) 为唯一规则入口：先审计，做可回退增量，再按受影响依赖选择测试。正式自动化中，Linux 测试统一使用仓库私有 `mpmc_hnu` self-hosted Linux x64 runner，Windows/macOS 继续使用 GitHub 官方托管 runner；纯 metadata/path gate 可以保留官方托管 Linux。纯文档核对内容、相对引用和差异范围，代码变更运行必要增量及受影响下游。解析/数值回归、synthetic fixture、实验验证与性能基准分别报告，不把已有工作流当作已经通过的证据。
 
 | 后续方向 | 所需证据或前置条件 |
 | --- | --- |

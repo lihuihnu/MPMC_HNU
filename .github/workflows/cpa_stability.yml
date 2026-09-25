@@ -1,16 +1,10 @@
 name: CPA PT stability
 
+
+# Main-target PR path matching is owned by pr_incremental_ci.yml. This file
+# has no local PR path gate; it only executes routed or explicit manual validation.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'modules/flash/include/mpmc/flash/cpa_stability.hpp'
-      - 'modules/flash/include/mpmc/flash/pt_stability.hpp'
-      - 'modules/thermodynamics/include/mpmc/thermodynamics/cpa_*.hpp'
-      - 'tests/flash/cpa_stability/**'
-      - '.github/workflows/cpa_stability.yml'
-      - '.github/workflows/_cpp_ctest.yml'
-      - 'tests/support/cmake/cpp_test_options.cmake'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
