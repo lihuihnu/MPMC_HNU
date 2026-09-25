@@ -1060,6 +1060,12 @@ struct Sw92TransactionalPhaseTransitionRebuildContext3D {
         rock_storage;
     MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
         cell_source_evaluator;
+    // Optional projection used only when the caller intentionally wants to
+    // adjust the authoritative target q onto the frozen component/energy
+    // storage manifold before the rebuilt SNES solve.  Source-complete
+    // production property models should normally leave this false and let
+    // SNES satisfy equilibrium and conservation simultaneously.
+    bool project_target_to_conservation_storage{false};
     std::vector<
         Sw92TransactionalRebuildBaselineCell3D>
         baseline_cells;
@@ -1451,6 +1457,8 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
+                if (context
+                        ->project_target_to_conservation_storage) {
                 conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
@@ -1493,6 +1501,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                         return MixedCardinalityPhysicalCurrentCellLinearization3D{
                             std::move(*value)};
                     });
+                }
                 runtime->one_phase_contexts
                     .push_back(
                         std::move(evaluator));
@@ -1517,6 +1526,8 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
+                if (context
+                        ->project_target_to_conservation_storage) {
                 conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
@@ -1559,6 +1570,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                         return MixedCardinalityPhysicalCurrentCellLinearization3D{
                             std::move(*value)};
                     });
+                }
                 runtime->two_phase_contexts
                     .push_back(
                         std::move(evaluator));
@@ -1583,6 +1595,8 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
+                if (context
+                        ->project_target_to_conservation_storage) {
                 conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
@@ -1625,6 +1639,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                         return MixedCardinalityPhysicalCurrentCellLinearization3D{
                             std::move(*value)};
                     });
+                }
                 runtime->three_phase_contexts
                     .push_back(
                         std::move(evaluator));

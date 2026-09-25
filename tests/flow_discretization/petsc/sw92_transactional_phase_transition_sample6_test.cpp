@@ -1743,6 +1743,8 @@ void sample6_two_to_three() {
     rebuild.rock_storage = {
         &sample6_zero_rock,
         nullptr};
+    rebuild.project_target_to_conservation_storage =
+        true;
     rebuild.baseline_cells.push_back(
         {
             mesh::LocalIndex{0U},
@@ -2013,6 +2015,8 @@ void sample6_three_to_two() {
     rebuild.rock_storage = {
         &sample6_zero_rock,
         nullptr};
+    rebuild.project_target_to_conservation_storage =
+        true;
     rebuild.baseline_cells.push_back(
         {
             mesh::LocalIndex{0U},

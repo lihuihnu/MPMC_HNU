@@ -4673,8 +4673,13 @@ runs real Sample-6 SW92 thermodynamics through transactional 2P->3P and 3P->2P
 same-dt rebuild/re-solve.  Sample-6 still has no source-complete eight-component
 flow transport/caloric dataset in this repository, so those two algorithmic
 regressions add only explicitly `synthetic_test` molar masses and a
-manufactured topology-independent linear-u(T)/constant-viscosity provider.  Those manufactured values
-never enter production data or scientific claims; the phase equilibria,
+manufactured topology-independent linear-u(T)/constant-viscosity provider.
+Their rebuild contexts also explicitly opt into a conservation-storage anchor
+that projects target q onto the frozen component/energy storage manifold before
+SNES.  That projection is **off by default** and is not applied to the sourced
+CO2/H2O production-property regressions, where the authoritative target is
+passed directly to SNES.  The manufactured values and opt-in projection never
+enter production data or scientific claims; the phase equilibria,
 AQ/NA families, selected roots, compositions and topology remain the real
 SW92 Sample-6 solutions.
 
