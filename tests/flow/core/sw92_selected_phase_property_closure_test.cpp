@@ -526,9 +526,9 @@ void cardinality_and_direct_eos() {
                 q3);
 
     require(
-        bridge1.state.component_count() == 2U &&
-            bridge2.state.component_count() == 2U &&
-            bridge3.state.component_count() == 2U,
+        bridge1.state.component_ids().size() == 2U &&
+            bridge2.state.component_ids().size() == 2U &&
+            bridge3.state.component_ids().size() == 2U,
         "SW92 natural-variable bridge component count changed");
     require(
         bridge2.fugacity.residual_count() == 2U &&
