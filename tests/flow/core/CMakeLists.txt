@@ -96,7 +96,9 @@ target_link_libraries(
 add_executable(
     mpmc_flow_sw92_selected_phase_property_tests
     sw92_selected_phase_property_closure_test.cpp
-    sw92_selected_phase_property_closure_header.cpp)
+    sw92_selected_phase_property_closure_header.cpp
+    sw92_co2_water_properties_test.cpp
+    sw92_co2_water_properties_header.cpp)
 target_link_libraries(
     mpmc_flow_sw92_selected_phase_property_tests
     PRIVATE

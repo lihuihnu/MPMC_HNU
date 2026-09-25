@@ -16,6 +16,8 @@
 #include <vector>
 
 bool sw92_selected_phase_property_closure_header();
+bool sw92_co2_water_properties_header();
+void sw92_co2_water_provider_regression();
 
 namespace {
 
@@ -958,6 +960,7 @@ int main() {
         permutation_and_fixed_selection();
         pc_none_capability_guard();
         invalid_inputs_and_branch_failures();
+        sw92_co2_water_provider_regression();
         std::cout
             << "PASS SW92 selected-phase property -> flow natural-variable bridge\n";
         return 0;

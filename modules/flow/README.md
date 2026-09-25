@@ -4479,3 +4479,49 @@ failure propagation, and primal/Jacobian pc=none capability rejection.
 This slice does not add an SW92 viscosity/enthalpy model, does not run an SW92
 PETSc timestep, and does not change flash topology, wells, phase-transition
 orchestration, solver tolerances or any EOS equation.
+
+
+## 49. Source-backed zero-salinity SW92 CO2/H2O transport/caloric provider
+
+The first non-synthetic SW92 transport/caloric provider is deliberately narrow:
+
+`<mpmc/flow/sw92_co2_water_properties.hpp>`
+
+supports only the repository-curated corrected-original **CO2/H2O binary at
+NaCl molality = 0**.  Nonzero molality is rejected explicitly; the provider
+does not reuse pure-water parameters as an unvalidated brine model.
+
+Dynamic viscosity uses the Chung-Ajlan-Lee-Starling (1988) high-pressure
+polar-mixture correlation (DOI `10.1021/ie00076a024`) with the standard Chung
+mixture rules and Neufeld collision integral.  CO2 critical molar volume is the
+NIST SRD 69 Li-Kiran record; water critical volume is obtained from the IAPWS
+critical density `322 kg/m3` and the NIST molecular weight.  The water polar
+inputs are `mu=1.8546 D` and Chung association factor `kappa=0.076`.
+Chung transport binary `xi/zeta` parameters are unity, as in the standard
+method.
+
+Caloric enthalpy is the sum of:
+
+1. NIST SRD 69 / Chase-1998 gas-phase Shomate sensible
+   `H(T)-H(298.15 K)`; and
+2. the standard Peng-Robinson departure expression evaluated using the **SW92
+   family-specific** `a(T,x)`, `b(x)`, water alpha and BIPs for the frozen
+   selected family/root.
+
+The common sourced Shomate interval is exactly `500 <= T <= 1200 K`; no
+caloric extrapolation is permitted.  The reference is a nonreactive-flow
+sensible enthalpy, not heat of formation.  Internal energy continues to be
+derived by the selected-phase closure as `u=h-p/rho_mass`.
+
+The provider validates the exact repository dataset/revision, component
+identity, SW92 Table-3 `Tc/Pc/omega`, and NIST molar masses before use.
+Component order may be permuted, but the physical source identity may not.
+
+The flow-core regression separately freezes a source-formula oracle for the
+NIST Shomate mixture enthalpy and Chung viscosity, checks component permutation
+and range/salinity failures, then runs the real SW92 selected-root closure and
+compares its pressure/temperature/composition forward-AD viscosity, enthalpy
+and internal-energy derivatives against fresh central perturbations.
+
+This slice does **not** add a brine transport model, thermal conductivity,
+SW92 PETSc timestep, well coupling or phase-transition orchestration.
