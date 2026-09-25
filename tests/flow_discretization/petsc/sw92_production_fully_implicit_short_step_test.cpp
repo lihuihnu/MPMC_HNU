@@ -299,6 +299,30 @@ std::vector<double> residual_values(
     return values;
 }
 
+PetscErrorCode inactive_two_phase_relative_permeability(
+    const flow::NaturalVariableCellState2P& state,
+    void*,
+    std::optional<
+        fdp::Sw92TwoPhaseRelativePermeabilityLinearization3D>* output,
+    fdp::NaturalVariableSnesEvaluationStatus3D* status) {
+    if (output == nullptr ||
+        status == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    const std::size_t q =
+        state.layout().unknown_count();
+    output->emplace(
+        fdp::Sw92TwoPhaseRelativePermeabilityLinearization3D{
+            {1.0, 1.0},
+            {
+                std::vector<double>(q, 0.0),
+                std::vector<double>(q, 0.0)}});
+    *status =
+        fdp::NaturalVariableSnesEvaluationStatus3D::
+            success;
+    return PETSC_SUCCESS;
+}
+
 void sw92_stationary_short_step() {
     auto parameters =
         sourced_parameters();
@@ -308,18 +332,27 @@ void sw92_stationary_short_step() {
 
     const auto source =
         fl::solve_sw92_profile_c_pt_phase_set(
-            1.0e6,
+            1.0e7,
             510.0,
-            std::vector<double>{0.995, 0.005},
+            std::vector<double>{0.70, 0.30},
             model,
             0.0);
-    require_sw92_petsc(
-        source.solution.status ==
-                fl::PtPhaseSetStatus::accepted &&
-            source.accepted_phase_set_published() &&
-            source.solution.accepted_phase_count() ==
-                1U,
-        "SW92 sourced 1 MPa / 510 K CO2-rich fixture is not authoritative single phase");
+    if (!(source.solution.status ==
+              fl::PtPhaseSetStatus::accepted &&
+          source.accepted_phase_set_published() &&
+          source.solution.accepted_phase_count() ==
+              2U)) {
+        throw std::runtime_error(
+            "SW92 sourced 10 MPa / 510 K CO2-H2O fixture is not authoritative two phase; status=" +
+            std::to_string(
+                static_cast<int>(
+                    source.solution.status)) +
+            "; accepted_count=" +
+            std::to_string(
+                source.solution.accepted_phase_count()) +
+            "; diagnostic=" +
+            source.solution.diagnostic);
+    }
 
     auto materialized =
         fdp::
@@ -328,7 +361,7 @@ void sw92_stationary_short_step() {
                 model);
     const auto* layout =
         std::get_if<
-            flow::NaturalVariableLayout1P>(
+            flow::NaturalVariableLayout2P>(
                 &materialized.frozen_layout);
     require_sw92_petsc(
         layout != nullptr &&
@@ -336,20 +369,21 @@ void sw92_stationary_short_step() {
                 layout->unknown_count() &&
             materialized.component_ids.size() ==
                 2U,
-        "SW92 Profile-C materializer did not produce a 1P natural-variable cell");
+        "SW92 Profile-C materializer did not produce a 2P natural-variable cell");
 
     using Closure =
         fdp::Sw92Co2WaterSelectedPhasePropertyClosure3D;
-    fdp::Sw92SinglePhaseProductionCellEvaluatorContext3D<
+    fdp::Sw92TwoPhaseProductionCellEvaluatorContext3D<
         Closure>
         evaluator_context{
             &materialized.property_closure,
-            1.0,
+            {&inactive_two_phase_relative_permeability,
+             nullptr},
             {&zero_rock_storage, nullptr},
             {}};
 
     std::optional<
-        fdp::SinglePhaseCurrentCellLinearization3D>
+        fdp::TwoPhaseCurrentCellLinearization3D>
         initial_current;
     fdp::NaturalVariableSnesEvaluationStatus3D
         evaluation_status =
@@ -357,7 +391,7 @@ void sw92_stationary_short_step() {
                 success;
     require_sw92_petsc(
         fdp::
-            evaluate_sw92_single_phase_production_cell_3d<
+            evaluate_sw92_two_phase_production_cell_3d<
                 Closure>(
                 mesh::LocalIndex{0U},
                 mesh::GlobalEntityId{
@@ -373,10 +407,10 @@ void sw92_stationary_short_step() {
                 fdp::NaturalVariableSnesEvaluationStatus3D::
                     success &&
             initial_current.has_value(),
-        "SW92 production cell evaluator did not materialize the initial state");
+        "SW92 production 2P cell evaluator did not materialize the authoritative state");
 
     constexpr double porosity = 0.20;
-    fdp::SinglePhaseSnesCellInput3D
+    fdp::TwoPhaseSnesCellInput3D
         cell;
     cell.cell = mesh::LocalIndex{0U};
     cell.cell_global =
@@ -388,12 +422,12 @@ void sw92_stationary_short_step() {
         materialized.component_ids;
     cell.previous_component_accumulation =
         flow::
-            build_single_phase_component_accumulation(
+            build_two_phase_component_accumulation(
                 initial_current->state,
                 porosity);
     cell.previous_energy_accumulation =
         flow::
-            build_single_phase_energy_accumulation_snapshot(
+            build_two_phase_energy_accumulation_snapshot(
                 initial_current->state,
                 porosity,
                 initial_current->transport,
@@ -413,7 +447,7 @@ void sw92_stationary_short_step() {
         fdp::VariableCardinalityNaturalVariableNumbering3D>
         numbering;
     const std::array<std::size_t, 1>
-        phase_counts{1U};
+        phase_counts{2U};
     require_sw92_petsc(
         fdp::
             make_variable_cardinality_natural_variable_numbering_3d(
@@ -424,13 +458,13 @@ void sw92_stationary_short_step() {
                 &numbering) ==
                 PETSC_SUCCESS &&
             numbering.has_value(),
-        "failed SW92 variable-cardinality numbering");
+        "failed SW92 2P variable-cardinality numbering");
 
     fdp::MixedCardinalityPhysicalCellEvaluatorBindings3D
         bindings;
-    bindings.single_phase = {
+    bindings.two_phase = {
         &fdp::
-            evaluate_sw92_single_phase_production_cell_3d<
+            evaluate_sw92_two_phase_production_cell_3d<
                 Closure>,
         &evaluator_context};
 
@@ -439,15 +473,41 @@ void sw92_stationary_short_step() {
         cells;
     cells.emplace_back(
         std::move(cell));
+
+    const auto* accepted =
+        source.solution.accepted_phase_set();
+    require_sw92_petsc(
+        accepted != nullptr &&
+            accepted->phases.size() == 2U &&
+            source.phase_metadata.size() == 2U,
+        "SW92 authoritative 2P identity metadata disappeared");
+    std::vector<
+        flow::FrozenPhysicalPhaseIdentity>
+        phase_identities;
+    phase_identities.reserve(2U);
+    for (std::size_t phase = 0U;
+         phase < 2U;
+         ++phase) {
+        const auto family =
+            source.phase_metadata[phase]
+                    .thermodynamic_family ==
+                th::SwPhaseFamily::aqueous
+                ? "aqueous"
+                : "nonaqueous";
+        phase_identities.push_back({
+            "SW92/Profile-C/zero-salinity-CO2-H2O",
+            std::string{family} +
+                "/root=" +
+                std::to_string(
+                    accepted->phases[phase]
+                        .activity.branch)});
+    }
+
     std::vector<
         flow::FrozenActivePhaseIdentityMap>
         identities;
     identities.emplace_back(
-        std::vector<
-            flow::FrozenPhysicalPhaseIdentity>{
-            {
-                "SW92/Profile-C/zero-salinity-CO2-H2O",
-                "authoritative-single-phase"}});
+        std::move(phase_identities));
 
     std::optional<
         fdp::MixedCardinalityPhysicalSnesAssemblyContext3D>
@@ -471,7 +531,7 @@ void sw92_stationary_short_step() {
                     &assembly) ==
                 PETSC_SUCCESS &&
             assembly.has_value(),
-        "failed to create SW92 mixed-cardinality physical assembly");
+        "failed to create SW92 2P mixed-cardinality physical assembly");
 
     Vec initial_state = nullptr;
     Mat jacobian = nullptr;
@@ -482,7 +542,7 @@ void sw92_stationary_short_step() {
                 *numbering,
                 &initial_state) ==
                 PETSC_SUCCESS,
-        "failed to allocate SW92 natural-variable Vec");
+        "failed to allocate SW92 2P natural-variable Vec");
     set_state(
         initial_state,
         *numbering,
@@ -491,7 +551,7 @@ void sw92_stationary_short_step() {
         assembly->create_jacobian_structure(
             &jacobian) ==
                 PETSC_SUCCESS,
-        "failed to create SW92 Jacobian structure");
+        "failed to create SW92 2P Jacobian structure");
 
     const auto evaluator =
         assembly->snes_evaluator();
@@ -513,7 +573,7 @@ void sw92_stationary_short_step() {
     require_sw92_petsc(
         MatZeroEntries(jacobian) ==
             PETSC_SUCCESS,
-        "failed to zero SW92 Jacobian");
+        "failed to zero SW92 2P Jacobian");
     evaluation_status =
         fdp::NaturalVariableSnesEvaluationStatus3D::
             success;
@@ -535,10 +595,16 @@ void sw92_stationary_short_step() {
                 jacobian,
                 MAT_FINAL_ASSEMBLY) ==
                 PETSC_SUCCESS,
-        "failed SW92 analytic Jacobian assembly");
+        "failed SW92 2P analytic Jacobian assembly");
 
-    const std::array<double, 3>
-        steps{10.0, 1.0e-4, 1.0e-6};
+    std::vector<double> steps(q, 1.0e-6);
+    steps[layout->pressure_unknown_index()] =
+        10.0;
+    steps[layout->temperature_unknown_index()] =
+        1.0e-4;
+    steps[layout->independent_saturation_unknown_index()] =
+        1.0e-7;
+
     for (std::size_t column = 0U;
          column < q;
          ++column) {
@@ -567,11 +633,11 @@ void sw92_stationary_short_step() {
                 INSERT_VALUES) ==
                     PETSC_SUCCESS &&
                 VecSetValue(
-                    minus,
-                    global_column,
-                    materialized.natural_variables[column] -
-                        steps[column],
-                    INSERT_VALUES) ==
+                minus,
+                global_column,
+                materialized.natural_variables[column] -
+                    steps[column],
+                INSERT_VALUES) ==
                     PETSC_SUCCESS &&
                 VecAssemblyBegin(plus) ==
                     PETSC_SUCCESS &&
@@ -625,6 +691,20 @@ void sw92_stationary_short_step() {
         (void)VecDestroy(&minus);
     }
 
+    Vec row_scaling = nullptr;
+    require_sw92_petsc(
+        fdp::
+            make_variable_cardinality_initial_row_equilibration_3d(
+                PETSC_COMM_SELF,
+                *numbering,
+                initial_state,
+                jacobian,
+                evaluator,
+                &row_scaling) ==
+                PETSC_SUCCESS &&
+            row_scaling != nullptr,
+        "failed to build SW92 2P frozen row equilibration");
+
     Vec solution = nullptr;
     std::optional<
         fdp::
@@ -639,14 +719,15 @@ void sw92_stationary_short_step() {
                 jacobian,
                 evaluator,
                 &solution,
-                &report) ==
+                &report,
+                row_scaling) ==
                 PETSC_SUCCESS &&
             solution != nullptr &&
             report.has_value() &&
             static_cast<int>(
                 report->converged_reason) >
                 0,
-        "SW92 stationary physical short-step did not converge");
+        "SW92 stationary 2P physical short-step did not converge");
 
     const PetscScalar* solved = nullptr;
     require_sw92_petsc(
@@ -680,8 +761,9 @@ void sw92_stationary_short_step() {
             &history_matches) ==
                 PETSC_SUCCESS &&
             history_matches,
-        "SW92 stationary short-step changed component or energy inventory");
+        "SW92 stationary 2P short-step changed component or energy inventory");
 
+    (void)VecDestroy(&row_scaling);
     (void)VecDestroy(&solution);
     (void)MatDestroy(&jacobian);
     (void)VecDestroy(&initial_state);
