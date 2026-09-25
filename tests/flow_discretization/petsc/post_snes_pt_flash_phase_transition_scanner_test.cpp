@@ -15,6 +15,7 @@
 #include <vector>
 
 void post_snes_sw92_profile_c_phase_transition_scanner_test();
+void sw92_transactional_phase_transition_restart_test();
 
 namespace {
 
@@ -199,6 +200,7 @@ void post_snes_pt_flash_phase_transition_scanner_test() {
         try {
             run_scanner_regression();
             post_snes_sw92_profile_c_phase_transition_scanner_test();
+            sw92_transactional_phase_transition_restart_test();
         } catch (...) {
             local_success = 0;
         }

@@ -4622,3 +4622,42 @@ The regression freezes two boundaries:
 
 This slice does not rebuild/destroy an SNES system, restart a timestep, couple a
 well, infer physical phase identities or add transport data.
+
+
+## 52. SW92 transactional same-dt phase-transition restart
+
+The SW92 authoritative scan sidecar now feeds a real outer-rebuild/controller
+path through
+`sw92_transactional_phase_transition_restart.hpp`.
+
+The v1 production contract is deliberately narrow: one owned cell and no
+cross-cardinality face.  This is a real `PhaseTransitionRebuiltNaturalVariableSystem3D`
+restart, not a test-only state swap.  The existing generic controller owns the
+transaction:
+
+`solve -> authoritative SW92 scan -> discard trial solution -> rebuild target
+system -> destroy old solved Vec -> re-solve with the same dt`.
+
+The rebuild context freezes the accepted Backward-Euler component/energy
+history before the first solve and reuses that exact history for every restart
+generation.  Target q/layout/family/root come from the authoritative SW92
+sidecar.  A caller-supplied target-identity resolver is mandatory; the rebuild
+layer does not infer physical phase identity from AQ/NA family, root, density,
+compressibility factor or phase slot.
+
+For lower-cardinality transitions, the SW92-specific scanner may now accept a
+fresh authoritative lower-cardinality Profile-C publication as the target
+re-solve evidence.  This source-count-specific rule remains outside the generic
+role-neutral PT backend, whose declared 2->1 capability is unchanged.
+
+The first physical regression uses the sourced zero-salinity CO2/H2O provider
+and real SW92 selected-root production evaluators for both directions:
+1P->2P at 3 MPa / 340 K / z=[0.7,0.3], and 2P->1P at 3 MPa / 340 K /
+z=[0.995,0.005].  Both execute through the generic post-SNES controller and
+must finish with exactly one transition restart, the same 1 s trial timestep,
+a stable final cardinality, and the original accepted component/energy history.
+
+The runtime accepts authoritative target cardinality 1/2/3.  Cross-cardinality
+faces remain an explicit capability boundary: until an SW92 absent-phase
+thermodynamic extension is implemented, a nonempty face schedule is rejected
+instead of silently fabricating absent-phase properties.
