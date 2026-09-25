@@ -586,7 +586,7 @@ jobs:
     - name: Build discretization core tests
       run: "cmake --build build/discretization-core \\\n  --target mpmc_discretization_core_all \\\n  --config ${{ matrix.build_type }} \\\n  --parallel 2\n"
     - name: Run discretization core tests
-      run: "ctest --test-dir build/discretization-core \\\n  -C ${{ matrix.build_type }} \\\n  -R '^discretization[.]core[.]' \\\n  --verbose \\\n  --no-tests=error\n"
+      run: "ctest --test-dir build/discretization-core \\\n  -C ${{ matrix.build_type }} \\\n  -R '^(discretization[.]core[.]|well[.]core[.])' \\\n  --verbose \\\n  --no-tests=error\n"
     if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.impact.outputs.trusted == 'true' && needs.impact.outputs.legacy_discretization_core
       == 'true' && ('true' == 'true')
     permissions:

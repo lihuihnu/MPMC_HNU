@@ -837,7 +837,7 @@
       "central_hashes": {
         "legacy_discretization_core__core": "9956c4a50c943768dcc0507d489d8f603f7a5d90040116b537a4b8b8b64846a7"
       },
-      "retained_blob_sha": "1e9118acb22dd628f8cfbcc1002c8927e56e302b"
+      "retained_blob_sha": "2faab06fef0502b7f7b923d1347ac28bb8a10c5b"
     },
     ".github/workflows/flow_core.yml": {
       "name": "Flow natural-variable core contract",

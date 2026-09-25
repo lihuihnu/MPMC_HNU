@@ -17,15 +17,20 @@ def load(path):
 def digest(obj):
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
+def job_run_text(job):
+    runs = []
+    for step in job.get('steps') or []:
+        run = step.get('run')
+        if run:
+            runs.append(str(run))
+    return '\n'.join(runs)
+
 def workflow_run_text(path):
     workflow = load(path)
-    runs = []
-    for job in (workflow.get('jobs') or {}).values():
-        for step in job.get('steps') or []:
-            run = step.get('run')
-            if run:
-                runs.append(str(run))
-    return '\n'.join(runs)
+    return '\n'.join(
+        job_run_text(job)
+        for job in (workflow.get('jobs') or {}).values()
+    )
 
 def configured_ctest_names(source_dir):
     with tempfile.TemporaryDirectory(prefix='mpmc-ci-inventory-') as build_dir:
@@ -48,19 +53,17 @@ def configured_ctest_names(source_dir):
     assert names, ('no registered CTests discovered', source_dir, listed)
     return sorted(set(names))
 
-def assert_workflow_covers_registered_ctests(source_dir, workflow_path, required_targets):
-    run_text = workflow_run_text(workflow_path)
+def assert_run_text_covers_registered_ctests(registered, run_text, owner, required_targets):
     for target in required_targets:
         assert target in run_text, (
             'registered required test target omitted from workflow build',
-            workflow_path,
+            owner,
             target,
         )
 
     raw_patterns = re.findall(r"-R\s+['\"]([^'\"]+)['\"]", run_text)
-    assert raw_patterns, ('workflow has no CTest selection regex', workflow_path)
+    assert raw_patterns, ('workflow has no CTest selection regex', owner)
     patterns = [re.compile(pattern) for pattern in raw_patterns]
-    registered = configured_ctest_names(source_dir)
     omitted = [
         name
         for name in registered
@@ -68,8 +71,17 @@ def assert_workflow_covers_registered_ctests(source_dir, workflow_path, required
     ]
     assert not omitted, (
         'registered CTests omitted by authoritative workflow selection',
-        workflow_path,
+        owner,
         omitted,
+    )
+
+def assert_workflow_covers_registered_ctests(source_dir, workflow_path, required_targets):
+    registered = configured_ctest_names(source_dir)
+    assert_run_text_covers_registered_ctests(
+        registered,
+        workflow_run_text(workflow_path),
+        workflow_path,
+        required_targets,
     )
     return registered
 
@@ -120,6 +132,32 @@ def main():
     # list and CTest regex. This catches the silent failure mode where CMake
     # registers a required test but a narrower workflow selection never builds
     # or runs it.
+    discretization_core_tests = assert_workflow_covers_registered_ctests(
+        'tests/discretization/core',
+        '.github/workflows/discretization_core.yml',
+        {'mpmc_discretization_core_all'},
+    )
+    expected_well_control_tests = {
+        'well.core.single_well_control_policy.rate_hold_and_switch',
+        'well.core.single_well_control_policy.rate_pressure_equality_boundary',
+        'well.core.single_well_control_policy.capacity_deadband_and_equality',
+        'well.core.single_well_control_policy.pressure_deadband_and_equality',
+        'well.core.single_well_control_policy.disabled_reactivation',
+        'well.core.single_well_control_policy.accepted_state',
+        'well.core.single_well_control_policy.invalid_policy',
+        'well.core.single_well_control_policy.header_self_contained',
+    }
+    assert expected_well_control_tests <= set(discretization_core_tests), (
+        'single-well control-policy CTest registration drift',
+        sorted(expected_well_control_tests - set(discretization_core_tests)),
+    )
+    assert_run_text_covers_registered_ctests(
+        discretization_core_tests,
+        job_run_text(root['jobs']['legacy_discretization_core__core']),
+        'pr_incremental_ci.yml:legacy_discretization_core__core',
+        {'mpmc_discretization_core_all'},
+    )
+
     flow_core_tests = assert_workflow_covers_registered_ctests(
         'tests/flow/core',
         '.github/workflows/flow_core.yml',
@@ -172,6 +210,8 @@ def main():
     assert results['legacy_mesh_petsc'] and results['flow_discretization_petsc'] and not results['legacy_discretization_core']
     results, _, _ = select(['modules/well/include/mpmc/well/peaceman_well_index_3d.hpp'])
     assert results['legacy_discretization_core'] and not results['legacy_mesh_petsc']
+    results, _, _ = select(['tests/well/core/single_well_control_policy_test.cpp'])
+    assert results['legacy_discretization_core'] and not results['flow_discretization']
     results, _, _ = select(['modules/well/discretization/include/mpmc/well_discretization/hydraulic_conductance.hpp'])
     assert results['flow_discretization'] and not results['legacy_discretization_core'] and not results['flow_core']
     results, _, _ = select(['tests/well/discretization/hydraulic_conductance_test.cpp'])
@@ -267,6 +307,7 @@ def main():
     print('WORKFLOW_MAP_OK', len(paths), 'entries; single automatic entry; reusable closure:', len(seen))
     print(
         'REGISTERED_CTEST_INVENTORY_OK',
+        'discretization-core=', len(discretization_core_tests),
         'flow-core=', len(flow_core_tests),
         'flow-discretization=', len(flow_discretization_tests),
     )
