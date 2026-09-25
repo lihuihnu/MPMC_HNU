@@ -2,7 +2,7 @@
 
 面向多相、多组分计算的模块化高性能计算平台，采用可移植的 C++20 计算后端与独立 React/TypeScript 前端。计算核心可以作为库无界面运行。
 
-当前已有独立 AD、PR76/SW92/CPA PT 闪蒸后端、局部灵敏度与部分 physics closure，以及 PT 服务、Web/Electron 前端和 Android 工程应用；同时已建立 PETSc-ready 的独立网格基础、TPFA 离散系数/适用性契约与并行符号预分配链。生产级守恒残差、Darcy flux、时间推进与全局非线性/线性求解器仍未实现；安装包候选和工程预览不等于正式发行。具体能力与证据范围见下表，测试结果以对应提交的 [GitHub Actions](https://github.com/lihuihnu/MPMC_HNU/actions) 为准。
+当前已有独立 AD、PR76/SW92/CPA PT 闪蒸后端、局部灵敏度与部分 physics closure，以及已合并 PR #118 建立的可变相数 fully implicit 非等温多组分流动链：自然变量 1/2/3 相、组分/能量守恒、TPFA Darcy/重力、相渗/毛细压契约、PETSc SNES/GMRES/ASM、相变重启、自适应时间步和 Peaceman 单井控制；同时已有 PT 服务、Web/Electron 前端和 Android 工程应用。安装包候选和工程预览仍不等于正式发行。具体能力与证据范围见下表，测试结果以对应提交的 [GitHub Actions](https://github.com/lihuihnu/MPMC_HNU/actions) 为准。
 
 ## 阅读入口与文档分工
 
@@ -16,6 +16,8 @@
 | 相稳定性、两相/三相、统一后端、验证与历史审计 | [闪蒸模块](modules/flash/README.md) |
 | 局部物性快照、导数与每总流体体积组分库存 | [Physics closure](modules/physics/README.md)、[component inventory](modules/physics/component_inventory.md) |
 | 网格 topology/geometry/field/DoF、Gmsh/VTU/GRDECL、PETSc 与 TPFA ownership 边界 | [Mesh 模块](modules/mesh/README.md) |
+| 自然变量多相流、守恒装配、PETSc/SNES、相变与时间推进 | [Flow 模块](modules/flow/README.md) |
+| Peaceman 井模型、fixed-BHP / total-rate 控制与控制状态机 | [Well 模块](modules/well/README.md) |
 | 服务、通信、进程与部署 | [Runtime](modules/runtime/README.md)、[API](api/README.md)、[gRPC adapter](modules/runtime_grpc/README.md)、[process host](modules/pt_process/README.md)、[Envoy edge](deploy/pt-grpc-web/README.md) |
 | Web、桌面和 Android 使用/构建边界 | [前端](frontend/README.md)、[桌面/原生产品](products/pt/README.md)、[Android](products/pt_android/README.md) |
 | 项目级工程参考与原始文献 | [参考资料](docs/references.md)；具体公式、参数来源仍以模型专题为准 |
@@ -29,7 +31,9 @@
 | SW92 | corrected-original 物性、fixed-family stability/VLE、Whitson dual-model observables、Xu-style max2、Profile-C authoritative 1/2/3-phase PT | 各算法 profile 保持独立。Profile-C 有 Sample-6 与 n-butane/H2O 实验三相线验证；固定 NaCl molality 不等于盐库存守恒，H 相仍为 `nonaqueous_unclassified`。 |
 | CPA | explicit-site-pair 参数、缔合、PT 物性、minimum-Gibbs stability、VLE、max3 与统一 PT backend | 甲醇(2B)/水(4C) 两相已有可追溯物理回归；max3 仍为 synthetic structural validation，缺兼容的物理 VLLE oracle。 |
 | 灵敏度与 physics | PR76 内部两相、SW92 Profile-C 固定相集合的局部隐式导数及 closure；两者的 model-neutral component inventory/local Jacobian | 导数绑定已接受的光滑相/根/family 分支；PR76 standalone 单相 closure、CPA flash sensitivity/closure 尚未实现。Inventory 单位为 `mol/m³ fluid`，不是孔隙体积累积项。 |
-| Mesh / discretization foundation | 1D/2D/3D structured/unstructured topology/geometry、location-aware fields、DoF/partition、Gmsh 4.1 ASCII、VTU ASCII、声明的 GRDECL 子集、DMPlex/PetscSection/PetscSF 适配；TPFA admissibility/half/static transmissibility、owned connection schedule 与 MPIAIJ symbolic preallocation | `mesh` 不依赖 PETSc/MPI 或具体离散方法；TPFA 属于 `discretization`。当前只到 property/geometry/coefficient/symbolic structure，不创建 pressure 方程，不插入矩阵数值，不计算 mobility/gravity/Darcy flux/residual。详见 [Mesh 模块](modules/mesh/README.md)。 |
+| Mesh / discretization foundation | 1D/2D/3D structured/unstructured topology/geometry、location-aware fields、DoF/partition、Gmsh 4.1 ASCII、VTU ASCII、声明的 GRDECL 子集、DMPlex/PetscSection/PetscSF 适配；TPFA admissibility/half/static transmissibility、owned connection schedule 与 MPIAIJ symbolic preallocation | `mesh` 不依赖 PETSc/MPI 或具体流动物理；TPFA 几何/传导与符号结构属于 `discretization`。数值守恒装配、mobility/gravity/Darcy flux、时间推进和 PETSc 求解由上层 `flow` / `flow_discretization` / PETSc bridge 消费这些基础能力。详见 [Mesh 模块](modules/mesh/README.md)。 |
+| Flow / PETSc | 1/2/3 相 variable-cardinality 自然变量；Backward Euler 组分与能量守恒；TPFA 相势/重力、上风 mobility、组分与焓通量、导热；完整 residual/Jacobian 与 ragged global numbering；PETSc `SNESNEWTONLS + BT -> GMRES + restricted ASM`；post-SNES phase scan、1↔2↔3 rebuild/rebind、自适应 retry/cutback/growth、accepted physical-time/history commit；PR76 真实 transient 与来源完整三相 sour-gas 回归 | TPFA 只在现有 admissibility gate 允许的面上使用；production phase-property / transition 物理证据目前以 PR76 路径最完整。未因此自动获得 MPFA、扩散/弥散、反应、地质力学、裂缝、AMR 或任意 EOS/构成模型的生产覆盖。详见 [Flow 模块](modules/flow/README.md)。 |
+| Well | Cartesian/diagonal-K Peaceman WI、fixed-BHP 单/多 completion owner-only source、variable-cardinality rebind；单井 fixed-total-molar-rate 的全局 BHP unknown 与解析四块 Jacobian；minimum-BHP 切换、accepted control state、带滞回的 BHP→rate reactivation，以及 control-arbitration × phase-transition transactional restart | 当前是单井控制基线；不包含 multi-well network / priority、wellbore pressure-drop/heat-loss、surface/phase-rate control、maximum-BHP、completion schedule 或设施模型。详见 [Well 模块](modules/well/README.md)。 |
 
 三个预置 PT 后端均通过 [统一能力与结果契约](modules/flash/pt_flash_backend.md) 暴露 1/2/3 相能力、版本与有序组分身份。预置 backend inventory 本身仍是冻结快照；组分增减、替换、重排不能原地修改该快照。Electron 的免登录 **PR76 Expert** 工作台另行支持用完整的新参数快照创建不可变运行时 PR76 模型，可新增、删除、重排组分并显式给出 `Tc`、`Pc`、偏心因子、摩尔质量、完整 `kij` 与 solver settings，再由同一 C++ 相稳定/最多三相内核求解。这个能力不是通用物性数据库；内建 PR76 甲烷/乙烷/丙烷、SW92 CO₂/淡水、CPA 甲醇/水快照仍只覆盖声明的窄文献体系。
 
@@ -57,7 +61,7 @@
 - **计算核心：** C++20、目标级 CMake 与 CTest；`ad` 只依赖标准库。热力学不得反向依赖 flash，公共领域接口不得泄漏 Protobuf、HTTP、UI 或 PETSc/MPI 类型。
 - **依赖方向：** `runtime -> flash -> thermodynamics`；`physics` 消费 flash/sensitivity。`runtime_grpc`、`pt_process`、产品壳和前端位于外层，配置后端对象图或适配传输。参数和模型选择放在应用边界，不进入逐标量内循环。
 - **前端与通信：** React + TypeScript + Vite；Protobuf + gRPC，浏览器经 gRPC-Web。大体量网格/场结果拟采用独立 HTTP 二进制分块，vtk.js 仅为待评估可视化方案。任务/进度、重试幂等、背压和新增双向通信须在实际实现前单独审计；当前 PT RPC 不代表完整任务系统。
-- **网格与求解链：** `core` 保持可选最小基础层；`numerics` 提供领域无关算法；`mesh` 已负责 topology/geometry/field/DoF/I/O/partition，`discretization` 已拥有 TPFA admissibility、transmissibility 与当前 PETSc symbolic structure。守恒 residual/Jacobian 数值装配、时间推进与 `solvers` 仍按独立增量推进，不预建空框架。
+- **网格与求解链：** `core` 保持可选最小基础层；`numerics` 提供领域无关算法；`mesh` 负责 topology/geometry/field/DoF/I/O/partition，`discretization` 负责 TPFA admissibility/transmissibility 与 PETSc symbolic structure；`flow`/`flow_discretization` 在其上拥有组分/能量守恒、Darcy/热通量、variable-cardinality 自然变量和时间推进，PETSc bridge 负责 MPIAIJ 数值装配与 SNES/KSP/PC 求解。基础模块公共领域接口仍不得泄漏 PETSc/MPI 类型。
 - **可移植性：** 目标覆盖 Linux、Windows、macOS，Android 有独立产品路径；具体架构和编译器以实际 CI 证据为准。OpenMP、MPI、PETSc、GPU 和 `SolverBackend` 扩展须独立审计，不成为基础数值测试的前置条件。不默认启用 `fast-math`、`-march=native`，不承诺跨编译器 C++ ABI 兼容或未经测量的性能收益。
 
 ## 科学与结果解释
@@ -77,12 +81,12 @@
 
 根 [CMakeLists.txt](CMakeLists.txt) 和 [CMakePresets.json](CMakePresets.json) 当前只配置 AD；热力学、闪蒸、physics、服务和产品采用各自独立入口。请从上述模块文档选择构建命令，避免把根目录构建误认为整个项目的验证。
 
-开发流程以 [AGENTS.md](AGENTS.md) 为唯一规则入口：先审计，做可回退增量，再按受影响依赖选择测试。正式自动化中，Linux 测试统一使用仓库私有 `mpmc_hnu` self-hosted Linux x64 runner，Windows/macOS 继续使用 GitHub 官方托管 runner；纯 metadata/path gate 可以保留官方托管 Linux。纯文档核对内容、相对引用和差异范围，代码变更运行必要增量及受影响下游。解析/数值回归、synthetic fixture、实验验证与性能基准分别报告，不把已有工作流当作已经通过的证据。
+开发流程以 [AGENTS.md](AGENTS.md) 为唯一规则入口：先审计，做可回退增量，再按受影响依赖选择测试。正式自动化中，普通 Linux 编译、单元测试和常规矩阵默认使用 GitHub 官方 `ubuntu-24.04`，Windows/macOS 使用对应官方托管 runner；当前私有 `mpmc_hnu` 白名单仅覆盖 `flow_discretization_petsc.yml` 的 PETSc/MPI 2-rank 集成/求解 Gate，以及 `cpa_performance_audit.yml` 的经审计长时 paired performance audit。workflow 在私有 runner 上仍必须显式安装/核验固定依赖，不依赖持久机器的偶然环境。纯文档核对内容、相对引用和差异范围，代码变更运行必要增量及受影响下游。解析/数值回归、synthetic fixture、实验验证与性能基准分别报告，不把已有工作流当作已经通过的证据。
 
 | 后续方向 | 所需证据或前置条件 |
 | --- | --- |
 | 补齐模型能力 | PR76 若引入高级混合规则，先建立公式/导数/参数来源/有效范围契约并补独立宽温区验证；不移植测试 helper 或用受阻三元目标反标。CPA 继续补兼容物理三相参考与灵敏度/closure，PR76 standalone 单相 closure 按独立增量推进。 |
-| 扩展物理与数值 | 从已有局部 closure/inventory 与 mesh/discretization 基础出发，分别审计孔隙体积累积项、守恒残差/通量、时间推进和全局 Jacobian/求解器；以解析解、制造解及守恒/收敛回归验收。 |
+| 扩展流动与求解覆盖 | PR #118 已建立 fully implicit 1/2/3 相自然变量守恒、时间推进与 PETSc SNES/KSP/PC 主链；后续新增 MPFA/非正交修正、扩散/弥散、更多 EOS/构成模型的 production bridge、multi-well/schedule、checkpoint/restart 或场尺度优化时，分别冻结契约并以守恒、收敛和独立物理证据验收。 |
 | 细化含水体系 | H 相物理分类、盐库存、电解质/反应、固相/水合物及有限速率传质均需新的模型与证据，不由当前 fixed-molality PT 能力自动获得。 |
 | 完成应用发行与结果能力 | 产品签名/公证、项目许可、发布/更新策略、真实部署，以及可视化和结果导出分别验收。工程 APK/MSI/PKG/DEB 不能自动升级为正式发行。 |
 
