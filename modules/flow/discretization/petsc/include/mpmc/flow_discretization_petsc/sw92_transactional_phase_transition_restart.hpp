@@ -348,7 +348,8 @@ rebuild_sw92_transactional_phase_transition_system_3d(
     auto* context =
         static_cast<Context*>(
             raw_context);
-    if (context->schedule == nullptr ||
+    if (context->comm == MPI_COMM_NULL ||
+        context->schedule == nullptr ||
         context->partition == nullptr ||
         context->cell_bridge == nullptr ||
         context->cell_pattern == nullptr ||
