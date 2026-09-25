@@ -12,6 +12,7 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <cstdio>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -1119,9 +1120,26 @@ rebuild_sw92_transactional_phase_transition_system_3d(
     using Closure =
         typename Runtime::Closure;
 
+    const char* diagnostic_stage = "validate-inputs";
+    std::optional<mpmc::mesh::GlobalEntityId> diagnostic_cell;
+    const auto diagnose = [&](PetscErrorCode code, const char* message) {
+        if (diagnostic_cell.has_value()) {
+            std::fprintf(stderr,
+                "[SW92 rebuild] stage=%s cell=%llu error=%d detail=%s\n",
+                diagnostic_stage,
+                static_cast<unsigned long long>(diagnostic_cell->value()),
+                static_cast<int>(code), message);
+        } else {
+            std::fprintf(stderr,
+                "[SW92 rebuild] stage=%s cell=unassigned error=%d detail=%s\n",
+                diagnostic_stage, static_cast<int>(code), message);
+        }
+    };
+
     if (raw_context == nullptr ||
         rebuilt_system == nullptr ||
         converged_state == nullptr) {
+        diagnose(PETSC_ERR_ARG_NULL, "null context/output/converged state");
         return PETSC_ERR_ARG_NULL;
     }
     rebuilt_system->reset();
@@ -1154,6 +1172,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
             current_system
                 .numbering()
                 .local_cell_count()) {
+        diagnose(PETSC_ERR_ARG_INCOMP, "invalid context, face schedule, solve report, timestep or baseline count");
         return PETSC_ERR_ARG_INCOMP;
     }
 
@@ -1178,6 +1197,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
         evaluation_status =
             NaturalVariableSnesEvaluationStatus3D::
                 success;
+    diagnostic_stage = "evaluate-local-cells";
     PetscErrorCode error =
         current_system
             .evaluate_local_cells_for_phase_transition(
@@ -1186,6 +1206,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                 &porosities,
                 &evaluation_status);
     if (error != PETSC_SUCCESS) {
+        diagnose(error, "callee returned error");
         return error;
     }
     if (evaluation_status !=
@@ -1236,6 +1257,8 @@ rebuild_sw92_transactional_phase_transition_system_3d(
              ++local) {
             const auto& baseline =
                 context->baseline_cells[local];
+            diagnostic_cell = baseline.cell_global;
+            diagnostic_stage = "validate-baseline-current";
             const auto cell =
                 mpmc::mesh::LocalIndex{
                     static_cast<
@@ -1288,6 +1311,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     ->find_target(
                         record.cell_global);
 
+            diagnostic_stage = "validate-proposal-sidecar";
             if ((proposal ==
                      local_owned_proposals.end()) !=
                 (target == nullptr)) {
@@ -1341,6 +1365,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                 continue;
             }
 
+            diagnostic_stage = "validate-accepted-batch";
             const auto accepted =
                 std::find_if(
                     accepted_global_batch.begin(),
@@ -1372,6 +1397,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                 mpmc::flow::
                     FrozenActivePhaseIdentityMap>
                 target_active;
+            diagnostic_stage = "resolve-target-identity";
             error =
                 context->target_identity
                     .resolver(
@@ -1382,6 +1408,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                             .user_context,
                         &target_active);
             if (error != PETSC_SUCCESS) {
+                diagnose(error, "callee returned error");
                 return error;
             }
             if (!target_active.has_value() ||
@@ -1392,10 +1419,12 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     "SW92 transactional target identity resolution is indeterminate");
             }
 
+            diagnostic_stage = "current-component-inventory";
             const auto current_inventory =
                 current_component_inventory(
                     *current[local],
                     baseline.porosity);
+            diagnostic_stage = "project-identity-history";
             auto rebuilt =
                 make_accepted_phase_transition_rebuild_cell_3d(
                     baseline.cell,
@@ -1413,6 +1442,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     {},
                     context->projection_options);
 
+            diagnostic_stage = "compare-authoritative-projection";
             if (rebuilt.target_layout.phase_count() !=
                     target->projection
                         .target_phase_count() ||
@@ -1436,6 +1466,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                 selections.push_back(
                     phase.selection);
             }
+            diagnostic_stage = "construct-selected-phase-closure";
             auto closure =
                 std::make_unique<Closure>(
                     *context->model,
@@ -1465,6 +1496,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     evaluator.get();
                 if (context
                         ->project_target_to_conservation_storage) {
+                diagnostic_stage = "conservative-storage-anchor";
                 conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
@@ -1534,6 +1566,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     evaluator.get();
                 if (context
                         ->project_target_to_conservation_storage) {
+                diagnostic_stage = "conservative-storage-anchor";
                 conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
@@ -1603,6 +1636,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     evaluator.get();
                 if (context
                         ->project_target_to_conservation_storage) {
+                diagnostic_stage = "conservative-storage-anchor";
                 conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
@@ -1685,24 +1719,29 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                 }
             }
         }
-    } catch (const std::exception&) {
+    } catch (const std::exception& exception) {
+        diagnose(PETSC_ERR_ARG_INCOMP, exception.what());
         return PETSC_ERR_ARG_INCOMP;
     }
 
+    diagnostic_cell.reset();
     try {
+        diagnostic_stage = "construct-dispatcher";
         runtime->dispatcher =
             std::make_unique<
                 CellScopedMixedCardinalityEvaluatorDispatcher3D>(
                     std::move(one_entries),
                     std::move(two_entries),
                     std::move(three_entries));
-    } catch (const std::exception&) {
+    } catch (const std::exception& exception) {
+        diagnose(PETSC_ERR_ARG_INCOMP, exception.what());
         return PETSC_ERR_ARG_INCOMP;
     }
 
     std::unique_ptr<
         PhaseTransitionRebuiltNaturalVariableSystem3D>
         next;
+    diagnostic_stage = "rebuild-natural-variable-system";
     error =
         rebuild_phase_transition_natural_variable_system_3d(
             context->comm,
@@ -1722,6 +1761,8 @@ rebuild_sw92_transactional_phase_transition_system_3d(
             &next);
     if (error != PETSC_SUCCESS ||
         next == nullptr) {
+        diagnose(error != PETSC_SUCCESS ? error : PETSC_ERR_PLIB,
+            "outer rebuild returned error or null system");
         return error != PETSC_SUCCESS
             ? error
             : PETSC_ERR_PLIB;

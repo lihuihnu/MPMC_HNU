@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <span>
@@ -927,6 +928,17 @@ rebuild_phase_transition_natural_variable_system_3d(
     }
     output->reset();
 
+    const char* diagnostic_stage = "validate-snapshots";
+    std::optional<mpmc::mesh::GlobalEntityId> diagnostic_cell;
+    const auto diagnose_exception = [&](const char* message) {
+        std::fprintf(stderr,
+            "[outer rebuild] stage=%s cell_known=%d cell=%llu error=%d detail=%s\n",
+            diagnostic_stage, diagnostic_cell.has_value() ? 1 : 0,
+            diagnostic_cell.has_value()
+                ? static_cast<unsigned long long>(diagnostic_cell->value()) : 0ULL,
+            static_cast<int>(PETSC_ERR_ARG_INCOMP), message);
+    };
+
     const std::size_t local_cell_count =
         partition.entity_count(
             mpmc::mesh::EntityKind::cell);
@@ -966,6 +978,7 @@ rebuild_phase_transition_natural_variable_system_3d(
             for (std::size_t local = 0U;
                  local < cells.size();
                  ++local) {
+                diagnostic_cell = cells[local].cell_global;
                 validate_cell_snapshot(
                     cells[local],
                     local,
@@ -982,7 +995,12 @@ rebuild_phase_transition_natural_variable_system_3d(
                         .target_layout
                         .phase_count());
             }
+        } catch (const std::exception& exception) {
+            diagnose_exception(exception.what());
+            local_error =
+                PETSC_ERR_ARG_INCOMP;
         } catch (...) {
+            diagnose_exception("non-standard exception");
             local_error =
                 PETSC_ERR_ARG_INCOMP;
         }
@@ -1034,6 +1052,7 @@ rebuild_phase_transition_natural_variable_system_3d(
 
     local_error =
         PETSC_SUCCESS;
+    diagnostic_stage = "insert-initial-state";
     try {
         for (const auto& record :
              system->numbering_->cells()) {
@@ -1042,6 +1061,7 @@ rebuild_phase_transition_natural_variable_system_3d(
                     ->local_rank()) {
                 continue;
             }
+            diagnostic_cell = record.cell_global;
             const auto& snapshot =
                 cells.at(
                     static_cast<std::size_t>(
@@ -1089,7 +1109,12 @@ rebuild_phase_transition_natural_variable_system_3d(
                 break;
             }
         }
+    } catch (const std::exception& exception) {
+        diagnose_exception(exception.what());
+        local_error =
+            PETSC_ERR_ARG_INCOMP;
     } catch (...) {
+        diagnose_exception("non-standard exception");
         local_error =
             PETSC_ERR_ARG_INCOMP;
     }
@@ -1130,9 +1155,11 @@ rebuild_phase_transition_natural_variable_system_3d(
 
     local_error =
         PETSC_SUCCESS;
+    diagnostic_stage = "make-cell-input";
     try {
         for (const auto& snapshot :
              cells) {
+            diagnostic_cell = snapshot.cell_global;
             const bool owned =
                 partition.is_owned(
                     mpmc::mesh::
@@ -1154,7 +1181,12 @@ rebuild_phase_transition_natural_variable_system_3d(
                     snapshot
                         .frozen_absent_phases});
         }
+    } catch (const std::exception& exception) {
+        diagnose_exception(exception.what());
+        local_error =
+            PETSC_ERR_ARG_INCOMP;
     } catch (...) {
+        diagnose_exception("non-standard exception");
         local_error =
             PETSC_ERR_ARG_INCOMP;
     }
@@ -1184,6 +1216,8 @@ rebuild_phase_transition_natural_variable_system_3d(
 
     local_error =
         PETSC_SUCCESS;
+    diagnostic_stage = "construct-coordinate-registry";
+    diagnostic_cell.reset();
     try {
         system->coordinate_registry_ =
             std::make_unique<
@@ -1192,7 +1226,12 @@ rebuild_phase_transition_natural_variable_system_3d(
                         registry_cells),
                     std::move(
                         registry_faces));
+    } catch (const std::exception& exception) {
+        diagnose_exception(exception.what());
+        local_error =
+            PETSC_ERR_ARG_INCOMP;
     } catch (...) {
+        diagnose_exception("non-standard exception");
         local_error =
             PETSC_ERR_ARG_INCOMP;
     }

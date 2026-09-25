@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -979,6 +980,26 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
 
     for (std::size_t generation = 0U;;
          ++generation) {
+        const char* diagnostic_stage = "solve-current-system";
+        const auto diagnose = [&](PetscErrorCode code) {
+            std::fprintf(stderr,
+                "[phase-transition controller] generation=%zu stage=%s error=%d\n",
+                generation, diagnostic_stage, static_cast<int>(code));
+            std::size_t logged_cells = 0U;
+            for (const auto& cell : current->numbering().cells()) {
+                if (logged_cells == 8U) {
+                    std::fprintf(stderr, "[phase-transition controller] remaining cells omitted\n");
+                    break;
+                }
+                if (cell.owner_rank == current->numbering().local_rank()) {
+                    std::fprintf(stderr,
+                        "[phase-transition controller] owned_cell=%llu phase_count=%zu\n",
+                        static_cast<unsigned long long>(cell.cell_global.value()),
+                        cell.phase_count);
+                    ++logged_cells;
+                }
+            }
+        };
         Vec solved = nullptr;
         std::optional<
             VariableCardinalityNaturalVariableSnesSolveReport3D>
@@ -992,6 +1013,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
                 (void)VecDestroy(
                     &solved);
             }
+            diagnose(error);
             return error;
         }
         if (!solve_report.has_value() ||
@@ -1037,6 +1059,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
             local_scan_status =
                 PostSnesPhaseTransitionScanStatus3D::
                     complete;
+        diagnostic_stage = "scan";
         local_error =
             bindings.scanner(
                 *current,
@@ -1052,6 +1075,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         if (error != PETSC_SUCCESS) {
             (void)VecDestroy(
                 &solved);
+            diagnose(error);
             return error;
         }
 
@@ -1095,6 +1119,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
             return PETSC_SUCCESS;
         }
 
+        diagnostic_stage = "validate-local-proposals";
         local_error =
             validate_local_proposals(
                 current->numbering(),
@@ -1106,12 +1131,14 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         if (error != PETSC_SUCCESS) {
             (void)VecDestroy(
                 &solved);
+            diagnose(error);
             return error;
         }
 
         std::vector<
             AcceptedPhaseTransitionSummary3D>
             accepted_batch;
+        diagnostic_stage = "gather-accepted-batch";
         error =
             gather_accepted_batch(
                 comm,
@@ -1121,6 +1148,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         if (error != PETSC_SUCCESS) {
             (void)VecDestroy(
                 &solved);
+            diagnose(error);
             return error;
         }
         generation_report
@@ -1161,6 +1189,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         std::unique_ptr<
             PhaseTransitionRebuiltNaturalVariableSystem3D>
             rebuilt;
+        diagnostic_stage = "rebuild-factory";
         local_error =
             bindings.rebuild_factory(
                 *current,
@@ -1177,6 +1206,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         if (error != PETSC_SUCCESS) {
             (void)VecDestroy(
                 &solved);
+            diagnose(error);
             return error;
         }
         if (rebuilt == nullptr) {
@@ -1188,6 +1218,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         std::vector<
             GlobalPhaseSetSignatureEntry3D>
             rebuilt_signature;
+        diagnostic_stage = "gather-rebuilt-signature";
         error =
             gather_phase_signature(
                 comm,
@@ -1196,8 +1227,10 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         if (error != PETSC_SUCCESS) {
             (void)VecDestroy(
                 &solved);
+            diagnose(error);
             return error;
         }
+        diagnostic_stage = "validate-rebuilt-signature";
         error =
             validate_rebuilt_signature_against_batch(
                 signature,
@@ -1206,6 +1239,7 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
         if (error != PETSC_SUCCESS) {
             (void)VecDestroy(
                 &solved);
+            diagnose(error);
             return error;
         }
 
@@ -1236,10 +1270,12 @@ solve_nonlinear_timestep_with_phase_transitions_3d(
             std::move(
                 rebuilt_signature);
 
+        diagnostic_stage = "destroy-old-state";
         error =
             VecDestroy(
                 &solved);
         if (error != PETSC_SUCCESS) {
+            diagnose(error);
             return error;
         }
         current =

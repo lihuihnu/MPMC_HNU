@@ -4688,3 +4688,9 @@ SW92 Sample-6 solutions.
 
 This slice does not commit physical time, does not rebase accepted history,
 does not couple wells, and does not add brine transport.
+
+Transactional restart failure diagnostics report the controller generation/stage
+and owned cells, the SW92 rebuild stage/cell, and original caught exception text.
+Outer rebuild snapshot/construction exceptions retain their message as well.
+These failure-only stderr messages preserve existing error codes, numerical
+criteria and solver control flow; they do not turn a failed restart into success.
