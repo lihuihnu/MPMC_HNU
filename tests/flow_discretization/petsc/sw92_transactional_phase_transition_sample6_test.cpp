@@ -111,18 +111,26 @@ struct ManufacturedSample6TransportCaloricProvider {
     operator()(
         const th::Sw92SelectedPhase<double>&,
         const Number& pressure_pa,
-        const Number&,
+        const Number& temperature_k,
         std::span<const Number>,
         const Number&,
         const Number&,
         const Number& mass_density_kg_per_m3) const {
         // Test-only transport/caloric closure.  The production selected-phase
-        // closure computes u=h-p/rho, so h=u0+p/rho makes u exactly topology-
-        // independent.  This isolates the transactional rebuild from missing
-        // eight-component transport/caloric source data.
+        // closure computes u=h-p/rho, so this manufactured h gives
+        // u(T)=u0+cp*(T-350 K): topology-independent yet temperature-sensitive.
+        // The nonzero du/dT keeps the energy row independent from the component
+        // accumulation rows while still isolating the transaction from missing
+        // eight-component source-complete caloric data.
+        constexpr double u0_j_per_kg = 2.5e5;
+        constexpr double cp_j_per_kg_k = 1.0e3;
+        const Number internal_energy =
+            Number{u0_j_per_kg} +
+            Number{cp_j_per_kg_k} *
+                (temperature_k - Number{350.0});
         return {
             Number{1.0e-5},
-            Number{2.5e5} +
+            internal_energy +
                 pressure_pa /
                     mass_density_kg_per_m3};
     }
@@ -140,7 +148,7 @@ manufactured_sample6_provenance() {
             "sample6-transaction-manufactured",
             "v1"},
         {
-            "manufactured h=u0+p/rho",
+            "manufactured h=u0+cp*(T-350K)+p/rho",
             "sample6-transaction-manufactured",
             "v1"},
         {
