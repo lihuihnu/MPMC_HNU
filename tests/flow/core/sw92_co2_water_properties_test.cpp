@@ -148,12 +148,31 @@ void sourced_formula_oracles() {
                 550.0,
                 std::span<const double>{
                     composition});
-    // Independently evaluated NIST Shomate H-H_298.15:
-    // CO2=10572.267471335748 J/mol,
-    // H2O=8698.84649871969 J/mol.
+    // Independently evaluated sourced sensible enthalpies at 550 K:
+    // CO2 NIST Shomate = 10572.267471335748 J/mol.
+    // H2O IAPWS-95 ideal-gas h0(T)-h0(298.15) = 8699.150336458495 J/mol.
     near_provider(
         ideal,
-        10010.24117955093,
+        10010.332330872572,
+        2.0e-12,
+        2.0e-9);
+
+    near_provider(
+        flow::sw92_co2_water_property_detail::
+            iapws95_water_sensible_molar_enthalpy_j_per_mol(
+                500.0),
+        6924.482280070443,
+        2.0e-12,
+        2.0e-9);
+
+    const std::array<double, 2>
+        low_temperature_composition{0.7, 0.3};
+    near_provider(
+        provider.ideal_gas_molar_enthalpy_j_per_mol(
+            340.0,
+            std::span<const double>{
+                low_temperature_composition}),
+        1536.6089303037077,
         2.0e-12,
         2.0e-9);
 
@@ -231,7 +250,7 @@ void permutation_and_source_guards() {
         [&] {
             (void)provider
                 .ideal_gas_molar_enthalpy_j_per_mol(
-                    499.99,
+                    299.99,
                     std::span<const double>{x});
         });
     expect_provider_error<std::domain_error>(

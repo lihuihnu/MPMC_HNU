@@ -22,7 +22,7 @@ namespace mpmc::flow {
 
 inline constexpr std::string_view
     sw92_co2_water_property_convention =
-        "flow/sw92/co2-water/zero-salinity/Chung1988-NIST-SW92-departure/v1";
+        "flow/sw92/co2-water/zero-salinity/Chung1988-NISTCO2-IAPWS95H2O-SW92-departure/v2";
 
 namespace sw92_co2_water_property_detail {
 
@@ -91,9 +91,9 @@ struct ShomateSensibleEnthalpy {
 };
 
 /// NIST SRD 69 / Chase (1998) gas-phase Shomate coefficients.
-/// H-H_298.15 is in kJ/mol.  The common sourced interval is deliberately
-/// restricted to 500--1200 K: CO2 is tabulated from 298--1200 K while H2O's
-/// first gas-phase Shomate interval begins at 500 K.
+/// H-H_298.15 is in kJ/mol. CO2 uses this sourced 298--1200 K interval.
+/// The H2O row is retained only as a 500 K cross-check; production H2O ideal-gas
+/// caloric values use IAPWS-95 continuously across the provider interval.
 inline constexpr std::array<
     ShomateSensibleEnthalpy,
     2>
@@ -116,9 +116,39 @@ inline constexpr std::array<
             -241.8264}}};
 
 inline constexpr double
-    minimum_temperature_k = 500.0;
+    minimum_temperature_k = 300.0;
 inline constexpr double
     maximum_temperature_k = 1200.0;
+
+/// IAPWS-95 (Revised Release R6-95(2018)) ideal-gas constants for ordinary
+/// water. The dimensionless Helmholtz ideal-gas part is
+/// phi0 = ln(delta)+n1+n2*tau+n3*ln(tau)
+///      + sum_i n_i ln(1-exp(-gamma_i*tau)), tau=Tc/T.
+/// h0/(R T) = 1 + tau*d(phi0)/d(tau).
+inline constexpr double
+    iapws95_water_critical_temperature_k = 647.096;
+inline constexpr double
+    iapws95_specific_gas_constant_j_per_kg_k = 461.51805;
+inline constexpr double
+    iapws95_reference_temperature_k = 298.15;
+inline constexpr double
+    iapws95_n2 = 6.6832105275932;
+inline constexpr double
+    iapws95_n3 = 3.00632;
+inline constexpr std::array<double, 5>
+    iapws95_ideal_n{
+        0.012436,
+        0.97315,
+        1.27950,
+        0.96956,
+        0.24873};
+inline constexpr std::array<double, 5>
+    iapws95_ideal_gamma{
+        1.28728967,
+        3.53734222,
+        7.74073708,
+        9.24437796,
+        27.5075105};
 
 template <typename Number>
 [[nodiscard]] inline double primal_value(
@@ -200,7 +230,7 @@ inline void validate_temperature(
     if (primal < minimum_temperature_k ||
         primal > maximum_temperature_k) {
         throw std::domain_error(
-            "mpmc::flow::SW92 CO2/H2O NIST caloric provider is validated only on [500,1200] K");
+            "mpmc::flow::SW92 CO2/H2O sourced caloric provider is validated only on [300,1200] K");
     }
 }
 
@@ -236,6 +266,70 @@ shomate_sensible_molar_enthalpy_j_per_mol(
         h_kj_per_mol,
         "NIST Shomate sensible molar enthalpy");
     return h_kj_per_mol * 1000.0;
+}
+
+template <typename Number>
+[[nodiscard]] inline Number
+iapws95_water_ideal_gas_absolute_specific_enthalpy_j_per_kg(
+    const Number& temperature_k) {
+    require_finite(
+        temperature_k,
+        "IAPWS-95 ideal-gas water temperature [K]",
+        true);
+    using std::exp;
+    const Number tau =
+        iapws95_water_critical_temperature_k /
+        temperature_k;
+    Number tau_phi_tau =
+        iapws95_n2 * tau +
+        iapws95_n3;
+    for (std::size_t i = 0U;
+         i < iapws95_ideal_n.size();
+         ++i) {
+        const Number exponent =
+            iapws95_ideal_gamma[i] *
+            tau;
+        const Number denominator =
+            exp(exponent) - 1.0;
+        require_finite(
+            denominator,
+            "IAPWS-95 ideal-gas water Planck-Einstein denominator",
+            true);
+        tau_phi_tau +=
+            iapws95_ideal_n[i] *
+            iapws95_ideal_gamma[i] *
+            tau /
+            denominator;
+    }
+    const Number h =
+        iapws95_specific_gas_constant_j_per_kg_k *
+        temperature_k *
+        (1.0 + tau_phi_tau);
+    require_finite(
+        h,
+        "IAPWS-95 ideal-gas water specific enthalpy",
+        true);
+    return h;
+}
+
+template <typename Number>
+[[nodiscard]] inline Number
+iapws95_water_sensible_molar_enthalpy_j_per_mol(
+    const Number& temperature_k) {
+    const Number reference{
+        iapws95_reference_temperature_k};
+    const Number specific_difference =
+        iapws95_water_ideal_gas_absolute_specific_enthalpy_j_per_kg(
+            temperature_k) -
+        iapws95_water_ideal_gas_absolute_specific_enthalpy_j_per_kg(
+            reference);
+    const Number molar =
+        specific_difference *
+        molar_mass_kg_per_mol[1];
+    require_finite(
+        molar,
+        "IAPWS-95 water sensible molar enthalpy");
+    return molar;
 }
 
 template <typename Number>
@@ -281,9 +375,11 @@ neufeld_collision_integral(
 ///   The Chung xi/zeta binary transport parameters are unity.
 ///
 /// Caloric:
-///   NIST SRD 69 / Chase (1998) ideal-gas Shomate H-H_298.15 on the common
-///   500--1200 K interval plus the Peng-Robinson departure enthalpy evaluated
-///   with the *SW92 family-specific* a(T,x), b(x), water alpha and BIPs.
+///   CO2 uses NIST SRD 69 / Chase (1998) gas-phase Shomate H-H_298.15.
+///   H2O uses the IAPWS-95 R6-95(2018) ideal-gas Helmholtz contribution,
+///   referenced as h0(T)-h0(298.15 K). The shared production interval is
+///   300--1200 K. Peng-Robinson departure enthalpy is evaluated with the
+///   *SW92 family-specific* a(T,x), b(x), water alpha and BIPs.
 ///
 /// The enthalpy reference is intentionally sensible H-H_298.15; it is not a
 /// heat-of-formation convention.  NaCl molality is required to be exactly zero:
@@ -391,9 +487,9 @@ public:
                 "doi:10.1021/ie00076a024__NIST-CO2-Vc__IAPWS-H2O-rhoc__Chung-H2O-polar",
                 "zero-salinity-v1"},
             {
-                "NIST SRD 69 Shomate sensible enthalpy + SW92 family-specific PR departure",
-                "NIST-SRD69-Chase1998-CO2-H2O-Shomate__SW92-corrected-original",
-                "500-1200K-zero-salinity-v1"},
+                "NIST SRD 69 CO2 Shomate + IAPWS-95 H2O ideal-gas sensible enthalpy + SW92 family-specific PR departure",
+                "NIST-SRD69-Chase1998-CO2-Shomate__IAPWS-R6-95-2018-H2O-ideal__SW92-corrected-original",
+                "300-1200K-zero-salinity-v2"},
             {
                 "thermodynamic identity u=h-p/rho_mass",
                 "SW92-Chung-NIST-zero-salinity",
@@ -416,11 +512,16 @@ public:
              ++model_index) {
             const std::size_t canonical =
                 model_to_canonical_[model_index];
+            const Number component_enthalpy =
+                canonical == 0U
+                    ? shomate_sensible_molar_enthalpy_j_per_mol(
+                          temperature_k,
+                          nist_shomate[0])
+                    : iapws95_water_sensible_molar_enthalpy_j_per_mol(
+                          temperature_k);
             result +=
                 composition[model_index] *
-                shomate_sensible_molar_enthalpy_j_per_mol(
-                    temperature_k,
-                    nist_shomate[canonical]);
+                component_enthalpy;
         }
         require_finite(
             result,

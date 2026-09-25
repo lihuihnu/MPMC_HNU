@@ -332,8 +332,8 @@ void sw92_stationary_short_step() {
 
     const auto source =
         fl::solve_sw92_profile_c_pt_phase_set(
-            1.0e7,
-            510.0,
+            3.0e6,
+            340.0,
             std::vector<double>{0.70, 0.30},
             model,
             0.0);
@@ -343,7 +343,7 @@ void sw92_stationary_short_step() {
           source.solution.accepted_phase_count() ==
               2U)) {
         throw std::runtime_error(
-            "SW92 sourced 10 MPa / 510 K CO2-H2O fixture is not authoritative two phase; status=" +
+            "SW92 sourced 3 MPa / 340 K CO2-H2O fixture is not authoritative two phase; status=" +
             std::to_string(
                 static_cast<int>(
                     source.solution.status)) +
