@@ -4502,15 +4502,19 @@ method.
 
 Caloric enthalpy is the sum of:
 
-1. NIST SRD 69 / Chase-1998 gas-phase Shomate sensible
-   `H(T)-H(298.15 K)`; and
-2. the standard Peng-Robinson departure expression evaluated using the **SW92
+1. CO2: NIST SRD 69 / Chase-1998 gas-phase Shomate sensible
+   `H(T)-H(298.15 K)`;
+2. H2O: IAPWS-95 R6-95(2018) ideal-gas Helmholtz contribution, evaluated as
+   `h0(T)-h0(298.15 K)`; and
+3. the standard Peng-Robinson departure expression evaluated using the **SW92
    family-specific** `a(T,x)`, `b(x)`, water alpha and BIPs for the frozen
    selected family/root.
 
-The common sourced Shomate interval is exactly `500 <= T <= 1200 K`; no
-caloric extrapolation is permitted.  The reference is a nonreactive-flow
-sensible enthalpy, not heat of formation.  Internal energy continues to be
+The provider interval is now exactly `300 <= T <= 1200 K`. CO2 remains inside
+its NIST 298--1200 K Shomate interval; H2O uses one continuous IAPWS-95
+ideal-gas expression across the whole provider interval, so no 500 K caloric
+splice is introduced. The reference is a nonreactive-flow sensible enthalpy,
+not heat of formation.  Internal energy continues to be
 derived by the selected-phase closure as `u=h-p/rho_mass`.
 
 The provider validates the exact repository dataset/revision, component
@@ -4525,3 +4529,45 @@ and internal-energy derivatives against fresh central perturbations.
 
 This slice does **not** add a brine transport model, thermal conductivity,
 SW92 PETSc timestep, well coupling or phase-transition orchestration.
+
+
+## 50. SW92 production cell evaluator and stationary PETSc short-step
+
+The PETSc flow bridge now separates the model-neutral selected-phase production
+cell evaluator core from EOS-specific wrappers:
+
+- `selected_phase_production_cell_evaluator.hpp` owns the common 1P/2P/3P
+  cell-evaluation pipeline, rock-storage callback contract, two-phase
+  relative-permeability callback contract and three-phase saturation callback
+  contract;
+- the existing `pr76_production_cell_evaluator.hpp` remains source-compatible
+  as a thin PR76 traits wrapper;
+- `sw92_production_cell_evaluator.hpp` supplies the SW92 traits wrapper and
+  maps SW92 `pc=none` capability failures to `PETSC_ERR_SUP`.
+
+The SW92 wrapper also provides
+`materialize_sw92_co2_water_profile_c_frozen_cell_3d(...)`.  It consumes an
+already accepted authoritative Profile-C phase set, preserves its ordered
+components, AQ/NA family and selected algebraic root, chooses a
+well-conditioned dependent composition component per phase, converts mole
+phase fractions to volume saturations from the selected SW92 molar densities,
+and constructs the frozen 1P/2P/3P natural-variable chart.  It performs no
+flash, stability search, phase transition or phase-identity inference.
+
+The first production regression is intentionally stationary and minimal. The
+existing authoritative zero-salinity CO2/H2O **W+H two-phase** Profile-C
+regression state at 3 MPa / 340 K / z=[0.7,0.3] is materialized into the real
+`Sw92Co2WaterPropertyProvider`, inserted through
+`MixedCardinalityPhysicalSnesAssemblyContext3D`, and advanced as a 1 s
+Backward-Euler system with no faces, source or well.  The initial accepted
+state is therefore the exact nonlinear solution.
+
+The regression checks component, energy and fugacity-equilibrium residuals at
+the frozen state, compares the assembled analytic/AD Jacobian against fresh
+pressure/temperature/saturation/composition central perturbations, solves
+through the existing variable-cardinality PETSc
+`SNESNEWTONLS -> GMRES -> restricted ASM` path, and verifies that accepted
+component inventories and total internal energy are unchanged.
+
+This slice remains `pc=none` and does not add SW92 post-SNES phase scanning,
+1<->2<->3 restart, wells, brine transport, face fluxes or long-time stepping.

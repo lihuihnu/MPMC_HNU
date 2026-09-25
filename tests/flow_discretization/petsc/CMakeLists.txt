@@ -21,6 +21,7 @@ add_executable(
     mixed_cardinality_physical_snes_assembly_test.cpp
     pr76_production_fully_implicit_transient_test.cpp
     pr76_li_firoozabadi_sour_gas_short_step_test.cpp
+    sw92_production_fully_implicit_short_step_test.cpp
     adaptive_timestep_controller_test.cpp
     post_snes_pt_flash_phase_transition_scanner_test.cpp
     distributed_component_conservation_header.cpp
@@ -39,6 +40,8 @@ add_executable(
     fixed_bhp_well_source_evaluator_header.cpp
     fixed_total_molar_rate_timestep_driver_header.cpp
     pr76_production_cell_evaluator_header.cpp
+    selected_phase_production_cell_evaluator_header.cpp
+    sw92_production_cell_evaluator_header.cpp
     pr76_single_phase_transition_target_rebuild_header.cpp
     pr76_transition_rebuild_materialization_header.cpp
     adaptive_timestep_controller_header.cpp

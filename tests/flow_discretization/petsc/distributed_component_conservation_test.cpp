@@ -48,6 +48,7 @@ bool pr76_single_phase_transition_target_rebuild_header();
 bool pr76_transition_rebuild_materialization_header();
 void pr76_production_fully_implicit_transient_test();
 void pr76_li_firoozabadi_sour_gas_short_step_test();
+void sw92_production_fully_implicit_short_step_test();
 bool adaptive_timestep_controller_header();
 bool physical_timestep_driver_header();
 bool physical_time_loop_header();
@@ -5585,6 +5586,7 @@ int main(int argc, char** argv) {
         mixed_cardinality_physical_snes_assembly_test();
         pr76_production_fully_implicit_transient_test();
         pr76_li_firoozabadi_sour_gas_short_step_test();
+        sw92_production_fully_implicit_short_step_test();
         adaptive_timestep_controller_test();
         post_snes_pt_flash_phase_transition_scanner_test();
         global_component_assembly_mapping();
