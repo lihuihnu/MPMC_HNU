@@ -4667,10 +4667,16 @@ SW92 still has no validated family/root-aware absent-phase thermodynamic
 extension provider.  Therefore this v1 transactional rebuild explicitly
 requires **no authoritative faces and no local ghost overlap**.  It returns a
 capability error rather than pretending cross-cardinality face transport is
-available.  The rebuild factory itself accepts authoritative 1P/2P/3P targets;
-the existing Sample-6 scanner regression continues to verify the 2->3
-authoritative target sidecar, but a sourced eight-component transport/caloric
-provider is not fabricated merely to force a Sample-6 flow re-solve.
+available.  The rebuild factory accepts authoritative 1P/2P/3P targets.  In addition to
+the sourced CO2/H2O 1P<->2P production-property regression, the PETSc test now
+runs real Sample-6 SW92 thermodynamics through transactional 2P->3P and 3P->2P
+same-dt rebuild/re-solve.  Sample-6 still has no source-complete eight-component
+flow transport/caloric dataset in this repository, so those two algorithmic
+regressions add only explicitly `synthetic_test` molar masses and a
+manufactured constant-u/constant-viscosity provider.  Those manufactured values
+never enter production data or scientific claims; the phase equilibria,
+AQ/NA families, selected roots, compositions and topology remain the real
+SW92 Sample-6 solutions.
 
 This slice does not commit physical time, does not rebase accepted history,
 does not couple wells, and does not add brine transport.

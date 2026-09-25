@@ -22,6 +22,8 @@
 
 bool sw92_transactional_phase_transition_restart_header();
 
+void sw92_transactional_phase_transition_sample6_test();
+
 namespace {
 
 namespace dp = mpmc::discretization_petsc;
@@ -1008,4 +1010,5 @@ void sw92_transactional_phase_transition_restart_test() {
         "SW92 transactional restart public header probe failed");
     sw92_same_dt_one_to_two_transaction();
     sw92_same_dt_two_to_one_transaction();
+    sw92_transactional_phase_transition_sample6_test();
 }

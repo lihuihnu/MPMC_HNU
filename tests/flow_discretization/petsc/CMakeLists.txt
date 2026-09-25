@@ -26,6 +26,7 @@ add_executable(
     post_snes_pt_flash_phase_transition_scanner_test.cpp
     post_snes_sw92_profile_c_phase_transition_scanner_test.cpp
     sw92_transactional_phase_transition_restart_test.cpp
+    sw92_transactional_phase_transition_sample6_test.cpp
     distributed_component_conservation_header.cpp
     distributed_energy_conservation_header.cpp
     energy_global_assembly_mapping_header.cpp
