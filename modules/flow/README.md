@@ -4569,5 +4569,56 @@ through the existing variable-cardinality PETSc
 `SNESNEWTONLS -> GMRES -> restricted ASM` path, and verifies that accepted
 component inventories and total internal energy are unchanged.
 
-This slice remains `pc=none` and does not add SW92 post-SNES phase scanning,
-1<->2<->3 restart, wells, brine transport, face fluxes or long-time stepping.
+That production-cell slice remains `pc=none` and did not itself add SW92
+post-SNES phase scanning, 1<->2<->3 restart, wells, brine transport, face fluxes
+or long-time stepping; the following section adds only the scanner/materializer
+boundary, not the restart.
+
+
+## 51. SW92-aware post-SNES scan -> authoritative target materialization
+
+The generic PT backend remains intentionally role-neutral: it does not publish
+SW92 AQ/NA family labels, physical-role metadata or selected-root provenance.
+Those fields are therefore **not** added to `PtFlashBackendResult`.
+
+The PETSc bridge instead exposes
+
+`<mpmc/flow_discretization_petsc/post_snes_sw92_profile_c_phase_transition_scanner.hpp>`
+
+as a model-specific post-SNES boundary.  For each owned cell it runs the
+boundary-aware Profile-C topology solve exactly once.  Two pure projections are
+then taken from that same owned solve:
+
+1. the existing role-neutral PT phase-set + transition evidence, used to build
+   the model-neutral `PostSnesPhaseTransitionProposal3D`; and
+2. the authoritative Profile-C publication, retaining ordered components,
+   prescribed NaCl molality, AQ/NA family and selected algebraic root.
+
+When the accepted cardinality differs from the frozen source cardinality, the
+scanner evaluates each accepted SW92 selected-phase molar density on the
+authoritative family/root, constructs the existing generic
+`PhaseSetTransitionProjection` (dependent-component pivots, volume
+saturations and target natural variables), and publishes a
+`Sw92AuthoritativeTargetMaterialization3D` sidecar.  Proposal and sidecar are
+one-to-one by stable cell ID and share the same transition evidence profile.
+No liquid/vapor, oil/gas/water or cross-cell physical phase identity is inferred
+from root, slot, density or compressibility factor.
+
+The scanner context keeps only the current scan generation's local-owned
+materializations so a later rebuild factory can consume them transactionally.
+If any owned cell is indeterminate, the proposal list and sidecar cache are
+both cleared.
+
+The regression freezes two boundaries:
+
+- the existing 3 MPa / 340 K zero-salinity CO2/H2O authoritative 2P state is a
+  same-cardinality no-op and produces no proposal/sidecar;
+- the sourced Sample-6 10 MPa / 350 K 2->3 topology path produces a resolved
+  generic proposal plus an authoritative AQ/NA/NA sidecar whose family, root,
+  density, component order and target natural-variable projection are checked.
+  Generic material balance is checked against the source inventory, and the
+  existing history-migration contract verifies component and total-energy
+  histories are preserved exactly.
+
+This slice does not rebuild/destroy an SNES system, restart a timestep, couple a
+well, infer physical phase identities or add transport data.

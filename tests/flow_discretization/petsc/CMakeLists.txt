@@ -24,6 +24,7 @@ add_executable(
     sw92_production_fully_implicit_short_step_test.cpp
     adaptive_timestep_controller_test.cpp
     post_snes_pt_flash_phase_transition_scanner_test.cpp
+    post_snes_sw92_profile_c_phase_transition_scanner_test.cpp
     distributed_component_conservation_header.cpp
     distributed_energy_conservation_header.cpp
     energy_global_assembly_mapping_header.cpp
@@ -56,6 +57,7 @@ add_executable(
     post_snes_phase_transition_controller_header.cpp
     post_snes_phase_transition_handoff_scanner_header.cpp
     post_snes_pt_flash_phase_transition_scanner_header.cpp
+    post_snes_sw92_profile_c_phase_transition_scanner_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 target_link_libraries(
