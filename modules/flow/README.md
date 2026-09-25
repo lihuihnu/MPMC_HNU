@@ -4676,9 +4676,12 @@ regressions add only explicitly `synthetic_test` molar masses and a
 manufactured topology-independent linear-u(T)/constant-viscosity provider.
 Their rebuild contexts also explicitly opt into a conservation-storage anchor
 that projects target q onto the frozen component/energy storage manifold before
-SNES.  That projection is **off by default** and is not applied to the sourced
-CO2/H2O production-property regressions, where the authoritative target is
-passed directly to SNES.  The manufactured values and opt-in projection never
+SNES, and reuse the already-audited Sample-6 transition material-balance
+tolerance of `2e-8` from the authoritative scanner regression.  Both are
+explicit context settings: the production defaults remain no storage anchor and
+the generic `1e-10` projection tolerance.  The sourced CO2/H2O
+production-property regressions therefore pass the authoritative target
+directly to SNES under the stricter default contract.  The manufactured values and opt-in projection never
 enter production data or scientific claims; the phase equilibria,
 AQ/NA families, selected roots, compositions and topology remain the real
 SW92 Sample-6 solutions.

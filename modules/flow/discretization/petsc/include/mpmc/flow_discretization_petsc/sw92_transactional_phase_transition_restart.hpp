@@ -1072,6 +1072,11 @@ struct Sw92TransactionalPhaseTransitionRebuildContext3D {
     // production property models should normally leave this false and let
     // SNES satisfy equilibrium and conservation simultaneously.
     bool project_target_to_conservation_storage{false};
+    // Reuse the model-neutral transition projection tolerance explicitly.
+    // The default remains the generic 1e-10 contract; a provider/test with a
+    // looser, already-audited flash material-balance tolerance must opt in.
+    mpmc::flow::PhaseSetTransitionProjectionOptions
+        projection_options{};
 
     [[nodiscard]]
     MixedCardinalityPhysicalCellEvaluatorBindings3D
@@ -1405,7 +1410,8 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                          .previous_energy_accumulation,
                     source_active,
                     *target_active,
-                    {});
+                    {},
+                    context->projection_options);
 
             if (rebuilt.target_layout.phase_count() !=
                     target->projection

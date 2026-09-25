@@ -1745,6 +1745,8 @@ void sample6_two_to_three() {
         nullptr};
     rebuild.project_target_to_conservation_storage =
         true;
+    rebuild.projection_options = {
+        2.0e-8};
     rebuild.baseline_cells.push_back(
         {
             mesh::LocalIndex{0U},
@@ -2017,6 +2019,8 @@ void sample6_three_to_two() {
         nullptr};
     rebuild.project_target_to_conservation_storage =
         true;
+    rebuild.projection_options = {
+        2.0e-8};
     rebuild.baseline_cells.push_back(
         {
             mesh::LocalIndex{0U},
