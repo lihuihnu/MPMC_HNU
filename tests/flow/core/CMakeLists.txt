@@ -94,6 +94,20 @@ target_link_libraries(
         mpmc::ad)
 
 add_executable(
+    mpmc_flow_sw92_selected_phase_property_tests
+    sw92_selected_phase_property_closure_test.cpp
+    sw92_selected_phase_property_closure_header.cpp)
+target_link_libraries(
+    mpmc_flow_sw92_selected_phase_property_tests
+    PRIVATE
+        mpmc::flow_thermodynamics
+        mpmc::ad)
+target_include_directories(
+    mpmc_flow_sw92_selected_phase_property_tests
+    PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
+
+add_executable(
     mpmc_flow_accumulation_tests
     component_accumulation_test.cpp
     component_accumulation_header.cpp)
@@ -152,6 +166,7 @@ foreach(target IN ITEMS
         mpmc_flow_absent_phase_thermodynamics_tests
         mpmc_flow_fugacity_linearization_tests
         mpmc_flow_pr76_selected_phase_property_tests
+        mpmc_flow_sw92_selected_phase_property_tests
         mpmc_flow_accumulation_tests
         mpmc_flow_accumulation_time_tests
         mpmc_flow_energy_accumulation_tests
@@ -280,6 +295,15 @@ set_tests_properties(
     flow.pr76_selected_phase_property.closure
     PROPERTIES
         LABELS "flow;natural_variables;thermodynamics;pr76;density;viscosity;enthalpy;internal_energy"
+        TIMEOUT 120)
+
+add_test(
+    NAME flow.sw92_selected_phase_property.closure
+    COMMAND mpmc_flow_sw92_selected_phase_property_tests)
+set_tests_properties(
+    flow.sw92_selected_phase_property.closure
+    PROPERTIES
+        LABELS "flow;natural_variables;thermodynamics;sw92;density;viscosity;enthalpy;internal_energy"
         TIMEOUT 120)
 
 set(accumulation_cases
