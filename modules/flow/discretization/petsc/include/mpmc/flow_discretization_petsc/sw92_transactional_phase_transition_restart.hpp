@@ -365,7 +365,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
              ->assembly_rows()
              .empty() ||
         static_cast<int>(
-            solve_report.converged_reason()) <=
+            solve_report.converged_reason) <=
             0 ||
         current_system.time_step_seconds() <=
             0.0 ||
