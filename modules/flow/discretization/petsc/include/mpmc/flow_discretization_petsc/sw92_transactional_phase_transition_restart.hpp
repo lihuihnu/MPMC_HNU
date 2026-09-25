@@ -294,139 +294,563 @@ aggregate_storage_linearization(
         current);
 }
 
+struct ConservationStorageLinearization3D {
+    mpmc::flow::PoreVolumeComponentAccumulationSnapshot3P
+        component_snapshot;
+    mpmc::flow::PoreVolumeEnergyAccumulationSnapshot3P
+        energy_snapshot;
+    mpmc::flow::PoreVolumeComponentAccumulationLinearization3P
+        component_linearization;
+    mpmc::flow::PoreVolumeEnergyAccumulationLinearization3P
+        energy_linearization;
+};
+
+[[nodiscard]] inline
+ConservationStorageLinearization3D
+conservation_storage_linearization(
+    const MixedCardinalityPhysicalCurrentCellLinearization3D&
+        current,
+    double porosity) {
+    return std::visit(
+        [porosity](const auto& typed)
+            -> ConservationStorageLinearization3D {
+            using Typed =
+                std::decay_t<decltype(typed)>;
+            if constexpr (
+                std::is_same_v<
+                    Typed,
+                    SinglePhaseCurrentCellLinearization3D>) {
+                return {
+                    mpmc::flow::
+                        build_single_phase_component_accumulation(
+                            typed.state,
+                            porosity),
+                    mpmc::flow::
+                        build_single_phase_energy_accumulation_snapshot(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock),
+                    mpmc::flow::
+                        build_single_phase_component_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.molar_density),
+                    mpmc::flow::
+                        build_single_phase_energy_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock)};
+            } else if constexpr (
+                std::is_same_v<
+                    Typed,
+                    TwoPhaseCurrentCellLinearization3D>) {
+                return {
+                    mpmc::flow::
+                        build_two_phase_component_accumulation(
+                            typed.state,
+                            porosity),
+                    mpmc::flow::
+                        build_two_phase_energy_accumulation_snapshot(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock),
+                    mpmc::flow::
+                        build_two_phase_component_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.molar_density),
+                    mpmc::flow::
+                        build_two_phase_energy_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock)};
+            } else {
+                return {
+                    mpmc::flow::
+                        build_pore_volume_component_accumulation(
+                            typed.state,
+                            porosity),
+                    mpmc::flow::
+                        build_pore_volume_energy_accumulation_snapshot(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock),
+                    mpmc::flow::
+                        build_pore_volume_component_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.molar_density),
+                    mpmc::flow::
+                        build_pore_volume_energy_accumulation_linearization(
+                            typed.state,
+                            porosity,
+                            typed.transport,
+                            typed.caloric,
+                            typed.rock)};
+            }
+        },
+        current);
+}
+
+inline bool solve_dense_partial_pivot(
+    std::vector<double> matrix,
+    std::vector<double> rhs,
+    std::vector<double>* solution) {
+    if (solution == nullptr ||
+        rhs.empty() ||
+        matrix.size() !=
+            rhs.size() * rhs.size()) {
+        return false;
+    }
+    const std::size_t n = rhs.size();
+    double matrix_scale = 0.0;
+    for (double value : matrix) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+        matrix_scale =
+            std::max(
+                matrix_scale,
+                std::abs(value));
+    }
+    if (!(matrix_scale > 0.0) ||
+        !std::isfinite(matrix_scale)) {
+        return false;
+    }
+
+    for (std::size_t column = 0U;
+         column < n;
+         ++column) {
+        std::size_t pivot = column;
+        double pivot_value =
+            std::abs(
+                matrix[
+                    column * n +
+                    column]);
+        for (std::size_t row =
+                 column + 1U;
+             row < n;
+             ++row) {
+            const double value =
+                std::abs(
+                    matrix[
+                        row * n +
+                        column]);
+            if (value > pivot_value) {
+                pivot = row;
+                pivot_value = value;
+            }
+        }
+        if (!std::isfinite(pivot_value) ||
+            pivot_value <=
+                16384.0 *
+                    std::numeric_limits<double>::epsilon() *
+                    matrix_scale) {
+            return false;
+        }
+        if (pivot != column) {
+            for (std::size_t entry = 0U;
+                 entry < n;
+                 ++entry) {
+                std::swap(
+                    matrix[
+                        column * n +
+                        entry],
+                    matrix[
+                        pivot * n +
+                        entry]);
+            }
+            std::swap(
+                rhs[column],
+                rhs[pivot]);
+        }
+
+        const double diagonal =
+            matrix[
+                column * n +
+                column];
+        for (std::size_t row =
+                 column + 1U;
+             row < n;
+             ++row) {
+            const double factor =
+                matrix[
+                    row * n +
+                    column] /
+                diagonal;
+            matrix[
+                row * n +
+                column] = 0.0;
+            for (std::size_t entry =
+                     column + 1U;
+                 entry < n;
+                 ++entry) {
+                matrix[
+                    row * n +
+                    entry] -=
+                    factor *
+                    matrix[
+                        column * n +
+                        entry];
+            }
+            rhs[row] -=
+                factor * rhs[column];
+        }
+    }
+
+    solution->assign(
+        n,
+        0.0);
+    for (std::size_t reverse = 0U;
+         reverse < n;
+         ++reverse) {
+        const std::size_t row =
+            n - 1U - reverse;
+        double value = rhs[row];
+        for (std::size_t column =
+                 row + 1U;
+             column < n;
+             ++column) {
+            value -=
+                matrix[
+                    row * n +
+                    column] *
+                (*solution)[column];
+        }
+        const double diagonal =
+            matrix[
+                row * n +
+                row];
+        if (!std::isfinite(diagonal) ||
+            std::abs(diagonal) <=
+                16384.0 *
+                    std::numeric_limits<double>::epsilon() *
+                    matrix_scale) {
+            return false;
+        }
+        (*solution)[row] =
+            value / diagonal;
+        if (!std::isfinite(
+                (*solution)[row])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 template <typename Evaluate>
-inline void conservative_pt_anchor(
+inline void conservative_storage_anchor(
     std::vector<double>* q,
     double porosity,
-    double target_total_molar_accumulation,
-    double target_total_internal_energy,
+    const mpmc::flow::
+        PoreVolumeComponentAccumulationSnapshot3P&
+            target_component,
+    const mpmc::flow::
+        PoreVolumeEnergyAccumulationSnapshot3P&
+            target_energy,
     Evaluate&& evaluate) {
     if (q == nullptr ||
         q->size() < 2U ||
-        !std::isfinite(target_total_molar_accumulation) ||
-        !(target_total_molar_accumulation > 0.0) ||
-        !std::isfinite(target_total_internal_energy)) {
+        target_component.component_ids.size() < 2U ||
+        target_component
+                .component_accumulation_mol_per_bulk_m3
+                .size() !=
+            target_component.component_ids.size() ||
+        !std::isfinite(
+            target_energy
+                .total_internal_energy_j_per_bulk_m3)) {
         throw std::invalid_argument(
-            "SW92 transactional conservative p/T anchor inputs are invalid");
+            "SW92 transactional conservation anchor inputs are invalid");
     }
 
-    const double molar_scale =
-        std::max(
-            1.0,
-            std::abs(
-                target_total_molar_accumulation));
-    const double energy_scale =
-        std::max(
-            1.0,
-            std::abs(
-                target_total_internal_energy));
+    const std::size_t n =
+        target_component.component_ids.size();
+    const std::size_t row_count =
+        n + 1U;
+    const std::size_t column_count =
+        q->size();
 
-    auto residual_norm =
-        [&](const AggregateStorageLinearization3D& value) {
-            return std::hypot(
-                (value.total_molar_accumulation -
-                 target_total_molar_accumulation) /
-                    molar_scale,
-                (value.total_internal_energy -
-                 target_total_internal_energy) /
-                    energy_scale);
-        };
+    auto residual_and_jacobian =
+        [&](std::span<const double> state,
+            std::vector<double>* residual,
+            std::vector<double>* jacobian,
+            double* norm)
+            -> bool {
+        const auto current =
+            evaluate(state);
+        if (!current.has_value()) {
+            return false;
+        }
+        const auto storage =
+            conservation_storage_linearization(
+                *current,
+                porosity);
+        if (storage.component_snapshot.component_ids !=
+                target_component.component_ids ||
+            storage.component_linearization.input_count !=
+                column_count ||
+            storage.energy_linearization
+                    .total_internal_energy_gradient
+                    .size() !=
+                column_count) {
+            return false;
+        }
+
+        residual->assign(
+            row_count,
+            0.0);
+        jacobian->assign(
+            row_count * column_count,
+            0.0);
+        double sum_square = 0.0;
+
+        for (std::size_t component = 0U;
+             component < n;
+             ++component) {
+            const double scale =
+                std::max(
+                    1.0,
+                    std::abs(
+                        target_component
+                            .component_accumulation_mol_per_bulk_m3[
+                                component]));
+            const double value =
+                (storage.component_snapshot
+                     .component_accumulation_mol_per_bulk_m3[
+                         component] -
+                 target_component
+                     .component_accumulation_mol_per_bulk_m3[
+                         component]) /
+                scale;
+            if (!std::isfinite(value)) {
+                return false;
+            }
+            (*residual)[component] =
+                value;
+            sum_square +=
+                value * value;
+            for (std::size_t column = 0U;
+                 column < column_count;
+                 ++column) {
+                (*jacobian)[
+                    component * column_count +
+                    column] =
+                    storage.component_linearization
+                        .d_component(
+                            component,
+                            column) /
+                    scale;
+            }
+        }
+
+        const double energy_scale =
+            std::max(
+                1.0,
+                std::abs(
+                    target_energy
+                        .total_internal_energy_j_per_bulk_m3));
+        const double energy_residual =
+            (storage.energy_snapshot
+                 .total_internal_energy_j_per_bulk_m3 -
+             target_energy
+                 .total_internal_energy_j_per_bulk_m3) /
+            energy_scale;
+        if (!std::isfinite(
+                energy_residual)) {
+            return false;
+        }
+        (*residual)[n] =
+            energy_residual;
+        sum_square +=
+            energy_residual *
+            energy_residual;
+        for (std::size_t column = 0U;
+             column < column_count;
+             ++column) {
+            (*jacobian)[
+                n * column_count +
+                column] =
+                storage.energy_linearization
+                    .total_internal_energy_gradient[
+                        column] /
+                energy_scale;
+        }
+
+        *norm =
+            std::sqrt(
+                sum_square);
+        return std::isfinite(*norm);
+    };
 
     constexpr std::size_t maximum_iterations = 8U;
-    constexpr std::size_t maximum_backtracks = 10U;
+    constexpr std::size_t maximum_backtracks = 12U;
     constexpr double target_norm = 1.0e-8;
 
     for (std::size_t iteration = 0U;
          iteration < maximum_iterations;
          ++iteration) {
-        const auto current =
-            evaluate(*q);
-        if (!current.has_value()) {
+        std::vector<double> residual;
+        std::vector<double> jacobian;
+        double norm = 0.0;
+        if (!residual_and_jacobian(
+                *q,
+                &residual,
+                &jacobian,
+                &norm)) {
             throw std::range_error(
-                "SW92 transactional conservative p/T anchor cannot evaluate target state");
+                "SW92 transactional conservation anchor cannot evaluate target state");
         }
-        const auto storage =
-            aggregate_storage_linearization(
-                *current,
-                porosity);
-        const double norm =
-            residual_norm(storage);
         if (norm <= target_norm) {
             return;
         }
 
-        const double a =
-            storage.d_molar_dp /
-            molar_scale;
-        const double b =
-            storage.d_molar_dt /
-            molar_scale;
-        const double c =
-            storage.d_energy_dp /
-            energy_scale;
-        const double d =
-            storage.d_energy_dt /
-            energy_scale;
-        const double rhs0 =
-            -(storage.total_molar_accumulation -
-              target_total_molar_accumulation) /
-            molar_scale;
-        const double rhs1 =
-            -(storage.total_internal_energy -
-              target_total_internal_energy) /
-            energy_scale;
-        const double determinant =
-            a * d - b * c;
-        const double determinant_scale =
+        std::vector<double> column_scale(
+            column_count,
+            1.0);
+        column_scale[0] =
             std::max(
-                {1.0,
-                 std::abs(a * d),
-                 std::abs(b * c)});
-        if (!std::isfinite(determinant) ||
-            std::abs(determinant) <=
-                4096.0 *
-                    std::numeric_limits<double>::epsilon() *
-                    determinant_scale) {
-            throw std::range_error(
-                "SW92 transactional conservative p/T anchor Jacobian is singular");
-        }
-
-        double dp =
-            (rhs0 * d - b * rhs1) /
-            determinant;
-        double dt =
-            (a * rhs1 - rhs0 * c) /
-            determinant;
-        const double pressure =
-            (*q)[0];
-        const double temperature =
-            (*q)[1];
-        if (!std::isfinite(dp) ||
-            !std::isfinite(dt) ||
-            !std::isfinite(pressure) ||
-            !(pressure > 0.0) ||
-            !std::isfinite(temperature) ||
-            !(temperature > 0.0)) {
-            throw std::range_error(
-                "SW92 transactional conservative p/T anchor step is invalid");
-        }
-
-        const double pressure_limit =
-            0.25 * pressure;
-        const double temperature_limit =
+                1.0e5,
+                0.1 *
+                    std::abs(
+                        (*q)[0]));
+        column_scale[1] =
             std::max(
                 10.0,
-                0.10 * temperature);
-        dp =
-            std::clamp(
-                dp,
-                -pressure_limit,
-                pressure_limit);
-        dt =
-            std::clamp(
-                dt,
-                -temperature_limit,
-                temperature_limit);
+                0.1 *
+                    std::abs(
+                        (*q)[1]));
+
+        std::vector<double> scaled_jacobian(
+            jacobian.size(),
+            0.0);
+        for (std::size_t row = 0U;
+             row < row_count;
+             ++row) {
+            for (std::size_t column = 0U;
+                 column < column_count;
+                 ++column) {
+                scaled_jacobian[
+                    row * column_count +
+                    column] =
+                    jacobian[
+                        row * column_count +
+                        column] *
+                    column_scale[column];
+            }
+        }
+
+        std::vector<double> normal(
+            row_count * row_count,
+            0.0);
+        for (std::size_t row = 0U;
+             row < row_count;
+             ++row) {
+            for (std::size_t other = 0U;
+                 other < row_count;
+                 ++other) {
+                double value = 0.0;
+                for (std::size_t column = 0U;
+                     column < column_count;
+                     ++column) {
+                    value +=
+                        scaled_jacobian[
+                            row * column_count +
+                            column] *
+                        scaled_jacobian[
+                            other * column_count +
+                            column];
+                }
+                normal[
+                    row * row_count +
+                    other] =
+                    value;
+            }
+        }
+
+        double diagonal_scale = 0.0;
+        for (std::size_t row = 0U;
+             row < row_count;
+             ++row) {
+            diagonal_scale =
+                std::max(
+                    diagonal_scale,
+                    std::abs(
+                        normal[
+                            row * row_count +
+                            row]));
+        }
+        if (!(diagonal_scale > 0.0) ||
+            !std::isfinite(
+                diagonal_scale)) {
+            throw std::range_error(
+                "SW92 transactional conservation anchor normal matrix is empty");
+        }
+        const double regularization =
+            1024.0 *
+            std::numeric_limits<double>::epsilon() *
+            diagonal_scale;
+        for (std::size_t row = 0U;
+             row < row_count;
+             ++row) {
+            normal[
+                row * row_count +
+                row] +=
+                regularization;
+        }
+
+        std::vector<double> rhs(
+            row_count,
+            0.0);
+        for (std::size_t row = 0U;
+             row < row_count;
+             ++row) {
+            rhs[row] =
+                -residual[row];
+        }
+        std::vector<double> dual;
+        if (!solve_dense_partial_pivot(
+                std::move(normal),
+                std::move(rhs),
+                &dual)) {
+            throw std::range_error(
+                "SW92 transactional conservation anchor normal solve failed");
+        }
+
+        std::vector<double> step(
+            column_count,
+            0.0);
+        for (std::size_t column = 0U;
+             column < column_count;
+             ++column) {
+            double normalized_step = 0.0;
+            for (std::size_t row = 0U;
+                 row < row_count;
+                 ++row) {
+                normalized_step +=
+                    scaled_jacobian[
+                        row * column_count +
+                        column] *
+                    dual[row];
+            }
+            step[column] =
+                column_scale[column] *
+                normalized_step;
+            if (!std::isfinite(
+                    step[column])) {
+                throw std::range_error(
+                    "SW92 transactional conservation anchor step is non-finite");
+            }
+        }
 
         bool accepted = false;
         double damping = 1.0;
@@ -434,52 +858,52 @@ inline void conservative_pt_anchor(
              backtrack < maximum_backtracks;
              ++backtrack) {
             auto trial = *q;
-            trial[0] =
-                pressure +
-                damping * dp;
-            trial[1] =
-                temperature +
-                damping * dt;
+            for (std::size_t column = 0U;
+                 column < column_count;
+                 ++column) {
+                trial[column] +=
+                    damping *
+                    step[column];
+            }
             if (!(trial[0] > 0.0) ||
                 !(trial[1] > 0.0)) {
                 damping *= 0.5;
                 continue;
             }
 
-            const auto evaluated =
-                evaluate(trial);
-            if (evaluated.has_value()) {
-                const auto trial_storage =
-                    aggregate_storage_linearization(
-                        *evaluated,
-                        porosity);
-                if (residual_norm(
-                        trial_storage) <
-                    norm) {
-                    *q =
-                        std::move(trial);
-                    accepted = true;
-                    break;
-                }
+            std::vector<double> trial_residual;
+            std::vector<double> trial_jacobian;
+            double trial_norm = 0.0;
+            if (residual_and_jacobian(
+                    trial,
+                    &trial_residual,
+                    &trial_jacobian,
+                    &trial_norm) &&
+                trial_norm < norm) {
+                *q =
+                    std::move(trial);
+                accepted = true;
+                break;
             }
             damping *= 0.5;
         }
         if (!accepted) {
             throw std::range_error(
-                "SW92 transactional conservative p/T anchor line search failed");
+                "SW92 transactional conservation anchor line search failed");
         }
     }
 
-    const auto final =
-        evaluate(*q);
-    if (!final.has_value() ||
-        residual_norm(
-            aggregate_storage_linearization(
-                *final,
-                porosity)) >
-            1.0e-6) {
+    std::vector<double> final_residual;
+    std::vector<double> final_jacobian;
+    double final_norm = 0.0;
+    if (!residual_and_jacobian(
+            *q,
+            &final_residual,
+            &final_jacobian,
+            &final_norm) ||
+        final_norm > 1.0e-6) {
         throw std::range_error(
-            "SW92 transactional conservative p/T anchor did not close aggregate storage");
+            "SW92 transactional conservation anchor did not close component/energy storage");
     }
 }
 
@@ -1027,14 +1451,13 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
-                conservative_pt_anchor(
+                conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
-                    current_inventory.total_accumulation_mol_per_bulk_m3,
+                    current_inventory,
                     current_energy_inventory(
                         *current[local],
-                        baseline.porosity)
-                        .total_internal_energy_j_per_bulk_m3,
+                        baseline.porosity),
                     [&](std::span<const double> q)
                         -> std::optional<
                             MixedCardinalityPhysicalCurrentCellLinearization3D> {
@@ -1094,14 +1517,13 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
-                conservative_pt_anchor(
+                conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
-                    current_inventory.total_accumulation_mol_per_bulk_m3,
+                    current_inventory,
                     current_energy_inventory(
                         *current[local],
-                        baseline.porosity)
-                        .total_internal_energy_j_per_bulk_m3,
+                        baseline.porosity),
                     [&](std::span<const double> q)
                         -> std::optional<
                             MixedCardinalityPhysicalCurrentCellLinearization3D> {
@@ -1161,14 +1583,13 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                     context->rock_storage;
                 auto* evaluator_ptr =
                     evaluator.get();
-                conservative_pt_anchor(
+                conservative_storage_anchor(
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
-                    current_inventory.total_accumulation_mol_per_bulk_m3,
+                    current_inventory,
                     current_energy_inventory(
                         *current[local],
-                        baseline.porosity)
-                        .total_internal_energy_j_per_bulk_m3,
+                        baseline.porosity),
                     [&](std::span<const double> q)
                         -> std::optional<
                             MixedCardinalityPhysicalCurrentCellLinearization3D> {
