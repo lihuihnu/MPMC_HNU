@@ -308,8 +308,8 @@ void sw92_stationary_short_step() {
 
     const auto source =
         fl::solve_sw92_profile_c_pt_phase_set(
-            3.0e6,
-            550.0,
+            1.0e6,
+            510.0,
             std::vector<double>{0.995, 0.005},
             model,
             0.0);
@@ -319,7 +319,7 @@ void sw92_stationary_short_step() {
             source.accepted_phase_set_published() &&
             source.solution.accepted_phase_count() ==
                 1U,
-        "SW92 sourced 550 K fixture is not authoritative single phase");
+        "SW92 sourced 1 MPa / 510 K CO2-rich fixture is not authoritative single phase");
 
     auto materialized =
         fdp::
