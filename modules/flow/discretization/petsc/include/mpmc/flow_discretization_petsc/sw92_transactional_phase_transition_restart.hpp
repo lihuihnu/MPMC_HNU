@@ -330,7 +330,6 @@ materialize_sw92_transactional_initial_system_3d(
         cell.transition_evidence_profile =
             "SW92/transactional-initial-baseline/v1";
 
-        int provider_token = 1;
         std::unique_ptr<PhaseTransitionRebuiltNaturalVariableSystem3D> system;
         const PetscErrorCode error =
             rebuild_phase_transition_natural_variable_system_3d(
@@ -346,7 +345,7 @@ materialize_sw92_transactional_initial_system_3d(
                 runtime->bindings(),
                 {},
                 &reject_absent_phase_provider,
-                &provider_token,
+                context,
                 &system);
         if (error != PETSC_SUCCESS || system == nullptr) {
             return error != PETSC_SUCCESS ? error : PETSC_ERR_PLIB;
@@ -498,7 +497,6 @@ rebuild_sw92_transactional_phase_transition_3d(
         auto runtime =
             make_generation_runtime(*context, std::move(selections));
 
-        int provider_token = 1;
         std::unique_ptr<PhaseTransitionRebuiltNaturalVariableSystem3D> next;
         error =
             rebuild_phase_transition_natural_variable_system_3d(
@@ -514,7 +512,7 @@ rebuild_sw92_transactional_phase_transition_3d(
                 runtime->bindings(),
                 {},
                 &reject_absent_phase_provider,
-                &provider_token,
+                context,
                 &next);
         if (error != PETSC_SUCCESS || next == nullptr) {
             return error != PETSC_SUCCESS ? error : PETSC_ERR_PLIB;
