@@ -873,10 +873,10 @@ public:
         if (selection.family ==
             thermodynamics::SwPhaseFamily::
                 nonaqueous) {
-            kij =
+            kij = Number{
                 parameters
                     .water_nonaqueous_constant_kij(
-                        co2_index);
+                        co2_index)};
         } else if (
             selection.family ==
             thermodynamics::SwPhaseFamily::
