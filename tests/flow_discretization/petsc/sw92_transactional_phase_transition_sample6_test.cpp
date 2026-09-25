@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -584,6 +585,276 @@ std::vector<double> three_phase_q(
     return q;
 }
 
+struct Sample6TargetLinearDiagnostics {
+    std::size_t rank{};
+    double minimum_pivot{};
+    double residual_l2{};
+    double row_scaled_residual_l2{};
+};
+
+Sample6TargetLinearDiagnostics
+sample6_target_linear_diagnostics(
+    fdp::PhaseTransitionRebuiltNaturalVariableSystem3D&
+        system) {
+    const auto& numbering =
+        system.numbering();
+    const PetscInt start =
+        numbering.petsc_owned_scalar_start();
+    const PetscInt end =
+        numbering.petsc_owned_scalar_end();
+    require_sample6_transaction(
+        start >= 0 &&
+            end > start &&
+            numbering.rank_count() == 1U,
+        "Sample-6 target rank diagnostic requires PETSC_COMM_SELF");
+
+    const std::size_t n =
+        static_cast<std::size_t>(
+            end - start);
+    std::vector<PetscInt> indices(n);
+    for (std::size_t i = 0U; i < n; ++i) {
+        indices[i] =
+            start +
+            static_cast<PetscInt>(i);
+    }
+
+    Vec residual = nullptr;
+    Mat jacobian = nullptr;
+    require_sample6_transaction(
+        VecDuplicate(
+            system.initial_state(),
+            &residual) ==
+                PETSC_SUCCESS &&
+            MatDuplicate(
+                system.jacobian_structure(),
+                MAT_DO_NOT_COPY_VALUES,
+                &jacobian) ==
+                PETSC_SUCCESS,
+        "failed to allocate Sample-6 target rank diagnostic objects");
+
+    auto cleanup =
+        [&]() {
+            if (jacobian != nullptr) {
+                (void)MatDestroy(&jacobian);
+            }
+            if (residual != nullptr) {
+                (void)VecDestroy(&residual);
+            }
+        };
+
+    try {
+        require_sample6_transaction(
+            VecSet(residual, 0.0) ==
+                PETSC_SUCCESS &&
+            MatZeroEntries(jacobian) ==
+                PETSC_SUCCESS,
+            "failed to clear Sample-6 target diagnostic objects");
+
+        auto evaluator =
+            system.snes_evaluator();
+        fdp::NaturalVariableSnesEvaluationStatus3D
+            status =
+                fdp::NaturalVariableSnesEvaluationStatus3D::
+                    success;
+        require_sample6_transaction(
+            evaluator.function(
+                system.initial_state(),
+                residual,
+                evaluator.user_context,
+                &status) ==
+                PETSC_SUCCESS &&
+            status ==
+                fdp::NaturalVariableSnesEvaluationStatus3D::
+                    success &&
+            VecAssemblyBegin(residual) ==
+                PETSC_SUCCESS &&
+            VecAssemblyEnd(residual) ==
+                PETSC_SUCCESS,
+            "failed to evaluate Sample-6 target residual diagnostic");
+
+        status =
+            fdp::NaturalVariableSnesEvaluationStatus3D::
+                success;
+        require_sample6_transaction(
+            evaluator.jacobian(
+                system.initial_state(),
+                jacobian,
+                evaluator.user_context,
+                &status) ==
+                PETSC_SUCCESS &&
+            status ==
+                fdp::NaturalVariableSnesEvaluationStatus3D::
+                    success &&
+            MatAssemblyBegin(
+                jacobian,
+                MAT_FINAL_ASSEMBLY) ==
+                PETSC_SUCCESS &&
+            MatAssemblyEnd(
+                jacobian,
+                MAT_FINAL_ASSEMBLY) ==
+                PETSC_SUCCESS,
+            "failed to evaluate Sample-6 target Jacobian diagnostic");
+
+        PetscReal residual_norm = 0.0;
+        require_sample6_transaction(
+            VecNorm(
+                residual,
+                NORM_2,
+                &residual_norm) ==
+                PETSC_SUCCESS,
+            "failed to norm Sample-6 target residual");
+
+        std::vector<PetscScalar>
+            matrix_values(n * n);
+        std::vector<PetscScalar>
+            residual_values(n);
+        require_sample6_transaction(
+            MatGetValues(
+                jacobian,
+                static_cast<PetscInt>(n),
+                indices.data(),
+                static_cast<PetscInt>(n),
+                indices.data(),
+                matrix_values.data()) ==
+                PETSC_SUCCESS &&
+            VecGetValues(
+                residual,
+                static_cast<PetscInt>(n),
+                indices.data(),
+                residual_values.data()) ==
+                PETSC_SUCCESS,
+            "failed to read Sample-6 target dense diagnostic");
+
+        std::vector<double> a(n * n);
+        std::vector<double> scaled_r(n);
+        for (std::size_t row = 0U;
+             row < n;
+             ++row) {
+            double maximum = 0.0;
+            for (std::size_t column = 0U;
+                 column < n;
+                 ++column) {
+                const double value =
+                    static_cast<double>(
+                        PetscRealPart(
+                            matrix_values[
+                                row * n +
+                                column]));
+                require_sample6_transaction(
+                    std::isfinite(value),
+                    "non-finite Sample-6 target Jacobian diagnostic");
+                a[row * n + column] =
+                    value;
+                maximum =
+                    std::max(
+                        maximum,
+                        std::abs(value));
+            }
+            require_sample6_transaction(
+                maximum > 0.0 &&
+                    std::isfinite(maximum),
+                "zero Sample-6 target Jacobian row");
+            for (std::size_t column = 0U;
+                 column < n;
+                 ++column) {
+                a[row * n + column] /=
+                    maximum;
+            }
+            scaled_r[row] =
+                static_cast<double>(
+                    PetscRealPart(
+                        residual_values[row])) /
+                maximum;
+        }
+
+        double scaled_norm2 = 0.0;
+        for (double value : scaled_r) {
+            scaled_norm2 +=
+                value * value;
+        }
+
+        std::size_t rank = 0U;
+        double minimum_pivot =
+            std::numeric_limits<double>::
+                infinity();
+        constexpr double pivot_tolerance =
+            1.0e-11;
+        for (std::size_t column = 0U;
+             column < n &&
+             rank < n;
+             ++column) {
+            std::size_t pivot_row =
+                rank;
+            double pivot_magnitude = 0.0;
+            for (std::size_t row = rank;
+                 row < n;
+                 ++row) {
+                const double magnitude =
+                    std::abs(
+                        a[row * n + column]);
+                if (magnitude >
+                    pivot_magnitude) {
+                    pivot_magnitude =
+                        magnitude;
+                    pivot_row = row;
+                }
+            }
+            if (!(pivot_magnitude >
+                  pivot_tolerance)) {
+                continue;
+            }
+            if (pivot_row != rank) {
+                for (std::size_t j = 0U;
+                     j < n;
+                     ++j) {
+                    std::swap(
+                        a[rank * n + j],
+                        a[pivot_row * n + j]);
+                }
+            }
+            const double pivot =
+                a[rank * n + column];
+            minimum_pivot =
+                std::min(
+                    minimum_pivot,
+                    std::abs(pivot));
+            for (std::size_t row =
+                     rank + 1U;
+                 row < n;
+                 ++row) {
+                const double factor =
+                    a[row * n + column] /
+                    pivot;
+                if (factor == 0.0) {
+                    continue;
+                }
+                for (std::size_t j = column;
+                     j < n;
+                     ++j) {
+                    a[row * n + j] -=
+                        factor *
+                        a[rank * n + j];
+                }
+            }
+            ++rank;
+        }
+
+        cleanup();
+        return {
+            rank,
+            rank == 0U
+                ? 0.0
+                : minimum_pivot,
+            static_cast<double>(
+                residual_norm),
+            std::sqrt(
+                scaled_norm2)};
+    } catch (...) {
+        cleanup();
+        throw;
+    }
+}
+
 template <typename Provider>
 PetscErrorCode sample6_preflight_rebuild(
     const fdp::PhaseTransitionRebuiltNaturalVariableSystem3D&
@@ -627,6 +898,9 @@ PetscErrorCode sample6_preflight_rebuild(
     std::optional<
         fdp::NaturalVariableSnesFailureDiagnostics3D>
         diagnostics;
+    const auto linear_diagnostics =
+        sample6_target_linear_diagnostics(
+            **rebuilt_system);
     const PetscErrorCode solve_error =
         (*rebuilt_system)
             ->solve(
@@ -639,7 +913,19 @@ PetscErrorCode sample6_preflight_rebuild(
     if (solve_error != PETSC_SUCCESS) {
         std::cerr
             << "[Sample-6 target preflight] error="
-            << static_cast<int>(solve_error);
+            << static_cast<int>(solve_error)
+            << " dense_rank="
+            << linear_diagnostics.rank
+            << " dense_size="
+            << (*rebuilt_system)
+                   ->numbering()
+                   .petsc_local_owned_scalar_count()
+            << " min_scaled_pivot="
+            << linear_diagnostics.minimum_pivot
+            << " raw_residual_l2="
+            << linear_diagnostics.residual_l2
+            << " row_scaled_residual_l2="
+            << linear_diagnostics.row_scaled_residual_l2;
         if (diagnostics.has_value()) {
             std::cerr
                 << " snes_reason="
