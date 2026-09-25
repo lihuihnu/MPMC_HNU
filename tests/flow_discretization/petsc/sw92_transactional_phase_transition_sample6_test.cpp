@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <span>
@@ -584,6 +585,107 @@ std::vector<double> three_phase_q(
 }
 
 template <typename Provider>
+PetscErrorCode sample6_preflight_rebuild(
+    const fdp::PhaseTransitionRebuiltNaturalVariableSystem3D&
+        current_system,
+    Vec converged_state,
+    const fdp::VariableCardinalityNaturalVariableSnesSolveReport3D&
+        solve_report,
+    std::span<
+        const fdp::PostSnesPhaseTransitionProposal3D>
+        local_owned_proposals,
+    std::span<
+        const fdp::AcceptedPhaseTransitionSummary3D>
+        accepted_global_batch,
+    void* raw_context,
+    std::unique_ptr<
+        fdp::PhaseTransitionRebuiltNaturalVariableSystem3D>*
+            rebuilt_system) {
+    const PetscErrorCode rebuild_error =
+        fdp::
+            rebuild_sw92_transactional_phase_transition_system_3d<
+                Provider>(
+                current_system,
+                converged_state,
+                solve_report,
+                local_owned_proposals,
+                accepted_global_batch,
+                raw_context,
+                rebuilt_system);
+    if (rebuild_error != PETSC_SUCCESS ||
+        rebuilt_system == nullptr ||
+        *rebuilt_system == nullptr) {
+        return rebuild_error != PETSC_SUCCESS
+            ? rebuild_error
+            : PETSC_ERR_PLIB;
+    }
+
+    Vec probe_state = nullptr;
+    std::optional<
+        fdp::VariableCardinalityNaturalVariableSnesSolveReport3D>
+        probe_report;
+    std::optional<
+        fdp::NaturalVariableSnesFailureDiagnostics3D>
+        diagnostics;
+    const PetscErrorCode solve_error =
+        (*rebuilt_system)
+            ->solve(
+                &probe_state,
+                &probe_report,
+                &diagnostics);
+    if (probe_state != nullptr) {
+        (void)VecDestroy(&probe_state);
+    }
+    if (solve_error != PETSC_SUCCESS) {
+        std::cerr
+            << "[Sample-6 target preflight] error="
+            << static_cast<int>(solve_error);
+        if (diagnostics.has_value()) {
+            std::cerr
+                << " snes_reason="
+                << static_cast<int>(
+                       diagnostics->snes_reason)
+                << " ksp_reason="
+                << static_cast<int>(
+                       diagnostics->ksp_reason)
+                << " pc_reason="
+                << diagnostics->pc_failed_reason
+                << " sub_ksp_reason="
+                << static_cast<int>(
+                       diagnostics->asm_sub_ksp_reason)
+                << " sub_pc_reason="
+                << diagnostics->asm_sub_pc_failed_reason
+                << " nonlinear_iterations="
+                << static_cast<long long>(
+                       diagnostics->nonlinear_iterations)
+                << " function_evaluations="
+                << static_cast<long long>(
+                       diagnostics->function_evaluations)
+                << " jacobian_evaluations="
+                << static_cast<long long>(
+                       diagnostics->jacobian_evaluations)
+                << " function_domain_errors="
+                << static_cast<long long>(
+                       diagnostics->function_domain_errors)
+                << " jacobian_domain_errors="
+                << static_cast<long long>(
+                       diagnostics->jacobian_domain_errors)
+                << " line_search_prechecks="
+                << static_cast<long long>(
+                       diagnostics->line_search_prechecks)
+                << " line_search_direction_changes="
+                << static_cast<long long>(
+                       diagnostics->line_search_direction_changes)
+                << " function_l2_norm="
+                << diagnostics->function_l2_norm;
+        }
+        std::cerr << '\n';
+        return solve_error;
+    }
+    return PETSC_SUCCESS;
+}
+
+template <typename Provider>
 void run_controller(
     std::unique_ptr<
         fdp::PhaseTransitionRebuiltNaturalVariableSystem3D>
@@ -611,9 +713,8 @@ void run_controller(
                     &fdp::
                         scan_post_snes_sw92_profile_c_phase_transitions_3d,
                     scanner,
-                    &fdp::
-                        rebuild_sw92_transactional_phase_transition_system_3d<
-                            Provider>,
+                    &sample6_preflight_rebuild<
+                        Provider>,
                     rebuild},
                 {.max_transition_restarts = 4U},
                 &final_system,
