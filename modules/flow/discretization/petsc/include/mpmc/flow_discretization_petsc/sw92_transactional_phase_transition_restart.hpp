@@ -1060,18 +1060,18 @@ struct Sw92TransactionalPhaseTransitionRebuildContext3D {
         rock_storage;
     MixedCardinalityPhysicalCellSourceEvaluatorBinding3D
         cell_source_evaluator;
-    // Optional projection used only when the caller intentionally wants to
-    // adjust the authoritative target q onto the frozen component/energy
-    // storage manifold before the rebuilt SNES solve.  Source-complete
-    // production property models should normally leave this false and let
-    // SNES satisfy equilibrium and conservation simultaneously.
-    bool project_target_to_conservation_storage{false};
     std::vector<
         Sw92TransactionalRebuildBaselineCell3D>
         baseline_cells;
     std::vector<std::unique_ptr<Runtime>>
         runtimes;
     int absent_provider_token{1};
+    // Optional projection used only when the caller intentionally wants to
+    // adjust the authoritative target q onto the frozen component/energy
+    // storage manifold before the rebuilt SNES solve.  Source-complete
+    // production property models should normally leave this false and let
+    // SNES satisfy equilibrium and conservation simultaneously.
+    bool project_target_to_conservation_storage{false};
 
     [[nodiscard]]
     MixedCardinalityPhysicalCellEvaluatorBindings3D
