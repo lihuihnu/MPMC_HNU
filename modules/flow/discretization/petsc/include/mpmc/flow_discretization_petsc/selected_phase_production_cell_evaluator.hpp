@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_SELECTED_PHASE_PRODUCTION_CELL_EVALUATOR_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_SELECTED_PHASE_PRODUCTION_CELL_EVALUATOR_HPP
 
+#include <mpmc/ad/runtime_differentiate.hpp>
 #include <mpmc/flow_discretization_petsc/fixed_three_phase_snes_assembly.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_snes_assembly.hpp>
 #include <mpmc/flow_discretization_petsc/two_phase_snes_assembly.hpp>
