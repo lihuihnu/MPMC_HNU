@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <stdexcept>

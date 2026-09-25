@@ -6,12 +6,14 @@
 
 #include <petscsys.h>
 
+#include <array>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace mpmc::flow_discretization_petsc {
 
