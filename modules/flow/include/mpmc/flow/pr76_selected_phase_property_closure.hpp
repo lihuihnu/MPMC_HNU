@@ -531,17 +531,14 @@ struct Pr76SelectedPhasePropertyChartLinearization {
 
 template <
     std::size_t K = 4U,
-    std::floating_point T,
-    typename Provider>
+    typename Closure>
 [[nodiscard]] inline
 Pr76SelectedPhasePropertyChartLinearization
 evaluate_pr76_selected_phase_property_chart(
     const NaturalVariableLayoutDescriptor& layout,
     std::span<const std::string> component_ids,
     std::span<const double> natural_variables,
-    const Pr76SelectedPhasePropertyClosure<
-        T,
-        Provider>& closure,
+    const Closure& closure,
     mpmc::ad::RuntimeJacobianWorkspace<
         double,
         K>& workspace) {

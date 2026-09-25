@@ -164,6 +164,7 @@ def main():
         {
             'mpmc_flow_absent_phase_thermodynamics_tests',
             'mpmc_flow_pr76_selected_phase_property_tests',
+            'mpmc_flow_sw92_selected_phase_property_tests',
         },
     )
     flow_discretization_tests = assert_workflow_covers_registered_ctests(

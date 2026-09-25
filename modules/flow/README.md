@@ -4434,3 +4434,48 @@ does not enter any externally validated rate or inventory value and is not a
 physical V-L1-L2 relative-permeability claim.  Full provenance and the independent
 oracle contract are recorded in
 `tests/flow_discretization/petsc/pr76_li_firoozabadi_sour_gas_short_step.md`.
+
+
+## 48. SW92 selected-phase property -> flow natural-variable bridge
+
+The flow thermodynamics boundary now exposes
+
+`<mpmc/flow/sw92_selected_phase_property_closure.hpp>`
+
+for a frozen SW92 selected family/root chart.  Each active phase owns an
+explicit `Sw92SelectedPhase` carrying NaCl molality, AQ/NA family, algebraic
+root index and root options.  The closure never changes those identities while
+evaluating a natural-variable residual/Jacobian.
+
+SW92 itself supplies selected-branch `ln(phi)` and molar density through the
+existing scalar-generic thermodynamics façades.  Mass density is formed only
+from explicit ordered component molar masses.  Dynamic viscosity and absolute
+specific enthalpy remain an explicit caller-owned scalar-generic
+`SelectedPhaseTransportCaloricValues` provider; this slice introduces no SW92
+transport or caloric correlation.  Specific internal energy follows
+`u=h-p/rho_mass`.
+
+The existing topology-neutral P=1/2/3 property chart driver is now
+closure-generic, so SW92 reuses the already audited natural-variable carriers
+for molar density, transport, caloric properties and fugacity-equilibrium rows
+without duplicating a second flow algebra implementation.  The public SW92
+wrapper publishes value plus analytic forward-AD Jacobians with respect to
+pressure, temperature and independent phase compositions.  Family, root and
+molality are frozen discrete provenance, not differentiable unknowns.
+
+This v1 bridge is explicitly `pc=none`: all active SW92 selected phases are
+evaluated at `p_ref`.  A three-phase downstream saturation/pressure carrier
+with any nonzero capillary/phase-pressure offset, or with any phase-pressure
+Jacobian other than exact `dp_alpha/dp_ref=1`, is rejected as
+`Sw92SelectedPhasePcNoneCapabilityError`.  No pressure offset is silently
+ignored.
+
+The flow-core regression covers 1P/2P/3P publication, direct equality with the
+existing SW92 selected fugacity/density kernels, fresh-perturbation checks of
+the forward-AD Jacobian, component permutation, frozen family/root/molality
+identity, missing molar-mass and invalid-selection failures, root-resolution
+failure propagation, and primal/Jacobian pc=none capability rejection.
+
+This slice does not add an SW92 viscosity/enthalpy model, does not run an SW92
+PETSc timestep, and does not change flash topology, wells, phase-transition
+orchestration, solver tolerances or any EOS equation.
