@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+void post_snes_sw92_profile_c_phase_transition_scanner_test();
+
 namespace {
 
 namespace fdp = mpmc::flow_discretization_petsc;
@@ -196,6 +198,7 @@ void post_snes_pt_flash_phase_transition_scanner_test() {
     if (rank == 0) {
         try {
             run_scanner_regression();
+            post_snes_sw92_profile_c_phase_transition_scanner_test();
         } catch (...) {
             local_success = 0;
         }
