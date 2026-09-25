@@ -4622,3 +4622,55 @@ The regression freezes two boundaries:
 
 This slice does not rebuild/destroy an SNES system, restart a timestep, couple a
 well, infer physical phase identities or add transport data.
+
+
+## 52. SW92 transactional same-dt phase-transition restart
+
+The authoritative SW92 target sidecar can now drive the existing model-neutral
+post-SNES transition controller through a real transactional rebuild/re-solve
+cycle.
+
+`sw92_transactional_phase_transition_restart.hpp` adds a rebuild factory that
+consumes the scanner generation's sidecars and the generic accepted transition
+batch.  For each changed cell it:
+
+- validates source/target cardinality and stable cell identity;
+- obtains the target active-phase identity map from an explicit caller resolver
+  (family/root/slot are **not** promoted to physical phase identity);
+- reuses `make_accepted_phase_transition_rebuild_cell_3d` so target q,
+  component material balance and frozen component/energy history use the same
+  generic contract as existing phase-transition rebuilds;
+- constructs a new SW92 selected-phase property closure directly from the
+  authoritative target molality/family/root selections;
+- installs the matching 1P/2P/3P production evaluator in a cell-scoped
+  dispatcher; and
+- calls the normal `rebuild_phase_transition_natural_variable_system_3d` with
+  the **same** `time_step_seconds`.
+
+The generic controller already destroys the converged source candidate after a
+successful rebuild and immediately solves the rebuilt system in the same
+physical timestep.  No accepted-history rebase occurs between generations.
+
+The first production closure regression uses the sourced zero-salinity CO2/H2O
+provider.  A deliberately frozen 1P NA cell at 3 MPa / 340 K /
+z=[0.70,0.30] has zero backward-Euler residual on its own accepted baseline.
+The authoritative scanner resolves the same inventory to W+H 2P; the source
+candidate is discarded, the cell is rebuilt with authoritative AQ/NA
+family/root selections, and the 2P system is solved again at the same 1 s dt.
+The controller must report exactly one transition restart followed by a stable
+generation, while final component inventory and total internal-energy history
+still match the original pre-restart baseline.
+
+### Current capability boundary
+
+SW92 still has no validated family/root-aware absent-phase thermodynamic
+extension provider.  Therefore this v1 transactional rebuild explicitly
+requires **no authoritative faces and no local ghost overlap**.  It returns a
+capability error rather than pretending cross-cardinality face transport is
+available.  The rebuild factory itself accepts authoritative 1P/2P/3P targets;
+the existing Sample-6 scanner regression continues to verify the 2->3
+authoritative target sidecar, but a sourced eight-component transport/caloric
+provider is not fabricated merely to force a Sample-6 flow re-solve.
+
+This slice does not commit physical time, does not rebase accepted history,
+does not couple wells, and does not add brine transport.
