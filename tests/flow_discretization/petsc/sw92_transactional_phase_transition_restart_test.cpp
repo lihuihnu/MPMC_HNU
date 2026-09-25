@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -499,6 +500,7 @@ void sw92_same_dt_one_to_two_transaction() {
     fdp::Sw92TransactionalPhaseTransitionRebuildContext3D<
         Provider>
         rebuild_context{
+            PETSC_COMM_SELF,
             &schedule,
             &partition,
             &bridge,

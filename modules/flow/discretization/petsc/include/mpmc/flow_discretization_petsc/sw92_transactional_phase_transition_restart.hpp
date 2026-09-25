@@ -1,9 +1,9 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_SW92_TRANSACTIONAL_PHASE_TRANSITION_RESTART_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_SW92_TRANSACTIONAL_PHASE_TRANSITION_RESTART_HPP
 
-#include <mpmc/flow/discretization/petsc/include/mpmc/flow_discretization_petsc/cell_scoped_mixed_cardinality_evaluator_dispatcher.hpp>
-#include <mpmc/flow/discretization/petsc/include/mpmc/flow_discretization_petsc/post_snes_sw92_profile_c_phase_transition_scanner.hpp>
-#include <mpmc/flow/discretization/petsc/include/mpmc/flow_discretization_petsc/sw92_production_cell_evaluator.hpp>
+#include <mpmc/flow_discretization_petsc/cell_scoped_mixed_cardinality_evaluator_dispatcher.hpp>
+#include <mpmc/flow_discretization_petsc/post_snes_sw92_profile_c_phase_transition_scanner.hpp>
+#include <mpmc/flow_discretization_petsc/sw92_production_cell_evaluator.hpp>
 
 #include <petscvec.h>
 
@@ -12,6 +12,7 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -19,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -64,6 +66,24 @@ struct Sw92TransactionalRebuildBaselineCell3D {
 };
 
 namespace sw92_transactional_restart_detail {
+
+[[nodiscard]] inline bool near_roundoff(
+    double first,
+    double second) {
+    if (!std::isfinite(first) ||
+        !std::isfinite(second)) {
+        return false;
+    }
+    const double scale =
+        std::max(
+            {1.0,
+             std::abs(first),
+             std::abs(second)});
+    return std::abs(first - second) <=
+        8192.0 *
+            std::numeric_limits<double>::epsilon() *
+            scale;
+}
 
 [[nodiscard]] inline const
 mpmc::flow::NaturalVariableStateIdentity3P&
@@ -238,6 +258,7 @@ struct Sw92TransactionalPhaseTransitionRebuildContext3D {
         Sw92TransactionalPhaseTransitionRuntime3D<
             Provider>;
 
+    MPI_Comm comm{MPI_COMM_NULL};
     const mpmc::discretization_petsc::
         ParallelOwnedConnectionSchedule3D*
         schedule{};
@@ -763,15 +784,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
         next;
     error =
         rebuild_phase_transition_natural_variable_system_3d(
-            current_system
-                .numbering()
-                .local_rank()
-                .value() ==
-                    context->partition
-                        ->local_rank()
-                        .value()
-                ? PETSC_COMM_SELF
-                : PETSC_COMM_SELF,
+            context->comm,
             *context->schedule,
             *context->partition,
             *context->cell_bridge,
