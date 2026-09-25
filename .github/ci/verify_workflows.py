@@ -183,6 +183,28 @@ def main():
             token,
         )
 
+    # The flow-discretization PETSc suite is one monolithic executable.  Source
+    # membership alone is not execution proof, so keep an explicit entry-point
+    # guard for the SW92 transactional restart regression and public-header probe.
+    petsc_cmake_text = Path('tests/flow_discretization/petsc/CMakeLists.txt').read_text(encoding='utf-8')
+    petsc_entry_text = Path('tests/flow_discretization/petsc/distributed_component_conservation_test.cpp').read_text(encoding='utf-8')
+    for token in (
+        'sw92_transactional_phase_transition_restart_test.cpp',
+        'sw92_transactional_phase_transition_restart_header.cpp',
+    ):
+        assert token in petsc_cmake_text, (
+            'SW92 transactional restart source lost PETSc target ownership',
+            token,
+        )
+    assert re.search(
+        r'int\s+main\s*\([^)]*\)\s*\{[\s\S]*?sw92_transactional_phase_transition_restart_test\s*\(\s*\)\s*;',
+        petsc_entry_text,
+    ), 'SW92 transactional restart regression is compiled but not executed'
+    assert re.search(
+        r'void\s+headers\s*\(\s*\)\s*\{[\s\S]*?sw92_transactional_phase_transition_restart_header\s*\(\s*\)',
+        petsc_entry_text,
+    ), 'SW92 transactional restart header probe is compiled but not executed'
+
     assert 'result' in root['jobs'] and root['jobs']['result']['if'] == '${{ always() }}'
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')
