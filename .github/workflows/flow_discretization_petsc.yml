@@ -26,16 +26,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libpetsc-real3.19-dev=3.19.6+dfsg1-2.2ubuntu2 \
-            openmpi-bin
+            openmpi-bin gdb
           test "$(pkg-config --modversion PETSc)" = "3.19.6"
           command -v mpiexec
+          command -v gdb
 
+      # Capture the rank-local crash stack in the same CTest invocation.
+      # --return-child-result preserves failures; no rerun or ignored exit status.
       - name: Configure flow-discretization PETSc tests
         run: |
           cmake -S tests/flow_discretization/petsc \
             -B build/flow-discretization-petsc \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=g++
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_CXX_FLAGS_RELEASE='-O3 -DNDEBUG -g1' \
+            -DMPIEXEC_PREFLAGS='gdb;--batch;--return-child-result;-ex;run;-ex;thread apply all bt;--args'
 
       - name: Build flow-discretization PETSc tests
         run: |
