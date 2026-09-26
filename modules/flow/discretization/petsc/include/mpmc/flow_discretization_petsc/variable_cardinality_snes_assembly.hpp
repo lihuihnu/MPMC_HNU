@@ -2304,6 +2304,9 @@ solve_variable_cardinality_natural_variable_snes_3d(
         "-mpmc_variable_cardinality_sub_pc_factor_nonzeros_along_diagonal";
     constexpr const char* sub_pc_shift_type_option =
         "-mpmc_variable_cardinality_sub_pc_factor_shift_type";
+    constexpr const char* sub_pc_solver_type_option =
+        "-mpmc_variable_cardinality_sub_pc_factor_mat_solver_type";
+    bool sub_pc_solver_type_installed = false;
     bool sub_pc_option_installed = false;
     bool sub_pc_reorder_installed = false;
     bool sub_pc_shift_type_installed = false;
@@ -2324,6 +2327,15 @@ solve_variable_cardinality_natural_variable_snes_3d(
             error == PETSC_SUCCESS;
     }
     if (error == PETSC_SUCCESS) {
+        error =
+            PetscOptionsSetValue(
+                nullptr,
+                sub_pc_solver_type_option,
+                "mumps");
+        sub_pc_solver_type_installed =
+            error == PETSC_SUCCESS;
+    }
+    if (error == PETSC_SUCCESS) {
         const char* reorder_tolerance =
             row_scaling != nullptr
                 ? "1.0e-10"
@@ -2336,13 +2348,12 @@ solve_variable_cardinality_natural_variable_snes_3d(
         sub_pc_reorder_installed =
             error == PETSC_SUCCESS;
     }
-    if (error == PETSC_SUCCESS &&
-        row_scaling != nullptr) {
+    if (error == PETSC_SUCCESS) {
         error =
             PetscOptionsSetValue(
                 nullptr,
                 sub_pc_shift_type_option,
-                "nonzero");
+                "none");
         sub_pc_shift_type_installed =
             error == PETSC_SUCCESS;
     }
@@ -2396,6 +2407,18 @@ solve_variable_cardinality_natural_variable_snes_3d(
                         nullptr,
                         sub_pc_reorder_option);
                 sub_pc_reorder_installed =
+                    false;
+                if (first == PETSC_SUCCESS &&
+                    current != PETSC_SUCCESS) {
+                    first = current;
+                }
+            }
+            if (sub_pc_solver_type_installed) {
+                const PetscErrorCode current =
+                    PetscOptionsClearValue(
+                        nullptr,
+                        sub_pc_solver_type_option);
+                sub_pc_solver_type_installed =
                     false;
                 if (first == PETSC_SUCCESS &&
                     current != PETSC_SUCCESS) {

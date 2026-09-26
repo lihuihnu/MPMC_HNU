@@ -4737,3 +4737,11 @@ is diagnostic only: it never replaces the Newton step or changes the original
 failure result. Distributed failures report the actual KSP but do not launch
 a serial LU comparison. The existing Sample-6 preflight in the PETSc/MPI Gate
 requests these diagnostics; no new workflow or solver acceptance is added.
+
+The variable-cardinality SNES path now explicitly selects MUMPS for ASM subblock
+LU and disables factor shifts (`sub_pc_factor_mat_solver_type=mumps`,
+`sub_pc_factor_shift_type=none`). This requires a PETSc build with MUMPS; there
+is no silent backend fallback. Newton/BT, GMRES, restricted ASM overlap, diagonal
+reordering, row scaling and all convergence/positivity/conservation criteria are
+unchanged. The existing PETSc/MPI Gate checks whether this removes the Sample-6
+linear-solve blockage; this configuration change alone is not convergence evidence.
