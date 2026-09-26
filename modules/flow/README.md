@@ -4701,3 +4701,14 @@ pressure/temperature. Unavailable trial norms are NaN. The failing iteration's
 scaled component/energy residuals and current coordinates/search direction are
 printed once. Records use fixed-size storage and are emitted only on failure;
 backtracking, acceptance thresholds and evaluator call counts are unchanged.
+
+Conservation-anchor backtracking starts from a layout-aware fraction-to-boundary
+step: at most 99% of the first zero crossing of pressure, temperature, each
+independent composition/saturation and each reconstructed composition/saturation.
+The dependent composition follows the explicit pivot for each phase. No state
+clipping or positive floor is introduced. The original 12 backtracks, strict
+positive evaluator domain, residual-decrease test and conservation tolerances
+remain unchanged. This protects feasibility; it does not guarantee convergence
+for a trace-component-limited direction. Analytic 1P/2P/3P boundary cases run in
+the existing transactional restart regression, owned by
+`mpmc_flow_discretization_petsc_tests` and its distributed conservation CTest.

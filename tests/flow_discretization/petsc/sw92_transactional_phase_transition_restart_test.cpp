@@ -42,6 +42,64 @@ void require_transaction(
     }
 }
 
+// Analytic affine-simplex bounds, including a non-last composition pivot.
+// Owned by the existing PETSc executable/Gate; these are software invariants.
+void conservation_anchor_feasible_step_test() {
+    using fdp::sw92_transactional_restart_detail::conservation_anchor_feasible_damping;
+    for (std::size_t phases = 1U; phases <= 3U; ++phases) {
+        const flow::NaturalVariableLayoutDescriptor layout{
+            3U, phases, std::vector<std::size_t>(phases, 0U)};
+        std::vector<double> q(layout.unknown_count(), 0.2);
+        q[0] = 1.0e7;
+        q[1] = 350.0;
+        std::vector<double> step(q.size(), 0.0);
+        require_transaction(conservation_anchor_feasible_damping(layout, q, step) == 1.0,
+            "zero direction must retain unit damping");
+        const auto check = [&](double expected) {
+            const double alpha = conservation_anchor_feasible_damping(layout, q, step);
+            require_transaction(std::abs(alpha / expected - 1.0) < 1.0e-12,
+                "incorrect analytic conservation-anchor feasibility bound");
+            auto trial = q;
+            for (std::size_t i = 0U; i < q.size(); ++i) {
+                trial[i] += alpha * step[i];
+            }
+            const std::vector<double> zero(q.size(), 0.0);
+            require_transaction(conservation_anchor_feasible_damping(layout, trial, zero) == 1.0,
+                "bounded trial must retain strict-positive independent and dependent coordinates");
+        };
+        const auto composition = *layout.independent_composition_unknown_index(
+            flow::PhaseSlot3::phase0, 1U);
+        q[composition] = 7.454115499883185e-12;
+        step[composition] = -0.013885768807024454;
+        check(0.99 * q[composition] / -step[composition]);
+        q[composition] = 0.2;
+        step[composition] = 2.0;
+        check(0.99 * 0.6 / 2.0); // Reconstructed pivot reaches zero first.
+        step[composition] = 0.0;
+        if (phases > 1U) {
+            step[2] = -2.0;
+            check(0.99 * 0.2 / 2.0);
+            step[2] = 2.0;
+            check(0.99 * (1.0 - 0.2 * static_cast<double>(phases - 1U)) / 2.0);
+            step[2] = 0.0;
+        }
+        step[0] = -2.0e7;
+        check(0.495);
+        step[0] = 0.0;
+        step[1] = -700.0;
+        check(0.495);
+        step[1] = 0.0;
+        q[composition] = 0.0;
+        bool rejected = false;
+        try {
+            (void)conservation_anchor_feasible_damping(layout, q, step);
+        } catch (const std::range_error&) {
+            rejected = true;
+        }
+        require_transaction(rejected, "zero composition must not be clipped into the interior");
+    }
+}
+
 th::Provenance nist_transaction_source(
     std::string locator) {
     return {
@@ -1008,6 +1066,7 @@ void sw92_transactional_phase_transition_restart_test() {
     require_transaction(
         sw92_transactional_phase_transition_restart_header(),
         "SW92 transactional restart public header probe failed");
+    conservation_anchor_feasible_step_test();
     sw92_same_dt_one_to_two_transaction();
     sw92_same_dt_two_to_one_transaction();
     sw92_transactional_phase_transition_sample6_test();

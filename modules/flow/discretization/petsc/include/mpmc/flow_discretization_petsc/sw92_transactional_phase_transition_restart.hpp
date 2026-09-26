@@ -549,8 +549,57 @@ inline bool solve_dense_partial_pivot(
     return true;
 }
 
+// Bound the affine natural-variable trial to the strict-positive interior.
+// The 0.99 fraction is a step safeguard, not a state floor or residual tolerance.
+[[nodiscard]] inline double conservation_anchor_feasible_damping(
+    const mpmc::flow::NaturalVariableLayoutDescriptor& layout,
+    std::span<const double> q,
+    std::span<const double> step) {
+    if (q.size() != layout.unknown_count() || step.size() != q.size()) {
+        throw std::invalid_argument("SW92 conservation anchor layout/step mismatch");
+    }
+    double damping = 1.0;
+    const auto constrain = [&](double value, double direction) {
+        if (!std::isfinite(value) || !(value > 0.0) ||
+            !std::isfinite(direction)) {
+            throw std::range_error("SW92 conservation anchor requires a finite positive interior state");
+        }
+        if (direction < 0.0) {
+            damping = std::min(damping, 0.99 * (value / -direction));
+        }
+    };
+    // All stored coordinates (p, T, independent S and x) must be positive.
+    for (std::size_t column = 0U; column < q.size(); ++column) {
+        constrain(q[column], step[column]);
+    }
+    double dependent_saturation = 1.0;
+    double dependent_saturation_step = 0.0;
+    for (std::size_t phase = 0U; phase < layout.phase_count(); ++phase) {
+        const auto slot = static_cast<mpmc::flow::PhaseSlot3>(phase);
+        if (const auto column = layout.independent_saturation_unknown_index(slot)) {
+            dependent_saturation -= q[*column];
+            dependent_saturation_step -= step[*column];
+        }
+        double independent_sum = 0.0;
+        double independent_step_sum = 0.0;
+        for (std::size_t component = 0U; component < layout.component_count(); ++component) {
+            if (const auto column = layout.independent_composition_unknown_index(slot, component)) {
+                independent_sum += q[*column];
+                independent_step_sum += step[*column];
+            }
+        }
+        constrain(1.0 - independent_sum, -independent_step_sum);
+    }
+    constrain(dependent_saturation, dependent_saturation_step);
+    if (!(damping > 0.0)) {
+        throw std::range_error("SW92 conservation anchor has no representable positive feasible damping");
+    }
+    return damping;
+}
+
 template <typename Evaluate>
 inline void conservative_storage_anchor(
+    const mpmc::flow::NaturalVariableLayoutDescriptor& layout,
     std::vector<double>* q,
     double porosity,
     const mpmc::flow::
@@ -869,7 +918,7 @@ inline void conservative_storage_anchor(
         };
         std::array<BacktrackDiagnostic, maximum_backtracks> diagnostics{};
         bool accepted = false;
-        double damping = 1.0;
+        double damping = conservation_anchor_feasible_damping(layout, *q, step);
         for (std::size_t backtrack = 0U;
              backtrack < maximum_backtracks;
              ++backtrack) {
@@ -1540,6 +1589,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                         ->project_target_to_conservation_storage) {
                 diagnostic_stage = "conservative-storage-anchor";
                 conservative_storage_anchor(
+                    rebuilt.target_layout,
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
                     current_inventory,
@@ -1610,6 +1660,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                         ->project_target_to_conservation_storage) {
                 diagnostic_stage = "conservative-storage-anchor";
                 conservative_storage_anchor(
+                    rebuilt.target_layout,
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
                     current_inventory,
@@ -1680,6 +1731,7 @@ rebuild_sw92_transactional_phase_transition_system_3d(
                         ->project_target_to_conservation_storage) {
                 diagnostic_stage = "conservative-storage-anchor";
                 conservative_storage_anchor(
+                    rebuilt.target_layout,
                     &rebuilt.target_natural_variables,
                     baseline.porosity,
                     current_inventory,
