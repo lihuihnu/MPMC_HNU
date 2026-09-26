@@ -100,6 +100,54 @@ void conservation_anchor_feasible_step_test() {
     }
 }
 
+// Synthetic linear storage row: dx_trace + dx_bulk = -0.1. The analytic
+// feasible correction is carried by the bulk coordinate, without deleting trace.
+void conservation_anchor_scaled_direction_test() {
+    using namespace fdp::sw92_transactional_restart_detail;
+    const flow::NaturalVariableLayoutDescriptor layout{3U, 1U, {0U}};
+    const std::vector<double> q{1.0e7, 350.0, 1.0e-12, 0.2};
+    const auto scale = conservation_anchor_column_scale(layout, q);
+    const double normal = scale[2] * scale[2] + scale[3] * scale[3];
+    std::vector<double> dual;
+    require_transaction(solve_dense_partial_pivot({normal}, {-0.1}, &dual),
+        "scaled synthetic storage normal solve failed");
+    std::vector<double> step(q.size(), 0.0);
+    step[2] = scale[2] * scale[2] * dual[0];
+    step[3] = scale[3] * scale[3] * dual[0];
+    const double alpha = conservation_anchor_feasible_damping(layout, q, step);
+    require_transaction(alpha == 1.0 && q[2] + step[2] > 0.0 &&
+            std::abs(0.1 + step[2] + step[3]) < 1.0e-14,
+        "trace-safe direction must close the analytic storage row at a full feasible step");
+    step[2] = -0.05;
+    step[3] = -0.05;
+    require_transaction(conservation_anchor_feasible_damping(layout, q, step) < 1.0e-10,
+        "unit-scaled reference must reproduce trace-limited stagnation");
+    for (std::size_t phases = 1U; phases <= 3U; ++phases) {
+        const flow::NaturalVariableLayoutDescriptor chart{3U, phases,
+            std::vector<std::size_t>(phases, 0U)};
+        std::vector<double> state(chart.unknown_count(), 0.2);
+        state[0] = 1.0e7;
+        state[1] = 350.0;
+        for (std::size_t phase = 0U; phase < phases; ++phase) {
+            const auto slot = static_cast<flow::PhaseSlot3>(phase);
+            const auto a = *chart.independent_composition_unknown_index(slot, 1U);
+            const auto b = *chart.independent_composition_unknown_index(slot, 2U);
+            state[a] = 0.6;
+            state[b] = 0.399999;
+            const auto metric = conservation_anchor_column_scale(chart, state);
+            require_transaction(std::abs(metric[a] - (1.0 - state[a] - state[b])) < 1.0e-15 &&
+                    metric[a] == metric[b],
+                "metric must account for each reconstructed composition pivot");
+        }
+        if (phases > 1U) {
+            state[2] = phases == 2U ? 0.999999 : 0.799999;
+            const auto metric = conservation_anchor_column_scale(chart, state);
+            require_transaction(metric[2] > 0.0 && metric[2] < 1.1e-6,
+                "metric must account for reconstructed saturation boundary");
+        }
+    }
+}
+
 th::Provenance nist_transaction_source(
     std::string locator) {
     return {
@@ -1067,6 +1115,7 @@ void sw92_transactional_phase_transition_restart_test() {
         sw92_transactional_phase_transition_restart_header(),
         "SW92 transactional restart public header probe failed");
     conservation_anchor_feasible_step_test();
+    conservation_anchor_scaled_direction_test();
     sw92_same_dt_one_to_two_transaction();
     sw92_same_dt_two_to_one_transaction();
     sw92_transactional_phase_transition_sample6_test();

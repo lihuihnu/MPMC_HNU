@@ -4712,3 +4712,16 @@ remain unchanged. This protects feasibility; it does not guarantee convergence
 for a trace-component-limited direction. Analytic 1P/2P/3P boundary cases run in
 the existing transactional restart regression, owned by
 `mpmc_flow_discretization_petsc_tests` and its distributed conservation CTest.
+
+The storage-correction direction now uses a simplex-interior diagonal column
+metric: each independent composition/saturation scale is the smaller of its
+current value and the corresponding reconstructed dependent value. Pressure and
+temperature scaling is unchanged. For scaled Jacobian `A = J D`, the existing
+regularized dual solve and `delta_q = D A^T dual` remain in use. Thus large
+relative trace-component changes are penalized before the feasibility line
+search. No component is removed or floored; residual scaling, conservation
+tolerances and strict-positive acceptance are unchanged. The owning regression
+includes an analytic linear storage row where unit scaling stalls on a trace
+coordinate but the new metric yields a full feasible, conservative step, plus
+1P/2P/3P reconstructed-boundary checks. This is software validation, not new
+physical data or a guarantee of Sample-6 convergence.

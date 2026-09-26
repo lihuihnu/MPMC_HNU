@@ -597,6 +597,45 @@ inline bool solve_dense_partial_pivot(
     return damping;
 }
 
+// Diagonal metric for the minimum-norm storage correction. Relative simplex
+// changes are penalized near either independent or reconstructed boundaries.
+// This changes the direction metric, never the state or conservation residual.
+[[nodiscard]] inline std::vector<double> conservation_anchor_column_scale(
+    const mpmc::flow::NaturalVariableLayoutDescriptor& layout,
+    std::span<const double> q) {
+    const std::vector<double> zero(q.size(), 0.0);
+    (void)conservation_anchor_feasible_damping(layout, q, zero);
+    std::vector<double> scale(q.size(), 1.0);
+    scale[0] = std::max(1.0e5, 0.1 * std::abs(q[0]));
+    scale[1] = std::max(10.0, 0.1 * std::abs(q[1]));
+    double dependent_saturation = 1.0;
+    for (std::size_t phase = 0U; phase < layout.phase_count(); ++phase) {
+        const auto slot = static_cast<mpmc::flow::PhaseSlot3>(phase);
+        if (const auto column = layout.independent_saturation_unknown_index(slot)) {
+            dependent_saturation -= q[*column];
+        }
+        double sum = 0.0;
+        for (std::size_t component = 0U; component < layout.component_count(); ++component) {
+            if (const auto column = layout.independent_composition_unknown_index(slot, component)) {
+                sum += q[*column];
+            }
+        }
+        const double dependent = 1.0 - sum;
+        for (std::size_t component = 0U; component < layout.component_count(); ++component) {
+            if (const auto column = layout.independent_composition_unknown_index(slot, component)) {
+                scale[*column] = std::min(q[*column], dependent);
+            }
+        }
+    }
+    for (std::size_t phase = 0U; phase < layout.phase_count(); ++phase) {
+        if (const auto column = layout.independent_saturation_unknown_index(
+                static_cast<mpmc::flow::PhaseSlot3>(phase))) {
+            scale[*column] = std::min(q[*column], dependent_saturation);
+        }
+    }
+    return scale;
+}
+
 template <typename Evaluate>
 inline void conservative_storage_anchor(
     const mpmc::flow::NaturalVariableLayoutDescriptor& layout,
@@ -771,21 +810,7 @@ inline void conservative_storage_anchor(
             return;
         }
 
-        std::vector<double> column_scale(
-            column_count,
-            1.0);
-        column_scale[0] =
-            std::max(
-                1.0e5,
-                0.1 *
-                    std::abs(
-                        (*q)[0]));
-        column_scale[1] =
-            std::max(
-                10.0,
-                0.1 *
-                    std::abs(
-                        (*q)[1]));
+        const auto column_scale = conservation_anchor_column_scale(layout, *q);
 
         std::vector<double> scaled_jacobian(
             jacobian.size(),
