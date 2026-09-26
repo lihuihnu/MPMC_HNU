@@ -4694,3 +4694,10 @@ and owned cells, the SW92 rebuild stage/cell, and original caught exception text
 Outer rebuild snapshot/construction exceptions retain their message as well.
 These failure-only stderr messages preserve existing error codes, numerical
 criteria and solver control flow; they do not turn a failed restart into success.
+
+A failed conservation-anchor line search also reports all twelve backtracks:
+iteration, damping, rejection reason, base/trial scaled residual norms and trial
+pressure/temperature. Unavailable trial norms are NaN. The failing iteration's
+scaled component/energy residuals and current coordinates/search direction are
+printed once. Records use fixed-size storage and are emitted only on failure;
+backtracking, acceptance thresholds and evaluator call counts are unchanged.

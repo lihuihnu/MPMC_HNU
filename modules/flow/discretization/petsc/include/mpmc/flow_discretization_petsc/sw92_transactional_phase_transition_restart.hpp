@@ -581,17 +581,20 @@ inline void conservative_storage_anchor(
     const std::size_t column_count =
         q->size();
 
+    const char* evaluation_diagnostic = "not-evaluated";
     auto residual_and_jacobian =
         [&](std::span<const double> state,
             std::vector<double>* residual,
             std::vector<double>* jacobian,
             double* norm)
             -> bool {
+        evaluation_diagnostic = "evaluator-no-value";
         const auto current =
             evaluate(state);
         if (!current.has_value()) {
             return false;
         }
+        evaluation_diagnostic = "storage-shape-mismatch";
         const auto storage =
             conservation_storage_linearization(
                 *current,
@@ -634,6 +637,7 @@ inline void conservative_storage_anchor(
                          component]) /
                 scale;
             if (!std::isfinite(value)) {
+                evaluation_diagnostic = "non-finite-component-residual";
                 return false;
             }
             (*residual)[component] =
@@ -668,6 +672,7 @@ inline void conservative_storage_anchor(
             energy_scale;
         if (!std::isfinite(
                 energy_residual)) {
+            evaluation_diagnostic = "non-finite-energy-residual";
             return false;
         }
         (*residual)[n] =
@@ -690,6 +695,8 @@ inline void conservative_storage_anchor(
         *norm =
             std::sqrt(
                 sum_square);
+        evaluation_diagnostic = std::isfinite(*norm)
+            ? "residual-not-decreased" : "non-finite-residual-norm";
         return std::isfinite(*norm);
     };
 
@@ -853,6 +860,14 @@ inline void conservative_storage_anchor(
             }
         }
 
+        struct BacktrackDiagnostic {
+            const char* reason = "not-evaluated";
+            double damping = 0.0;
+            double norm = std::numeric_limits<double>::quiet_NaN();
+            double pressure = 0.0;
+            double temperature = 0.0;
+        };
+        std::array<BacktrackDiagnostic, maximum_backtracks> diagnostics{};
         bool accepted = false;
         double damping = 1.0;
         for (std::size_t backtrack = 0U;
@@ -866,15 +881,20 @@ inline void conservative_storage_anchor(
                     damping *
                     step[column];
             }
+            auto& diagnostic = diagnostics[backtrack];
+            diagnostic.damping = damping;
+            diagnostic.pressure = trial[0];
+            diagnostic.temperature = trial[1];
             if (!(trial[0] > 0.0) ||
                 !(trial[1] > 0.0)) {
+                diagnostic.reason = "nonpositive-or-NaN-pressure-temperature";
                 damping *= 0.5;
                 continue;
             }
 
             std::vector<double> trial_residual;
             std::vector<double> trial_jacobian;
-            double trial_norm = 0.0;
+            double trial_norm = std::numeric_limits<double>::quiet_NaN();
             if (residual_and_jacobian(
                     trial,
                     &trial_residual,
@@ -886,9 +906,31 @@ inline void conservative_storage_anchor(
                 accepted = true;
                 break;
             }
+            diagnostic.reason = evaluation_diagnostic;
+            diagnostic.norm = trial_norm;
             damping *= 0.5;
         }
         if (!accepted) {
+            for (std::size_t backtrack = 0U;
+                 backtrack < maximum_backtracks; ++backtrack) {
+                const auto& diagnostic = diagnostics[backtrack];
+                std::fprintf(stderr,
+                    "[SW92 anchor backtrack] iteration=%zu backtrack=%zu reason=%s "
+                    "damping=%.17g base_norm=%.17g trial_norm=%.17g "
+                    "pressure_pa=%.17g temperature_k=%.17g\n",
+                    iteration, backtrack, diagnostic.reason, diagnostic.damping,
+                    norm, diagnostic.norm, diagnostic.pressure, diagnostic.temperature);
+            }
+            for (std::size_t row = 0U; row < row_count; ++row) {
+                std::fprintf(stderr,
+                    "[SW92 anchor residual] row=%zu kind=%s scaled_value=%.17g\n",
+                    row, row < n ? "component" : "energy", residual[row]);
+            }
+            for (std::size_t column = 0U; column < column_count; ++column) {
+                std::fprintf(stderr,
+                    "[SW92 anchor direction] column=%zu q=%.17g step=%.17g\n",
+                    column, (*q)[column], step[column]);
+            }
             throw std::range_error(
                 "SW92 transactional conservation anchor line search failed");
         }
