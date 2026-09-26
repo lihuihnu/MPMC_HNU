@@ -2459,6 +2459,75 @@ solve_variable_cardinality_natural_variable_snes_3d(
     }
     if (static_cast<int>(reason) <= 0) {
         if (failure_diagnostics != nullptr) {
+            // Diagnostic-only replay of the actual frozen linear problem. Never
+            // replace the failed Newton correction or alter the SNES outcome.
+            Mat frozen_matrix = nullptr;
+            Vec frozen_rhs = nullptr;
+            Vec failed_solution = nullptr;
+            PetscErrorCode replay_error = KSPGetOperators(ksp, &frozen_matrix, nullptr);
+            if (replay_error == PETSC_SUCCESS) replay_error = KSPGetRhs(ksp, &frozen_rhs);
+            if (replay_error == PETSC_SUCCESS) replay_error = KSPGetSolution(ksp, &failed_solution);
+            const auto print_linear_diagnostic = [&](KSP solver, const char* label) {
+                Vec x = nullptr;
+                Vec residual = nullptr;
+                PetscInt iterations = -1;
+                PetscReal rhs_norm = 0.0;
+                PetscReal true_norm = std::numeric_limits<PetscReal>::quiet_NaN();
+                KSPConvergedReason linear_reason = KSP_CONVERGED_ITERATING;
+                PetscErrorCode diagnostic_error = KSPGetSolution(solver, &x);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = KSPGetIterationNumber(solver, &iterations);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = KSPGetConvergedReason(solver, &linear_reason);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecNorm(frozen_rhs, NORM_2, &rhs_norm);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecDuplicate(frozen_rhs, &residual);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = MatMult(frozen_matrix, x, residual);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecAXPY(residual, -1.0, frozen_rhs);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecNorm(residual, NORM_2, &true_norm);
+                (void)PetscPrintf(comm,
+                    "[frozen linear diagnostic] path=%s error=%d reason=%d iterations=%d "
+                    "rhs_l2=%.17g true_residual_l2=%.17g relative_true_residual=%.17g\n",
+                    label, static_cast<int>(diagnostic_error), static_cast<int>(linear_reason),
+                    static_cast<int>(iterations), static_cast<double>(rhs_norm),
+                    static_cast<double>(true_norm), static_cast<double>(
+                        rhs_norm > 0.0 ? true_norm / rhs_norm : true_norm));
+                (void)KSPView(solver, PETSC_VIEWER_STDOUT_(comm));
+                if (residual != nullptr) (void)VecDestroy(&residual);
+            };
+            if (replay_error == PETSC_SUCCESS && frozen_matrix != nullptr &&
+                frozen_rhs != nullptr && failed_solution != nullptr) {
+                print_linear_diagnostic(ksp, "actual-gmres-asm");
+                PetscMPIInt comm_size = 0;
+                if (MPI_Comm_size(comm, &comm_size) == MPI_SUCCESS && comm_size == 1) {
+                    KSP direct = nullptr;
+                    Vec direct_solution = nullptr;
+                    PC direct_pc = nullptr;
+                    // Return diagnostic LU errors instead of aborting the original failure report.
+                    replay_error = PetscPushErrorHandler(PetscReturnErrorHandler, nullptr);
+                    const bool handler_installed = replay_error == PETSC_SUCCESS;
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPCreate(comm, &direct);
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPSetOperators(direct, frozen_matrix, frozen_matrix);
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPSetType(direct, KSPPREONLY);
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPGetPC(direct, &direct_pc);
+                    if (replay_error == PETSC_SUCCESS) replay_error = PCSetType(direct_pc, PCLU);
+                    if (replay_error == PETSC_SUCCESS) replay_error = PCFactorReorderForNonzeroDiagonal(direct_pc, 1.0e-10);
+                    if (replay_error == PETSC_SUCCESS) replay_error = PCFactorSetShiftType(direct_pc, MAT_SHIFT_NONE);
+                    if (replay_error == PETSC_SUCCESS) replay_error = VecDuplicate(failed_solution, &direct_solution);
+                    if (replay_error == PETSC_SUCCESS) replay_error = VecSet(direct_solution, 0.0);
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPSolve(direct, frozen_rhs, direct_solution);
+                    (void)PetscPrintf(comm, "[frozen linear diagnostic] path=direct-lu solve_error=%d\n",
+                        static_cast<int>(replay_error));
+                    if (replay_error == PETSC_SUCCESS) {
+                        print_linear_diagnostic(direct, "direct-lu-no-shift");
+                    } else if (direct != nullptr) {
+                        (void)KSPView(direct, PETSC_VIEWER_STDOUT_(comm));
+                    }
+                    if (direct != nullptr) (void)KSPDestroy(&direct);
+                    if (direct_solution != nullptr) (void)VecDestroy(&direct_solution);
+                    if (handler_installed) (void)PetscPopErrorHandler();
+                }
+            } else {
+                (void)PetscPrintf(comm, "[frozen linear diagnostic] unavailable error=%d\n",
+                    static_cast<int>(replay_error));
+            }
             KSPConvergedReason ksp_reason{
                 KSP_CONVERGED_ITERATING};
             PCFailedReason pc_reason{};

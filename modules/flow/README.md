@@ -4725,3 +4725,15 @@ includes an analytic linear storage row where unit scaling stalls on a trace
 coordinate but the new metric yields a full feasible, conservative step, plus
 1P/2P/3P reconstructed-boundary checks. This is software validation, not new
 physical data or a guarantee of Sample-6 convergence.
+
+When variable-cardinality SNES fails and the caller requests failure diagnostics,
+the actual KSP configuration, iteration count and explicit `||A x - b||_2`
+(relative to `||b||_2`) are reported from its frozen operator/RHS. These are the
+row-scaled linear equations when row equilibration is enabled, not a new EOS
+evaluation. Serial diagnostics additionally replay that exact operator/RHS with
+PREONLY + LU, nonzero-diagonal reorder and no factor shift, using a separate
+solution vector. KSPView records the actual nested configuration. This replay
+is diagnostic only: it never replaces the Newton step or changes the original
+failure result. Distributed failures report the actual KSP but do not launch
+a serial LU comparison. The existing Sample-6 preflight in the PETSc/MPI Gate
+requests these diagnostics; no new workflow or solver acceptance is added.
