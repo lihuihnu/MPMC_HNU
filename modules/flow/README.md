@@ -4622,3 +4622,118 @@ The regression freezes two boundaries:
 
 This slice does not rebuild/destroy an SNES system, restart a timestep, couple a
 well, infer physical phase identities or add transport data.
+
+
+## 52. SW92 transactional same-dt phase-transition restart
+
+The authoritative SW92 target sidecar can now drive the existing model-neutral
+post-SNES transition controller through a real transactional rebuild/re-solve
+cycle.
+
+`sw92_transactional_phase_transition_restart.hpp` adds a rebuild factory that
+consumes the scanner generation's sidecars and the generic accepted transition
+batch.  For each changed cell it:
+
+- validates source/target cardinality and stable cell identity;
+- obtains the target active-phase identity map from an explicit caller resolver
+  (family/root/slot are **not** promoted to physical phase identity);
+- reuses `make_accepted_phase_transition_rebuild_cell_3d` so target q,
+  component material balance and frozen component/energy history use the same
+  generic contract as existing phase-transition rebuilds;
+- constructs a new SW92 selected-phase property closure directly from the
+  authoritative target molality/family/root selections;
+- installs the matching 1P/2P/3P production evaluator in a cell-scoped
+  dispatcher; and
+- calls the normal `rebuild_phase_transition_natural_variable_system_3d` with
+  the **same** `time_step_seconds`.
+
+The generic controller already destroys the converged source candidate after a
+successful rebuild and immediately solves the rebuilt system in the same
+physical timestep.  No accepted-history rebase occurs between generations.
+
+The first production closure regression uses the sourced zero-salinity CO2/H2O
+provider.  A deliberately frozen 1P NA cell at 3 MPa / 340 K /
+z=[0.70,0.30] has zero backward-Euler residual on its own accepted baseline.
+The authoritative scanner resolves the same inventory to W+H 2P; the source
+candidate is discarded, the cell is rebuilt with authoritative AQ/NA
+family/root selections, and the 2P system is solved again at the same 1 s dt.
+The controller must report exactly one transition restart followed by a stable
+generation, while final component inventory and total internal-energy history
+still match the original pre-restart baseline.
+
+### Current capability boundary
+
+SW92 still has no validated family/root-aware absent-phase thermodynamic
+extension provider.  Therefore this v1 transactional rebuild explicitly
+requires **no authoritative faces and no local ghost overlap**.  It returns a
+capability error rather than pretending cross-cardinality face transport is
+available.  The rebuild factory accepts authoritative 1P/2P/3P targets.  In addition to
+the sourced CO2/H2O 1P<->2P production-property regression, the PETSc test now
+runs real Sample-6 SW92 thermodynamics through transactional 2P->3P and 3P->2P
+same-dt rebuild/re-solve.  Sample-6 still has no source-complete eight-component
+flow transport/caloric dataset in this repository, so those two algorithmic
+regressions add only explicitly `synthetic_test` molar masses and a
+manufactured topology-independent linear-u(T)/constant-viscosity provider.
+Their rebuild contexts also explicitly opt into a conservation-storage anchor
+that projects target q onto the frozen component/energy storage manifold before
+SNES, and reuse the already-audited Sample-6 transition material-balance
+tolerance of `2e-8` from the authoritative scanner regression.  Both are
+explicit context settings: the production defaults remain no storage anchor and
+the generic `1e-10` projection tolerance.  The sourced CO2/H2O
+production-property regressions therefore pass the authoritative target
+directly to SNES under the stricter default contract.  The manufactured values and opt-in projection never
+enter production data or scientific claims; the phase equilibria,
+AQ/NA families, selected roots, compositions and topology remain the real
+SW92 Sample-6 solutions.
+
+This slice does not commit physical time, does not rebase accepted history,
+does not couple wells, and does not add brine transport.
+
+Transactional restart failure diagnostics report the controller generation/stage
+and owned cells, the SW92 rebuild stage/cell, and original caught exception text.
+Outer rebuild snapshot/construction exceptions retain their message as well.
+These failure-only stderr messages preserve existing error codes, numerical
+criteria and solver control flow; they do not turn a failed restart into success.
+
+A failed conservation-anchor line search also reports all twelve backtracks:
+iteration, damping, rejection reason, base/trial scaled residual norms and trial
+pressure/temperature. Unavailable trial norms are NaN. The failing iteration's
+scaled component/energy residuals and current coordinates/search direction are
+printed once. Records use fixed-size storage and are emitted only on failure;
+backtracking, acceptance thresholds and evaluator call counts are unchanged.
+
+Conservation-anchor backtracking starts from a layout-aware fraction-to-boundary
+step: at most 99% of the first zero crossing of pressure, temperature, each
+independent composition/saturation and each reconstructed composition/saturation.
+The dependent composition follows the explicit pivot for each phase. No state
+clipping or positive floor is introduced. The original 12 backtracks, strict
+positive evaluator domain, residual-decrease test and conservation tolerances
+remain unchanged. This protects feasibility; it does not guarantee convergence
+for a trace-component-limited direction. Analytic 1P/2P/3P boundary cases run in
+the existing transactional restart regression, owned by
+`mpmc_flow_discretization_petsc_tests` and its distributed conservation CTest.
+
+The storage-correction direction now uses a simplex-interior diagonal column
+metric: each independent composition/saturation scale is the smaller of its
+current value and the corresponding reconstructed dependent value. Pressure and
+temperature scaling is unchanged. For scaled Jacobian `A = J D`, the existing
+regularized dual solve and `delta_q = D A^T dual` remain in use. Thus large
+relative trace-component changes are penalized before the feasibility line
+search. No component is removed or floored; residual scaling, conservation
+tolerances and strict-positive acceptance are unchanged. The owning regression
+includes an analytic linear storage row where unit scaling stalls on a trace
+coordinate but the new metric yields a full feasible, conservative step, plus
+1P/2P/3P reconstructed-boundary checks. This is software validation, not new
+physical data or a guarantee of Sample-6 convergence.
+
+When variable-cardinality SNES fails and the caller requests failure diagnostics,
+the actual KSP configuration, iteration count and explicit `||A x - b||_2`
+(relative to `||b||_2`) are reported from its frozen operator/RHS. These are the
+row-scaled linear equations when row equilibration is enabled, not a new EOS
+evaluation. Serial diagnostics additionally replay that exact operator/RHS with
+PREONLY + LU, nonzero-diagonal reorder and no factor shift, using a separate
+solution vector. KSPView records the actual nested configuration. This replay
+is diagnostic only: it never replaces the Newton step or changes the original
+failure result. Distributed failures report the actual KSP but do not launch
+a serial LU comparison. The existing Sample-6 preflight in the PETSc/MPI Gate
+requests these diagnostics; no new workflow or solver acceptance is added.
