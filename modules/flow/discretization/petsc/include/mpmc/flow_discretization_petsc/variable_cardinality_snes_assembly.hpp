@@ -2469,7 +2469,7 @@ solve_variable_cardinality_natural_variable_snes_3d(
             if (replay_error == PETSC_SUCCESS) replay_error = KSPGetSolution(ksp, &failed_solution);
             const auto print_linear_diagnostic = [&](KSP solver, const char* label) {
                 Vec x = nullptr;
-                Vec residual = nullptr;
+                Vec linear_residual = nullptr;
                 PetscInt iterations = -1;
                 PetscReal rhs_norm = 0.0;
                 PetscReal true_norm = std::numeric_limits<PetscReal>::quiet_NaN();
@@ -2478,10 +2478,10 @@ solve_variable_cardinality_natural_variable_snes_3d(
                 if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = KSPGetIterationNumber(solver, &iterations);
                 if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = KSPGetConvergedReason(solver, &linear_reason);
                 if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecNorm(frozen_rhs, NORM_2, &rhs_norm);
-                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecDuplicate(frozen_rhs, &residual);
-                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = MatMult(frozen_matrix, x, residual);
-                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecAXPY(residual, -1.0, frozen_rhs);
-                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecNorm(residual, NORM_2, &true_norm);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecDuplicate(frozen_rhs, &linear_residual);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = MatMult(frozen_matrix, x, linear_residual);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecAXPY(linear_residual, -1.0, frozen_rhs);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecNorm(linear_residual, NORM_2, &true_norm);
                 (void)PetscPrintf(comm,
                     "[frozen linear diagnostic] path=%s error=%d reason=%d iterations=%d "
                     "rhs_l2=%.17g true_residual_l2=%.17g relative_true_residual=%.17g\n",
@@ -2490,7 +2490,7 @@ solve_variable_cardinality_natural_variable_snes_3d(
                     static_cast<double>(true_norm), static_cast<double>(
                         rhs_norm > 0.0 ? true_norm / rhs_norm : true_norm));
                 (void)KSPView(solver, PETSC_VIEWER_STDOUT_(comm));
-                if (residual != nullptr) (void)VecDestroy(&residual);
+                if (linear_residual != nullptr) (void)VecDestroy(&linear_residual);
             };
             if (replay_error == PETSC_SUCCESS && frozen_matrix != nullptr &&
                 frozen_rhs != nullptr && failed_solution != nullptr) {
