@@ -519,23 +519,12 @@ void run_fixed_total_molar_rate_control_case(
                 3U,
         "rate-control reservoir system changed frozen phase cardinality");
 
-    const auto local_previous_total =
-        owned_conserved_totals(
+    auto global_previous_total =
+        global_conserved_totals(
             *reservoir_system,
             reservoir_system
-                ->initial_state());
-    std::array<double, 4>
-        global_previous_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_previous_total.data(),
-            global_previous_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce rate-control previous conserved totals");
+                ->initial_state(),
+            "failed to reduce rate-control previous conserved totals");
 
     std::unique_ptr<
         wdp::
@@ -820,22 +809,11 @@ void run_fixed_total_molar_rate_control_case(
             reservoir_solution != nullptr,
         "failed to extract reservoir state from rate-controlled solution");
 
-    const auto local_final_total =
-        owned_conserved_totals(
+    auto global_final_total =
+        global_conserved_totals(
             *reservoir_system,
-            reservoir_solution);
-    std::array<double, 4>
-        global_final_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_final_total.data(),
-            global_final_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce rate-control final conserved totals");
+            reservoir_solution,
+            "failed to reduce rate-control final conserved totals");
 
     std::vector<std::optional<
         fdp::
@@ -1560,23 +1538,12 @@ void run_fixed_total_molar_rate_control_case(
             &switch_source_context,
             &provider);
 
-    const auto switch_local_previous_total =
-        owned_conserved_totals(
+    auto switch_global_previous_total =
+        global_conserved_totals(
             *switch_reservoir_system,
             switch_reservoir_system
-                ->initial_state());
-    std::array<double, 4>
-        switch_global_previous_total{};
-    require_collective(
-        MPI_Allreduce(
-            switch_local_previous_total.data(),
-            switch_global_previous_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce minimum-BHP switching previous conserved totals");
+                ->initial_state(),
+            "failed to reduce minimum-BHP switching previous conserved totals");
 
     fdp::AcceptedPhysicalTimeClock3D
         switch_clock{
@@ -1821,23 +1788,12 @@ void run_fixed_total_molar_rate_control_case(
                                 target_rate)),
         "minimum-BHP constrained solution still forced the infeasible fixed-rate target");
 
-    const auto switch_local_final_total =
-        owned_conserved_totals(
+    auto switch_global_final_total =
+        global_conserved_totals(
             *switch_reservoir_system,
             switch_reservoir_system
-                ->initial_state());
-    std::array<double, 4>
-        switch_global_final_total{};
-    require_collective(
-        MPI_Allreduce(
-            switch_local_final_total.data(),
-            switch_global_final_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce minimum-BHP switching final conserved totals");
+                ->initial_state(),
+            "failed to reduce minimum-BHP switching final conserved totals");
 
     for (std::size_t quantity = 0U;
          quantity < 4U;
@@ -1876,23 +1832,12 @@ void run_fixed_total_molar_rate_control_case(
     const double second_step_time_n =
         switch_clock
             .accepted_time_seconds();
-    const auto second_step_local_previous_total =
-        owned_conserved_totals(
+    auto second_step_global_previous_total =
+        global_conserved_totals(
             *switch_reservoir_system,
             switch_reservoir_system
-                ->initial_state());
-    std::array<double, 4>
-        second_step_global_previous_total{};
-    require_collective(
-        MPI_Allreduce(
-            second_step_local_previous_total.data(),
-            second_step_global_previous_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce persisted minimum-BHP second-step previous totals");
+                ->initial_state(),
+            "failed to reduce persisted minimum-BHP second-step previous totals");
 
     std::optional<
         wdp::
@@ -2080,23 +2025,12 @@ void run_fixed_total_molar_rate_control_case(
                 2U,
         "persisted minimum-BHP second step lost owner-only well aggregation");
 
-    const auto second_step_local_final_total =
-        owned_conserved_totals(
+    auto second_step_global_final_total =
+        global_conserved_totals(
             *switch_reservoir_system,
             switch_reservoir_system
-                ->initial_state());
-    std::array<double, 4>
-        second_step_global_final_total{};
-    require_collective(
-        MPI_Allreduce(
-            second_step_local_final_total.data(),
-            second_step_global_final_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce persisted minimum-BHP second-step final totals");
+                ->initial_state(),
+            "failed to reduce persisted minimum-BHP second-step final totals");
 
     for (std::size_t quantity = 0U;
          quantity < 4U;
@@ -2272,23 +2206,12 @@ void run_fixed_total_molar_rate_control_case(
         reactivation_pressure_margin_pa =
             1.0e-3;
 
-    const auto reactivation_local_previous_total =
-        owned_conserved_totals(
+    auto reactivation_global_previous_total =
+        global_conserved_totals(
             *reactivation_reservoir_system,
             reactivation_reservoir_system
-                ->initial_state());
-    std::array<double, 4>
-        reactivation_global_previous_total{};
-    require_collective(
-        MPI_Allreduce(
-            reactivation_local_previous_total.data(),
-            reactivation_global_previous_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce reactivation previous conserved totals");
+                ->initial_state(),
+            "failed to reduce reactivation previous conserved totals");
 
     auto reactivation_control_state =
         wdp::
@@ -2435,23 +2358,12 @@ void run_fixed_total_molar_rate_control_case(
         1.0e-8,
         1.0e-10);
 
-    const auto reactivation_local_final_total =
-        owned_conserved_totals(
+    auto reactivation_global_final_total =
+        global_conserved_totals(
             *reactivation_reservoir_system,
             reactivation_reservoir_system
-                ->initial_state());
-    std::array<double, 4>
-        reactivation_global_final_total{};
-    require_collective(
-        MPI_Allreduce(
-            reactivation_local_final_total.data(),
-            reactivation_global_final_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce reactivated rate-control final conserved totals");
+                ->initial_state(),
+            "failed to reduce reactivated rate-control final conserved totals");
     for (std::size_t quantity = 0U;
          quantity < 4U;
          ++quantity) {
@@ -3662,23 +3574,12 @@ void run_fixed_total_molar_rate_control_case(
                 transition_rate_control
                     .bottom_hole_pressure_pa));
 
-    const auto transition_rate_local_final =
-        owned_conserved_totals(
+    auto transition_rate_global_final =
+        global_conserved_totals(
             *transition_rate_system,
             transition_rate_system
-                ->initial_state());
-    std::array<double, 4>
-        transition_rate_global_final{};
-    require_collective(
-        MPI_Allreduce(
-            transition_rate_local_final.data(),
-            transition_rate_global_final.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce transitioned rate-control final totals");
+                ->initial_state(),
+            "failed to reduce transitioned rate-control final totals");
     for (std::size_t quantity = 0U;
          quantity < 4U;
          ++quantity) {
@@ -3935,23 +3836,12 @@ void run_fixed_total_molar_rate_control_case(
             "restarted arbitration produced an invalid final minimum-BHP control state");
     }
 
-    const auto transition_switch_local_final =
-        owned_conserved_totals(
+    auto transition_switch_global_final =
+        global_conserved_totals(
             *transition_switch_system,
             transition_switch_system
-                ->initial_state());
-    std::array<double, 4>
-        transition_switch_global_final{};
-    require_collective(
-        MPI_Allreduce(
-            transition_switch_local_final.data(),
-            transition_switch_global_final.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce control/phase transactional final totals");
+                ->initial_state(),
+            "failed to reduce control/phase transactional final totals");
     for (std::size_t quantity = 0U;
          quantity < 4U;
          ++quantity) {
@@ -4144,23 +4034,12 @@ void run_fixed_total_molar_rate_control_case(
             2U,
         "minimum-BHP transition lost owner-only two-connection aggregation");
 
-    const auto transition_bhp_local_final =
-        owned_conserved_totals(
+    auto transition_bhp_global_final =
+        global_conserved_totals(
             *transition_bhp_system,
             transition_bhp_system
-                ->initial_state());
-    std::array<double, 4>
-        transition_bhp_global_final{};
-    require_collective(
-        MPI_Allreduce(
-            transition_bhp_local_final.data(),
-            transition_bhp_global_final.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce transitioned minimum-BHP final totals");
+                ->initial_state(),
+            "failed to reduce transitioned minimum-BHP final totals");
     for (std::size_t quantity = 0U;
          quantity < 4U;
          ++quantity) {

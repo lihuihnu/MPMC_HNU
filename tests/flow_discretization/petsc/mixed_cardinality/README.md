@@ -30,3 +30,11 @@ are retained. Changes anywhere under this directory route to the owning PETSc Ga
 Validation of the initial split expanded the includes and compared the result
 byte-for-byte with the previous monolithic source. Runtime validation uses the same
 Gate; no additional test executable or workflow is introduced.
+
+The BHP and rate-control cases share `global_conserved_totals(system, state,
+error_message)` from `well_fixture.inc`. It evaluates owner-only inventories using
+`owned_conserved_totals`, sums the same four doubles on `PETSC_COMM_WORLD`, then
+performs the existing collective error check. Entries are the three component
+inventories in mol and total internal energy in J. Each caller retains its state
+expression, diagnostic and position in the collective sequence. Scenario-specific
+conservation formulas, tolerances and well-rate probes stay in the cases.

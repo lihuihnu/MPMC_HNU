@@ -576,6 +576,28 @@ owned_conserved_totals(
     return totals;
 }
 
+// Three component inventories [mol], followed by total internal energy [J].
+// Preserve the owner-only evaluation and WORLD collective order at each call site.
+// Keep the caller's diagnostic; require_collective retains its MPI_MIN error check.
+std::array<double, 4>
+global_conserved_totals(
+    const fdp::PhaseTransitionRebuiltNaturalVariableSystem3D& system,
+    Vec state,
+    std::string_view error_message) {
+    const auto local_totals = owned_conserved_totals(system, state);
+    std::array<double, 4> global_totals{};
+    require_collective(
+        MPI_Allreduce(
+            local_totals.data(),
+            global_totals.data(),
+            4,
+            MPI_DOUBLE,
+            MPI_SUM,
+            PETSC_COMM_WORLD) == MPI_SUCCESS,
+        error_message);
+    return global_totals;
+}
+
 std::array<double, 4>
 global_fixed_bhp_well_production_rate(
     const fdp::

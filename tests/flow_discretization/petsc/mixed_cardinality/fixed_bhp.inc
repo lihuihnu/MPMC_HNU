@@ -65,23 +65,12 @@ void run_rebound_fixed_bhp_physical_timestep(
             rebased_history_matches,
         "rebound fixed-BHP accepted history did not match stable state");
 
-    const auto local_previous_total =
-        owned_conserved_totals(
+    auto global_previous_total =
+        global_conserved_totals(
             **system,
             (*system)
-                ->initial_state());
-    std::array<double, 4>
-        global_previous_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_previous_total.data(),
-            global_previous_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce rebound fixed-BHP previous conserved totals");
+                ->initial_state(),
+            "failed to reduce rebound fixed-BHP previous conserved totals");
 
     Vec previous_state = nullptr;
     require_collective(
@@ -232,23 +221,12 @@ void run_rebound_fixed_bhp_physical_timestep(
                 1.0e-10,
         "rebound fixed-BHP physical timestep did not change reservoir state");
 
-    const auto local_final_total =
-        owned_conserved_totals(
+    auto global_final_total =
+        global_conserved_totals(
             **system,
             (*system)
-                ->initial_state());
-    std::array<double, 4>
-        global_final_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_final_total.data(),
-            global_final_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce rebound fixed-BHP final conserved totals");
+                ->initial_state(),
+            "failed to reduce rebound fixed-BHP final conserved totals");
 
     std::vector<std::optional<
         fdp::
@@ -457,23 +435,12 @@ void run_rebound_multi_connection_fixed_bhp_physical_timestep(
             rebased_history_matches,
         "rebound multi-connection fixed-BHP history did not match stable state");
 
-    const auto local_previous_total =
-        owned_conserved_totals(
+    auto global_previous_total =
+        global_conserved_totals(
             **system,
             (*system)
-                ->initial_state());
-    std::array<double, 4>
-        global_previous_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_previous_total.data(),
-            global_previous_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce rebound multi-connection previous conserved totals");
+                ->initial_state(),
+            "failed to reduce rebound multi-connection previous conserved totals");
 
     Vec previous_state = nullptr;
     require_collective(
@@ -631,23 +598,12 @@ void run_rebound_multi_connection_fixed_bhp_physical_timestep(
                 1.0e-10,
         "rebound multi-connection accepted timestep did not change reservoir state");
 
-    const auto local_final_total =
-        owned_conserved_totals(
+    auto global_final_total =
+        global_conserved_totals(
             **system,
             (*system)
-                ->initial_state());
-    std::array<double, 4>
-        global_final_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_final_total.data(),
-            global_final_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce rebound multi-connection final conserved totals");
+                ->initial_state(),
+            "failed to reduce rebound multi-connection final conserved totals");
 
     std::vector<std::optional<
         fdp::
@@ -1057,23 +1013,12 @@ void run_frozen_fixed_bhp_timestep_case(
             ->numbering()
             .local_rank();
 
-    const auto local_previous_total =
-        owned_conserved_totals(
+    auto global_previous_total =
+        global_conserved_totals(
             *timestep_system,
             timestep_system
-                ->initial_state());
-    std::array<double, 4>
-        global_previous_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_previous_total.data(),
-            global_previous_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce variable-cardinality fixed-BHP previous conserved totals");
+                ->initial_state(),
+            "failed to reduce variable-cardinality fixed-BHP previous conserved totals");
 
     Vec previous_state = nullptr;
     require_collective(
@@ -1296,23 +1241,12 @@ void run_frozen_fixed_bhp_timestep_case(
                 1.0e-6,
         "accepted variable-cardinality fixed-BHP timestep failed independent residual reassembly");
 
-    const auto local_final_total =
-        owned_conserved_totals(
+    auto global_final_total =
+        global_conserved_totals(
             *verification_system,
             timestep_system
-                ->initial_state());
-    std::array<double, 4>
-        global_final_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_final_total.data(),
-            global_final_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce variable-cardinality fixed-BHP final conserved totals");
+                ->initial_state(),
+            "failed to reduce variable-cardinality fixed-BHP final conserved totals");
 
     std::vector<std::optional<
         fdp::
@@ -1719,22 +1653,11 @@ void run_multi_connection_fixed_bhp_timestep_case(
             record60.owner_rank.value() == 1U,
         "multi-connection fixed-BHP well changed reservoir global numbering or target ownership");
 
-    const auto local_previous_total =
-        owned_conserved_totals(
+    auto global_previous_total =
+        global_conserved_totals(
             *system,
-            system->initial_state());
-    std::array<double, 4>
-        global_previous_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_previous_total.data(),
-            global_previous_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce multi-connection fixed-BHP previous conserved totals");
+            system->initial_state(),
+            "failed to reduce multi-connection fixed-BHP previous conserved totals");
 
     Vec previous_state = nullptr;
     require_collective(
@@ -1853,22 +1776,11 @@ void run_multi_connection_fixed_bhp_timestep_case(
                 1.0e-10,
         "multi-connection fixed-BHP accepted timestep did not change reservoir state");
 
-    const auto local_final_total =
-        owned_conserved_totals(
+    auto global_final_total =
+        global_conserved_totals(
             *system,
-            system->initial_state());
-    std::array<double, 4>
-        global_final_total{};
-    require_collective(
-        MPI_Allreduce(
-            local_final_total.data(),
-            global_final_total.data(),
-            4,
-            MPI_DOUBLE,
-            MPI_SUM,
-            PETSC_COMM_WORLD) ==
-            MPI_SUCCESS,
-        "failed to reduce multi-connection fixed-BHP final conserved totals");
+            system->initial_state(),
+            "failed to reduce multi-connection fixed-BHP final conserved totals");
 
     std::vector<std::optional<
         fdp::
