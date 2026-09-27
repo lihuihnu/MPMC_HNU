@@ -22,7 +22,6 @@
 
 bool sw92_transactional_phase_transition_restart_header();
 
-void sw92_transactional_phase_transition_sample6_test();
 
 namespace {
 
@@ -1118,5 +1117,4 @@ void sw92_transactional_phase_transition_restart_test() {
     conservation_anchor_scaled_direction_test();
     sw92_same_dt_one_to_two_transaction();
     sw92_same_dt_two_to_one_transaction();
-    sw92_transactional_phase_transition_sample6_test();
 }

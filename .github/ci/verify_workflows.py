@@ -109,13 +109,15 @@ def main():
         for job in spec.get('central_hashes', {}):
             assert job in root['jobs'], ('mapped central job missing', job)
     assert auto == [router_path], ('multiple automatic workflow entries', auto)
-    # The diagnostic launcher runs the original two-rank CTest once and propagates
-    # the inferior exit status, including fatal signals, through batch GDB.
+    # Run the owning MPI CTest directly, clearing cached diagnostic launch flags.
     petsc_run = workflow_run_text('.github/workflows/flow_discretization_petsc.yml')
-    assert "-DMPIEXEC_PREFLAGS='gdb;--batch;--return-child-result;-ex;run;-ex;thread apply all bt;--args'" in petsc_run
-    assert "-DCMAKE_CXX_FLAGS_RELEASE='-O3 -DNDEBUG -g1'" in petsc_run
+    assert 'gdb' not in petsc_run
+    assert '-DMPIEXEC_PREFLAGS=' in petsc_run
+    assert '-U CMAKE_CXX_FLAGS_RELEASE' in petsc_run
     assert petsc_run.count('ctest --test-dir') == 1
     assert '--rerun-failed' not in petsc_run and '|| true' not in petsc_run
+    restart_test = Path('tests/flow_discretization/petsc/sw92_transactional_phase_transition_restart_test.cpp').read_text()
+    assert 'sw92_transactional_phase_transition_sample6_test(' not in restart_test, 'Sample-6 must execute only from main'
     # Private Linux runners are reserved for audited long-running gates and
     # explicitly authorized PETSc/MPI integration/solver gates.
     private_allowlist = {
