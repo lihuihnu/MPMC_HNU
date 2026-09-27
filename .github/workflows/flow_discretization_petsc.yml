@@ -35,7 +35,9 @@ jobs:
           cmake -S tests/flow_discretization/petsc \
             -B build/flow-discretization-petsc \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=g++
+            -DCMAKE_CXX_COMPILER=g++ \
+            -U CMAKE_CXX_FLAGS_RELEASE \
+            -DMPIEXEC_PREFLAGS=
 
       - name: Build flow-discretization PETSc tests
         run: |

@@ -513,12 +513,70 @@ scan_post_snes_sw92_profile_c_source_cell_3d(
                 density.molar_density_mol_per_m3);
         }
 
-        auto candidate =
-            mpmc::flow::
-                make_phase_set_transition_candidate_from_flash(
-                    source.source_phase_count,
-                    generic,
-                    densities);
+        std::optional<
+            mpmc::flow::PhaseSetTransitionCandidate>
+            candidate;
+        if (accepted->phases.size() <
+            source.source_phase_count) {
+            // This SW92-specific boundary has just completed a fresh
+            // boundary-aware Profile-C solve at the post-SNES p/T/feed and
+            // authoritatively published the lower-cardinality topology.
+            // That publication is the target-topology re-solve/review
+            // evidence. Keep this source-cardinality-specific fact out of
+            // the generic role-neutral backend, whose PtFlashRequest carries
+            // no source phase count.
+            mpmc::flow::PhaseSetTransitionCandidate lower;
+            lower.source_phase_count =
+                source.source_phase_count;
+            lower.target_phase_count =
+                accepted->phases.size();
+            lower.trigger =
+                mpmc::flow::PhaseSetTransitionTrigger::
+                    phase_disappearance;
+            lower.status =
+                mpmc::flow::
+                    PhaseSetTransitionCandidateStatus::
+                        target_resolved;
+            lower.pressure_pa =
+                authoritative.solution.pressure_pa;
+            lower.temperature_k =
+                authoritative.solution.temperature_k;
+            lower.component_ids =
+                authoritative.component_ids;
+            lower.evidence_profile =
+                std::string{
+                    mpmc::flash::
+                        sw92_profile_c_transition_evidence_profile};
+            lower.diagnostic =
+                std::string{
+                    "fresh authoritative lower-cardinality SW92 Profile-C target: "} +
+                authoritative.solution.diagnostic;
+            lower.target_phases.reserve(
+                accepted->phases.size());
+            for (std::size_t phase = 0U;
+                 phase < accepted->phases.size();
+                 ++phase) {
+                const auto& published =
+                    accepted->phases[phase];
+                lower.target_phases.push_back(
+                    {
+                        published.mole_phase_fraction,
+                        published.composition,
+                        densities[phase],
+                        std::optional<std::size_t>{
+                            published.activity.branch},
+                        published.activity.smooth});
+            }
+            candidate.emplace(
+                std::move(lower));
+        } else {
+            candidate =
+                mpmc::flow::
+                    make_phase_set_transition_candidate_from_flash(
+                        source.source_phase_count,
+                        generic,
+                        densities);
+        }
         if (!candidate.has_value()) {
             *scan_status =
                 PostSnesPhaseTransitionScanStatus3D::

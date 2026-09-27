@@ -2046,8 +2046,8 @@ make_variable_cardinality_initial_row_equilibration_3d(
 /// An optional frozen positive left row-scaling vector D applies the same
 /// audited contract as the fixed-cardinality solver: PETSc solves D*R=0 with
 /// D*J while the physical evaluator continues to publish native R and J.
-/// With D enabled, ASM sub-block LU uses the same weak-diagonal reordering and
-/// MAT_SHIFT_NONZERO stabilization as the fixed-cardinality correctness path.
+/// ASM sub-block LU uses MUMPS ordering with no factor shift. Do not install
+/// PETSc nonzero-diagonal reordering on this external-factorization path.
 /// Optional failure diagnostics preserve SNES/KSP/PC reasons without changing
 /// non-convergence semantics.
 inline PetscErrorCode
@@ -2300,12 +2300,12 @@ solve_variable_cardinality_natural_variable_snes_3d(
         "mpmc_variable_cardinality_";
     constexpr const char* sub_pc_option =
         "-mpmc_variable_cardinality_sub_pc_type";
-    constexpr const char* sub_pc_reorder_option =
-        "-mpmc_variable_cardinality_sub_pc_factor_nonzeros_along_diagonal";
     constexpr const char* sub_pc_shift_type_option =
         "-mpmc_variable_cardinality_sub_pc_factor_shift_type";
+    constexpr const char* sub_pc_solver_type_option =
+        "-mpmc_variable_cardinality_sub_pc_factor_mat_solver_type";
+    bool sub_pc_solver_type_installed = false;
     bool sub_pc_option_installed = false;
-    bool sub_pc_reorder_installed = false;
     bool sub_pc_shift_type_installed = false;
 
     if (error == PETSC_SUCCESS) {
@@ -2324,25 +2324,20 @@ solve_variable_cardinality_natural_variable_snes_3d(
             error == PETSC_SUCCESS;
     }
     if (error == PETSC_SUCCESS) {
-        const char* reorder_tolerance =
-            row_scaling != nullptr
-                ? "1.0e-10"
-                : "0.0";
         error =
             PetscOptionsSetValue(
                 nullptr,
-                sub_pc_reorder_option,
-                reorder_tolerance);
-        sub_pc_reorder_installed =
+                sub_pc_solver_type_option,
+                "mumps");
+        sub_pc_solver_type_installed =
             error == PETSC_SUCCESS;
     }
-    if (error == PETSC_SUCCESS &&
-        row_scaling != nullptr) {
+    if (error == PETSC_SUCCESS) {
         error =
             PetscOptionsSetValue(
                 nullptr,
                 sub_pc_shift_type_option,
-                "nonzero");
+                "none");
         sub_pc_shift_type_installed =
             error == PETSC_SUCCESS;
     }
@@ -2390,12 +2385,12 @@ solve_variable_cardinality_natural_variable_snes_3d(
                 sub_pc_shift_type_installed =
                     false;
             }
-            if (sub_pc_reorder_installed) {
+            if (sub_pc_solver_type_installed) {
                 const PetscErrorCode current =
                     PetscOptionsClearValue(
                         nullptr,
-                        sub_pc_reorder_option);
-                sub_pc_reorder_installed =
+                        sub_pc_solver_type_option);
+                sub_pc_solver_type_installed =
                     false;
                 if (first == PETSC_SUCCESS &&
                     current != PETSC_SUCCESS) {
@@ -2459,6 +2454,75 @@ solve_variable_cardinality_natural_variable_snes_3d(
     }
     if (static_cast<int>(reason) <= 0) {
         if (failure_diagnostics != nullptr) {
+            // Diagnostic-only replay of the actual frozen linear problem. Never
+            // replace the failed Newton correction or alter the SNES outcome.
+            Mat frozen_matrix = nullptr;
+            Vec frozen_rhs = nullptr;
+            Vec failed_solution = nullptr;
+            PetscErrorCode replay_error = KSPGetOperators(ksp, &frozen_matrix, nullptr);
+            if (replay_error == PETSC_SUCCESS) replay_error = KSPGetRhs(ksp, &frozen_rhs);
+            if (replay_error == PETSC_SUCCESS) replay_error = KSPGetSolution(ksp, &failed_solution);
+            const auto print_linear_diagnostic = [&](KSP solver, const char* label) {
+                Vec x = nullptr;
+                Vec linear_residual = nullptr;
+                PetscInt iterations = -1;
+                PetscReal rhs_norm = 0.0;
+                PetscReal true_norm = std::numeric_limits<PetscReal>::quiet_NaN();
+                KSPConvergedReason linear_reason = KSP_CONVERGED_ITERATING;
+                PetscErrorCode diagnostic_error = KSPGetSolution(solver, &x);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = KSPGetIterationNumber(solver, &iterations);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = KSPGetConvergedReason(solver, &linear_reason);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecNorm(frozen_rhs, NORM_2, &rhs_norm);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecDuplicate(frozen_rhs, &linear_residual);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = MatMult(frozen_matrix, x, linear_residual);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecAXPY(linear_residual, -1.0, frozen_rhs);
+                if (diagnostic_error == PETSC_SUCCESS) diagnostic_error = VecNorm(linear_residual, NORM_2, &true_norm);
+                (void)PetscPrintf(comm,
+                    "[frozen linear diagnostic] path=%s error=%d reason=%d iterations=%d "
+                    "rhs_l2=%.17g true_residual_l2=%.17g relative_true_residual=%.17g\n",
+                    label, static_cast<int>(diagnostic_error), static_cast<int>(linear_reason),
+                    static_cast<int>(iterations), static_cast<double>(rhs_norm),
+                    static_cast<double>(true_norm), static_cast<double>(
+                        rhs_norm > 0.0 ? true_norm / rhs_norm : true_norm));
+                (void)KSPView(solver, PETSC_VIEWER_STDOUT_(comm));
+                if (linear_residual != nullptr) (void)VecDestroy(&linear_residual);
+            };
+            if (replay_error == PETSC_SUCCESS && frozen_matrix != nullptr &&
+                frozen_rhs != nullptr && failed_solution != nullptr) {
+                print_linear_diagnostic(ksp, "actual-gmres-asm");
+                PetscMPIInt comm_size = 0;
+                if (MPI_Comm_size(comm, &comm_size) == MPI_SUCCESS && comm_size == 1) {
+                    KSP direct = nullptr;
+                    Vec direct_solution = nullptr;
+                    PC direct_pc = nullptr;
+                    // Return diagnostic LU errors instead of aborting the original failure report.
+                    replay_error = PetscPushErrorHandler(PetscReturnErrorHandler, nullptr);
+                    const bool handler_installed = replay_error == PETSC_SUCCESS;
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPCreate(comm, &direct);
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPSetOperators(direct, frozen_matrix, frozen_matrix);
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPSetType(direct, KSPPREONLY);
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPGetPC(direct, &direct_pc);
+                    if (replay_error == PETSC_SUCCESS) replay_error = PCSetType(direct_pc, PCLU);
+                    if (replay_error == PETSC_SUCCESS) replay_error = PCFactorReorderForNonzeroDiagonal(direct_pc, 1.0e-10);
+                    if (replay_error == PETSC_SUCCESS) replay_error = PCFactorSetShiftType(direct_pc, MAT_SHIFT_NONE);
+                    if (replay_error == PETSC_SUCCESS) replay_error = VecDuplicate(failed_solution, &direct_solution);
+                    if (replay_error == PETSC_SUCCESS) replay_error = VecSet(direct_solution, 0.0);
+                    if (replay_error == PETSC_SUCCESS) replay_error = KSPSolve(direct, frozen_rhs, direct_solution);
+                    (void)PetscPrintf(comm, "[frozen linear diagnostic] path=direct-lu solve_error=%d\n",
+                        static_cast<int>(replay_error));
+                    if (replay_error == PETSC_SUCCESS) {
+                        print_linear_diagnostic(direct, "direct-lu-no-shift");
+                    } else if (direct != nullptr) {
+                        (void)KSPView(direct, PETSC_VIEWER_STDOUT_(comm));
+                    }
+                    if (direct != nullptr) (void)KSPDestroy(&direct);
+                    if (direct_solution != nullptr) (void)VecDestroy(&direct_solution);
+                    if (handler_installed) (void)PetscPopErrorHandler();
+                }
+            } else {
+                (void)PetscPrintf(comm, "[frozen linear diagnostic] unavailable error=%d\n",
+                    static_cast<int>(replay_error));
+            }
             KSPConvergedReason ksp_reason{
                 KSP_CONVERGED_ITERATING};
             PCFailedReason pc_reason{};

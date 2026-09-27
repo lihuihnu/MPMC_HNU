@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -199,7 +200,14 @@ void post_snes_pt_flash_phase_transition_scanner_test() {
         try {
             run_scanner_regression();
             post_snes_sw92_profile_c_phase_transition_scanner_test();
+        } catch (const std::exception& error) {
+            std::cerr
+                << "[rank 0] PT scanner regression exception: "
+                << error.what() << '\n';
+            local_success = 0;
         } catch (...) {
+            std::cerr
+                << "[rank 0] PT scanner regression unknown exception\n";
             local_success = 0;
         }
     }

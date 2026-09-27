@@ -19,6 +19,7 @@
 #include <vector>
 
 bool post_snes_sw92_profile_c_phase_transition_scanner_header();
+void sw92_transactional_phase_transition_restart_test();
 
 namespace {
 
@@ -387,4 +388,5 @@ void post_snes_sw92_profile_c_phase_transition_scanner_test() {
         "SW92 authoritative transition scanner public header probe failed");
     same_cardinality_is_noop();
     sample6_two_to_three_authoritative_target();
+    sw92_transactional_phase_transition_restart_test();
 }
