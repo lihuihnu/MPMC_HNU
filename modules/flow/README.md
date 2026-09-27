@@ -4741,7 +4741,10 @@ requests these diagnostics; no new workflow or solver acceptance is added.
 The variable-cardinality SNES path now explicitly selects MUMPS for ASM subblock
 LU and disables factor shifts (`sub_pc_factor_mat_solver_type=mumps`,
 `sub_pc_factor_shift_type=none`). This requires a PETSc build with MUMPS; there
-is no silent backend fallback. Newton/BT, GMRES, restricted ASM overlap, diagonal
-reordering, row scaling and all convergence/positivity/conservation criteria are
+is no silent backend fallback. ASM subblocks use MUMPS ordering without the
+additional PETSc `sub_pc_factor_nonzeros_along_diagonal` option: CI #243 located
+SIGSEGV inside `MatReorderForNonzeroDiagonal` during subblock setup in the existing
+mixed-cardinality regression, before Sample-6. Newton/BT, GMRES, restricted ASM
+overlap, row scaling and all convergence/positivity/conservation criteria are
 unchanged. The existing PETSc/MPI Gate checks whether this removes the Sample-6
 linear-solve blockage; this configuration change alone is not convergence evidence.

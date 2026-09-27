@@ -2046,8 +2046,8 @@ make_variable_cardinality_initial_row_equilibration_3d(
 /// An optional frozen positive left row-scaling vector D applies the same
 /// audited contract as the fixed-cardinality solver: PETSc solves D*R=0 with
 /// D*J while the physical evaluator continues to publish native R and J.
-/// With D enabled, ASM sub-block LU uses the same weak-diagonal reordering and
-/// MAT_SHIFT_NONZERO stabilization as the fixed-cardinality correctness path.
+/// ASM sub-block LU uses MUMPS ordering with no factor shift. Do not install
+/// PETSc nonzero-diagonal reordering on this external-factorization path.
 /// Optional failure diagnostics preserve SNES/KSP/PC reasons without changing
 /// non-convergence semantics.
 inline PetscErrorCode
@@ -2300,15 +2300,12 @@ solve_variable_cardinality_natural_variable_snes_3d(
         "mpmc_variable_cardinality_";
     constexpr const char* sub_pc_option =
         "-mpmc_variable_cardinality_sub_pc_type";
-    constexpr const char* sub_pc_reorder_option =
-        "-mpmc_variable_cardinality_sub_pc_factor_nonzeros_along_diagonal";
     constexpr const char* sub_pc_shift_type_option =
         "-mpmc_variable_cardinality_sub_pc_factor_shift_type";
     constexpr const char* sub_pc_solver_type_option =
         "-mpmc_variable_cardinality_sub_pc_factor_mat_solver_type";
     bool sub_pc_solver_type_installed = false;
     bool sub_pc_option_installed = false;
-    bool sub_pc_reorder_installed = false;
     bool sub_pc_shift_type_installed = false;
 
     if (error == PETSC_SUCCESS) {
@@ -2333,19 +2330,6 @@ solve_variable_cardinality_natural_variable_snes_3d(
                 sub_pc_solver_type_option,
                 "mumps");
         sub_pc_solver_type_installed =
-            error == PETSC_SUCCESS;
-    }
-    if (error == PETSC_SUCCESS) {
-        const char* reorder_tolerance =
-            row_scaling != nullptr
-                ? "1.0e-10"
-                : "0.0";
-        error =
-            PetscOptionsSetValue(
-                nullptr,
-                sub_pc_reorder_option,
-                reorder_tolerance);
-        sub_pc_reorder_installed =
             error == PETSC_SUCCESS;
     }
     if (error == PETSC_SUCCESS) {
@@ -2400,18 +2384,6 @@ solve_variable_cardinality_natural_variable_snes_3d(
                         sub_pc_shift_type_option);
                 sub_pc_shift_type_installed =
                     false;
-            }
-            if (sub_pc_reorder_installed) {
-                const PetscErrorCode current =
-                    PetscOptionsClearValue(
-                        nullptr,
-                        sub_pc_reorder_option);
-                sub_pc_reorder_installed =
-                    false;
-                if (first == PETSC_SUCCESS &&
-                    current != PETSC_SUCCESS) {
-                    first = current;
-                }
             }
             if (sub_pc_solver_type_installed) {
                 const PetscErrorCode current =
