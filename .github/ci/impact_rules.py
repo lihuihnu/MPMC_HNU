@@ -654,6 +654,9 @@ def thermo_matrix(selected):
 
 checks = [
     (["tests/flow_discretization/petsc/scanner.cpp"], expected_route(flow_discretization_petsc=True)),
+    # Private source fragments must retain the same owner on edits/removals.
+    (["tests/flow_discretization/petsc/mixed_cardinality/rate_control.inc"], expected_route(flow_discretization_petsc=True)),
+    (["tests/flow_discretization/petsc/mixed_cardinality/fixture.inc"], expected_route(flow_discretization_petsc=True)),
     (["modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp"], expected_route(flow_discretization=True)),
     (["modules/well/discretization/include/mpmc/well_discretization/hydraulic_conductance.hpp"], expected_route(flow_discretization=True)),
     (["tests/well/discretization/hydraulic_conductance_test.cpp"], expected_route(flow_discretization=True)),
