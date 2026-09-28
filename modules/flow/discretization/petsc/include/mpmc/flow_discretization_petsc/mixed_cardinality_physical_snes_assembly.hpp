@@ -371,6 +371,49 @@ insert_dense_cell_assembly(
     return PETSC_SUCCESS;
 }
 
+// One face side contributes component rows followed by one energy row.
+// insert_face_side validates these spans before calling this packing helper.
+// Columns belong to either adjacent cell, so the block may be rectangular.
+[[nodiscard]] inline PetscErrorCode
+insert_face_jacobian_block(
+    Mat jacobian,
+    std::span<const PetscInt> rows,
+    const VariableCardinalityNaturalVariableCellDof3D& column_cell,
+    std::size_t component_count,
+    std::span<const double> component,
+    std::span<const double> energy) {
+    const std::size_t column_count = column_cell.scalar_count;
+    std::vector<PetscInt> columns(column_count);
+    for (std::size_t slot = 0U; slot < column_count; ++slot) {
+        columns[slot] =
+            column_cell.petsc_global_scalar_start +
+            static_cast<PetscInt>(slot);
+    }
+
+    std::vector<PetscScalar> values(
+        (component_count + 1U) * column_count,
+        PetscScalar{0.0});
+    for (std::size_t row = 0U; row < component_count; ++row) {
+        for (std::size_t column = 0U; column < column_count; ++column) {
+            values[row * column_count + column] =
+                static_cast<PetscScalar>(component[row * column_count + column]);
+        }
+    }
+    for (std::size_t column = 0U; column < column_count; ++column) {
+        values[component_count * column_count + column] =
+            static_cast<PetscScalar>(energy[column]);
+    }
+
+    return MatSetValues(
+        jacobian,
+        static_cast<PetscInt>(rows.size()),
+        rows.data(),
+        static_cast<PetscInt>(columns.size()),
+        columns.data(),
+        values.data(),
+        ADD_VALUES);
+}
+
 [[nodiscard]] inline PetscErrorCode
 insert_face_side(
     const VariableCardinalityNaturalVariableCellDof3D&
@@ -445,98 +488,26 @@ insert_face_side(
         return PETSC_SUCCESS;
     }
 
-    const auto make_block =
-        [&](std::size_t column_count,
-            std::span<const double> component,
-            std::span<const double> energy) {
-            std::vector<PetscScalar>
-                values(
-                    conservation_rows *
-                    column_count,
-                    PetscScalar{0.0});
-            for (std::size_t row = 0U;
-                 row < component_count;
-                 ++row) {
-                for (std::size_t column = 0U;
-                     column < column_count;
-                     ++column) {
-                    values[
-                        row * column_count +
-                        column] =
-                        static_cast<PetscScalar>(
-                            component[
-                                row * column_count +
-                                column]);
-                }
-            }
-            for (std::size_t column = 0U;
-                 column < column_count;
-                 ++column) {
-                values[
-                    component_count *
-                        column_count +
-                    column] =
-                    static_cast<PetscScalar>(
-                        energy[column]);
-            }
-            return values;
-        };
-
-    std::vector<PetscInt>
-        diagonal_columns(
-            row_cell.scalar_count);
-    for (std::size_t slot = 0U;
-         slot < row_cell.scalar_count;
-         ++slot) {
-        diagonal_columns[slot] =
-            row_cell.petsc_global_scalar_start +
-            static_cast<PetscInt>(slot);
-    }
-    auto diagonal_values =
-        make_block(
-            row_cell.scalar_count,
+    // Assemble the diagonal block first; preserve early return on PETSc errors.
+    const PetscErrorCode error =
+        insert_face_jacobian_block(
+            jacobian,
+            rows,
+            row_cell,
+            component_count,
             component_diagonal,
             energy_diagonal);
-    PetscErrorCode error =
-        MatSetValues(
-            jacobian,
-            static_cast<PetscInt>(
-                rows.size()),
-            rows.data(),
-            static_cast<PetscInt>(
-                diagonal_columns.size()),
-            diagonal_columns.data(),
-            diagonal_values.data(),
-            ADD_VALUES);
     if (error != PETSC_SUCCESS) {
         return error;
     }
 
-    std::vector<PetscInt>
-        off_columns(
-            other_cell.scalar_count);
-    for (std::size_t slot = 0U;
-         slot < other_cell.scalar_count;
-         ++slot) {
-        off_columns[slot] =
-            other_cell.petsc_global_scalar_start +
-            static_cast<PetscInt>(slot);
-    }
-    auto off_values =
-        make_block(
-            other_cell.scalar_count,
-            component_off_diagonal,
-            energy_off_diagonal);
-    return MatSetValues(
+    return insert_face_jacobian_block(
         jacobian,
-        static_cast<PetscInt>(
-            rows.size()),
-        rows.data(),
-        static_cast<PetscInt>(
-            off_columns.size()),
-        off_columns.data(),
-        off_values.data(),
-        ADD_VALUES);
+        rows,
+        other_cell,
+        component_count,
+        component_off_diagonal,
+        energy_off_diagonal);
 }
 
 } // namespace mixed_cardinality_physical_detail
