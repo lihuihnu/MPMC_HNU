@@ -308,6 +308,66 @@ controlled_well_transition_rebuild(
     return PETSC_SUCCESS;
 }
 
+// Read all selected entries before testing their magnitudes, as in the original
+// check. A PETSc read error stops subsequent reads; a zero value does not.
+template<std::size_t N>
+bool jacobian_entries_are_nonzero(
+    Mat jacobian,
+    const std::array<std::pair<PetscInt, PetscInt>, N>& entries) {
+    std::array<PetscScalar, N> values{};
+    for (std::size_t i = 0U; i < N; ++i) {
+        if (MatGetValues(
+                jacobian, 1, &entries[i].first,
+                1, &entries[i].second, &values[i]) != PETSC_SUCCESS) {
+            return false;
+        }
+    }
+    for (const auto value : values) {
+        if (std::abs(static_cast<double>(PetscRealPart(value))) <= 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// r = reservoir unknowns; w = the single whole-well BHP unknown.
+// Rank 0 owns cell30; rank 1 owns cell60 and the rate-control equation.
+// Only locally owned rows are read. This checks block presence, not FD accuracy.
+void require_rate_control_jacobian_blocks(
+    int rank,
+    const fdp::VariableCardinalityNaturalVariableNumbering3D& numbering,
+    PetscInt well_row,
+    Mat jacobian,
+    bool assembly_succeeded) {
+    bool local_blocks_ok = assembly_succeeded;
+    if (local_blocks_ok && rank == 0) {
+        const PetscInt cell30 = numbering.cell(mesh::LocalIndex{2U})
+                                   .petsc_global_scalar_start;
+        const std::array<std::pair<PetscInt, PetscInt>, 2> entries{{
+            {cell30, cell30},   // Jrr: local reservoir response
+            {cell30, well_row} // Jrw: reservoir response to BHP
+        }};
+        local_blocks_ok = jacobian_entries_are_nonzero(jacobian, entries);
+    }
+    if (local_blocks_ok && rank == 1) {
+        const PetscInt cell30 = numbering.cell(mesh::LocalIndex{2U})
+                                   .petsc_global_scalar_start;
+        const PetscInt cell60 = numbering.cell(mesh::LocalIndex{5U})
+                                   .petsc_global_scalar_start;
+        const std::array<std::pair<PetscInt, PetscInt>, 5> entries{{
+            {cell60, cell60},   // Jrr
+            {cell60, well_row}, // Jrw
+            {well_row, cell30}, // Jwr: rate response to remote reservoir state
+            {well_row, cell60}, // Jwr: rate response to local reservoir state
+            {well_row, well_row} // Jww: rate response to BHP
+        }};
+        local_blocks_ok = jacobian_entries_are_nonzero(jacobian, entries);
+    }
+    require_collective(
+        local_blocks_ok,
+        "rate-control Jacobian did not materialize analytic Jrr/Jrw/Jwr/Jww blocks");
+}
+
 void run_fixed_total_molar_rate_control_case(
     int rank,
     const dp::
@@ -644,159 +704,14 @@ void run_fixed_total_molar_rate_control_case(
                 MAT_FINAL_ASSEMBLY);
     }
 
-    bool local_four_blocks_ok =
+    require_rate_control_jacobian_blocks(
+        rank,
+        reservoir_system->numbering(),
+        control_system->well_global_scalar(),
+        controlled_jacobian,
         error == PETSC_SUCCESS &&
-        controlled_status ==
-            fdp::
-                NaturalVariableSnesEvaluationStatus3D::
-                    success;
-    const PetscInt well_row =
-        control_system
-            ->well_global_scalar();
-
-    if (local_four_blocks_ok &&
-        rank == 0) {
-        const auto& cell30 =
-            reservoir_system
-                ->numbering()
-                .cell(
-                    mesh::LocalIndex{2U});
-        const PetscInt row =
-            cell30
-                .petsc_global_scalar_start;
-        const PetscInt column =
-            row;
-        PetscScalar jrr = 0.0;
-        PetscScalar jrw = 0.0;
-        if (MatGetValues(
-                controlled_jacobian,
-                1,
-                &row,
-                1,
-                &column,
-                &jrr) !=
-                PETSC_SUCCESS ||
-            MatGetValues(
-                controlled_jacobian,
-                1,
-                &row,
-                1,
-                &well_row,
-                &jrw) !=
-                PETSC_SUCCESS ||
-            std::abs(
-                static_cast<double>(
-                    PetscRealPart(
-                        jrr))) <=
-                0.0 ||
-            std::abs(
-                static_cast<double>(
-                    PetscRealPart(
-                        jrw))) <=
-                0.0) {
-            local_four_blocks_ok =
-                false;
-        }
-    }
-
-    if (local_four_blocks_ok &&
-        rank == 1) {
-        const auto& cell30 =
-            reservoir_system
-                ->numbering()
-                .cell(
-                    mesh::LocalIndex{2U});
-        const auto& cell60 =
-            reservoir_system
-                ->numbering()
-                .cell(
-                    mesh::LocalIndex{5U});
-        const PetscInt cell30_column =
-            cell30
-                .petsc_global_scalar_start;
-        const PetscInt cell60_column =
-            cell60
-                .petsc_global_scalar_start;
-        const PetscInt cell60_row =
-            cell60
-                .petsc_global_scalar_start;
-        PetscScalar jrr = 0.0;
-        PetscScalar jrw = 0.0;
-        PetscScalar jwr30 = 0.0;
-        PetscScalar jwr60 = 0.0;
-        PetscScalar jww = 0.0;
-        if (MatGetValues(
-                controlled_jacobian,
-                1,
-                &cell60_row,
-                1,
-                &cell60_column,
-                &jrr) !=
-                PETSC_SUCCESS ||
-            MatGetValues(
-                controlled_jacobian,
-                1,
-                &cell60_row,
-                1,
-                &well_row,
-                &jrw) !=
-                PETSC_SUCCESS ||
-            MatGetValues(
-                controlled_jacobian,
-                1,
-                &well_row,
-                1,
-                &cell30_column,
-                &jwr30) !=
-                PETSC_SUCCESS ||
-            MatGetValues(
-                controlled_jacobian,
-                1,
-                &well_row,
-                1,
-                &cell60_column,
-                &jwr60) !=
-                PETSC_SUCCESS ||
-            MatGetValues(
-                controlled_jacobian,
-                1,
-                &well_row,
-                1,
-                &well_row,
-                &jww) !=
-                PETSC_SUCCESS ||
-            std::abs(
-                static_cast<double>(
-                    PetscRealPart(
-                        jrr))) <=
-                0.0 ||
-            std::abs(
-                static_cast<double>(
-                    PetscRealPart(
-                        jrw))) <=
-                0.0 ||
-            std::abs(
-                static_cast<double>(
-                    PetscRealPart(
-                        jwr30))) <=
-                0.0 ||
-            std::abs(
-                static_cast<double>(
-                    PetscRealPart(
-                        jwr60))) <=
-                0.0 ||
-            std::abs(
-                static_cast<double>(
-                    PetscRealPart(
-                        jww))) <=
-                0.0) {
-            local_four_blocks_ok =
-                false;
-        }
-    }
-    require_collective(
-        local_four_blocks_ok,
-        "rate-control Jacobian did not materialize analytic Jrr/Jrw/Jwr/Jww blocks");
+            controlled_status ==
+                fdp::NaturalVariableSnesEvaluationStatus3D::success);
 
     Vec reservoir_solution = nullptr;
     error =

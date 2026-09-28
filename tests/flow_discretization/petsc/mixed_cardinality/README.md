@@ -38,3 +38,11 @@ performs the existing collective error check. Entries are the three component
 inventories in mol and total internal energy in J. Each caller retains its state
 expression, diagnostic and position in the collective sequence. Scenario-specific
 conservation formulas, tolerances and well-rate probes stay in the cases.
+
+For the augmented rate-control Jacobian, `r` denotes reservoir unknowns and `w`
+the one whole-well BHP unknown. `require_rate_control_jacobian_blocks` lists the
+Jrr/Jrw/Jwr/Jww entries explicitly: rank 0 reads cell30 rows; rank 1 reads cell60
+and the well equation, including coupling to cell30 on the other rank. The helper
+checks nonzero block entries, not finite-difference derivative accuracy. Assembly
+and matrix lifetime remain in the scenario; the shared reader retains PETSc read
+order, short-circuit behavior on read errors and the original magnitude predicate.
