@@ -510,6 +510,79 @@ insert_face_side(
         energy_off_diagonal);
 }
 
+// Cell rows are [component balances, energy balance, fugacity equalities].
+// Accumulation adds to the conservation rows; equilibrium writes the remaining
+// rows. Keep these operations distinct so sources can later add to balances.
+// nc is the component count; q is the frozen cell unknown count. The caller
+// allocates q residual entries and a q-by-q row-major diagonal block.
+inline void add_accumulation_rows(
+    const mpmc::flow::BackwardEulerComponentAccumulationResidual3P& component,
+    const mpmc::flow::BackwardEulerEnergyAccumulationResidual3P& energy,
+    std::size_t nc,
+    std::size_t q,
+    VariableCardinalityNaturalVariableCellAssembly3D& assembly,
+    VariableCardinalityNaturalVariableJacobianBlock3D& diagonal) {
+    if (component.component_count() != nc ||
+        component.input_count != q || energy.input_count != q) {
+        throw std::invalid_argument("mixed-cardinality accumulation shape mismatch");
+    }
+    for (std::size_t row = 0U; row < nc; ++row) {
+        assembly.residual[row] += component.residual(row);
+        for (std::size_t column = 0U; column < q; ++column) {
+            diagonal.values_row_major[row * q + column] +=
+                component.d_residual(row, column);
+        }
+    }
+    assembly.residual[nc] += energy.residual_w_per_bulk_m3;
+    for (std::size_t column = 0U; column < q; ++column) {
+        diagonal.values_row_major[nc * q + column] += energy.d_residual(column);
+    }
+}
+
+// Two phases supply Nc equalities. Preserve the checked derivative accessor.
+inline void write_fugacity_rows(
+    const mpmc::flow::TwoPhaseFugacityEquilibriumLinearization& fugacity,
+    std::size_t nc,
+    std::size_t q,
+    VariableCardinalityNaturalVariableCellAssembly3D& assembly,
+    VariableCardinalityNaturalVariableJacobianBlock3D& diagonal) {
+    if (fugacity.residual_count() != nc || fugacity.input_count != q) {
+        throw std::invalid_argument(
+            "two-phase fugacity shape mismatch in mixed dispatcher");
+    }
+    for (std::size_t component_index = 0U; component_index < nc; ++component_index) {
+        const std::size_t row = nc + 1U + component_index;
+        assembly.residual[row] = fugacity.residual[component_index];
+        for (std::size_t column = 0U; column < q; ++column) {
+            diagonal.values_row_major[row * q + column] =
+                fugacity.d_residual(component_index, column);
+        }
+    }
+}
+
+// Three phases supply 2*Nc equalities from the validated dense linearization.
+inline void write_fugacity_rows(
+    const mpmc::flow::FugacityEquilibriumResidualLinearization3P& fugacity,
+    std::size_t nc,
+    std::size_t q,
+    VariableCardinalityNaturalVariableCellAssembly3D& assembly,
+    VariableCardinalityNaturalVariableJacobianBlock3D& diagonal) {
+    if (fugacity.residual_count() != 2U * nc || fugacity.input_count() != q) {
+        throw std::invalid_argument(
+            "three-phase fugacity shape mismatch in mixed dispatcher");
+    }
+    const auto values = fugacity.values();
+    const auto jacobian = fugacity.jacobian();
+    for (std::size_t local_row = 0U; local_row < values.size(); ++local_row) {
+        const std::size_t row = nc + 1U + local_row;
+        assembly.residual[row] = values[local_row];
+        for (std::size_t column = 0U; column < q; ++column) {
+            diagonal.values_row_major[row * q + column] =
+                jacobian[local_row * q + column];
+        }
+    }
+}
+
 } // namespace mixed_cardinality_physical_detail
 
 class MixedCardinalityPhysicalSnesAssemblyContext3D {
@@ -1869,50 +1942,6 @@ private:
             q * q,
             0.0);
 
-        const auto add_conservation =
-            [&](const mpmc::flow::
-                    BackwardEulerComponentAccumulationResidual3P&
-                        component,
-                const mpmc::flow::
-                    BackwardEulerEnergyAccumulationResidual3P&
-                        energy) {
-                if (component.component_count() !=
-                        nc ||
-                    component.input_count !=
-                        q ||
-                    energy.input_count !=
-                        q) {
-                    throw std::invalid_argument(
-                        "mixed-cardinality accumulation shape mismatch");
-                }
-                for (std::size_t row = 0U;
-                     row < nc;
-                     ++row) {
-                    assembly.residual[row] +=
-                        component.residual(row);
-                    for (std::size_t column = 0U;
-                         column < q;
-                         ++column) {
-                        diagonal.values_row_major[
-                            row * q +
-                            column] +=
-                            component.d_residual(
-                                row,
-                                column);
-                    }
-                }
-                assembly.residual[nc] +=
-                    energy.residual_w_per_bulk_m3;
-                for (std::size_t column = 0U;
-                     column < q;
-                     ++column) {
-                    diagonal.values_row_major[
-                        nc * q +
-                        column] +=
-                        energy.d_residual(
-                            column);
-                }
-            };
 
         if (record.phase_count == 1U) {
             const auto& evaluated =
@@ -1964,9 +1993,7 @@ private:
                         energy_linearization,
                         *previous_energy(input),
                         time_step_seconds_);
-            add_conservation(
-                component,
-                energy);
+            add_accumulation_rows(component, energy, nc, q, assembly, diagonal);
         } else if (
             record.phase_count == 2U) {
             const auto& evaluated =
@@ -2018,39 +2045,9 @@ private:
                         energy_linearization,
                         *previous_energy(input),
                         time_step_seconds_);
-            add_conservation(
-                component,
-                energy);
+            add_accumulation_rows(component, energy, nc, q, assembly, diagonal);
 
-            if (evaluated.fugacity.residual_count() !=
-                    nc ||
-                evaluated.fugacity.input_count !=
-                    q) {
-                throw std::invalid_argument(
-                    "two-phase fugacity shape mismatch in mixed dispatcher");
-            }
-            for (std::size_t component_index = 0U;
-                 component_index < nc;
-                 ++component_index) {
-                const std::size_t row =
-                    nc + 1U +
-                    component_index;
-                assembly.residual[row] =
-                    evaluated.fugacity
-                        .residual[
-                            component_index];
-                for (std::size_t column = 0U;
-                     column < q;
-                     ++column) {
-                    diagonal.values_row_major[
-                        row * q +
-                        column] =
-                        evaluated.fugacity
-                            .d_residual(
-                                component_index,
-                                column);
-                }
-            }
+            write_fugacity_rows(evaluated.fugacity, nc, q, assembly, diagonal);
         } else {
             const auto& evaluated =
                 std::get<
@@ -2101,40 +2098,9 @@ private:
                         energy_linearization,
                         *previous_energy(input),
                         time_step_seconds_);
-            add_conservation(
-                component,
-                energy);
+            add_accumulation_rows(component, energy, nc, q, assembly, diagonal);
 
-            if (evaluated.fugacity.residual_count() !=
-                    2U * nc ||
-                evaluated.fugacity.input_count() !=
-                    q) {
-                throw std::invalid_argument(
-                    "three-phase fugacity shape mismatch in mixed dispatcher");
-            }
-            const auto values =
-                evaluated.fugacity.values();
-            const auto jacobian =
-                evaluated.fugacity.jacobian();
-            for (std::size_t local_row = 0U;
-                 local_row < values.size();
-                 ++local_row) {
-                const std::size_t row =
-                    nc + 1U +
-                    local_row;
-                assembly.residual[row] =
-                    values[local_row];
-                for (std::size_t column = 0U;
-                     column < q;
-                     ++column) {
-                    diagonal.values_row_major[
-                        row * q +
-                        column] =
-                        jacobian[
-                            local_row * q +
-                            column];
-                }
-            }
+            write_fugacity_rows(evaluated.fugacity, nc, q, assembly, diagonal);
         }
 
         if (source.has_value()) {
