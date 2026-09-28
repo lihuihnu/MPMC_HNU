@@ -583,6 +583,55 @@ inline void write_fugacity_rows(
     }
 }
 
+// Phase-specific mobility formulas stay explicit; the callback protocol below
+// is shared. Three phases additionally consume the saturation constitutive law.
+[[nodiscard]] inline mpmc::flow::SinglePhaseMobilityLinearization
+build_current_mobility(const SinglePhaseCurrentCellLinearization3D& evaluated) {
+    return mpmc::flow::build_single_phase_mobility_linearization(
+        evaluated.state, evaluated.transport);
+}
+
+[[nodiscard]] inline mpmc::flow::TwoPhaseMobilityLinearization
+build_current_mobility(const TwoPhaseCurrentCellLinearization3D& evaluated) {
+    return mpmc::flow::build_two_phase_mobility_linearization(
+        evaluated.state, evaluated.transport);
+}
+
+[[nodiscard]] inline mpmc::flow::LocalPhaseMobilityLinearization3P
+build_current_mobility(const FixedThreePhaseCurrentCellLinearization3D& evaluated) {
+    return mpmc::flow::build_local_phase_mobility_linearization(
+        evaluated.state, evaluated.transport, evaluated.saturation_constitutive);
+}
+
+// Called after evaluate_cell validates output pointers and resets candidates.
+// Forward the frozen chart and canonical component order unchanged. A failed,
+// domain-invalid or empty evaluation must not produce mobility/current output.
+// Keep mobility construction before moving the evaluated closure into current.
+template <class CellInput, class CellLinearization, class EvaluatorBinding>
+[[nodiscard]] inline PetscErrorCode evaluate_phase_cell(
+    const MixedCardinalityPhysicalSnesCellInput3D& input,
+    std::span<const double> values,
+    const EvaluatorBinding& binding,
+    std::optional<MixedCardinalityPhysicalCurrentCellLinearization3D>* current,
+    std::optional<MixedCardinalityPhysicalMobilityLinearization3D>* mobility,
+    NaturalVariableSnesEvaluationStatus3D* status) {
+    const auto* typed = std::get_if<CellInput>(&input);
+    if (typed == nullptr) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    std::optional<CellLinearization> evaluated;
+    const PetscErrorCode error = binding.evaluator(
+        typed->cell, typed->cell_global, values, typed->frozen_layout,
+        typed->component_ids, binding.user_context, &evaluated, status);
+    if (error == PETSC_SUCCESS &&
+        *status == NaturalVariableSnesEvaluationStatus3D::success &&
+        evaluated.has_value()) {
+        mobility->emplace(build_current_mobility(*evaluated));
+        current->emplace(std::move(*evaluated));
+    }
+    return error;
+}
+
 } // namespace mixed_cardinality_physical_detail
 
 class MixedCardinalityPhysicalSnesAssemblyContext3D {
@@ -1579,119 +1628,23 @@ private:
         PetscErrorCode error =
             PETSC_SUCCESS;
 
+        // Dispatch only the phase-specific types and binding. Candidate validity
+        // and identity checks below apply uniformly to all three phase counts.
         if (record.phase_count == 1U) {
-            const auto* typed =
-                std::get_if<
-                    SinglePhaseSnesCellInput3D>(
-                        &input);
-            if (typed == nullptr) {
-                return PETSC_ERR_ARG_INCOMP;
-            }
-            std::optional<
-                SinglePhaseCurrentCellLinearization3D>
-                evaluated;
-            error =
-                cell_evaluators_
-                    .single_phase.evaluator(
-                        typed->cell,
-                        typed->cell_global,
-                        values,
-                        typed->frozen_layout,
-                        typed->component_ids,
-                        cell_evaluators_
-                            .single_phase
-                            .user_context,
-                        &evaluated,
-                        &cell_status);
-            if (error == PETSC_SUCCESS &&
-                cell_status ==
-                    NaturalVariableSnesEvaluationStatus3D::
-                        success &&
-                evaluated.has_value()) {
-                mobility->emplace(
-                    mpmc::flow::
-                        build_single_phase_mobility_linearization(
-                            evaluated->state,
-                            evaluated->transport));
-                current->emplace(
-                    std::move(*evaluated));
-            }
+            error = evaluate_phase_cell<
+                SinglePhaseSnesCellInput3D, SinglePhaseCurrentCellLinearization3D>(
+                input, values, cell_evaluators_.single_phase,
+                current, mobility, &cell_status);
         } else if (record.phase_count == 2U) {
-            const auto* typed =
-                std::get_if<
-                    TwoPhaseSnesCellInput3D>(
-                        &input);
-            if (typed == nullptr) {
-                return PETSC_ERR_ARG_INCOMP;
-            }
-            std::optional<
-                TwoPhaseCurrentCellLinearization3D>
-                evaluated;
-            error =
-                cell_evaluators_
-                    .two_phase.evaluator(
-                        typed->cell,
-                        typed->cell_global,
-                        values,
-                        typed->frozen_layout,
-                        typed->component_ids,
-                        cell_evaluators_
-                            .two_phase
-                            .user_context,
-                        &evaluated,
-                        &cell_status);
-            if (error == PETSC_SUCCESS &&
-                cell_status ==
-                    NaturalVariableSnesEvaluationStatus3D::
-                        success &&
-                evaluated.has_value()) {
-                mobility->emplace(
-                    mpmc::flow::
-                        build_two_phase_mobility_linearization(
-                            evaluated->state,
-                            evaluated->transport));
-                current->emplace(
-                    std::move(*evaluated));
-            }
+            error = evaluate_phase_cell<
+                TwoPhaseSnesCellInput3D, TwoPhaseCurrentCellLinearization3D>(
+                input, values, cell_evaluators_.two_phase,
+                current, mobility, &cell_status);
         } else if (record.phase_count == 3U) {
-            const auto* typed =
-                std::get_if<
-                    FixedThreePhaseSnesCellInput3D>(
-                        &input);
-            if (typed == nullptr) {
-                return PETSC_ERR_ARG_INCOMP;
-            }
-            std::optional<
-                FixedThreePhaseCurrentCellLinearization3D>
-                evaluated;
-            error =
-                cell_evaluators_
-                    .three_phase.evaluator(
-                        typed->cell,
-                        typed->cell_global,
-                        values,
-                        typed->frozen_layout,
-                        typed->component_ids,
-                        cell_evaluators_
-                            .three_phase
-                            .user_context,
-                        &evaluated,
-                        &cell_status);
-            if (error == PETSC_SUCCESS &&
-                cell_status ==
-                    NaturalVariableSnesEvaluationStatus3D::
-                        success &&
-                evaluated.has_value()) {
-                mobility->emplace(
-                    mpmc::flow::
-                        build_local_phase_mobility_linearization(
-                            evaluated->state,
-                            evaluated->transport,
-                            evaluated
-                                ->saturation_constitutive));
-                current->emplace(
-                    std::move(*evaluated));
-            }
+            error = evaluate_phase_cell<
+                FixedThreePhaseSnesCellInput3D, FixedThreePhaseCurrentCellLinearization3D>(
+                input, values, cell_evaluators_.three_phase,
+                current, mobility, &cell_status);
         } else {
             return PETSC_ERR_ARG_INCOMP;
         }
