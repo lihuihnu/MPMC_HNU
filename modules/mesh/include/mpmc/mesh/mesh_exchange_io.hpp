@@ -469,37 +469,24 @@ topology_with_gmsh_ids(
         copy_relations(source)};
 }
 
-// Export-local index: stable IDs may be sparse and unrelated to local order.
-// The document owns ids for this lookup's lifetime. Build only on first use so
-// exports without group members do not allocate or sort an unused index.
+// The index is shared with document validation; the writer retains its own
+// missing-member diagnostic. Each wrapper belongs to one export and entity kind.
 class CanonicalEntityLookup {
 public:
     explicit CanonicalEntityLookup(std::span<const GlobalEntityId> ids)
-        : ids_(ids) {}
+        : lookup_(ids) {}
 
     [[nodiscard]] std::size_t local(GlobalEntityId id) {
-        if (sorted_.empty()) {
-            sorted_.reserve(ids_.size());
-            for (std::size_t local = 0U; local < ids_.size(); ++local) {
-                sorted_.emplace_back(ids_[local].value(), local);
-            }
-            std::sort(sorted_.begin(), sorted_.end());
-        }
-        const auto found = std::lower_bound(
-            sorted_.begin(), sorted_.end(), id.value(),
-            [](const auto& entry, GlobalEntityId::value_type value) {
-                return entry.first < value;
-            });
-        if (found == sorted_.end() || found->first != id.value()) {
+        const auto local = lookup_.find(id);
+        if (!local.has_value()) {
             throw std::invalid_argument(
                 "mpmc::mesh::canonical writer: group member is absent from topology");
         }
-        return found->second;
+        return *local;
     }
 
 private:
-    std::span<const GlobalEntityId> ids_;
-    std::vector<std::pair<GlobalEntityId::value_type, std::size_t>> sorted_;
+    mesh_exchange_detail::GroupEntityLookup lookup_;
 };
 
 [[nodiscard]] inline FaceBoundarySnapshot

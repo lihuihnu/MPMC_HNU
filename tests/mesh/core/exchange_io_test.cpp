@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -365,6 +366,61 @@ void verify_sparse_group_lookup() {
             "cell groups must retain memberships and sorted tags after renaming");
 }
 
+// Validation must distinguish entity kinds even when stable IDs overlap, and
+// retain the first diagnostic when an input violates more than one rule.
+void verify_group_validation_lookup() {
+    using Kind = mesh::EntityKind;
+    using Id = mesh::GlobalEntityId;
+    const auto create = [](std::vector<mesh::MeshExchangeGroup> groups) {
+        mesh::Topology::EntityIds ids;
+        ids.vertices = {Id{0U}, Id{std::numeric_limits<std::uint64_t>::max()}};
+        ids.edges = {Id{900U}};
+        ids.faces = {Id{900U}};
+        ids.cells = {Id{3U}};
+        return mesh::MeshExchangeDocument::create(
+            mesh::MeshExchangeFormat::gmsh_4_1_ascii, 2,
+            mesh::Topology{std::move(ids), {}}, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}},
+            std::nullopt, {}, std::move(groups), std::nullopt);
+    };
+    const auto valid = create({
+        {Kind::vertex, 1U, "vertices", {Id{std::numeric_limits<std::uint64_t>::max()}, Id{0U}, Id{0U}}},
+        {Kind::vertex, 2U, "first", {Id{0U}}},
+        {Kind::edge, 1U, "edge", {Id{900U}}},
+        {Kind::face, 1U, "face", {Id{900U}}},
+        {Kind::cell, 1U, "cell", {Id{3U}}}});
+    require(valid.groups().size() == 5U && valid.groups()[0].members.size() == 3U,
+            "validation must preserve group order and repeated members");
+    require(create({}).groups().empty(), "empty groups must remain valid");
+    const auto rejects = [&](std::vector<mesh::MeshExchangeGroup> groups,
+                             std::string_view expected) {
+        try {
+            (void)create(std::move(groups));
+        } catch (const std::invalid_argument& error) {
+            return std::string_view(error.what()) == expected;
+        }
+        return false;
+    };
+    constexpr std::string_view missing =
+        "mpmc::mesh::MeshExchangeDocument: group member is absent from topology";
+    require(rejects({{Kind::vertex, 1U, "wrong kind", {Id{900U}}}}, missing),
+            "an ID from another entity kind must be rejected");
+    require(rejects({{Kind::cell, 1U, "valid", {Id{3U}}},
+                     {Kind::cell, 2U, "missing", {Id{42U}}}}, missing),
+            "reused index must still reject absent members");
+    require(rejects({{Kind::cell, 0U, "zero", {Id{42U}}}},
+            "mpmc::mesh::MeshExchangeDocument: group tag zero is reserved"),
+            "zero tag must precede missing-member diagnostic");
+    require(rejects({{Kind::cell, 1U, std::string("bad\0name", 8U), {Id{42U}}}},
+            "mpmc::mesh::MeshExchangeDocument: group name cannot contain NUL"),
+            "invalid name must precede missing-member diagnostic");
+    require(rejects({{Kind::cell, 1U, "first", {}}, {Kind::cell, 1U, "duplicate", {Id{42U}}}},
+            "mpmc::mesh::MeshExchangeDocument: duplicate group key"),
+            "duplicate key must precede missing-member diagnostic");
+    require(rejects({{static_cast<Kind>(99), 1U, "invalid kind", {}}},
+            "mpmc::mesh::Topology: invalid entity kind"),
+            "invalid kind must be rejected before indexing the lookup array");
+}
+
 void verify_rectilinear_grdecl_reconstruction() {
     const auto source =
         mesh::import_vtu_ascii_3d(
@@ -600,6 +656,7 @@ int main() {
         verify_grdecl_canonical_roundtrip();
         verify_gmsh_group_bridge();
         verify_sparse_group_lookup();
+        verify_group_validation_lookup();
         verify_rectilinear_grdecl_reconstruction();
         verify_slanted_hexa_reconstruction_rejection();
         verify_non_corner_point_report();
