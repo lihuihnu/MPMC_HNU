@@ -4,10 +4,15 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace mesh = mpmc::mesh;
 
@@ -293,6 +298,73 @@ void verify_gmsh_group_bridge() {
         "Gmsh boundary tags bridge");
 }
 
+// Stable IDs need not be sorted, contiguous, or fit a local index. The writer
+// must map group members to the original local order before canonical renaming.
+void verify_sparse_group_lookup() {
+    const std::array ids{
+        mesh::GlobalEntityId{900U}, mesh::GlobalEntityId{0U},
+        mesh::GlobalEntityId{std::numeric_limits<std::uint64_t>::max()},
+        mesh::GlobalEntityId{3U}};
+    mesh::mesh_exchange_io_detail::CanonicalEntityLookup lookup(ids);
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        for (std::size_t local = 0U; local < ids.size(); ++local) {
+            require(lookup.local(ids[local]) == local,
+                    "sparse global ID must retain its original local index");
+        }
+    }
+    const auto rejects_missing = [](auto& index) {
+        try {
+            (void)index.local(mesh::GlobalEntityId{42U});
+        } catch (const std::invalid_argument& error) {
+            return std::string_view(error.what()) ==
+                "mpmc::mesh::canonical writer: group member is absent from topology";
+        }
+        return false;
+    };
+    require(rejects_missing(lookup), "missing group member must be rejected");
+    mesh::mesh_exchange_io_detail::CanonicalEntityLookup empty({});
+    require(rejects_missing(empty), "empty topology must reject a group member");
+
+    const auto raw = mesh::import_gmsh_4_1_ascii(gmsh_group_fixture(), 1.0);
+    const auto original = mesh::make_mesh_exchange_document(raw);
+    mesh::Topology::EntityIds remapped;
+    const auto copy_ids = [&](mesh::EntityKind kind) {
+        const auto source = original.topology().global_ids(kind);
+        return std::vector<mesh::GlobalEntityId>(source.begin(), source.end());
+    };
+    remapped.vertices = copy_ids(mesh::EntityKind::vertex);
+    remapped.edges = copy_ids(mesh::EntityKind::edge);
+    remapped.faces = copy_ids(mesh::EntityKind::face);
+    remapped.cells = {ids[0], ids[3]};
+    for (std::size_t local = 0U; local < remapped.faces.size(); ++local) {
+        remapped.faces[local] = mesh::GlobalEntityId{
+            1000U + static_cast<std::uint64_t>(remapped.faces.size() - local) * 7U};
+    }
+    const std::vector<mesh::MeshExchangeGroup> groups{
+        {mesh::EntityKind::face, 11U, "boundary", {remapped.faces[0], remapped.faces[2]}},
+        {mesh::EntityKind::cell, 21U, "second", {remapped.cells[1]}},
+        {mesh::EntityKind::cell, 22U, "both", {remapped.cells[1], remapped.cells[0]}}};
+    const auto coordinates = original.vertex_coordinates_m();
+    const auto document = mesh::MeshExchangeDocument::create(
+        original.source_format(), original.dimension(),
+        mesh::Topology{std::move(remapped),
+            mesh::mesh_exchange_io_detail::copy_relations(original.topology())},
+        {coordinates.begin(), coordinates.end()}, std::nullopt, {}, groups, std::nullopt);
+    const auto boundary = mesh::mesh_exchange_io_detail::canonical_face_boundary(
+        document, original.topology());
+    const auto tags = boundary.physical_tags();
+    for (std::size_t local = 0U; local < tags.size(); ++local) {
+        require(tags[local].value() == (local == 0U || local == 2U ? 11U : 0U),
+                "face groups must follow local order after canonical renaming");
+    }
+    const auto cells = mesh::mesh_exchange_io_detail::canonical_cell_groups(
+        document, original.topology());
+    require(cells.size() == 2U &&
+            cells[0].physical_tags == std::vector<std::uint32_t>{22U} &&
+            cells[1].physical_tags == std::vector<std::uint32_t>{21U, 22U},
+            "cell groups must retain memberships and sorted tags after renaming");
+}
+
 void verify_rectilinear_grdecl_reconstruction() {
     const auto source =
         mesh::import_vtu_ascii_3d(
@@ -527,6 +599,7 @@ int main() {
     try {
         verify_grdecl_canonical_roundtrip();
         verify_gmsh_group_bridge();
+        verify_sparse_group_lookup();
         verify_rectilinear_grdecl_reconstruction();
         verify_slanted_hexa_reconstruction_rejection();
         verify_non_corner_point_report();

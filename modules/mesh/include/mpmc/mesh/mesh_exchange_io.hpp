@@ -469,27 +469,38 @@ topology_with_gmsh_ids(
         copy_relations(source)};
 }
 
-[[nodiscard]] inline std::size_t
-local_from_global(
-    const Topology& topology,
-    EntityKind location,
-    GlobalEntityId id) {
-    const auto ids =
-        topology.global_ids(location);
-    const auto found =
-        std::find(
-            ids.begin(),
-            ids.end(),
-            id);
-    if (found == ids.end()) {
-        throw std::invalid_argument(
-            "mpmc::mesh::canonical writer: group member is absent from topology");
+// Export-local index: stable IDs may be sparse and unrelated to local order.
+// The document owns ids for this lookup's lifetime. Build only on first use so
+// exports without group members do not allocate or sort an unused index.
+class CanonicalEntityLookup {
+public:
+    explicit CanonicalEntityLookup(std::span<const GlobalEntityId> ids)
+        : ids_(ids) {}
+
+    [[nodiscard]] std::size_t local(GlobalEntityId id) {
+        if (sorted_.empty()) {
+            sorted_.reserve(ids_.size());
+            for (std::size_t local = 0U; local < ids_.size(); ++local) {
+                sorted_.emplace_back(ids_[local].value(), local);
+            }
+            std::sort(sorted_.begin(), sorted_.end());
+        }
+        const auto found = std::lower_bound(
+            sorted_.begin(), sorted_.end(), id.value(),
+            [](const auto& entry, GlobalEntityId::value_type value) {
+                return entry.first < value;
+            });
+        if (found == sorted_.end() || found->first != id.value()) {
+            throw std::invalid_argument(
+                "mpmc::mesh::canonical writer: group member is absent from topology");
+        }
+        return found->second;
     }
-    return static_cast<std::size_t>(
-        std::distance(
-            ids.begin(),
-            found));
-}
+
+private:
+    std::span<const GlobalEntityId> ids_;
+    std::vector<std::pair<GlobalEntityId::value_type, std::size_t>> sorted_;
+};
 
 [[nodiscard]] inline FaceBoundarySnapshot
 canonical_face_boundary(
@@ -517,6 +528,8 @@ canonical_face_boundary(
             source_tags.end());
     }
 
+    CanonicalEntityLookup face_lookup(
+        document.topology().global_ids(EntityKind::face));
     for (const auto& group :
          document.groups()) {
         if (group.location !=
@@ -526,10 +539,7 @@ canonical_face_boundary(
         for (const auto member :
              group.members) {
             const std::size_t local =
-                local_from_global(
-                    document.topology(),
-                    EntityKind::face,
-                    member);
+                face_lookup.local(member);
             if (tags[local].is_tagged() &&
                 tags[local].value() !=
                     group.tag) {
@@ -594,6 +604,8 @@ canonical_cell_groups(
     std::vector<std::vector<std::uint32_t>>
         tags(cell_count);
 
+    CanonicalEntityLookup cell_lookup(
+        document.topology().global_ids(EntityKind::cell));
     for (const auto& group :
          document.groups()) {
         if (group.location !=
@@ -603,10 +615,7 @@ canonical_cell_groups(
         for (const auto member :
              group.members) {
             const std::size_t local =
-                local_from_global(
-                    document.topology(),
-                    EntityKind::cell,
-                    member);
+                cell_lookup.local(member);
             tags[local].push_back(
                 group.tag);
         }
