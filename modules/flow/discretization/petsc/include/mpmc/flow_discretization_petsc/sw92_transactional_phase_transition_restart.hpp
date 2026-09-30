@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_SW92_TRANSACTIONAL_PHASE_TRANSITION_RESTART_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_SW92_TRANSACTIONAL_PHASE_TRANSITION_RESTART_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow_discretization_petsc/cell_scoped_mixed_cardinality_evaluator_dispatcher.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_sw92_profile_c_phase_transition_scanner.hpp>
 #include <mpmc/flow_discretization_petsc/sw92_production_cell_evaluator.hpp>
@@ -71,19 +72,7 @@ namespace sw92_transactional_restart_detail {
 [[nodiscard]] inline bool near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second);
 }
 
 [[nodiscard]] inline const

@@ -14,6 +14,17 @@
 #include <utility>
 #include <vector>
 
+void shared_validation_contract();
+void composition_coordinates_contract();
+bool single_phase_cell_state_header();
+bool single_phase_properties_header();
+bool single_phase_accumulation_header();
+bool single_phase_transport_header();
+bool two_phase_cell_state_header();
+bool two_phase_properties_header();
+bool two_phase_accumulation_header();
+bool two_phase_transport_header();
+
 bool natural_variable_cell_state_header();
 bool single_phase_natural_variable_header();
 void single_phase_natural_variable_contract();
@@ -659,6 +670,15 @@ void cross_cardinality_phase_identity() {
 }
 
 void headers() {
+    require(single_phase_cell_state_header(), "single_phase_cell_state header probe failed");
+    require(single_phase_properties_header(), "single_phase_properties header probe failed");
+    require(single_phase_accumulation_header(), "single_phase_accumulation header probe failed");
+    require(single_phase_transport_header(), "single_phase_transport header probe failed");
+    require(two_phase_cell_state_header(), "two_phase_cell_state header probe failed");
+    require(two_phase_properties_header(), "two_phase_properties header probe failed");
+    require(two_phase_accumulation_header(), "two_phase_accumulation header probe failed");
+    require(two_phase_transport_header(), "two_phase_transport header probe failed");
+
     require(
         natural_variable_cell_state_header(),
         "flow public-header probe failed");
@@ -684,6 +704,8 @@ constexpr Test tests[]{
     {"single_phase_reduction", single_phase_reduction},
     {"two_phase_reduction", two_phase_reduction},
     {"cross_cardinality_phase_identity", cross_cardinality_phase_identity},
+    {"shared_validation", shared_validation_contract},
+    {"composition_coordinates", composition_coordinates_contract},
     {"headers", headers}};
 
 } // namespace

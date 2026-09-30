@@ -1,7 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_TWO_PHASE_FUGACITY_GLOBAL_ASSEMBLY_MAPPING_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_TWO_PHASE_FUGACITY_GLOBAL_ASSEMBLY_MAPPING_HPP
 
-#include <mpmc/flow/two_phase_natural_variable.hpp>
+#include <mpmc/flow/two_phase_properties.hpp>
 #include <mpmc/flow_discretization_petsc/fugacity_equilibrium_global_assembly_mapping.hpp>
 
 #include <petscsys.h>
