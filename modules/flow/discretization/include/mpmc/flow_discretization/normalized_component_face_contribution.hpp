@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_NORMALIZED_COMPONENT_FACE_CONTRIBUTION_HPP
 #define MPMC_FLOW_DISCRETIZATION_NORMALIZED_COMPONENT_FACE_CONTRIBUTION_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow_discretization/conservative_component_face_rate_scatter.hpp>
 
 #include <algorithm>
@@ -192,22 +193,7 @@ namespace normalized_face_contribution_detail {
     double first,
     double second,
     double extra_scale = 0.0) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second) ||
-        !std::isfinite(extra_scale) ||
-        extra_scale < 0.0) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second),
-             extra_scale});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second, extra_scale);
 }
 
 inline void validate_volume(

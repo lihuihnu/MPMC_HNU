@@ -49,6 +49,7 @@ ownership = {
         ".github/workflows/flow_core.yml",
     ],
     "flow_discretization": [
+        "modules/flow/include/mpmc/flow/detail/validation.hpp",
         "modules/flow_discretization/**",
         "modules/flow/discretization/include/**",
         "modules/flow/discretization/CMakeLists.txt",
@@ -76,6 +77,7 @@ ownership = {
         ".github/workflows/flow_discretization.yml",
     ],
     "flow_discretization_petsc": [
+        "modules/flow/include/mpmc/flow/detail/validation.hpp",
         "modules/flow_discretization_petsc/**",
         "modules/flow/discretization/petsc/**",
         "modules/well/discretization/petsc/**",
@@ -653,6 +655,7 @@ def thermo_matrix(selected):
     }
 
 checks = [
+    (["modules/flow/include/mpmc/flow/detail/validation.hpp"], expected_route(flow_core=True, flow_discretization=True, flow_discretization_petsc=True)),
     (["tests/flow_discretization/petsc/scanner.cpp"], expected_route(flow_discretization_petsc=True)),
     (["modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp"], expected_route(flow_discretization=True)),
     (["modules/well/discretization/include/mpmc/well_discretization/hydraulic_conductance.hpp"], expected_route(flow_discretization=True)),

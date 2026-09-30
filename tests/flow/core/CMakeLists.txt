@@ -24,6 +24,7 @@ option(
 add_executable(
     mpmc_flow_core_tests
     natural_variable_cell_state_test.cpp
+    validation_test.cpp
     natural_variable_cell_state_header.cpp
     single_phase_natural_variable_test.cpp
     single_phase_natural_variable_header.cpp
@@ -221,6 +222,7 @@ foreach(target IN ITEMS
 endforeach()
 
 set(core_cases
+    shared_validation
     layout
     composition_pivot
     valid_state

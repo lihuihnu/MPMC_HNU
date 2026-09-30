@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_LOCAL_ENERGY_CONSERVATION_RESIDUAL_HPP
 #define MPMC_FLOW_DISCRETIZATION_LOCAL_ENERGY_CONSERVATION_RESIDUAL_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/energy_accumulation.hpp>
 #include <mpmc/flow_discretization/energy_face_flux.hpp>
 
@@ -77,22 +78,7 @@ namespace local_energy_conservation_detail {
     double first,
     double second,
     double scale = 0.0) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second) ||
-        !std::isfinite(scale) ||
-        scale < 0.0) {
-        return false;
-    }
-    const double reference =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second),
-             scale});
-    return std::abs(first - second) <=
-        16384.0 *
-            std::numeric_limits<double>::epsilon() *
-            reference;
+    return mpmc::flow::validation_detail::near_roundoff<16384>(first, second, scale);
 }
 
 inline void validate_face(

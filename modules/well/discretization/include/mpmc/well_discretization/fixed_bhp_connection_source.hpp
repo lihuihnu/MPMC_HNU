@@ -1,6 +1,7 @@
 #ifndef MPMC_WELL_DISCRETIZATION_FIXED_BHP_CONNECTION_SOURCE_HPP
 #define MPMC_WELL_DISCRETIZATION_FIXED_BHP_CONNECTION_SOURCE_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/phase_transport.hpp>
 #include <mpmc/flow_discretization/cell_source.hpp>
 #include <mpmc/well/peaceman_well_index_3d.hpp>
@@ -95,19 +96,7 @@ namespace fixed_bhp_connection_source_detail {
 near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second);
 }
 
 inline void validate_gradient(

@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_SINGLE_PHASE_NATURAL_VARIABLE_HPP
 #define MPMC_FLOW_SINGLE_PHASE_NATURAL_VARIABLE_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/component_accumulation_time.hpp>
 #include <mpmc/flow/energy_accumulation.hpp>
 #include <mpmc/flow/phase_potential_upwind.hpp>
@@ -401,16 +402,7 @@ make_state_identity(
 same_layout(
     const NaturalVariableLayoutDescriptor& first,
     const NaturalVariableLayoutDescriptor& second) {
-    return first.component_count() ==
-               second.component_count() &&
-        first.phase_count() ==
-            second.phase_count() &&
-        first.unknown_count() ==
-            second.unknown_count() &&
-        first.composition_pivot()
-                .dependent_components() ==
-            second.composition_pivot()
-                .dependent_components();
+    return mpmc::flow::validation_detail::same_layout(first, second);
 }
 
 inline void validate_gradient(

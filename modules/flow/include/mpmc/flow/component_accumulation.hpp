@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_COMPONENT_ACCUMULATION_HPP
 #define MPMC_FLOW_COMPONENT_ACCUMULATION_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/natural_variable_cell_state.hpp>
 
 #include <algorithm>
@@ -124,20 +125,7 @@ namespace component_accumulation_detail {
 [[nodiscard]] inline bool near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        4096.0 *
-            std::numeric_limits<double>::
-                epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<4096>(first, second);
 }
 
 inline void validate_porosity(

@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_TPFA_COMPONENT_MOLAR_FLUX_HPP
 #define MPMC_FLOW_DISCRETIZATION_TPFA_COMPONENT_MOLAR_FLUX_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/component_accumulation.hpp>
 #include <mpmc/flow_discretization/tpfa_phase_darcy_flux.hpp>
 
@@ -136,22 +137,7 @@ namespace component_flux_detail {
     double first,
     double second,
     double extra_scale = 0.0) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second) ||
-        !std::isfinite(extra_scale) ||
-        extra_scale < 0.0) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second),
-             extra_scale});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second, extra_scale);
 }
 
 inline void validate_state_identity(
@@ -162,10 +148,8 @@ inline void validate_state_identity(
     const auto& layout =
         state.layout();
 
-    if (identity.component_ids !=
-            std::vector<std::string>{
-                state.component_ids().begin(),
-                state.component_ids().end()} ||
+    if (!mpmc::flow::validation_detail::same_component_ids(
+            identity.component_ids, state.component_ids()) ||
         identity.layout.component_count() !=
             layout.component_count() ||
         identity.layout.phase_count() !=

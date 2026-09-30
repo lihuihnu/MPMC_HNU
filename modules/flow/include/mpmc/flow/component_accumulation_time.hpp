@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_COMPONENT_ACCUMULATION_TIME_HPP
 #define MPMC_FLOW_COMPONENT_ACCUMULATION_TIME_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/component_accumulation.hpp>
 
 #include <algorithm>
@@ -93,23 +94,7 @@ namespace component_accumulation_time_detail {
     double first,
     double second,
     double scale) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second) ||
-        !std::isfinite(scale) ||
-        scale < 0.0) {
-        return false;
-    }
-    const double reference =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second),
-             scale});
-    return std::abs(first - second) <=
-        4096.0 *
-            std::numeric_limits<double>::
-                epsilon() *
-            reference;
+    return mpmc::flow::validation_detail::near_roundoff<4096>(first, second, scale);
 }
 
 inline void validate_time_step(

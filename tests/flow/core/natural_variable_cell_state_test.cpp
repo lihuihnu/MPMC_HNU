@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+void shared_validation_contract();
 bool natural_variable_cell_state_header();
 bool single_phase_natural_variable_header();
 void single_phase_natural_variable_contract();
@@ -684,6 +685,7 @@ constexpr Test tests[]{
     {"single_phase_reduction", single_phase_reduction},
     {"two_phase_reduction", two_phase_reduction},
     {"cross_cardinality_phase_identity", cross_cardinality_phase_identity},
+    {"shared_validation", shared_validation_contract},
     {"headers", headers}};
 
 } // namespace
