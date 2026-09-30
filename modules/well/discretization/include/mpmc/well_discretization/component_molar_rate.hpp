@@ -1,6 +1,7 @@
 #ifndef MPMC_WELL_DISCRETIZATION_COMPONENT_MOLAR_RATE_HPP
 #define MPMC_WELL_DISCRETIZATION_COMPONENT_MOLAR_RATE_HPP
 
+#include <mpmc/flow/detail/composition_coordinates.hpp>
 #include <mpmc/flow/component_accumulation.hpp>
 #include <mpmc/well_discretization/pressure_drawdown_rate.hpp>
 
@@ -235,30 +236,8 @@ d_phase_composition(
     std::size_t phase,
     std::size_t component,
     std::size_t column) {
-    const auto identity =
-        layout.composition_unknown_identity(
-            column);
-    if (!identity ||
-        static_cast<std::size_t>(
-            identity->phase) !=
-            phase) {
-        return 0.0;
-    }
-
-    if (component ==
-        identity->component) {
-        return 1.0;
-    }
-
-    if (component ==
-        layout.dependent_composition_component(
-            static_cast<
-                mpmc::flow::PhaseSlot3>(
-                    phase))) {
-        return -1.0;
-    }
-
-    return 0.0;
+    return mpmc::flow::composition_coordinate_detail::derivative(
+        layout, phase, component, column);
 }
 
 } // namespace component_molar_rate_detail

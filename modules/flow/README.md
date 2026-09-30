@@ -14,7 +14,7 @@ scope of their original increments; they are not new implementation requests.
 
 | Responsibility | Start here | Boundary |
 | --- | --- | --- |
-| Natural-variable layout and state | [natural_variable_cell_state.hpp](include/mpmc/flow/natural_variable_cell_state.hpp), [1P](include/mpmc/flow/single_phase_natural_variable.hpp), [2P](include/mpmc/flow/two_phase_natural_variable.hpp) | Component order, active phases, pivots, strict positive support |
+| Natural-variable layout and state | [3P](include/mpmc/flow/natural_variable_cell_state.hpp), [1P](include/mpmc/flow/single_phase_cell_state.hpp), [2P](include/mpmc/flow/two_phase_cell_state.hpp) | Component order, active phases, pivots, strict positive support |
 | EOS and property adapters | [PR76 closure](include/mpmc/flow/pr76_selected_phase_property_closure.hpp), [SW92 closure](include/mpmc/flow/sw92_selected_phase_property_closure.hpp) | Frozen selected phases, sourced properties, value/derivative consistency |
 | Local storage | [component accumulation](include/mpmc/flow/component_accumulation.hpp), [backward Euler](include/mpmc/flow/component_accumulation_time.hpp), [energy accumulation](include/mpmc/flow/energy_accumulation.hpp) | Frozen accepted history; local residual and Jacobian |
 | Mobility and face transport | [phase transport](include/mpmc/flow/phase_transport.hpp), [phase potential](include/mpmc/flow/phase_potential_upwind.hpp), [component flux](discretization/include/mpmc/flow_discretization/tpfa_component_molar_flux.hpp) | TPFA admissibility, frozen upwind choice, owner-to-neighbour orientation |
@@ -27,6 +27,33 @@ Mesh owns topology, geometry and fields. Discretization owns TPFA admissibility
 and transmissibility. Flow consumes these results; its local core does not
 introduce PETSc/MPI types. AD and thermodynamics keep their existing independent
 module boundaries. See [cross-module ownership](contracts.md#14-cross-module-ownership).
+
+## Work on one responsibility
+
+The 1P and 2P implementations have matching layers. Include the narrowest layer
+your code uses; each header is self-contained. The original
+`single_phase_natural_variable.hpp` and `two_phase_natural_variable.hpp` remain
+compatible entry points that include all four layers.
+
+| Layer | 1P | 2P | Owns |
+| --- | --- | --- | --- |
+| State | [cell state](include/mpmc/flow/single_phase_cell_state.hpp) | [cell state](include/mpmc/flow/two_phase_cell_state.hpp) | Layout, pivot, positive-support reconstruction and immutable values |
+| Properties | [properties](include/mpmc/flow/single_phase_properties.hpp) | [properties](include/mpmc/flow/two_phase_properties.hpp) | Exact-state identity, property/gradient carriers and their builders; 2P fugacity carrier |
+| Accumulation | [accumulation](include/mpmc/flow/single_phase_accumulation.hpp) | [accumulation](include/mpmc/flow/two_phase_accumulation.hpp) | Component and energy inventory and Jacobians |
+| Transport | [transport](include/mpmc/flow/single_phase_transport.hpp) | [transport](include/mpmc/flow/two_phase_transport.hpp) | Mobility, gravity potential and frozen upwind selection |
+
+Properties depend on state. Accumulation and transport both consume properties;
+transport does not include accumulation. The PR76/SW92 property adapter includes
+the property layer directly. State-only users require no storage or transport
+implementation. The existing 3P state header remains their shared prerequisite.
+
+The internal [composition coordinate helper](include/mpmc/flow/detail/composition_coordinates.hpp)
+owns the `+1 / -1 / 0` derivative of independent/reconstructed mole fractions.
+The 1P/2P lookup now identifies a column in constant time, removing a component
+scan from every Jacobian entry. Inventory assembly therefore scales quadratically
+with component count instead of cubically on these paths. It still constructs
+the same dense Jacobian with the same product rule and summation order.
+The 3P and descriptor callers retain their checked inverse-column mapping.
 
 ## State checks and numerical policies
 
@@ -100,6 +127,12 @@ The shared comparison regression is `flow.core.shared_validation`, owned by
 `mpmc_flow_core_tests`. It covers threshold boundaries, non-finite values, ordered
 identities, pivots and inactive sidecars. Existing constitutive, AD/Jacobian,
 conservation and restart regressions remain their original owners.
+
+`flow.core.composition_coordinates` compares coordinate derivatives against
+actual positive-support reconstruction for every pivot with 2–12 components,
+all active phase counts and all columns. It also checks exact normalization
+closure and existing invalid-index behavior. Eight additional translation units
+exercise the new public headers through the existing `flow.core.headers` case.
 
 A change to the shared validation header selects Flow core, Flow discretization
 and Flow PETSc through the [central impact router](../../.github/ci/impact_rules.py).

@@ -1,6 +1,7 @@
 #ifndef MPMC_WELL_DISCRETIZATION_FIXED_BHP_CONNECTION_SOURCE_HPP
 #define MPMC_WELL_DISCRETIZATION_FIXED_BHP_CONNECTION_SOURCE_HPP
 
+#include <mpmc/flow/detail/composition_coordinates.hpp>
 #include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/phase_transport.hpp>
 #include <mpmc/flow_discretization/cell_source.hpp>
@@ -291,28 +292,8 @@ phase_composition_derivative(
     std::size_t phase,
     std::size_t component,
     std::size_t column) {
-    const auto identity =
-        layout.composition_unknown_identity(
-            column);
-    if (!identity ||
-        static_cast<std::size_t>(
-            identity->phase) != phase) {
-        return 0.0;
-    }
-
-    if (component ==
-        identity->component) {
-        return 1.0;
-    }
-
-    if (component ==
-        layout.dependent_composition_component(
-            static_cast<
-                mpmc::flow::PhaseSlot3>(
-                    phase))) {
-        return -1.0;
-    }
-    return 0.0;
+    return mpmc::flow::composition_coordinate_detail::derivative(
+        layout, phase, component, column);
 }
 
 } // namespace fixed_bhp_connection_source_detail
