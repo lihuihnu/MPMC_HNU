@@ -85,6 +85,37 @@ def assert_workflow_covers_registered_ctests(source_dir, workflow_path, required
     )
     return registered
 
+def assert_root_readme_selection(select):
+    # Root overview edits have no scientific execution dependency. Topic docs,
+    # source, fixtures and build inputs keep their existing owners even when
+    # README.md is also changed (including either side of a rename).
+    science_paths = (
+        'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp',
+        'tests/flash/sw92_profile_c_phase_set/publication_test.cpp',
+        'tests/support/sw92/test_support.hpp',
+        'modules/thermodynamics/include/mpmc/thermodynamics/sw92_phase.hpp',
+        'modules/flash/sw92_profile_c_phase_set.md',
+        'tests/flash/sw92_profile_c_phase_set/CMakeLists.txt',
+        '.github/workflows/sw92_profile_c_phase_set.yml',
+    )
+    for action in ('opened', 'reopened', 'synchronize', 'ready_for_review'):
+        for paths in (['README.md'], ['README.md', 'AGENTS.md', '.github/AGENTS.md']):
+            results, ad, thermo = select(paths, action=action)
+            assert not any(results.values()) and not ad and not thermo, (
+                'root overview edits selected scientific gates', action, paths,
+            )
+        for path in science_paths:
+            expected = select([path], action=action)
+            assert expected[0]['sw92_profile_c_phase_set'], ('lost Profile-C owner', path)
+            for paths in (['README.md', path], [path, 'README.md']):
+                assert select(paths, action=action) == expected, (
+                    'root overview changed scientific ownership', action, paths,
+                )
+        path = 'modules/ad/include/mpmc/ad/math.hpp'
+        expected = select([path], action=action)
+        assert expected[1], 'AD change must retain its selected suites'
+        assert select(['README.md', path], action=action) == expected
+
 def main():
     catalog = json.loads(Path('.github/ci/workflow_map.json').read_text(encoding='utf-8'))
     router_path = '.github/workflows/pr_incremental_ci.yml'
@@ -223,6 +254,7 @@ def main():
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')
     select = planner['select']
+    assert_root_readme_selection(select)
     results, ad, thermo = select(['.github/AGENTS.md', 'tests/AGENTS.md'])
     assert not any(results.values()) and not ad and not thermo
     results, _, _ = select(['tests/flash/cpa_clapeyron_oracle/changed.json'])
