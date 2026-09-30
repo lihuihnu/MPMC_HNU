@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_MIXED_CARDINALITY_PHYSICAL_SNES_ASSEMBLY_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_MIXED_CARDINALITY_PHYSICAL_SNES_ASSEMBLY_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/cross_cardinality_phase_identity.hpp>
 #include <mpmc/flow_discretization/cell_source.hpp>
 #include <mpmc/flow_discretization_petsc/fixed_three_phase_snes_assembly.hpp>
@@ -248,20 +249,7 @@ state_identity(
 near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::
-                epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second);
 }
 
 [[nodiscard]] inline PetscErrorCode

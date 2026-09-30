@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_CONSERVATIVE_COMPONENT_FACE_RATE_SCATTER_HPP
 #define MPMC_FLOW_DISCRETIZATION_CONSERVATIVE_COMPONENT_FACE_RATE_SCATTER_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow_discretization/tpfa_component_molar_flux.hpp>
 
 #include <algorithm>
@@ -174,22 +175,7 @@ namespace conservative_scatter_detail {
     double first,
     double second,
     double extra_scale = 0.0) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second) ||
-        !std::isfinite(extra_scale) ||
-        extra_scale < 0.0) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second),
-             extra_scale});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second, extra_scale);
 }
 
 inline void validate_source(
