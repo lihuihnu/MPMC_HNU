@@ -39,6 +39,8 @@ def assert_root_build_selection(select):
         'tests/build/root_libraries/spatial_consumer.cpp',
         'tests/build/root_libraries/flow_consumer.cpp',
         'tests/build/root_libraries/flow_discretization_consumer.cpp',
+        'tests/build/root_libraries/well_consumer.cpp',
+        'tests/build/root_libraries/well_discretization_consumer.cpp',
         'tests/build/root_libraries/verify.py',
         'modules/thermodynamics/CMakeLists.txt',
         'modules/flash/CMakeLists.txt',
@@ -46,6 +48,8 @@ def assert_root_build_selection(select):
         'modules/discretization/CMakeLists.txt',
         'modules/flow/CMakeLists.txt',
         'modules/flow/discretization/CMakeLists.txt',
+        'modules/well/CMakeLists.txt',
+        'modules/well/discretization/CMakeLists.txt',
         'tests/build/root_libraries/README.md',
     ]
     # Discover the probe's actual project-header closure, so a future include
@@ -61,13 +65,18 @@ def assert_root_build_selection(select):
         for header in re.findall(r'#include\s+[<"](mpmc/[^>"]+)[>"]', text):
             module = header.split('/')[1]
             # Bridge namespaces live under their owning module, not at root.
-            module_dir = {'flow_discretization': 'flow/discretization'}.get(module, module)
+            module_dir = {
+                'flow_discretization': 'flow/discretization',
+                'well_discretization': 'well/discretization',
+            }.get(module, module)
             pending.append(Path('modules') / module_dir / 'include' / header)
     direct.extend(str(path).replace('\\', '/') for path in visited)
     for action in ('opened', 'reopened', 'synchronize', 'ready_for_review'):
         for path in direct:
             assert 'arithmetic' in select([path], action=action)[1], (action, path)
         for path in ('modules/mesh/include/mpmc/mesh/vtu.hpp',
+                     'modules/well/include/mpmc/well/single_well_control_policy.hpp',
+                     'modules/well/discretization/petsc/CMakeLists.txt',
                      'modules/flow/include/mpmc/flow/sw92_co2_water_properties.hpp',
                      'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp',
                      'tests/unknown/new.cpp', '.github/AGENTS.md'):

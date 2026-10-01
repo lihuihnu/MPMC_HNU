@@ -10,21 +10,27 @@ if(NOT TARGET mpmc::ad OR TARGET mpmc_ad_tests)
     message(FATAL_ERROR "Root library-only build must expose AD without its tests")
 endif()
 foreach(module IN ITEMS thermodynamics flash mesh discretization
-                        flow flow_thermodynamics flow_discretization)
+                        flow flow_thermodynamics flow_discretization well well_discretization)
     set(expected OFF)
     if(module STREQUAL "thermodynamics" AND
-       (MPMC_ENABLE_THERMODYNAMICS OR MPMC_ENABLE_FLASH OR MPMC_ENABLE_FLOW_DISCRETIZATION))
+       (MPMC_ENABLE_THERMODYNAMICS OR MPMC_ENABLE_FLASH OR
+        MPMC_ENABLE_FLOW_DISCRETIZATION OR MPMC_ENABLE_WELL_DISCRETIZATION))
         set(expected ON)
     elseif(module STREQUAL "flash" AND MPMC_ENABLE_FLASH)
         set(expected ON)
     elseif(module STREQUAL "mesh" AND
-           (MPMC_ENABLE_MESH OR MPMC_ENABLE_DISCRETIZATION OR MPMC_ENABLE_FLOW_DISCRETIZATION))
+           (MPMC_ENABLE_MESH OR MPMC_ENABLE_DISCRETIZATION OR
+            MPMC_ENABLE_FLOW_DISCRETIZATION OR MPMC_ENABLE_WELL_DISCRETIZATION))
         set(expected ON)
     elseif(module STREQUAL "discretization" AND
-           (MPMC_ENABLE_DISCRETIZATION OR MPMC_ENABLE_FLOW_DISCRETIZATION))
+           (MPMC_ENABLE_DISCRETIZATION OR MPMC_ENABLE_FLOW_DISCRETIZATION OR MPMC_ENABLE_WELL_DISCRETIZATION))
         set(expected ON)
     elseif((module STREQUAL "flow" OR module STREQUAL "flow_thermodynamics" OR
-            module STREQUAL "flow_discretization") AND MPMC_ENABLE_FLOW_DISCRETIZATION)
+            module STREQUAL "flow_discretization") AND
+           (MPMC_ENABLE_FLOW_DISCRETIZATION OR MPMC_ENABLE_WELL_DISCRETIZATION))
+        set(expected ON)
+    elseif((module STREQUAL "well" OR module STREQUAL "well_discretization") AND
+           MPMC_ENABLE_WELL_DISCRETIZATION)
         set(expected ON)
     endif()
     if(expected AND NOT TARGET mpmc::${module})
@@ -63,7 +69,7 @@ if(MPMC_ENABLE_MESH OR MPMC_ENABLE_DISCRETIZATION)
     add_test(NAME build.root_spatial_libraries COMMAND mpmc_root_spatial_consumer)
     set_tests_properties(build.root_spatial_libraries PROPERTIES LABELS "build;consumer" TIMEOUT 30)
 endif()
-if(MPMC_ENABLE_FLOW_DISCRETIZATION)
+if(MPMC_ENABLE_FLOW_DISCRETIZATION OR MPMC_ENABLE_WELL_DISCRETIZATION)
     # Keep the two published usage contracts separate: the discretization
     # bridge links flow + spatial targets, while flow_thermodynamics links EOS/AD.
     add_executable(mpmc_root_flow_consumer flow_consumer.cpp)
@@ -74,6 +80,18 @@ if(MPMC_ENABLE_FLOW_DISCRETIZATION)
     add_test(NAME build.root_flow_thermodynamics COMMAND mpmc_root_flow_consumer)
     add_test(NAME build.root_flow_discretization COMMAND mpmc_root_flow_discretization_consumer)
     set_tests_properties(build.root_flow_thermodynamics build.root_flow_discretization
+                        PROPERTIES LABELS "build;consumer" TIMEOUT 30)
+endif()
+if(MPMC_ENABLE_WELL_DISCRETIZATION)
+    # Check the base well target without borrowing the bridge's include paths.
+    add_executable(mpmc_root_well_consumer well_consumer.cpp)
+    target_link_libraries(mpmc_root_well_consumer PRIVATE mpmc::well)
+    add_executable(mpmc_root_well_discretization_consumer well_discretization_consumer.cpp)
+    target_link_libraries(mpmc_root_well_discretization_consumer PRIVATE mpmc::well_discretization)
+    list(APPEND consumer_targets mpmc_root_well_consumer mpmc_root_well_discretization_consumer)
+    add_test(NAME build.root_well COMMAND mpmc_root_well_consumer)
+    add_test(NAME build.root_well_discretization COMMAND mpmc_root_well_discretization_consumer)
+    set_tests_properties(build.root_well build.root_well_discretization
                         PROPERTIES LABELS "build;consumer" TIMEOUT 30)
 endif()
 if(MPMC_AD_ENABLE_SANITIZERS)

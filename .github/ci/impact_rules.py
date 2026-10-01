@@ -595,6 +595,20 @@ root_build_inputs = {
     "modules/flow/discretization/CMakeLists.txt",
     "modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp",
     "modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp",
+    "modules/well/CMakeLists.txt",
+    "modules/well/discretization/CMakeLists.txt",
+    "modules/well/include/mpmc/well/peaceman_well_index_3d.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/cell_source_adapter.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/component_molar_rate.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/energy_rate.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/hydraulic_conductance.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/pressure_drawdown_rate.hpp",
+    "modules/flow/include/mpmc/flow/component_accumulation.hpp",
+    "modules/flow/include/mpmc/flow/detail/composition_coordinates.hpp",
+    "modules/flow/include/mpmc/flow/detail/validation.hpp",
+    "modules/flow/include/mpmc/flow/energy_accumulation.hpp",
+    "modules/flow/include/mpmc/flow/phase_transport.hpp",
+    "modules/flow/include/mpmc/flow/saturation_constitutive.hpp",
 }
 
 def ad_suites_for(paths):
@@ -850,6 +864,15 @@ ad_checks = [
     (["modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp"], ["arithmetic"]),
     (["modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp"], ["arithmetic"]),
     (["modules/flow/include/mpmc/flow/sw92_co2_water_properties.hpp"], []),
+    (["tests/build/root_libraries/well_consumer.cpp"], ["arithmetic"]),
+    (["tests/build/root_libraries/well_discretization_consumer.cpp"], ["arithmetic"]),
+    (["modules/well/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/well/discretization/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/well/include/mpmc/well/peaceman_well_index_3d.hpp"], ["arithmetic"]),
+    (["modules/well/discretization/include/mpmc/well_discretization/cell_source_adapter.hpp"], ["arithmetic"]),
+    (["modules/flow/include/mpmc/flow/detail/composition_coordinates.hpp"], ["arithmetic"]),
+    (["modules/well/include/mpmc/well/single_well_control_policy.hpp"], []),
+    (["modules/well/discretization/petsc/CMakeLists.txt"], []),
 ]
 for paths, expected in ad_checks:
     actual = ad_suites_for(paths)
