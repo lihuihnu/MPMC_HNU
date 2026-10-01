@@ -1,0 +1,74 @@
+"""Root build contract; owned once per platform by the AD arithmetic CI job."""
+import argparse
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+
+
+def run(*args):
+    subprocess.run(args, check=True)
+
+
+def tests_in(build, config):
+    result = subprocess.check_output(
+        ['ctest', '--test-dir', str(build), '-C', config, '--show-only=json-v1'],
+        text=True,
+    )
+    return [test['name'] for test in json.loads(result)['tests']]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config', default='Debug')
+    parser.add_argument('--compiler', default='')
+    parser.add_argument('--sanitizer', choices=['ON', 'OFF'], default='OFF')
+    args = parser.parse_args()
+    source = Path(__file__).resolve().parent
+    root = source.parents[2]
+    common = [f'-DCMAKE_BUILD_TYPE={args.config}']
+    if args.compiler:
+        common.append(f'-DCMAKE_CXX_COMPILER={args.compiler}')
+    with tempfile.TemporaryDirectory(prefix='mpmc-root-build-') as temporary:
+        work = Path(temporary)
+        # Root defaults must still register exactly the original AD test.
+        default_build = work / 'default'
+        run('cmake', '-S', str(root), '-B', str(default_build), *common)
+        assert tests_in(default_build, args.config) == ['ad.dual']
+        cache = (default_build / 'CMakeCache.txt').read_text(encoding='utf-8')
+        for option in ('MPMC_ENABLE_THERMODYNAMICS', 'MPMC_ENABLE_FLASH'):
+            assert f'{option}:BOOL=OFF' in cache, (option, 'default changed')
+        # Exercise the documented preset while keeping outputs outside the repo.
+        preset_build = work / 'preset'
+        subprocess.run(
+            ['cmake', '--preset', 'flash-libraries', '-B', str(preset_build), *common],
+            cwd=root, check=True,
+        )
+        preset_cache = (preset_build / 'CMakeCache.txt').read_text(encoding='utf-8')
+        for setting in ('BUILD_TESTING:BOOL=OFF', 'MPMC_ENABLE_FLASH:BOOL=ON'):
+            assert setting in preset_cache, ('library preset drifted', setting)
+        assert tests_in(preset_build, args.config) == []
+        run('cmake', '--build', str(preset_build), '--config', args.config)
+        # Four independent consumers expose missing, duplicate or leaked targets.
+        for thermo, flash in [('OFF', 'OFF'), ('ON', 'OFF'), ('OFF', 'ON'), ('ON', 'ON')]:
+            build = work / f'{thermo}-{flash}'
+            run('cmake', '-S', str(source), '-B', str(build), *common,
+                f'-DMPMC_ENABLE_THERMODYNAMICS={thermo}',
+                f'-DMPMC_ENABLE_FLASH={flash}',
+                f'-DMPMC_AD_ENABLE_SANITIZERS={args.sanitizer}')
+            assert tests_in(build, args.config) == ['build.root_libraries']
+            run('cmake', '--build', str(build), '--config', args.config, '--parallel', '2')
+            run('ctest', '--test-dir', str(build), '-C', args.config,
+                '--output-on-failure', '--no-tests=error')
+        # Disabling modules in an existing build must remove their targets, too.
+        build = work / 'ON-ON'
+        run('cmake', '-S', str(source), '-B', str(build), *common,
+            '-DMPMC_ENABLE_THERMODYNAMICS=OFF', '-DMPMC_ENABLE_FLASH=OFF')
+        run('cmake', '--build', str(build), '--config', args.config, '--parallel', '2')
+        run('ctest', '--test-dir', str(build), '-C', args.config,
+            '--output-on-failure', '--no-tests=error')
+    print('ROOT_BUILD_CONTRACT_OK defaults; library preset; four option combinations; reconfigure')
+
+
+if __name__ == '__main__':
+    main()

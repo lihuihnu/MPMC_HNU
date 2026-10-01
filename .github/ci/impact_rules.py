@@ -567,6 +567,18 @@ def expected_route(**overrides):
     expected.update(overrides)
     return expected
 
+# Root optional-library consumers are owned by the arithmetic matrix. This
+# precise header closure comes from consumer.cpp, not every flash/thermo header.
+root_build_inputs = {
+    "modules/thermodynamics/CMakeLists.txt",
+    "modules/flash/CMakeLists.txt",
+    "modules/thermodynamics/include/mpmc/thermodynamics/pr76_pure.hpp",
+    "modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp",
+    "modules/thermodynamics/include/mpmc/thermodynamics/components.hpp",
+    "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+    "modules/flash/include/mpmc/flash/pt_stability.hpp",
+}
+
 def ad_suites_for(paths):
     selected = set()
     infrastructure = False
@@ -582,6 +594,9 @@ def ad_suites_for(paths):
         ".github/workflows/ad.yml",
     }
     for path in paths:
+        if path in root_build_inputs or path.startswith("tests/build/root_libraries/"):
+            selected.add("arithmetic")
+            continue
         owned = (
             path.startswith("modules/ad/") or
             path.startswith("tests/ad/") or
@@ -793,6 +808,16 @@ ad_checks = [
     (["modules/ad/include/mpmc/ad/math.hpp", "tests/ad/runtime/runtime_test.cpp"],
      ["jacobian", "math", "runtime"]),
     (["modules/ad/runtime_differentiate.md"], []),
+    (["tests/build/root_libraries/consumer.cpp"], ["arithmetic"]),
+    (["tests/build/root_libraries/verify.py"], ["arithmetic"]),
+    (["tests/build/root_libraries/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/thermodynamics/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/flash/CMakeLists.txt"], ["arithmetic"]),
+    (["tests/build/root_libraries/README.md"], ["arithmetic"]),
+    (["modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp"], ["arithmetic"]),
+    (["modules/flash/include/mpmc/flash/rachford_rice.hpp"], ["arithmetic"]),
+    (["modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp"], []),
+    (["tests/build/root_libraries/old.cpp", "tests/ad/math/math_test.cpp"], ["arithmetic", "math"]),
 ]
 for paths, expected in ad_checks:
     actual = ad_suites_for(paths)
