@@ -37,17 +37,20 @@ def assert_root_build_selection(select):
         'tests/build/root_libraries/CMakeLists.txt',
         'tests/build/root_libraries/consumer.cpp',
         'tests/build/root_libraries/spatial_consumer.cpp',
+        'tests/build/root_libraries/flow_consumer.cpp',
+        'tests/build/root_libraries/flow_discretization_consumer.cpp',
         'tests/build/root_libraries/verify.py',
         'modules/thermodynamics/CMakeLists.txt',
         'modules/flash/CMakeLists.txt',
         'modules/mesh/CMakeLists.txt',
         'modules/discretization/CMakeLists.txt',
+        'modules/flow/CMakeLists.txt',
+        'modules/flow/discretization/CMakeLists.txt',
         'tests/build/root_libraries/README.md',
     ]
     # Discover the probe's actual project-header closure, so a future include
     # cannot silently escape the explicit build-consumer ownership list.
-    pending = [Path('tests/build/root_libraries/consumer.cpp'),
-               Path('tests/build/root_libraries/spatial_consumer.cpp')]
+    pending = [Path(path) for path in direct if path.endswith('.cpp')]
     visited = set()
     while pending:
         path = pending.pop()
@@ -57,12 +60,15 @@ def assert_root_build_selection(select):
         text = path.read_text(encoding='utf-8')
         for header in re.findall(r'#include\s+[<"](mpmc/[^>"]+)[>"]', text):
             module = header.split('/')[1]
-            pending.append(Path('modules') / module / 'include' / header)
+            # Bridge namespaces live under their owning module, not at root.
+            module_dir = {'flow_discretization': 'flow/discretization'}.get(module, module)
+            pending.append(Path('modules') / module_dir / 'include' / header)
     direct.extend(str(path).replace('\\', '/') for path in visited)
     for action in ('opened', 'reopened', 'synchronize', 'ready_for_review'):
         for path in direct:
             assert 'arithmetic' in select([path], action=action)[1], (action, path)
         for path in ('modules/mesh/include/mpmc/mesh/vtu.hpp',
+                     'modules/flow/include/mpmc/flow/sw92_co2_water_properties.hpp',
                      'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp',
                      'tests/unknown/new.cpp', '.github/AGENTS.md'):
             assert not select([path], action=action)[1], ('unrelated AD fanout', path)

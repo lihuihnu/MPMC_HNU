@@ -568,7 +568,7 @@ def expected_route(**overrides):
     return expected
 
 # Root optional-library consumers are owned by the arithmetic matrix. This
-# precise header closure comes from the two consumers, not every module header.
+# precise header closure comes from the root consumers, not every module header.
 root_build_inputs = {
     "modules/thermodynamics/CMakeLists.txt",
     "modules/flash/CMakeLists.txt",
@@ -591,6 +591,10 @@ root_build_inputs = {
     "modules/mesh/include/mpmc/mesh/cartesian_symmetric_tensor_3d.hpp",
     "modules/mesh/include/mpmc/mesh/dense_field.hpp",
     "modules/mesh/include/mpmc/mesh/dense_field_registry.hpp",
+    "modules/flow/CMakeLists.txt",
+    "modules/flow/discretization/CMakeLists.txt",
+    "modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp",
+    "modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp",
 }
 
 def ad_suites_for(paths):
@@ -839,6 +843,13 @@ ad_checks = [
     (["modules/discretization/include/mpmc/discretization/tpfa_half_connection_3d.hpp"], ["arithmetic"]),
     (["modules/mesh/include/mpmc/mesh/dense_field_registry.hpp"], ["arithmetic"]),
     (["modules/mesh/include/mpmc/mesh/vtu.hpp"], []),
+    (["tests/build/root_libraries/flow_consumer.cpp"], ["arithmetic"]),
+    (["tests/build/root_libraries/flow_discretization_consumer.cpp"], ["arithmetic"]),
+    (["modules/flow/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/flow/discretization/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp"], ["arithmetic"]),
+    (["modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp"], ["arithmetic"]),
+    (["modules/flow/include/mpmc/flow/sw92_co2_water_properties.hpp"], []),
 ]
 for paths, expected in ad_checks:
     actual = ad_suites_for(paths)

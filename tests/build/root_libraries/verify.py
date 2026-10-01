@@ -31,7 +31,8 @@ def main():
     if args.compiler:
         common.append(f'-DCMAKE_CXX_COMPILER={args.compiler}')
     options = ('MPMC_ENABLE_THERMODYNAMICS', 'MPMC_ENABLE_FLASH',
-               'MPMC_ENABLE_MESH', 'MPMC_ENABLE_DISCRETIZATION')
+               'MPMC_ENABLE_MESH', 'MPMC_ENABLE_DISCRETIZATION',
+               'MPMC_ENABLE_FLOW_DISCRETIZATION')
     with tempfile.TemporaryDirectory(prefix='mpmc-root-build-') as temporary:
         work = Path(temporary)
         # Root defaults must still register exactly the original AD test.
@@ -49,33 +50,36 @@ def main():
         )
         preset_cache = (preset_build / 'CMakeCache.txt').read_text(encoding='utf-8')
         for setting in ('BUILD_TESTING:BOOL=OFF', 'MPMC_ENABLE_FLASH:BOOL=ON',
-                        'MPMC_ENABLE_MESH:BOOL=OFF', 'MPMC_ENABLE_DISCRETIZATION:BOOL=OFF'):
+                        'MPMC_ENABLE_MESH:BOOL=OFF', 'MPMC_ENABLE_DISCRETIZATION:BOOL=OFF',
+                        'MPMC_ENABLE_FLOW_DISCRETIZATION:BOOL=OFF'):
             assert setting in preset_cache, ('library preset drifted', setting)
         assert tests_in(preset_build, args.config) == []
         run('cmake', '--build', str(preset_build), '--config', args.config)
-        # Exhaust both dependency chains independently and together, including
-        # an explicitly disabled lower module required by its enabled consumer.
+        # Exhaust the original chains with/without the flow bridge, including
+        # explicitly disabled lower modules required by the enabled bridge.
         for values in product(('OFF', 'ON'), repeat=len(options)):
             build = work / '-'.join(values)
             run('cmake', '-S', str(source), '-B', str(build), *common,
                 *(f'-D{option}={value}' for option, value in zip(options, values)),
                 f'-DMPMC_AD_ENABLE_SANITIZERS={args.sanitizer}')
             expected = ['build.root_libraries']
-            if 'ON' in values[2:]:
+            if 'ON' in values[2:4]:
                 expected.append('build.root_spatial_libraries')
-            assert tests_in(build, args.config) == expected
+            if values[4] == 'ON':
+                expected.extend(['build.root_flow_thermodynamics', 'build.root_flow_discretization'])
+            assert tests_in(build, args.config) == sorted(expected)
             run('cmake', '--build', str(build), '--config', args.config, '--parallel', '2')
             run('ctest', '--test-dir', str(build), '-C', args.config,
                 '--output-on-failure', '--no-tests=error')
         # Disabling modules in an existing build must remove their targets, too.
-        build = work / 'ON-ON-ON-ON'
+        build = work / 'ON-ON-ON-ON-ON'
         run('cmake', '-S', str(source), '-B', str(build), *common,
             *(f'-D{option}=OFF' for option in options))
         assert tests_in(build, args.config) == ['build.root_libraries']
         run('cmake', '--build', str(build), '--config', args.config, '--parallel', '2')
         run('ctest', '--test-dir', str(build), '-C', args.config,
             '--output-on-failure', '--no-tests=error')
-    print('ROOT_BUILD_CONTRACT_OK defaults; library preset; 16 option combinations; reconfigure')
+    print('ROOT_BUILD_CONTRACT_OK defaults; library preset; 32 option combinations; reconfigure')
 
 
 if __name__ == '__main__':
