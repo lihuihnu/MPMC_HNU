@@ -16,7 +16,9 @@
         "CMAKE_BUILD_TYPE": "Release",
         "BUILD_TESTING": "OFF",
         "MPMC_ENABLE_THERMODYNAMICS": "OFF",
-        "MPMC_ENABLE_FLASH": "ON"
+        "MPMC_ENABLE_FLASH": "ON",
+        "MPMC_ENABLE_MESH": "OFF",
+        "MPMC_ENABLE_DISCRETIZATION": "OFF"
       }
     }
   ],

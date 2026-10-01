@@ -568,7 +568,7 @@ def expected_route(**overrides):
     return expected
 
 # Root optional-library consumers are owned by the arithmetic matrix. This
-# precise header closure comes from consumer.cpp, not every flash/thermo header.
+# precise header closure comes from the two consumers, not every module header.
 root_build_inputs = {
     "modules/thermodynamics/CMakeLists.txt",
     "modules/flash/CMakeLists.txt",
@@ -577,6 +577,20 @@ root_build_inputs = {
     "modules/thermodynamics/include/mpmc/thermodynamics/components.hpp",
     "modules/flash/include/mpmc/flash/rachford_rice.hpp",
     "modules/flash/include/mpmc/flash/pt_stability.hpp",
+    "modules/mesh/CMakeLists.txt",
+    "modules/discretization/CMakeLists.txt",
+    "modules/mesh/include/mpmc/mesh/entity.hpp",
+    "modules/discretization/include/mpmc/discretization/tpfa_half_transmissibility_3d.hpp",
+    "modules/discretization/include/mpmc/discretization/tpfa_half_connection_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/cell_face_geometric_operator_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/topology.hpp",
+    "modules/mesh/include/mpmc/mesh/csr_adjacency.hpp",
+    "modules/mesh/include/mpmc/mesh/permeability_tensor_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/cartesian_symmetric_tensor_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/dense_field.hpp",
+    "modules/mesh/include/mpmc/mesh/dense_field_registry.hpp",
 }
 
 def ad_suites_for(paths):
@@ -818,6 +832,13 @@ ad_checks = [
     (["modules/flash/include/mpmc/flash/rachford_rice.hpp"], ["arithmetic"]),
     (["modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp"], []),
     (["tests/build/root_libraries/old.cpp", "tests/ad/math/math_test.cpp"], ["arithmetic", "math"]),
+    (["tests/build/root_libraries/spatial_consumer.cpp"], ["arithmetic"]),
+    (["modules/mesh/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/discretization/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/mesh/include/mpmc/mesh/entity.hpp"], ["arithmetic"]),
+    (["modules/discretization/include/mpmc/discretization/tpfa_half_connection_3d.hpp"], ["arithmetic"]),
+    (["modules/mesh/include/mpmc/mesh/dense_field_registry.hpp"], ["arithmetic"]),
+    (["modules/mesh/include/mpmc/mesh/vtu.hpp"], []),
 ]
 for paths, expected in ad_checks:
     actual = ad_suites_for(paths)

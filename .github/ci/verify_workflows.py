@@ -36,14 +36,18 @@ def assert_root_build_selection(select):
     direct = [
         'tests/build/root_libraries/CMakeLists.txt',
         'tests/build/root_libraries/consumer.cpp',
+        'tests/build/root_libraries/spatial_consumer.cpp',
         'tests/build/root_libraries/verify.py',
         'modules/thermodynamics/CMakeLists.txt',
         'modules/flash/CMakeLists.txt',
+        'modules/mesh/CMakeLists.txt',
+        'modules/discretization/CMakeLists.txt',
         'tests/build/root_libraries/README.md',
     ]
     # Discover the probe's actual project-header closure, so a future include
     # cannot silently escape the explicit build-consumer ownership list.
-    pending = [Path('tests/build/root_libraries/consumer.cpp')]
+    pending = [Path('tests/build/root_libraries/consumer.cpp'),
+               Path('tests/build/root_libraries/spatial_consumer.cpp')]
     visited = set()
     while pending:
         path = pending.pop()
@@ -58,7 +62,7 @@ def assert_root_build_selection(select):
     for action in ('opened', 'reopened', 'synchronize', 'ready_for_review'):
         for path in direct:
             assert 'arithmetic' in select([path], action=action)[1], (action, path)
-        for path in ('modules/mesh/include/mpmc/mesh/entity.hpp',
+        for path in ('modules/mesh/include/mpmc/mesh/vtu.hpp',
                      'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp',
                      'tests/unknown/new.cpp', '.github/AGENTS.md'):
             assert not select([path], action=action)[1], ('unrelated AD fanout', path)
