@@ -10,7 +10,7 @@
 - Gmsh 验证节点坐标、稳定节点/单元/面 ID、线/三角形/四边形类型、循环连接、共享边、PhysicalNames、边界与多区域组成员。
 - VTK 验证坐标、三角形/四边形类型、循环连接、UInt64 单元 ID、PointData/CellData 的字段名、分量数、数值和实体对应。ID 使用整数访问器，避免经过 double。VTU 未编码稳定 vertex/face ID；此处按样例的唯一坐标建立映射，不声称这些 ID 被保留。
 - 数值采用绝对/相对容差 `1e-12`（坐标/质心 m、面积 m²、字段按声明单位）；样例量级为 1–300，容差用于十进制文本和浮点积分舍入。类型、整数 ID、连接和分组精确匹配。
-- 跨格式输出同时检查实际可读内容与 loss report：Gmsh 明确丢失字段，VTU 明确丢失组和面标签。VTU 的自定义 `mpmc_*` 单位/来源 XML 属性不是 VTK 标准字段语义，本测试不宣称 VTK 理解这些元数据，也不证明所有转换损失都已穷尽。
+- 跨格式输出同时检查实际可读内容与 loss report：Gmsh 明确丢失字段，VTU 明确丢失组和面标签。样例的稀疏 vertex/face ID 无法在当前 VTU 往返中保留，报告还必须含 `vtu.vertex_ids_remapped`、`vtu.face_ids_remapped`；官方 VTK 同时确认文件点顺序保持。无标签/字段、默认编号不误报及同集合错绑的实际往返回归由既有 `mesh.core.exchange_io` 唯一拥有，覆盖二维混合单元与三维金字塔的 16 个场景。VTU 的自定义 `mpmc_*` 单位/来源 XML 属性不是 VTK 标准字段语义，本测试不宣称 VTK 理解这些元数据，也不证明所有转换损失都已穷尽。
 - 五个负对照分别移除单元 ID 字段、改错字段值、反转连接、改错组名及破坏 XML；均须被拒绝。破坏 XML 的控制会产生预期的 VTK parser 错误诊断，只有所有拒绝判据满足才打印总 PASS。
 
 范围为现有二维线性 XY 平面、MSH 4.1 ASCII 和单 Piece VTU ASCII。未覆盖三维独立读回、binary/appended/compressed、高阶/曲面、大规模性能、Gmsh GUI/CAD 操作或科学求解验证。旧公共真实样例验证仍保留，不能与本项混称。

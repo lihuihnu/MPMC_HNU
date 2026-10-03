@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -649,10 +650,161 @@ void verify_non_corner_point_report() {
         "unsupported GRDECL export must not produce content");
 }
 
+// Identity regression oracle: compare the IDs attached to actual point/face
+// entities after export/import, never reproduce the analyzer's numbering rule.
+using FaceIdentities = std::map<std::vector<std::uint32_t>, std::uint64_t>;
+
+FaceIdentities face_identities(const mesh::Topology& topology) {
+    FaceIdentities result;
+    const auto ids = topology.global_ids(mesh::EntityKind::face);
+    const auto& relation = topology.relation(mesh::EntityKind::face, mesh::EntityKind::vertex);
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        std::vector<std::uint32_t> vertices;
+        for (const auto vertex : relation.adjacent(mesh::LocalIndex{static_cast<std::uint32_t>(i)})) {
+            vertices.push_back(vertex.value());
+        }
+        std::sort(vertices.begin(), vertices.end());
+        require(result.emplace(std::move(vertices), ids[i].value()).second, "duplicate face in identity fixture");
+    }
+    return result;
+}
+
+bool same_ids(const mesh::Topology& a, const mesh::Topology& b, mesh::EntityKind kind) {
+    const auto left = a.global_ids(kind);
+    const auto right = b.global_ids(kind);
+    return std::equal(left.begin(), left.end(), right.begin(), right.end());
+}
+
+void verify_identity_report(const mesh::MeshExchangeDocument& document,
+                            bool vertices_changed, bool faces_changed) {
+    const auto exported = mesh::export_vtu_ascii(document);
+    require(exported.exported(), "identity fixture must export");
+    const auto actual = document.dimension() == 2 ?
+        mesh::make_mesh_exchange_document(mesh::import_vtu_ascii(*exported.content)) :
+        mesh::make_mesh_exchange_document(mesh::import_vtu_ascii_3d(*exported.content));
+    require(!same_ids(document.topology(), actual.topology(), mesh::EntityKind::vertex) == vertices_changed,
+            "fixture vertex identity change differs from explicit expectation");
+    require((face_identities(document.topology()) != face_identities(actual.topology())) == faces_changed,
+            "fixture face identity change differs from explicit expectation");
+    require(same_ids(document.topology(), actual.topology(), mesh::EntityKind::cell),
+            "VTU must preserve exact UInt64 cell IDs");
+    const auto before = document.vertex_coordinates_m();
+    const auto after = actual.vertex_coordinates_m();
+    require(before.size() == after.size(), "identity change must not drop points");
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        require(before[i].x_m == after[i].x_m && before[i].y_m == after[i].y_m &&
+                before[i].z_m == after[i].z_m, "identity change must not alter coordinates");
+    }
+    const auto& left = document.topology().relation(mesh::EntityKind::cell, mesh::EntityKind::vertex);
+    const auto& right = actual.topology().relation(mesh::EntityKind::cell, mesh::EntityKind::vertex);
+    for (std::size_t i = 0; i < document.topology().entity_count(mesh::EntityKind::cell); ++i) {
+        const auto a = left.adjacent(mesh::LocalIndex{static_cast<std::uint32_t>(i)});
+        const auto b = right.adjacent(mesh::LocalIndex{static_cast<std::uint32_t>(i)});
+        require(std::equal(a.begin(), a.end(), b.begin(), b.end()), "cyclic cell connectivity changed");
+    }
+    for (const auto& report : {mesh::analyze_conversion(document, mesh::MeshExchangeFormat::vtu_ascii),
+                               exported.report}) {
+        bool vertex_issue = false;
+        bool face_issue = false;
+        for (const auto& issue : report.issues()) {
+            if (issue.code == "vtu.vertex_ids_remapped") vertex_issue = true;
+            else if (issue.code == "vtu.face_ids_remapped") face_issue = true;
+            else throw std::runtime_error("unrelated loss masks identity regression: " + issue.code);
+        }
+        require(vertex_issue == vertices_changed, "VTU report must match actual vertex identity loss");
+        require(face_issue == faces_changed, "VTU report must match actual face identity loss");
+        require(report.issues().size() == static_cast<std::size_t>(vertices_changed) +
+                                            static_cast<std::size_t>(faces_changed), "duplicate identity issue");
+        require(report.lossless() == (!vertices_changed && !faces_changed),
+                "VTU lossless promise differs from actual entity identities");
+    }
+}
+
+mesh::MeshExchangeDocument identity_variant(const mesh::MeshExchangeDocument& original,
+    std::vector<mesh::GlobalEntityId> vertices, std::vector<mesh::GlobalEntityId> faces,
+    bool reverse_face_storage = false) {
+    // Reorder storage and all affected relations together, preserving bindings.
+    const auto& topology = original.topology();
+    const auto face_count = faces.size();
+    if (reverse_face_storage) std::reverse(faces.begin(), faces.end());
+    mesh::Topology::EntityIds ids;
+    ids.vertices = std::move(vertices);
+    ids.faces = std::move(faces);
+    const auto cell_count = topology.entity_count(mesh::EntityKind::cell);
+    for (std::size_t i = 0; i < cell_count; ++i) {
+        ids.cells.emplace_back(9007199254740993ULL + static_cast<std::uint64_t>(i));
+    }
+    constexpr std::array kinds{mesh::EntityKind::vertex, mesh::EntityKind::face, mesh::EntityKind::cell};
+    std::vector<mesh::CsrAdjacency> relations;
+    for (const auto from : kinds) for (const auto to : kinds) {
+        if (!topology.has_relation(from, to)) continue;
+        std::vector<mesh::CsrAdjacency::Offset> offsets{0};
+        std::vector<mesh::LocalIndex> indices;
+        for (std::size_t i = 0; i < topology.entity_count(from); ++i) {
+            const auto source = reverse_face_storage && from == mesh::EntityKind::face ? face_count-1U-i : i;
+            for (const auto index : topology.relation(from, to).adjacent(
+                     mesh::LocalIndex{static_cast<std::uint32_t>(source)})) {
+                const auto target = reverse_face_storage && to == mesh::EntityKind::face ?
+                    face_count-1U-index.value() : index.value();
+                indices.emplace_back(static_cast<std::uint32_t>(target));
+            }
+            offsets.push_back(static_cast<mesh::CsrAdjacency::Offset>(indices.size()));
+        }
+        relations.emplace_back(from, to, topology.entity_count(to), std::move(offsets), std::move(indices));
+    }
+    return mesh::MeshExchangeDocument::create(mesh::MeshExchangeFormat::gmsh_4_1_ascii,
+        original.dimension(), mesh::Topology{std::move(ids), std::move(relations)},
+        {original.vertex_coordinates_m().begin(), original.vertex_coordinates_m().end()},
+        std::nullopt, {}, {}, std::nullopt);
+}
+
+void verify_vtu_identity_losses() {
+    // Handwritten geometry; mixed 2D has a shared edge, pyramid mixes triangle
+    // and quad faces. Default IDs are checked against actual readers below.
+    const auto two = mesh::make_mesh_exchange_document(mesh::import_vtu_ascii(R"VTU(
+<VTKFile type="UnstructuredGrid"><UnstructuredGrid><Piece NumberOfPoints="5" NumberOfCells="2">
+<Points><DataArray type="Float64" NumberOfComponents="3" format="ascii">0 0 0 3 0 0 2 2 0 0 2 0 4 0 0</DataArray></Points>
+<Cells><DataArray type="Int64" Name="connectivity" format="ascii">1 4 2 3 2 1 0</DataArray>
+<DataArray type="Int64" Name="offsets" format="ascii">3 7</DataArray>
+<DataArray type="UInt8" Name="types" format="ascii">5 9</DataArray></Cells>
+</Piece></UnstructuredGrid></VTKFile>)VTU"));
+    const auto three = mesh::make_mesh_exchange_document(mesh::import_vtu_ascii_3d(R"VTU(
+<VTKFile type="UnstructuredGrid"><UnstructuredGrid><Piece NumberOfPoints="5" NumberOfCells="1">
+<Points><DataArray type="Float64" NumberOfComponents="3" format="ascii">0 0 0 1 0 0 1 1 0 0 1 0 0.5 0.5 1</DataArray></Points>
+<Cells><DataArray type="Int64" Name="connectivity" format="ascii">0 1 2 3 4</DataArray>
+<DataArray type="Int64" Name="offsets" format="ascii">5</DataArray>
+<DataArray type="UInt8" Name="types" format="ascii">14</DataArray></Cells>
+</Piece></UnstructuredGrid></VTKFile>)VTU"));
+    for (const auto* source : {&two, &three}) {
+        const auto v = source->topology().global_ids(mesh::EntityKind::vertex);
+        const auto f = source->topology().global_ids(mesh::EntityKind::face);
+        const std::vector<mesh::GlobalEntityId> vertices{v.begin(), v.end()}, faces{f.begin(), f.end()};
+        verify_identity_report(identity_variant(*source, vertices, faces), false, false);
+        verify_identity_report(identity_variant(*source, vertices, faces, true), false, false);
+        auto sparse_vertices = vertices;
+        sparse_vertices[0] = mesh::GlobalEntityId{0};
+        sparse_vertices[1] = mesh::GlobalEntityId{std::numeric_limits<std::uint64_t>::max()};
+        verify_identity_report(identity_variant(*source, sparse_vertices, faces), true, false);
+        auto permuted_vertices = vertices;
+        std::swap(permuted_vertices[0], permuted_vertices[1]);
+        verify_identity_report(identity_variant(*source, permuted_vertices, faces), true, false);
+        auto sparse_faces = faces;
+        sparse_faces[0] = mesh::GlobalEntityId{9007199254740999ULL};
+        verify_identity_report(identity_variant(*source, vertices, sparse_faces), false, true);
+        auto permuted_faces = faces;
+        std::swap(permuted_faces[0], permuted_faces[1]);
+        verify_identity_report(identity_variant(*source, vertices, permuted_faces), false, true);
+        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces), true, true);
+        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces, true), true, true);
+    }
+    std::cout << "[PASS] mesh.core.exchange_io.vtu_identity_losses cases=16\n";
+}
+
 } // namespace
 
 int main() {
     try {
+        verify_vtu_identity_losses();
         verify_grdecl_canonical_roundtrip();
         verify_gmsh_group_bridge();
         verify_sparse_group_lookup();

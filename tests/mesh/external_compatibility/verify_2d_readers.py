@@ -177,6 +177,9 @@ def verify_vtu(path, name, with_fields):
         require(len(candidates) == 1, 'VTK point coordinate/identity mapping')
         source_indices.append(candidates[0])
     require(len(set(source_indices)) == len(coords), 'VTK duplicate/missing point')
+    # Conversion identity analysis relies on the writer retaining file point
+    # order; official VTK must observe that same order, even for sparse tags.
+    require(source_indices == list(range(len(coords))), 'VTK file point order changed')
     pd, cd = grid.GetPointData(), grid.GetCellData()
     id_array = cd.GetArray('mpmc_global_cell_id')
     require(id_array is not None and id_array.IsA('vtkUnsignedLongLongArray'), 'VTK UInt64 cell IDs required')
@@ -273,7 +276,8 @@ def main():
                 print(f'[PASS] independent.read.{filename}')
             check_report(directory / (name + '_from_vtu.msh.report'), {'gmsh.fields_not_serialized'})
             check_report(directory / (name + '_from_gmsh.vtu.report'),
-                         {'vtu.groups_not_serialized', 'vtu.face_tags_not_serialized'})
+                         {'vtu.groups_not_serialized', 'vtu.face_tags_not_serialized',
+                          'vtu.vertex_ids_remapped', 'vtu.face_ids_remapped'})
         report['negative_controls'] = negative_controls(directory)
         report['conversion_reports_checked'] = 6
         report['status'] = 'passed'

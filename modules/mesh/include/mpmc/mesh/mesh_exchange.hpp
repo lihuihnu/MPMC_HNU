@@ -692,6 +692,58 @@ namespace mesh_exchange_detail {
            element_ids.end();
 }
 
+[[nodiscard]] inline bool vtu_vertex_ids_require_remap(
+    const Topology& topology) {
+    const auto ids = topology.global_ids(EntityKind::vertex);
+    // Both VTU writers retain point order; readers regenerate IDs as 1..N.
+    for (std::size_t i = 0U; i < ids.size(); ++i) {
+        if (ids[i].value() != static_cast<std::uint64_t>(i) + 1U) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] inline bool vtu_face_ids_require_remap(
+    const Topology& topology) {
+    // The supported VTU readers regenerate faces without annotations/floors.
+    // Their ID order is (face width, sorted file-point indices), starting at 1.
+    // Compare bindings, not ID sets or source face storage order. In 2D the
+    // regenerated vertex IDs are point index + 1, so the ordering is identical.
+    using Key = std::array<LocalIndex::value_type, 5>;
+    std::vector<std::pair<Key, GlobalEntityId>> faces;
+    const auto ids = topology.global_ids(EntityKind::face);
+    const auto& relation = topology.relation(EntityKind::face, EntityKind::vertex);
+    faces.reserve(ids.size());
+    for (std::size_t i = 0U; i < ids.size(); ++i) {
+        const auto vertices = relation.adjacent(
+            LocalIndex{static_cast<LocalIndex::value_type>(i)});
+        Key key{};
+        key[0] = static_cast<LocalIndex::value_type>(vertices.size());
+        // Width is already validated as 2 (2D) or 3/4 (3D). Bounded insertion
+        // avoids general sort over a runtime-sized prefix of a fixed array.
+        for (std::size_t j = 0U; j < vertices.size(); ++j) {
+            const auto value = vertices[j].value();
+            std::size_t slot = j + 1U;
+            while (slot > 1U && value < key[slot - 1U]) {
+                key[slot] = key[slot - 1U];
+                --slot;
+            }
+            key[slot] = value;
+        }
+        faces.emplace_back(key, ids[i]);
+    }
+    std::sort(faces.begin(), faces.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+    });
+    for (std::size_t i = 0U; i < faces.size(); ++i) {
+        if (faces[i].second.value() != static_cast<std::uint64_t>(i) + 1U) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace mesh_exchange_detail
 
 [[nodiscard]] inline ConversionReport
@@ -792,6 +844,16 @@ analyze_conversion(
 
     if (target_format ==
         MeshExchangeFormat::vtu_ascii) {
+        if (vtu_vertex_ids_require_remap(document.topology())) {
+            report.note_lossy(
+                "vtu.vertex_ids_remapped",
+                "VTU does not encode stable vertex IDs; point-order 1..N IDs on re-import differ from source identities");
+        }
+        if (vtu_face_ids_require_remap(document.topology())) {
+            report.note_lossy(
+                "vtu.face_ids_remapped",
+                "VTU does not encode stable face IDs; regenerated IDs ordered by face width and sorted point indices differ from source identities");
+        }
         if (!document.groups().empty()) {
             report.note_lossy(
                 "vtu.groups_not_serialized",
