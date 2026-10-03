@@ -63,6 +63,19 @@ add_executable(
     sw92_transactional_phase_transition_restart_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
+# Private source fragments retain one translation unit and one fixture instance.
+set(mixed_cardinality_fragments
+    mixed_cardinality/fixture.inc
+    mixed_cardinality/thermodynamic_adapter.inc
+    mixed_cardinality/phase_transition.inc
+    mixed_cardinality/well_fixture.inc
+    mixed_cardinality/fixed_bhp.inc
+    mixed_cardinality/rate_control.inc
+    mixed_cardinality/fixed_bhp_transition.inc
+)
+set_source_files_properties(${mixed_cardinality_fragments} PROPERTIES HEADER_FILE_ONLY TRUE)
+target_sources(mpmc_flow_discretization_petsc_tests PRIVATE ${mixed_cardinality_fragments})
+
 target_link_libraries(
     mpmc_flow_discretization_petsc_tests
     PRIVATE
