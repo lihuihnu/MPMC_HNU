@@ -4,16 +4,18 @@
 
 ## 入口语义
 
-- 常规 PR 只有 `pr_incremental_ci.yml` 自动运行。旧独立 PR job 进入这个 run，不再生成各自的空 workflow run。原先已由中央路由调用的 reusable workflow 不改执行体。
+- PR 只有 `pr_incremental_ci.yml` 中央自动入口；开发期保持 Draft，impact、全部测试及 Required result 均 skipped，不占用测试 runner。完整功能的本地验收齐备后转 Ready 才执行云端多平台和科学性验证。恢复 Draft 的事件用于取消同一 PR 已过时的验收。旧独立 PR job 进入这个 run，不再生成各自的空 workflow run。原先已由中央路由调用的 reusable workflow 不改执行体。
 - 旧 `workflow_dispatch` 输入（包含 required/default/type/options）、手动签名/发布限制、平台矩阵、artifact、安装包验证、Clapeyron/ThermoPack 固定来源均保留。中央自动 job 不注入手动参数默认值，避免把手动签名/发布操作变成 PR 自动操作。
 - 原来只有 PR 入口的门禁显式补参数为空的手动入口，不删除其唯一可执行路径。中央手动入口维持既有核心套件集合；特殊手动验证仍使用对应命名 workflow。
 - 不把各旧 workflow 全部变成新增 reusable 调用，避免超过 GitHub 对单调用树唯一 reusable workflow 数量的限制；保留 legacy job 的 needs/output、defaults/env 和每 job 权限。
 
 ## 增量与失败
 
-`plan.py` 仅采用同 PR、同 base、祖先可达且中央新版本完整成功的 checkpoint。失败、取消或排队的提交不前移基线；无证据、首次运行、Ready-for-review 回退累计 PR 差异。删除/重命名按旧新路径共同选测。未知可执行路径明确失败，不能静默漏测。首次迁移没有新版本 checkpoint，会验证累计受影响范围，不能为节省本轮时间伪造成功基线。
+`plan.py` 对所有 Ready PR 事件（含正式验收修复的 synchronize）始终使用 `merge-base(base, HEAD)..HEAD` 累计差异，不查询 PR 成功 checkpoint。Draft 若绕过 workflow 直接调用 planner 则明确拒绝；Draft 调度的 success/skipped 不能被当作科学验收。删除/重命名按旧新路径共同选测，未知可执行路径失败。非 PR push 仍使用原 checkpoint 策略，未在此次修改中宣称其偏差已修复。
 
-根 `README.md` 是项目概览、能力矩阵与导航，不被 SW92 科学构建或测试消费。仅修改该文件不选择科学 Gate；中央 impact 中的 workflow/注册测试 inventory/选测检查和最终 Required CI result 仍执行。此前它直接命中 `sw92_profile_c_phase_set`，继而触发共享 topology 依赖闭包；现已移除这一条项目概览绑定。科学专题文档仍保持原 owner，例如 `modules/flash/sw92_profile_c_phase_set.md`；不全局排除 Markdown，也不因一次提交包含 README 而跳过同行源码、共享 fixture、CMake 或 workflow 的必要验证。若未来在根 README 引入可执行科学示例，须重新审计其执行 owner。
+`test_cloud_cadence.py` 由 `verify_workflows.py` 唯一调用，本地覆盖 Draft/未知状态拒绝、全部测试依赖 impact、Ready 与修复累计选测、禁止 PR checkpoint 查询、fork 信任边界，以及恢复 Draft 的取消条件。原 Required result 的失败/取消/selected-but-skipped 拒绝回归保留；Draft 全 skipped 不计为验收成功。
+
+根 `README.md` 是项目概览、能力矩阵与导航，不被 SW92 科学构建或测试消费。仅修改该文件不选择科学 Gate；Ready 时中央 impact 中的 workflow/注册测试 inventory/选测检查和最终 Required CI result 仍执行，Draft 时只在本地检查。此前它直接命中 `sw92_profile_c_phase_set`，继而触发共享 topology 依赖闭包；现已移除这一条项目概览绑定。科学专题文档仍保持原 owner，例如 `modules/flash/sw92_profile_c_phase_set.md`；不全局排除 Markdown，也不因一次提交包含 README 而跳过同行源码、共享 fixture、CMake 或 workflow 的必要验证。若未来在根 README 引入可执行科学示例，须重新审计其执行 owner。
 
 `verify_workflows.py` 的 `assert_root_readme_selection` 覆盖四种 PR action、纯概览/治理文档、源码/共享夹具/科学专题/CMake/workflow 混合提交，以及删除/重命名两侧路径的选测并集；混合提交的选择应与其实际科学输入单独变更一致，AD suite 也不能因 README 同行而丢失。该回归由现有 impact job 执行，不新增 workflow 或科学测试入口。
 
@@ -21,12 +23,12 @@ Linux 科学测试默认使用 GitHub 官方 `ubuntu-24.04`，Windows/macOS 保�
 
 ## 后续编写
 
-根可选库入口的消费方契约由 `ad.yml` 中 arithmetic matrix 唯一执行，覆盖默认 AD、thermodynamics/flash/mesh/discretization/flow_discretization/well_discretization 全部 64 种选项组合、库专用 preset 和重新关闭选项。`tests/build/root_libraries/`、相关 CMake 与六个消费程序的公共头闭包进入 arithmetic；不重新运行模块专项 CTest。空间、flow_thermodynamics、flow_discretization、well、well_discretization 消费程序分别链接自己的生产 target，不借用其他消费者的 include 路径。`verify_workflows.py` 从消费源码递归发现项目头，明确将 flow_discretization、well_discretization 命名空间映射到各自的 flow/discretization、well/discretization 模块目录，检查直接/传递选测、无关路径、删除/重命名并集和唯一 owner。现有 checkpoint、未知可执行路径拒绝和 Required result 失败传播机制保持不变。`workflow_map.json` 中 `ad.yml` 指纹对应已审计的 arithmetic 条件消费步骤；扩展消费契约无需再改 workflow，原平台、配置、sanitizer、手动输入、测试命令和结果汇总均保持。
+根可选库入口的消费方契约由 `ad.yml` 中 arithmetic matrix 唯一执行，覆盖默认 AD、thermodynamics/flash/mesh/discretization/flow_discretization/well_discretization 全部 64 种选项组合、库专用 preset 和重新关闭选项。`tests/build/root_libraries/`、相关 CMake 与六个消费程序的公共头闭包进入 arithmetic；不重新运行模块专项 CTest。空间、flow_thermodynamics、flow_discretization、well、well_discretization 消费程序分别链接自己的生产 target，不借用其他消费者的 include 路径。`verify_workflows.py` 从消费源码递归发现项目头，明确将 flow_discretization、well_discretization 命名空间映射到各自的 flow/discretization、well/discretization 模块目录，检查直接/传递选测、无关路径、删除/重命名并集和唯一 owner。未知可执行路径拒绝和 Required result 失败传播机制保持不变；PR 使用上述累计验收基线。`workflow_map.json` 中 `ad.yml` 指纹对应已审计的 arithmetic 条件消费步骤；扩展消费契约无需再改 workflow，原平台、配置、sanitizer、手动输入、测试命令和结果汇总均保持。
 
 先读 `.github/AGENTS.md` 与 `tests/AGENTS.md`；新增测试接现有 owner Gate，同步依赖规则、入口映射与反例。运行 `python3 .github/ci/verify_workflows.py`（PyYAML 6.0.2）。手动参数或矩阵变更必须更新映射并验证特殊路径。此次入口迁移不等同于全部测试计算已经去重；SW92 跨 workflow 的重复计算仍须单独审计，不能以单入口验收替代。
 
 ## 本地开发入口
 
-[本地指南](../../docs/development.md) 使用 `local.py doctor/plan/run`。累计差异直接复用 `plan.py` 的路径选择和必要下游；不读取云端成功 checkpoint。已有 workflow、平台、触发、测试命令、映射指纹和发布语义保持不变。支持的 native 测试使用原 CMake/CTest；未支持 Gate 和中央 workflow 的语义变化明确留待云端验证。
+[本地指南](../../docs/development.md) 使用 `local.py doctor/plan/run`。累计差异直接复用 `plan.py` 的路径选择和必要下游；不读取云端成功 checkpoint。已有 workflow、平台、测试命令、映射指纹和发布语义保留；PR 触发后的执行条件采用上述 Draft/Ready 规则。支持的 native 测试使用原 CMake/CTest；未支持 Gate 和中央 workflow 的语义变化明确留待云端验证。
 
-`test_local.py` 由原 impact 中的 `verify_workflows.py` 唯一调用，覆盖文档不误选、跨平台路径、未知 owner、传递选择、已提交/未提交/未跟踪文件、删除/重命名、失败传播及部分完成。治理脚本统一使用 POSIX 仓库路径和 UTF-8，允许 Windows 本地核对同一映射。旧 checkpoint 复用偏差仍是已知问题；本地累计计划不构成该云端问题已经修复的声明。
+`test_local.py` 由原 impact 中的 `verify_workflows.py` 唯一调用，覆盖文档不误选、跨平台路径、未知 owner、传递选择、已提交/未提交/未跟踪文件、删除/重命名、失败传播及部分完成。治理脚本统一使用 POSIX 仓库路径和 UTF-8，允许 Windows 本地核对同一映射。PR 正式验收已直接使用累计差异；非 PR push 的旧 checkpoint 偏差不在本次修改范围。

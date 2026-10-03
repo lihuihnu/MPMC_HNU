@@ -7,6 +7,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   impact:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: Compute current PR update impact
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -2789,7 +2790,7 @@ jobs:
       contents: read
   result:
     name: Required CI result
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     needs:
     - impact
     - flow-core
@@ -2876,6 +2877,7 @@ jobs:
     - reopened
     - synchronize
     - ready_for_review
+    - converted_to_draft
   workflow_dispatch: null
   push:
     branches:

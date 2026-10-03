@@ -373,7 +373,8 @@ def main():
         petsc_entry_text,
     ), 'SW92 transactional restart header probe is compiled but not executed'
 
-    assert 'result' in root['jobs'] and root['jobs']['result']['if'] == '${{ always() }}'
+    cadence_tests = runpy.run_path('.github/ci/test_cloud_cadence.py')
+    cadence_tests['run_tests']()
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')
     select = planner['select']

@@ -1,4 +1,4 @@
-"""Select affected tests; unsuccessful/cancelled runs never become checkpoints."""
+"""Select cumulative PR acceptance tests; push events retain their checkpoint policy."""
 import json
 import os
 from pathlib import Path
@@ -137,29 +137,13 @@ def main():
     trusted = not pr or pr['head']['repo']['full_name'] == os.environ['GITHUB_REPOSITORY']
     paths = []
     if pr:
+        if pr.get('draft') is not False:
+            raise RuntimeError('Draft PR is local development, not cloud acceptance')
         base, head = pr['base']['sha'], pr['head']['sha']
         before = cmd('merge-base', base, head)
-        mode = 'cumulative PR diff (no compatible successful checkpoint)'
-        if event.get('action') == 'synchronize':
-            try:
-                url = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/actions/workflows/pr_incremental_ci.yml/runs?event=pull_request&status=success&per_page=100'
-                req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
-                with urllib.request.urlopen(req, timeout=20) as response:
-                    runs = json.load(response)['workflow_runs']
-                for run in runs:
-                    if run.get('name') != 'CI - affected tests v2' or run.get('conclusion') != 'success':
-                        continue
-                    if run.get('head_branch') != pr['head']['ref']:
-                        continue
-                    if not any(p['number'] == pr['number'] and p['base']['sha'] == base for p in run.get('pull_requests', [])):
-                        continue
-                    candidate = run['head_sha']
-                    if candidate == head or not ancestor(candidate, head):
-                        continue
-                    before, mode = candidate, 'since compatible successful checkpoint'
-                    break
-            except Exception as error:
-                print('Checkpoint lookup unavailable; using cumulative diff:', type(error).__name__)
+        # Every formal PR run covers the complete feature. In particular, a
+        # successful workflow with all jobs skipped on a draft is no checkpoint.
+        mode = 'cumulative PR diff (feature acceptance)'
         raw = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', '-z', before, head])
         paths = [p for p in raw.decode('utf-8').split('\0') if p]
         result, ad, thermo = select(paths, pr['base']['ref'], event.get('action', ''))
