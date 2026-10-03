@@ -18,6 +18,8 @@
 #include <string_view>
 #include <vector>
 
+void emit_2d_exports(const char* output_directory);
+
 namespace mesh = mpmc::mesh;
 
 namespace {
@@ -541,6 +543,16 @@ void verify_grdecl_wrapper_rejection(
 int main(
     int argc,
     char** argv) {
+    if (argc == 3 && std::string_view{argv[1]} == "--emit-2d") {
+        try {
+            emit_2d_exports(argv[2]);
+            std::cout << "[PASS] external.mesh.emit_2d_exports\n";
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "[FAIL] " << error.what() << '\n';
+            return 1;
+        }
+    }
     if (argc != 6) {
         std::cerr
             << "[FAIL] external.mesh.compatibility: "

@@ -147,6 +147,8 @@ porosity、permeability、conductivity 等科研属性建立在该通用容器�
 
 OPM `27cellsAniso.grdecl` 包含顶层 `GRID` wrapper，而当前最小 GRDECL parser 只接受八个已声明关键词，因此 raw 文件必须明确以 `unsupported keyword 'GRID'` 拒绝；测试不先 strip wrapper 再宣称原文件兼容。这个 external gate 用于发现真实生态文件与当前声明子集的差异，不替代 checked-in synthetic/software correctness fixtures，也不允许为了某个外部文件而静默接受 high-order/binary/fault/NNC/未知 keyword。
 
+同一个 Gate 现在还执行二维输出的独立软件读回：测试 driver 生成三角形、凸四边形和混合网格的原生/跨格式 MSH、VTU 共 12 个文件，由固定版本 Gmsh 4.15.2 与 VTK 9.7.1 官方读取器逐项检查坐标、类型、循环连接、格式声明保留的身份/组/字段，并对照解析面积质心。另核对 6 份损失报告，要求 5 个损坏负对照均失败；原有公共样例链不变。依赖仅存在于测试隔离环境，生产库不增加第三方依赖。范围、容差、许可、结果证据和本地命令见[外部验证说明](../../tests/mesh/external_compatibility/README.md)。这项证据仅覆盖二维 ASCII 子集，不宣称三维独立读回或 VTK 理解自定义单位/来源属性。
+
 ## 5. 求解变量与拓扑索引
 
 最小 `DofLayout` 已实现 local scalar indexing 基线。每个 `DofVariable` 只包含稳定 ID、location 与 component count；location 现完整支持 cell/face/edge/vertex，component count 必须大于零，变量 ID 必须唯一。布局固定为 `[cell block][face block][edge block][vertex block]`；每个 location 内按 `entity-major -> variable declaration order -> component` 排列。同一实体上的变量 DoF 因此连续，且 location block 也连续。对没有 materialized edge 的既有 1D/2D/3D topology，edge block 宽度为 0，因此此前 cell/face/vertex scalar offsets 保持不变。

@@ -1401,13 +1401,13 @@
           ".github/workflows/mesh_external_compatibility.yml"
         ]
       },
-      "retained_hash": "f1faf39701d64d6309c0d4108f21e54622d21f16f1bdd6b2883fa37fcfd1cb39",
+      "retained_hash": "9e3092d045b67b01cf706361146c0f5cca635b6989ad225b822501c9fb445c68",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "compatibility": "legacy_mesh_external_compatibility__compatibility"
       },
       "central_hashes": {
-        "legacy_mesh_external_compatibility__compatibility": "f6cf6002d03439c32e65c7914dbca088cce645e0387ba3edc4f8ab65577d9e4a"
+        "legacy_mesh_external_compatibility__compatibility": "f75653673397b7a1925aa45433b46537b72c6f6e6f9238908162548b43944164"
       }
     },
     ".github/workflows/mesh_petsc.yml": {

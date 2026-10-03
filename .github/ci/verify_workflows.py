@@ -32,6 +32,43 @@ def workflow_run_text(path):
         for job in (workflow.get('jobs') or {}).values()
     )
 
+def assert_mesh_independent_readers(root, select):
+    owner = 'legacy_mesh_external_compatibility'
+    directory = Path('tests/mesh/external_compatibility')
+    manual = load('.github/workflows/mesh_external_compatibility.yml')['jobs']['compatibility']
+    central = root['jobs'][owner + '__compatibility']
+    # Check execution, not just a path match or a compiled-but-unused producer.
+    names = ('Install pinned independent mesh readers',
+             'Independently read 2D exports with Gmsh and VTK',
+             'Preserve independent reader evidence')
+    for name in names:
+        left = [step for step in manual['steps'] if step.get('name') == name]
+        right = [step for step in central['steps'] if step.get('name') == name]
+        assert len(left) == len(right) == 1 and left == right, ('mesh reader step parity', name)
+    run = next(step for step in central['steps'] if step.get('name') == names[1])
+    assert not run.get('continue-on-error') and not central.get('continue-on-error')
+    for token in ('set -euo pipefail', 'verify_2d_readers.py --producer',
+                  '/mpmc_mesh_external_compatibility', '--output-dir',
+                  'files=12 reports=6 negative_controls=5'):
+        assert token in run['run'], ('mesh reader failure/execution guard', token)
+    assert 'emit_2d_exports.cpp' in (directory / 'CMakeLists.txt').read_text(encoding='utf-8')
+    entry = (directory / 'external_mesh_compatibility.cpp').read_text(encoding='utf-8')
+    assert '--emit-2d' in entry and 'emit_2d_exports(argv[2])' in entry
+    for filename in ('emit_2d_exports.cpp', 'verify_2d_readers.py', 'requirements-readers.txt'):
+        path = (directory / filename).as_posix()
+        for action in ('opened', 'synchronize', 'ready_for_review'):
+            chosen, _, _ = select([path], action=action)
+            assert chosen[owner] and not chosen['legacy_mesh_core'], (path, action)
+        before, _, _ = select([path])  # Deletion retains the old path.
+        renamed, _, _ = select([path, (directory / ('renamed_' + filename)).as_posix()])
+        assert all(not value or renamed[key] for key, value in before.items())
+    assert not select(['modules/mesh/README.md'])[0][owner]
+    requirements = (directory / 'requirements-readers.txt').read_text(encoding='utf-8')
+    for line in requirements.splitlines():
+        if line and not line.startswith('#'):
+            assert re.fullmatch(r'[a-zA-Z0-9_-]+==[0-9][a-zA-Z0-9.]*', line), line
+    assert 'gmsh==' in requirements and 'vtk==' in requirements
+
 def assert_root_build_selection(select):
     direct = [
         'tests/build/root_libraries/CMakeLists.txt',
@@ -316,6 +353,7 @@ def main():
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')
     select = planner['select']
+    assert_mesh_independent_readers(root, select)
     # Shared 2D geometry affects both importers and their downstream adapters.
     # A deletion is represented by this path too; a rename contributes both sides.
     mesh2d_path = 'modules/mesh/include/mpmc/mesh/linear_cell_mesh_2d.hpp'
