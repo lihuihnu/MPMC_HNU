@@ -296,10 +296,10 @@ void supported_format_paths(const mesh::MeshExchangeDocument& source) {
     const auto vtu = mesh::export_vtu_ascii(source);
     require(gmsh.exported() && vtu.exported(),"fixture export available");
     if (source.dimension() == 2) {
-        verify_prepared(mesh::make_mesh_exchange_document(mesh::import_gmsh_4_1_ascii(*gmsh.content,{1.0})),false);
+        verify_prepared(mesh::make_mesh_exchange_document(mesh::import_gmsh_4_1_ascii(*gmsh.content, 1.0)),false);
         verify_prepared(mesh::make_mesh_exchange_document(mesh::import_vtu_ascii(*vtu.content)),false);
     } else {
-        verify_prepared(mesh::make_mesh_exchange_document(mesh::import_gmsh_4_1_ascii_3d(*gmsh.content,{1.0})),false);
+        verify_prepared(mesh::make_mesh_exchange_document(mesh::import_gmsh_4_1_ascii_3d(*gmsh.content, 1.0)),false);
         verify_prepared(mesh::make_mesh_exchange_document(mesh::import_vtu_ascii_3d(*vtu.content)),false);
     }
 }
