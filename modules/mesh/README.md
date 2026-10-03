@@ -163,9 +163,13 @@ VTU 二维/三维现在共享稳定节点身份契约：在标准 `PointData` �
 
 二维边与三维面共用稳定身份表，位于 `UnstructuredGrid/FieldData`，由 `mpmc_global_face_id`、`mpmc_face_vertex_offsets`、`mpmc_face_vertex_ids` 三个单分量 UInt64 数组组成。offsets 是逐面累计终止位置（不含起始 0），长度等于面 ID 数；vertices 是稳定节点 ID 的扁平列表。二维每条边含 2 个节点，三维每个面含 3 或 4 个节点；包括全部内部面和边界面，记录顺序无关。节点集合只定义身份，不携带外法向/owner；这些仍由单元连接与几何重建。身份表不会添加 VTK 单元或改变科学字段的关联。
 
-读入也接受非负 Int64，整数不经过浮点转换；检查数组类型、分量、可选 NumberOfTuples、偏移、节点引用、面 ID/面绑定唯一性及完整拓扑覆盖。缺少整个身份表时保持旧生成规则（二维按稳定端点 ID，三维按面宽和局部点索引）；部分数组、损坏表、重复表、错误 association 或不存在的单元面均拒绝，不能回退。保留的五个身份数组名不能被普通 point/cell 科学字段占用。其他 dataset FieldData 保持原有忽略行为，当前不承诺保留一般 FieldData。
+读入也接受非负 Int64，整数不经过浮点转换；检查数组类型、分量、可选 NumberOfTuples、偏移、节点引用、面 ID/面绑定唯一性及完整拓扑覆盖。缺少整个身份表时保持旧生成规则（二维按稳定端点 ID，三维按面宽和局部点索引）；部分数组、损坏表、重复表、错误 association 或不存在的单元面均拒绝，不能回退。五个身份数组名及面物理标签数组名均为保留名，不能被普通 point/cell 科学字段占用。其他 dataset FieldData 保持原有忽略行为，当前不承诺保留一般 FieldData。
 
-节点及面身份均被序列化，不再报告 `vtu.vertex_ids_remapped` 或 `vtu.face_ids_remapped`；组、面物理标签和其他真实损失继续报告。MPMC 身份表是标准 VTU 整数数组承载的应用语义，不是 VTK 内建的 face association，也不承诺任意第三方过滤/重网格操作保留它。官方 VTK 读写、混合网格关联与损坏负对照见[外部验证契约](../../tests/mesh/external_compatibility/README.md#稳定面身份的统一-vtu-契约)。
+节点及面身份均被序列化，不再报告 `vtu.vertex_ids_remapped` 或 `vtu.face_ids_remapped`；面物理标签也已保留，不再报告 `vtu.face_tags_not_serialized`；命名分组和其他真实损失继续报告。MPMC 身份表是标准 VTU 整数数组承载的应用语义，不是 VTK 内建的 face association，也不承诺任意第三方过滤/重网格操作保留它。官方 VTK 读写、混合网格关联与损坏负对照见[外部验证契约](../../tests/mesh/external_compatibility/README.md#稳定面身份的统一-vtu-契约)。
+
+物理标签通过同一 `UnstructuredGrid/FieldData` 中的 `mpmc_face_physical_tag` 保存，单分量 UInt32，逐项对应面身份表记录（不是按面 ID 数值作下标）。写出总是包含该数组；读入只接受 UInt32 整数全范围，0 表示无标签，正数为无物理量纲的 opaque 标签，多张边界面可重复使用同一标签。标签数组缺省时全部无标签；存在时必须配套完整身份表，数量/可选 NumberOfTuples/类型/分量/范围/association 不合法均拒绝。内部面必须为 0，边界分类由 face→cell 邻接数推导；标签本身不赋予压力、通量等边界条件。
+
+二维 `VtuImportResult` 末尾增加 `face_boundary`，原四成员 aggregate 构造仍可使用，默认按拓扑生成无标签快照；读入时保存构建器真实的分类及标签。二维/三维原生导出与统一导出均校验快照分类和拓扑一致。VTU 从 document 的 `face_boundary` 保留物理标签，不从命名/重叠分组合成标签；无快照时输出无标签，组仍报告未序列化。Gmsh 的组处理规则保持原有行为。标签数组是 MPMC 应用语义，官方 VTK 负责准确读写标准 UInt32 数组，不能据此声称第三方软件自动施加边界条件。详见[物理标签完整链验证](../../tests/mesh/external_compatibility/README.md#面物理标签的统一-vtu-契约)。
 
 ## 5. 求解变量与拓扑索引
 

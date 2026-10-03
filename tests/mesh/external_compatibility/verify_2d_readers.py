@@ -203,6 +203,32 @@ def vtk_face_ids(grid, required=True):
     return faces
 
 
+FACE_TAG_ARRAY = 'mpmc_face_physical_tag'
+
+
+def vtk_face_tags(grid, required=True):
+    faces = vtk_face_ids(grid,required=required)
+    array = grid.GetFieldData().GetArray(FACE_TAG_ARRAY)
+    if array is None and not required:
+        return {tag:0 for tag in faces}
+    require(array is not None and array.IsA('vtkUnsignedIntArray') and
+            array.GetNumberOfComponents() == 1 and array.GetNumberOfTuples() == len(faces),
+            'VTK scalar UInt32 face physical tags required')
+    tags = {tag:int(array.GetValue(i)) for i,tag in enumerate(faces)}
+    point_ids = vtk_vertex_ids(grid,required=False)
+    supports = {}
+    for i in range(grid.GetNumberOfCells()):
+        cell = grid.GetCell(i)
+        dim = cell.GetCellDimension()
+        for j in range(cell.GetNumberOfEdges() if dim == 2 else cell.GetNumberOfFaces()):
+            face = cell.GetEdge(j) if dim == 2 else cell.GetFace(j)
+            key = tuple(sorted(point_ids[face.GetPointId(k)] for k in range(face.GetNumberOfPoints())))
+            supports[key] = supports.get(key,0)+1
+    require(all(supports[row] == 1 or tags[tag] == 0 for tag,row in faces.items()),
+            'VTK interior face must be untagged')
+    return tags
+
+
 def verify_vtu(path, name, with_fields):
     vertex_ids, coords, expected_cells = case_data(name)
     reader = vtkXMLUnstructuredGridReader()
@@ -216,6 +242,8 @@ def verify_vtu(path, name, with_fields):
     require(grid.GetNumberOfPoints() == len(coords) and grid.GetNumberOfCells() == len(expected_cells),
             'VTK mesh counts')
     require(vtk_face_ids(grid) == expected_faces(name,vertex_ids,expected_cells), "VTK stable edge bindings")
+    require(vtk_face_tags(grid) == {tag:({701:11,702:12}.get(tag,0) if not with_fields else 0)
+            for tag in expected_faces(name,vertex_ids,expected_cells)}, 'VTK physical edge tag binding')
     require(vtk_vertex_ids(grid) == vertex_ids, 'VTK stable vertex IDs/order')
     actual_points = [grid.GetPoint(i) for i in range(grid.GetNumberOfPoints())]
     source_indices = []
@@ -325,7 +353,7 @@ def main():
                 print(f'[PASS] independent.read.{filename}')
             check_report(directory / (name + '_from_vtu.msh.report'), {'gmsh.fields_not_serialized'})
             check_report(directory / (name + '_from_gmsh.vtu.report'),
-                         {'vtu.groups_not_serialized', 'vtu.face_tags_not_serialized'})
+                         {'vtu.groups_not_serialized'})
         report['negative_controls'] = negative_controls(directory)
         report['conversion_reports_checked'] = 6
         report['status'] = 'passed'

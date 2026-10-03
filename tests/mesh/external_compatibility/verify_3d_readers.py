@@ -294,6 +294,8 @@ def verify_vtu(path, name, with_fields):
     actual_vertex_ids = vtk_vertex_ids(grid)
     topology = check_vtk_topology(name, grid)
     require(shared.vtk_face_ids(grid) == case_data(name)[5], "VTK stable face bindings")
+    require(shared.vtk_face_tags(grid) == {tag:({701:11,702:12}.get(tag,0) if not with_fields else 0)
+            for tag in case_data(name)[5]}, 'VTK physical face tag binding')
     require(actual_vertex_ids == vertex_ids, 'VTK stable vertex IDs/order')
     require(grid.GetNumberOfPoints() == len(coords) and grid.GetNumberOfCells() == len(cells), 'VTK counts')
     for i, point in enumerate(coords):
@@ -498,7 +500,7 @@ def main():
                 print(f'[PASS] independent.3d.read.{filename}')
             check_report(directory / (name + '_from_vtu.msh.report'), {'gmsh.fields_not_serialized'})
             check_report(directory / (name + '_from_gmsh.vtu.report'),
-                         {'vtu.groups_not_serialized', 'vtu.face_tags_not_serialized'})
+                         {'vtu.groups_not_serialized'})
         report['negative_control_rejections'] = negative_controls(directory)
         report['negative_control_rejections'].update(mixed_negative_controls(directory))
         report['negative_controls'] = len(report['negative_control_rejections'])

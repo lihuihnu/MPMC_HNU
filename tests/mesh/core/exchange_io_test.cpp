@@ -829,7 +829,7 @@ void verify_vertex_id_contract(const mesh::MeshExchangeDocument& source) {
     const auto collisions = [](auto imported, auto writer) {
         for (const auto location : {mesh::EntityKind::vertex, mesh::EntityKind::cell}) {
             for (const auto* reserved : {"mpmc_global_vertex_id", "mpmc_global_cell_id",
-                    "mpmc_global_face_id", "mpmc_face_vertex_offsets", "mpmc_face_vertex_ids"}) {
+                    "mpmc_global_face_id", "mpmc_face_vertex_offsets", "mpmc_face_vertex_ids", "mpmc_face_physical_tag"}) {
                 imported.point_fields.clear(); imported.cell_fields.clear();
                 auto value = mesh::DenseFieldSnapshot::create(imported.topology, location, 1U,
                     std::vector<double>(imported.topology.entity_count(location), 1.0),
@@ -847,7 +847,7 @@ void verify_vertex_id_contract(const mesh::MeshExchangeDocument& source) {
         collisions(mesh::import_vtu_ascii_3d(xml), [](const auto& input) { return mesh::export_vtu_ascii_3d(input); });
     }
     std::cout << "[PASS] mesh.core.exchange_io.vtu_vertex_ids dimension=" << source.dimension()
-              << " invalid_arrays=" << invalid.size()+1U << " reserved_collisions=10\n";
+              << " invalid_arrays=" << invalid.size()+1U << " reserved_collisions=12\n";
 }
 
 // Literal table shapes independently exercise the shared format contract.
@@ -948,6 +948,148 @@ void verify_face_id_contract(const mesh::MeshExchangeDocument& source) {
               << " invalid_tables=" << invalid.size() << '\n';
 }
 
+// Labels are bound to stable faces, never inferred from named groups.
+void verify_face_tag_contract(const mesh::MeshExchangeDocument& source) {
+    const auto& topology = source.topology();
+    const auto ids = topology.global_ids(mesh::EntityKind::face);
+    const auto untagged = mesh::make_face_boundary_snapshot(topology);
+    std::vector<mesh::PhysicalTag> tags(ids.size(), mesh::PhysicalTag{0U});
+    std::optional<std::size_t> interior;
+    std::vector<std::size_t> boundary;
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        if (untagged.is_boundary(mesh::LocalIndex{static_cast<std::uint32_t>(i)})) boundary.push_back(i);
+        else interior = i;
+    }
+    require(boundary.size() >= 4U, "tag fixture needs multiple boundary faces");
+    tags[boundary[0]] = mesh::PhysicalTag{std::numeric_limits<std::uint32_t>::max()};
+    tags[boundary[1]] = mesh::PhysicalTag{17U};
+    tags[boundary[2]] = mesh::PhysicalTag{17U};
+    const auto make_document = [&](std::optional<mesh::FaceBoundarySnapshot> value,
+                                   std::vector<mesh::MeshExchangeGroup> groups = {}) {
+        return mesh::MeshExchangeDocument::create(source.source_format(),source.dimension(),topology,
+            {source.vertex_coordinates_m().begin(),source.vertex_coordinates_m().end()},
+            std::move(value),{},std::move(groups),std::nullopt);
+    };
+    const auto source_boundary = mesh::make_face_boundary_snapshot(topology,tags);
+    const auto tagged = make_document(source_boundary);
+    const auto parse = [&](const std::string& text) {
+        return source.dimension() == 2 ? mesh::make_mesh_exchange_document(mesh::import_vtu_ascii(text)) :
+            mesh::make_mesh_exchange_document(mesh::import_vtu_ascii_3d(text));
+    };
+    const auto check = [&](const mesh::MeshExchangeDocument& actual, bool has_tags) {
+        require(face_identities(actual.topology()) == face_identities(topology), "tag changes face binding");
+        require(actual.face_boundary().has_value(), "import must retain face boundary snapshot");
+        const auto actual_ids = actual.topology().global_ids(mesh::EntityKind::face);
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            const auto found = std::find(actual_ids.begin(),actual_ids.end(),ids[i]);
+            require(found != actual_ids.end(), "tag stable face absent");
+            const mesh::LocalIndex j{static_cast<std::uint32_t>(found-actual_ids.begin())};
+            require(actual.face_boundary()->physical_tag(j).value() == (has_tags ? tags[i].value() : 0U),
+                    "physical tag stable face binding");
+            require(actual.face_boundary()->is_boundary(j) ==
+                untagged.is_boundary(mesh::LocalIndex{static_cast<std::uint32_t>(i)}), "boundary classification");
+        }
+    };
+    const auto exported = mesh::export_vtu_ascii(tagged);
+    require(exported.exported() && exported.report.lossless(), "tag-only VTU must be lossless");
+    const auto xml = *exported.content;
+    check(parse(xml),true);
+    const auto native = source.dimension() == 2 ? mesh::export_vtu_ascii(mesh::import_vtu_ascii(xml)) :
+        mesh::export_vtu_ascii_3d(mesh::import_vtu_ascii_3d(xml));
+    check(parse(native),true);
+    const auto name = xml.find("Name=\"mpmc_face_physical_tag\"");
+    const auto start = xml.rfind("<DataArray",name);
+    const auto end = xml.find("</DataArray>",name)+12U;
+    const auto replace = [&](const std::string& value) {
+        auto text = xml; text.replace(start,end-start,value); return text;
+    };
+    const auto array = [](const std::string& payload, const std::string& attributes = "type=\"UInt32\" format=\"ascii\"") {
+        return "<DataArray Name=\"mpmc_face_physical_tag\" "+attributes+">"+payload+"</DataArray>";
+    };
+    const auto payload = [&](const std::vector<mesh::PhysicalTag>& values) {
+        std::string result;
+        for (const auto value : values) result += std::to_string(value.value())+" ";
+        return result;
+    };
+    check(parse(replace("")),false); // Old identity table, no labels.
+    auto legacy = xml;
+    const auto field_start = legacy.find("<FieldData>");
+    legacy.erase(field_start,legacy.find("</FieldData>",field_start)+12U-field_start);
+    check(parse(legacy),false); // Legacy file without a face table.
+    std::vector<std::string> invalid;
+    for (const auto& attributes : {"type=\"Float64\" format=\"ascii\"", "type=\"UInt64\" format=\"ascii\"",
+            "type=\"Int32\" format=\"ascii\"", "type=\"UInt32\" format=\"binary\"",
+            "type=\"UInt32\" NumberOfComponents=\"0\" format=\"ascii\"",
+            "type=\"UInt32\" NumberOfComponents=\"2\" format=\"ascii\"",
+            "type=\"UInt32\" NumberOfTuples=\"1\" format=\"ascii\""}) {
+        invalid.push_back(replace(array(payload(tags),attributes)));
+    }
+    for (const auto* token : {"-1", "4294967296", "1.5"}) {
+        auto bad = payload(tags); bad.replace(0,bad.find(' '),token);
+        invalid.push_back(replace(array(bad)));
+    }
+    auto short_tags = tags; short_tags.pop_back();
+    invalid.push_back(replace(array(payload(short_tags))));
+    invalid.push_back(replace(array(payload(tags)+"0")));
+    invalid.push_back(replace(array(payload(tags))+array(payload(tags))));
+    auto orphan = legacy; orphan.insert(orphan.find("<Piece"),"<FieldData>"+array(payload(tags))+"</FieldData>");
+    invalid.push_back(orphan);
+    for (const auto* association : {"</PointData>","</CellData>"}) {
+        auto misplaced = replace("");
+        misplaced.insert(misplaced.find(association),array(payload(tags),"type=\"Float64\" format=\"ascii\""));
+        invalid.push_back(misplaced);
+    }
+    if (interior) {
+        auto bad = tags; bad[*interior] = mesh::PhysicalTag{7U};
+        invalid.push_back(replace(array(payload(bad))));
+    }
+    for (const auto& text : invalid) {
+        bool rejected = false;
+        try { (void)parse(text); } catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected,"invalid face physical tags must be rejected");
+    }
+    // Overlapping named groups do not overwrite snapshot tags or make VTU fail.
+    const std::vector<mesh::MeshExchangeGroup> groups{
+        {mesh::EntityKind::face,31U,"group A",{ids[boundary[0]]}},
+        {mesh::EntityKind::face,32U,"group B",{ids[boundary[0]]}}};
+    const auto group_export = mesh::export_vtu_ascii(make_document(source_boundary,groups));
+    require(group_export.exported() && group_export.report.issues().size() == 1U &&
+        group_export.report.issues()[0].code == "vtu.groups_not_serialized", "only named groups lost");
+    check(parse(*group_export.content),true);
+    check(parse(*mesh::export_vtu_ascii(make_document(std::nullopt,groups)).content),false);
+    const auto bad_export = [&](auto imported, auto writer) {
+        // Mismatched snapshot width and mislabeled interior are rejected on
+        // both native and canonical paths, even when supplied by a caller.
+        for (const auto count : {std::size_t{1U},ids.size()}) {
+            if (count == ids.size() && !interior) continue;
+            const mesh::FaceBoundarySnapshot bad{
+                std::vector<mesh::FaceClassification>(count,mesh::FaceClassification::boundary),
+                std::vector<mesh::PhysicalTag>(count,mesh::PhysicalTag{0U})};
+            auto input = imported;
+            // Snapshot is immutable, reconstruct the aggregate instead of assigning.
+            auto malformed = [&] {
+                if constexpr (requires { input.geometry; }) {
+                    return mesh::VtuImportResult{input.topology,input.geometry,input.point_fields,input.cell_fields,bad};
+                } else {
+                    return mesh::VtuImportResult3D{input.topology,input.vertex_coordinates_m,input.cell_volumes_m3,
+                        input.face_geometry,bad,input.point_fields,input.cell_fields};
+                }
+            }();
+            bool rejected = false;
+            try { (void)writer(malformed); } catch (const std::invalid_argument&) { rejected = true; }
+            require(rejected,"native writer must reject malformed face boundary");
+            rejected = false;
+            try { (void)mesh::export_vtu_ascii(make_document(bad)); }
+            catch (const std::invalid_argument&) { rejected = true; }
+            require(rejected,"canonical writer must reject malformed face boundary");
+        }
+    };
+    if (source.dimension() == 2) bad_export(mesh::import_vtu_ascii(xml),[](const auto& input){return mesh::export_vtu_ascii(input);});
+    else bad_export(mesh::import_vtu_ascii_3d(xml),[](const auto& input){return mesh::export_vtu_ascii_3d(input);});
+    std::cout << "[PASS] mesh.core.exchange_io.vtu_face_tags dimension=" << source.dimension()
+              << " invalid_arrays=" << invalid.size() << " interior=" << interior.has_value() << '\n';
+}
+
 void verify_vtu_identity_losses() {
     // Handwritten geometry; mixed 2D has a shared edge, pyramid mixes triangle
     // and quad faces. Default IDs are checked against actual readers below.
@@ -968,6 +1110,7 @@ void verify_vtu_identity_losses() {
     for (const auto* source : {&two, &three}) {
         verify_vertex_id_contract(*source);
         verify_face_id_contract(*source);
+        verify_face_tag_contract(*source);
         const auto v = source->topology().global_ids(mesh::EntityKind::vertex);
         const auto f = source->topology().global_ids(mesh::EntityKind::face);
         const std::vector<mesh::GlobalEntityId> vertices{v.begin(), v.end()}, faces{f.begin(), f.end()};
@@ -991,6 +1134,13 @@ void verify_vtu_identity_losses() {
         verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces), false, false);
         verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces, true), false, false);
     }
+    verify_face_tag_contract(mesh::make_mesh_exchange_document(mesh::import_vtu_ascii_3d(R"VTU(
+<VTKFile type="UnstructuredGrid"><UnstructuredGrid><Piece NumberOfPoints="5" NumberOfCells="2">
+<Points><DataArray type="Float64" NumberOfComponents="3" format="ascii">0 0 0 1 0 0 0 1 0 0 0 1 0 0 -1</DataArray></Points>
+<Cells><DataArray type="Int64" Name="connectivity" format="ascii">0 1 2 3 0 2 1 4</DataArray>
+<DataArray type="Int64" Name="offsets" format="ascii">4 8</DataArray>
+<DataArray type="UInt8" Name="types" format="ascii">10 10</DataArray></Cells>
+</Piece></UnstructuredGrid></VTKFile>)VTU")));
     std::cout << "[PASS] mesh.core.exchange_io.vtu_identity_losses cases=16\n";
 }
 

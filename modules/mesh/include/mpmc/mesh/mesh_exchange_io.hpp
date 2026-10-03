@@ -1051,8 +1051,7 @@ make_mesh_exchange_document(
         source.topology,
         mesh_exchange_io_detail::
             coordinates_3d(source.geometry),
-        make_face_boundary_snapshot(
-            source.topology),
+        source.face_boundary,
         mesh_exchange_io_detail::
             combine_fields(
                 source.point_fields,
@@ -1276,6 +1275,10 @@ export_vtu_ascii(
         point_fields,
         cell_fields);
 
+    const auto boundary = document.face_boundary().value_or(
+        make_face_boundary_snapshot(document.topology()));
+    vtu_detail::validate_vtu_face_boundary(document.topology(), boundary);
+
     if (document.dimension() == 2) {
         auto geometry =
             canonical_geometry_2d(
@@ -1285,7 +1288,8 @@ export_vtu_ascii(
             document.topology(),
             std::move(geometry),
             std::move(point_fields),
-            std::move(cell_fields)};
+            std::move(cell_fields),
+            boundary};
         return MeshTextExportResult{
             export_vtu_ascii(target),
             std::move(report)};
@@ -1300,10 +1304,6 @@ export_vtu_ascii(
     const auto cell_ids =
         document.topology().global_ids(
             EntityKind::cell);
-    const auto boundary =
-        canonical_face_boundary(
-            document,
-            document.topology());
     auto linear =
         canonical_linear_mesh_3d(
             document,

@@ -59,13 +59,8 @@ void convert(const Imported& imported, const std::string& stem) {
                         audit << ' ' << topology.global_ids(EntityKind::cell)[cell.value()].value();
                     const auto owner = imported.geometry.face_owner(local);
                     const auto normal = imported.geometry.face_owner_unit_normal(local);
-                    // VtuImportResult has no boundary metadata; do not invent it.
-                    if constexpr (requires { imported.face_boundary; }) {
-                        audit << ' ' << imported.face_boundary.is_boundary(local)
-                              << ' ' << imported.face_boundary.physical_tag(local).value();
-                    } else {
-                        audit << " -1 0";
-                    }
+                    audit << ' ' << imported.face_boundary.is_boundary(local)
+                          << ' ' << imported.face_boundary.physical_tag(local).value();
                     audit << ' ' << imported.geometry.face_length_m(local)
                           << ' ' << topology.global_ids(EntityKind::cell)[owner.value()].value()
                           << ' ' << normal.x << ' ' << normal.y;

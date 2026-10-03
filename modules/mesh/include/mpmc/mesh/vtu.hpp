@@ -37,6 +37,8 @@ struct VtuImportResult {
     Geometry2D geometry;
     std::vector<DenseFieldSnapshot> point_fields;
     std::vector<DenseFieldSnapshot> cell_fields;
+    // Trailing default preserves existing four-member aggregate construction.
+    FaceBoundarySnapshot face_boundary = make_face_boundary_snapshot(topology);
 };
 
 namespace vtu_detail {
@@ -49,9 +51,10 @@ inline constexpr std::string_view global_vertex_id_name =
 inline constexpr std::string_view global_face_id_name = "mpmc_global_face_id";
 inline constexpr std::string_view face_offsets_name = "mpmc_face_vertex_offsets";
 inline constexpr std::string_view face_vertices_name = "mpmc_face_vertex_ids";
+inline constexpr std::string_view face_physical_tag_name = "mpmc_face_physical_tag";
 
-[[nodiscard]] inline bool face_identity_name(std::string_view name) noexcept {
-    return name == global_face_id_name || name == face_offsets_name || name == face_vertices_name;
+[[nodiscard]] inline bool face_metadata_name(std::string_view name) noexcept {
+    return name == global_face_id_name || name == face_offsets_name || name == face_vertices_name || name == face_physical_tag_name;
 }
 
 struct XmlElement {
@@ -610,7 +613,7 @@ inline void write_vertex_ids(std::ostringstream& output, const Topology& topolog
         require_attribute(
             array, "Name",
             "mpmc::mesh::import_vtu_ascii: point/cell field Name is required");
-    if (name == global_vertex_id_name || name == global_cell_id_name || face_identity_name(name)) {
+    if (name == global_vertex_id_name || name == global_cell_id_name || face_metadata_name(name)) {
         throw std::invalid_argument("identity array name is reserved for its entity association");
     }
     if (name.empty()) {
@@ -675,6 +678,7 @@ inline void write_vertex_ids(std::ostringstream& output, const Topology& topolog
 struct FaceIdentity {
     GlobalEntityId id;
     std::vector<LocalIndex> vertices;
+    PhysicalTag physical_tag;
 };
 
 [[nodiscard]] inline std::vector<std::uint64_t> parse_face_integer_array(const XmlElement& array) {
@@ -700,6 +704,22 @@ struct FaceIdentity {
     return values;
 }
 
+// PhysicalTag is an opaque UInt32 label; repeated labels are valid.
+[[nodiscard]] inline std::vector<std::uint64_t> parse_face_physical_tags(const XmlElement& array) {
+    require_ascii_data_array(array);
+    if (component_count(array) != 1U ||
+        require_attribute(array, "type", "face physical tag type is required") != "UInt32") {
+        throw std::invalid_argument("face physical tags require scalar UInt32");
+    }
+    const auto values = parse_integer_values<std::uint32_t>(array.body, "invalid UInt32 face physical tag");
+    const auto tuples = array.attributes.find("NumberOfTuples");
+    if (tuples != array.attributes.end() &&
+        parse_size(tuples->second, "invalid face tag NumberOfTuples") != values.size()) {
+        throw std::invalid_argument("face physical tag tuple count mismatch");
+    }
+    return {values.begin(), values.end()};
+}
+
 [[nodiscard]] inline std::optional<std::vector<FaceIdentity>> parse_face_identities(
     const XmlElement& grid, const XmlElement& piece,
     std::span<const GlobalEntityId> vertex_ids, int dimension) {
@@ -717,17 +737,25 @@ struct FaceIdentity {
         if (name == global_vertex_id_name || name == global_cell_id_name) {
             throw std::invalid_argument("point/cell identity cannot be stored in FieldData");
         }
-        if (face_identity_name(name) && !arrays.emplace(name, parse_face_integer_array(array)).second) {
+        if (face_metadata_name(name) && !arrays.emplace(name, name == face_physical_tag_name ?
+                parse_face_physical_tags(array) : parse_face_integer_array(array)).second) {
             throw std::invalid_argument("duplicate face identity array");
         }
     }
     if (arrays.empty()) return std::nullopt; // Other dataset metadata keeps legacy behavior.
-    if (arrays.size() != 3U) throw std::invalid_argument("incomplete face identity table");
+    if (!arrays.contains(std::string(global_face_id_name)) ||
+        !arrays.contains(std::string(face_offsets_name)) || !arrays.contains(std::string(face_vertices_name))) {
+        throw std::invalid_argument("incomplete face identity table for face metadata");
+    }
     const auto& ids = arrays.at(std::string(global_face_id_name));
     const auto& offsets = arrays.at(std::string(face_offsets_name));
     const auto& vertices = arrays.at(std::string(face_vertices_name));
     if (ids.empty() || offsets.size() != ids.size()) {
         throw std::invalid_argument("face identity/offset count mismatch");
+    }
+    const auto tags = arrays.find(std::string(face_physical_tag_name));
+    if (tags != arrays.end() && tags->second.size() != ids.size()) {
+        throw std::invalid_argument("face physical tag count mismatch");
     }
     std::map<std::uint64_t, LocalIndex> lookup;
     for (std::size_t i = 0; i < vertex_ids.size(); ++i) {
@@ -748,7 +776,8 @@ struct FaceIdentity {
         if ((dimension == 2 && width != 2U) || (dimension == 3 && width != 3U && width != 4U)) {
             throw std::invalid_argument("invalid face identity width for dimension");
         }
-        FaceIdentity face{GlobalEntityId{ids[i]}, {}};
+        FaceIdentity face{GlobalEntityId{ids[i]}, {}, PhysicalTag{tags == arrays.end() ? 0U :
+            static_cast<std::uint32_t>(tags->second[i])}};
         std::vector<std::uint64_t> key;
         for (auto j = begin; j < end; ++j) {
             const auto vertex = lookup.find(vertices[j]);
@@ -768,21 +797,40 @@ struct FaceIdentity {
     return result;
 }
 
-inline void write_face_identities(std::ostringstream& output, const Topology& topology) {
+inline void validate_vtu_face_boundary(const Topology& topology, const FaceBoundarySnapshot& boundary) {
+    if (boundary.face_count() != topology.entity_count(EntityKind::face)) {
+        throw std::invalid_argument("VTU face boundary count mismatch");
+    }
+    const auto& support = topology.relation(EntityKind::face, EntityKind::cell);
+    for (std::size_t i = 0; i < boundary.face_count(); ++i) {
+        const auto face = local_index(i, "face index overflow");
+        const auto count = support.adjacent(face).size();
+        if ((count != 1U && count != 2U) || boundary.is_boundary(face) != (count == 1U) ||
+            (count == 2U && boundary.has_physical_tag(face))) {
+            throw std::invalid_argument("VTU face classification/tag disagrees with topology");
+        }
+    }
+}
+
+inline void write_face_identities(std::ostringstream& output, const Topology& topology,
+                                  const FaceBoundarySnapshot& boundary) {
+    validate_vtu_face_boundary(topology, boundary);
     const auto face_ids = topology.global_ids(EntityKind::face);
     const auto vertex_ids = topology.global_ids(EntityKind::vertex);
     const auto& relation = topology.relation(EntityKind::face, EntityKind::vertex);
-    std::vector<std::uint64_t> ids, offsets, vertices;
+    std::vector<std::uint64_t> ids, offsets, vertices, tags;
     for (std::size_t i = 0; i < face_ids.size(); ++i) {
         ids.push_back(face_ids[i].value());
+        tags.push_back(boundary.physical_tags()[i].value());
         for (const auto vertex : relation.adjacent(local_index(i, "face index overflow"))) {
             vertices.push_back(vertex_ids[vertex.value()].value());
         }
         offsets.push_back(static_cast<std::uint64_t>(vertices.size()));
     }
     output << "    <FieldData>\n";
-    const auto write = [&](std::string_view name, const std::vector<std::uint64_t>& values) {
-        output << "      <DataArray type=\"UInt64\" Name=\"" << name
+    const auto write = [&](std::string_view name, const std::vector<std::uint64_t>& values,
+                           std::string_view type = "UInt64") {
+        output << "      <DataArray type=\"" << type << "\" Name=\"" << name
                << "\" NumberOfComponents=\"1\" NumberOfTuples=\"" << values.size()
                << "\" format=\"ascii\">\n        ";
         for (const auto value : values) output << value << ' ';
@@ -791,6 +839,7 @@ inline void write_face_identities(std::ostringstream& output, const Topology& to
     write(global_face_id_name, ids);
     write(face_offsets_name, offsets);
     write(face_vertices_name, vertices);
+    write(face_physical_tag_name, tags, "UInt32");
     output << "    </FieldData>\n";
 }
 
@@ -838,7 +887,7 @@ inline void validate_export_fields(
                 "mpmc::mesh::export_vtu_ascii: duplicate field ID in one association");
         }
         if (field.metadata().id == global_cell_id_name ||
-            field.metadata().id == global_vertex_id_name || face_identity_name(field.metadata().id)) {
+            field.metadata().id == global_vertex_id_name || face_metadata_name(field.metadata().id)) {
             throw std::invalid_argument(
                 "mpmc::mesh::export_vtu_ascii: field name is reserved for stable entity identity");
         }
@@ -1313,7 +1362,7 @@ import_vtu_ascii(std::string_view content) {
     const auto identities = parse_face_identities(grid, piece, vertex_ids, 2);
     std::vector<LinearFaceAnnotation2D> annotations;
     if (identities) for (const auto& face : *identities) {
-        annotations.push_back({{face.vertices[0], face.vertices[1]}, face.id, PhysicalTag{0U}});
+        annotations.push_back({{face.vertices[0], face.vertices[1]}, face.id, face.physical_tag});
     }
     auto mesh = make_linear_mesh_2d(std::move(vertex_ids), std::move(coordinates), cells, annotations);
     if (identities && identities->size() != mesh.topology.entity_count(EntityKind::face)) {
@@ -1352,7 +1401,8 @@ import_vtu_ascii(std::string_view content) {
         std::move(topology),
         std::move(mesh.geometry),
         std::move(point_fields),
-        std::move(cell_fields)};
+        std::move(cell_fields),
+        std::move(mesh.face_boundary)};
 }
 
 [[nodiscard]] inline std::string
@@ -1440,7 +1490,7 @@ export_vtu_ascii(const VtuImportResult& mesh) {
     output << "<?xml version=\"1.0\"?>\n"
            << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n"
            << "  <UnstructuredGrid>\n";
-    write_face_identities(output, topology);
+    write_face_identities(output, topology, mesh.face_boundary);
     output << "    <Piece NumberOfPoints=\""
            << point_count
            << "\" NumberOfCells=\""

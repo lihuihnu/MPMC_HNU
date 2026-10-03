@@ -528,7 +528,7 @@ import_vtu_ascii_3d(
     const auto identities = parse_face_identities(grid, piece, vertex_ids, 3);
     std::vector<LinearFaceAnnotation3D> annotations;
     if (identities) for (const auto& face : *identities) {
-        annotations.push_back({face.vertices, face.id, PhysicalTag{0U}});
+        annotations.push_back({face.vertices, face.id, face.physical_tag});
     }
     auto mesh = make_linear_mesh_3d(vertex_ids, coordinates, cells, annotations);
     if (identities && identities->size() != mesh.topology.entity_count(EntityKind::face)) {
@@ -677,7 +677,7 @@ export_vtu_ascii_3d(
     output << "<?xml version=\"1.0\"?>\n"
            << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n"
            << "  <UnstructuredGrid>\n";
-    write_face_identities(output, topology);
+    write_face_identities(output, topology, mesh.face_boundary);
     output << "    <Piece NumberOfPoints=\""
            << point_count
            << "\" NumberOfCells=\""

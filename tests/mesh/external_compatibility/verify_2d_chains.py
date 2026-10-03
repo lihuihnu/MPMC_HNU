@@ -13,7 +13,7 @@ import platform
 import subprocess
 import sys
 
-from verify_2d_readers import vtk_face_ids
+from verify_2d_readers import vtk_face_tags, vtk_face_ids
 
 import gmsh
 
@@ -113,7 +113,7 @@ def read_official(path):
                 require(array.GetNumberOfTuples() == len(keys), 'chain field tuple count')
                 fields[location, array.GetName()] = {key: array.GetTuple(j) for j,key in enumerate(keys)}
         return dict(nodes=nodes, cells=cells, areas=areas, cell_faces=cell_faces,
-                    faces=vtk_face_ids(grid,required=False), groups={}, fields=fields)
+                    faces=vtk_face_ids(grid,required=False), face_tags=vtk_face_tags(grid,required=False), groups={}, fields=fields)
     gmsh.clear()
     gmsh.logger.start()
     try:
@@ -234,7 +234,7 @@ def read_import(path, source):
         detail = face_details[tag]
         owners = faces[tuple(sorted(row))]
         require(detail['owners'] == owners, 'imported cell-edge / edge-cell reciprocity')
-        require(detail['boundary'] == (int(len(owners) == 1) if source == 'gmsh' else -1), 'imported boundary classification')
+        require(detail['boundary'] == int(len(owners) == 1), 'imported boundary classification')
         require(detail['owner'] in owners, 'imported geometry owner')
         a,b = [snapshot['nodes'][v] for v in row]
         length = math.hypot(b[0]-a[0],b[1]-a[1])
@@ -248,6 +248,7 @@ def read_import(path, source):
             nx,ny = -nx,-ny
         for actual,expected in zip(detail['normal'],(nx,ny),strict=True):
             close(actual,expected,'imported owner outward normal')
+    snapshot["face_tags"] = {tag:detail["physical"] for tag,detail in face_details.items()}
     return snapshot, face_details
 
 
@@ -288,10 +289,11 @@ def run_case(directory, producer, name, source, disconnected):
                 require(set(actual['faces'][tag]) == set(row), 'exported face identity binding')
         codes = set()
         if source == 'gmsh' and target == 'vtu':
-            codes = {'vtu.groups_not_serialized','vtu.face_tags_not_serialized'}
+            codes = {'vtu.groups_not_serialized'}
         if source == 'vtu' and target == 'gmsh':
             codes = {'gmsh.fields_not_serialized'}
         if target == 'vtu':
+            require(actual['face_tags'] == imported['face_tags'], 'VTU physical tag binding after conversion')
             vtk_face_ids(reader.read_vtu(output))
             vertex_loss = set(actual['nodes']) != set(imported['nodes'])
             face_loss = {tag:tuple(sorted(row)) for tag,row in actual['faces'].items()} != {
@@ -345,6 +347,12 @@ def main():
                 read_official,lambda path: read_import(path,'vtu'),check_geometry,face_identity=True)
             for disconnected in (False,True)}
         report['face_identity_inputs'] = len(report['face_identity_cases'])
+        report['face_tag_cases'] = {
+            'mixed'+('_disconnected' if disconnected else ''): run_vertex_identity_case(
+                directory,producer,'mixed'+('_disconnected' if disconnected else ''),2,fixture('mixed',disconnected),
+                read_official,lambda path: read_import(path,'vtu'),check_geometry,physical_tags=True)
+            for disconnected in (False,True)}
+        report['face_tag_inputs'] = len(report['face_tag_cases'])
         report.update(status='passed',inputs=2,chains=4,conversion_reports=4,
                       disconnected_inputs=2,disconnected_chains=4,disconnected_reports=4,import_snapshots=4)
         print('[PASS] independent.mesh.2d_chains inputs=2 chains=4 reports=4 disconnected_chains=4')

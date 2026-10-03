@@ -797,11 +797,6 @@ analyze_conversion(
                 "vtu.groups_not_serialized",
                 "current VTU bridge does not encode canonical named/physical groups");
         }
-        if (has_tagged_faces(document)) {
-            report.note_lossy(
-                "vtu.face_tags_not_serialized",
-                "current VTU bridge writes volume/surface topology fields but not boundary face PhysicalTag metadata");
-        }
         if (document.logical_corner_point()
                 .has_value()) {
             report.note_lossy(

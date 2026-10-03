@@ -14,10 +14,10 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-from verify_2d_readers import vtk_face_ids, FACE_ARRAYS
+from verify_2d_readers import vtk_face_tags, vtk_face_ids, FACE_ARRAYS, FACE_TAG_ARRAY
 
 import gmsh
-from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkIdList, vtkPoints, vtkUnsignedLongLongArray
+from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkIdList, vtkPoints, vtkUnsignedLongLongArray, vtkUnsignedIntArray
 from vtkmodules.vtkCommonDataModel import vtkUnstructuredGrid
 from vtkmodules.vtkIOXML import vtkXMLUnstructuredGridWriter
 
@@ -72,7 +72,7 @@ def write_gmsh(path, data):
     return {i: tag for i, tag in enumerate(ids)}
 
 
-def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False, face_ids=None):
+def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False, face_ids=None, face_tags=None):
     kinds, vertex_ids, points, rows, _ = data
     # Rotate/reverse point storage independently of cell connectivity and IDs.
     order = list(reversed(range(len(points))))
@@ -125,6 +125,12 @@ def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False, face_ids=None):
             for value in values:
                 array.InsertNextValue(value)
             grid.GetFieldData().AddArray(array)
+        if face_tags is not None:
+            array = vtkUnsignedIntArray()
+            array.SetName(FACE_TAG_ARRAY)
+            for tag,_ in records:
+                array.InsertNextValue(face_tags[tag])
+            grid.GetFieldData().AddArray(array)
     writer = vtkXMLUnstructuredGridWriter()
     errors = []
     writer.AddObserver('ErrorEvent', lambda *_: errors.append('writer error'))
@@ -172,7 +178,7 @@ def read_official(path):
                 require(array.GetNumberOfTuples() == len(keys), 'chain field tuple count')
                 fields[location, array.GetName()] = {key: array.GetTuple(j) for j,key in enumerate(keys)}
         return dict(nodes=nodes, cells=cells, volumes=volumes, cell_faces=cell_faces,
-                    faces=vtk_face_ids(grid,required=False), groups={}, fields=fields)
+                    faces=vtk_face_ids(grid,required=False), face_tags=vtk_face_tags(grid,required=False), groups={}, fields=fields)
     gmsh.clear()
     gmsh.logger.start()
     try:
@@ -311,6 +317,7 @@ def read_import(path):
         sign = 1 if oracle.dot(vector,oracle.subtract(oracle.mean(vertices),oracle.mean(cell))) > 0 else -1
         for a,b in zip(detail['normal'],[sign*v/area for v in vector],strict=True):
             close(a,b,'imported owner outward normal')
+    snapshot["face_tags"] = {tag:detail["physical"] for tag,detail in face_details.items()}
     return snapshot, face_details
 
 
@@ -357,10 +364,11 @@ def run_case(directory, producer, name, source, disconnected):
                 require(set(actual['faces'][tag]) == set(row), 'exported face identity binding')
         codes = set()
         if source == 'gmsh' and target == 'vtu':
-            codes = {'vtu.groups_not_serialized','vtu.face_tags_not_serialized'}
+            codes = {'vtu.groups_not_serialized'}
         if source == 'vtu' and target == 'gmsh':
             codes = {'gmsh.fields_not_serialized'}
         if target == 'vtu':
+            require(actual['face_tags'] == imported['face_tags'], 'VTU physical tag binding after conversion')
             vtk_face_ids(oracle.read_vtu(output))
             vertex_loss = set(actual['nodes']) != set(imported['nodes'])
             face_loss = {tag:tuple(sorted(row)) for tag,row in actual['faces'].items()} != {
@@ -436,42 +444,107 @@ def face_identity_controls(directory,producer,dimension,source,output,read,expec
     return reasons
 
 
-def run_vertex_identity_case(directory, producer, name, dimension, data, read, imported_read, geometry, face_identity=False):
+def face_tag_fixture(data,dimension,faces):
+    kinds, ids, _, rows, _ = data
+    supports = {}
+    for tag,row in rows.items():
+        patterns = [(i,(i+1)%len(row)) for i in range(len(row))] if dimension == 2 else PATTERNS[kinds[tag]]
+        for face in patterns:
+            key = tuple(sorted(ids[row[i]] for i in face))
+            supports[key] = supports.get(key,0)+1
+    boundary = [tag for tag,row in faces.items() if supports[row] == 1]
+    # Include repeated labels, multiple labels, untagged boundary and full UInt32.
+    labels = {boundary[0]:2**32-1,boundary[1]:17,boundary[2]:17}
+    return {tag:labels.get(tag,0) for tag in faces}
+
+
+def face_tag_controls(directory,producer,dimension,source,output,read,expected,supports):
+    reasons = {}
+    for label in ('wrong_binding','missing_value','orphan_tags','overflow','interior_tag'):
+        tree = ET.parse(output if label == 'wrong_binding' else source)
+        section = tree.find('./UnstructuredGrid/FieldData')
+        arrays = {node.get('Name'):node for node in section.findall('DataArray')}
+        ids = list(map(int,arrays[FACE_ARRAYS[0]].text.split()))
+        values = list(map(int,arrays[FACE_TAG_ARRAY].text.split()))
+        if label == 'wrong_binding':
+            i = next(i for i,tag in enumerate(ids) if expected[tag] == 2**32-1)
+            j = next(i for i,tag in enumerate(ids) if expected[tag] == 17)
+            values[i],values[j] = values[j],values[i]
+        elif label == 'missing_value':
+            values.pop()
+        elif label == 'orphan_tags':
+            for name in FACE_ARRAYS:
+                section.remove(arrays[name])
+        elif label == 'overflow':
+            values[0] = 2**32
+        else:
+            faces = read(source)['faces']
+            interior = [i for i,tag in enumerate(ids) if len(supports[faces[tag]]) == 2]
+            if not interior:  # Disconnected fixture has boundary faces only.
+                continue
+            values[interior[0]] = 17
+        arrays[FACE_TAG_ARRAY].text = ' '.join(map(str,values))
+        arrays[FACE_TAG_ARRAY].set('NumberOfTuples',str(len(values)))
+        path = directory/(source.stem+'_'+label+'.vtu')
+        tree.write(path,encoding='utf-8',xml_declaration=True)
+        if label == 'wrong_binding':
+            actual = read(path)
+            require(actual['face_tags'] != expected, 'swapped boundary tags escaped independent oracle')
+            require(sorted(actual['face_tags'].values()) == sorted(expected.values()), 'control changed tag multiset')
+            reasons[label] = 'physical tag stable face binding mismatch with unchanged tag multiset'
+        else:
+            run = subprocess.run([str(producer),f'--convert-{dimension}d','vtu',path.name,path.stem],
+                                 cwd=directory,capture_output=True,text=True,timeout=60)
+            require(run.returncode != 0 and 'face' in run.stderr.lower(),
+                    f'invalid physical tag metadata not rejected: {label}: {run.stdout} {run.stderr}')
+            reasons[label] = run.stderr.strip()
+    return reasons
+
+
+def run_vertex_identity_case(directory, producer, name, dimension, data, read, imported_read, geometry, face_identity=False, physical_tags=False):
     kinds, ids, points, rows, measures = data
     ids = list(ids)
     ids[:3] = [0,2**64-1,2**53+1]
     data = kinds, ids, points, rows, measures
-    stem = name+('_face_ids' if face_identity else '_vertex_ids')
-    expected_faces = face_identity_fixture(data,dimension) if face_identity else None
+    stem = name+('_face_tags' if physical_tags else '_face_ids' if face_identity else '_vertex_ids')
+    expected_faces = face_identity_fixture(data,dimension) if face_identity or physical_tags else None
+    expected_tags = face_tag_fixture(data,dimension,expected_faces) if physical_tags else None
     path = directory/(stem+'_input.vtu')
-    mapping = write_vtu(path,data,{2:5,3:9} if dimension == 2 else VTK_KIND,stable_ids=True,face_ids=expected_faces)
+    mapping = write_vtu(path,data,{2:5,3:9} if dimension == 2 else VTK_KIND,stable_ids=True,face_ids=expected_faces,face_tags=expected_tags)
     disconnected = name.endswith('_disconnected')
     fixture_name = name.removesuffix('_disconnected')
     original = read(path)
-    if face_identity:
+    if face_identity or physical_tags:
         require(original['faces'] == expected_faces, 'official face table input bindings')
     geometry(original,fixture_name,data,mapping,disconnected)
     check_fields(original,data,mapping,True)
+    if physical_tags:
+        require(original['face_tags'] == expected_tags, 'official input physical tag bindings')
     run = subprocess.run([str(producer),f'--convert-{dimension}d','vtu',path.name,stem],cwd=directory,
                          capture_output=True,text=True,timeout=60)
     require(run.returncode == 0, f'vertex identity conversion failed: {run.stdout} {run.stderr}')
     imported, _ = imported_read(directory/(stem+'.import'))
     before = geometry(imported,fixture_name,data,mapping,disconnected)
-    if face_identity:
+    if physical_tags:
+        require(imported['face_tags'] == expected_tags, 'imported physical tag bindings')
+    if face_identity or physical_tags:
         check_face_binding(imported,expected_faces)
     output = directory/(stem+'.vtu')
     actual = read(output)
     vtk_vertex_ids(oracle.read_vtu(output))
     after = geometry(actual,fixture_name,data,mapping,disconnected)
     check_face_binding(actual,imported['faces'])
-    if face_identity:
+    if face_identity or physical_tags:
         check_face_binding(actual,expected_faces)
     check_fields(actual,data,mapping,True)
+    require(actual['face_tags'] == imported['face_tags'], 'VTU output physical tag bindings')
     check_report(Path(str(output)+'.report'),set())
     negatives = face_identity_controls(directory,producer,dimension,path,output,read,expected_faces) if face_identity else {}
-    print(f'[PASS] independent.{dimension}d.{"face_ids" if face_identity else "vertex_ids"}.{name}')
+    if physical_tags:
+        negatives = face_tag_controls(directory,producer,dimension,path,output,read,expected_tags,incidence(original))
+    print(f'[PASS] independent.{dimension}d.{"face_tags" if physical_tags else "face_ids" if face_identity else "vertex_ids"}.{name}')
     return dict(input=path.name,imported=before,output=after,vertex_ids=ids,
-                face_bindings=actual["faces"],negative_controls=negatives,
+                face_bindings=actual["faces"],face_tags=actual["face_tags"],negative_controls=negatives,
                 converter_stdout=run.stdout)
 
 
@@ -509,6 +582,12 @@ def main():
                 read_official,read_import,check_geometry,face_identity=True)
             for name in ('tetra_wedge','hexa_pyramid') for disconnected in (False,True)}
         report['face_identity_inputs'] = len(report['face_identity_cases'])
+        report['face_tag_cases'] = {
+            name+('_disconnected' if disconnected else ''): run_vertex_identity_case(
+                directory,producer,name+('_disconnected' if disconnected else ''),3,fixture(name,disconnected),
+                read_official,read_import,check_geometry,physical_tags=True)
+            for name in ('tetra_wedge','hexa_pyramid') for disconnected in (False,True)}
+        report['face_tag_inputs'] = len(report['face_tag_cases'])
         report.update(status='passed',inputs=4,chains=8,conversion_reports=8,
                       disconnected_inputs=4,disconnected_chains=8,disconnected_reports=8,import_snapshots=8)
         print('[PASS] independent.mesh.3d_chains inputs=4 chains=8 reports=8 disconnected_chains=8')
