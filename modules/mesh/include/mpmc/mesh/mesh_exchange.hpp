@@ -1,552 +1,126 @@
 #ifndef MPMC_MESH_MESH_EXCHANGE_HPP
 #define MPMC_MESH_MESH_EXCHANGE_HPP
 
-#include <mpmc/mesh/corner_point_geometry_3d.hpp>
-#include <mpmc/mesh/dense_field_registry.hpp>
-#include <mpmc/mesh/face_boundary.hpp>
-#include <mpmc/mesh/topology.hpp>
+#include <mpmc/mesh/mesh_exchange_document.hpp>
+#include <mpmc/mesh/grdecl_reconstruction.hpp>
+#include <mpmc/mesh/grdecl.hpp>
+#include <mpmc/mesh/active_corner_point.hpp>
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
-#include <span>
 #include <stdexcept>
-#include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace mpmc::mesh {
 
-enum class MeshExchangeFormat : std::uint8_t {
-    gmsh_4_1_ascii = 0,
-    vtu_ascii = 1,
-    grdecl = 2,
-};
-
-enum class ConversionDisposition : std::uint8_t {
-    lossless = 0,
-    lossy = 1,
-    unsupported = 2,
-};
-
-struct ConversionIssue {
-    std::string code;
-    std::string message;
-};
-
-class ConversionReport {
-public:
-    explicit ConversionReport(
-        MeshExchangeFormat target_format)
-        : target_format_(target_format) {}
-
-    [[nodiscard]] MeshExchangeFormat
-    target_format() const noexcept {
-        return target_format_;
-    }
-
-    [[nodiscard]] ConversionDisposition
-    disposition() const noexcept {
-        return disposition_;
-    }
-
-    [[nodiscard]] bool lossless() const noexcept {
-        return disposition_ ==
-            ConversionDisposition::lossless;
-    }
-
-    [[nodiscard]] std::span<const ConversionIssue>
-    issues() const noexcept {
-        return issues_;
-    }
-
-    void note_lossy(
-        std::string code,
-        std::string message) {
-        if (disposition_ ==
-            ConversionDisposition::lossless) {
-            disposition_ =
-                ConversionDisposition::lossy;
-        }
-        issues_.push_back(
-            ConversionIssue{
-                std::move(code),
-                std::move(message)});
-    }
-
-    void note_unsupported(
-        std::string code,
-        std::string message) {
-        disposition_ =
-            ConversionDisposition::unsupported;
-        issues_.push_back(
-            ConversionIssue{
-                std::move(code),
-                std::move(message)});
-    }
-
-private:
-    MeshExchangeFormat target_format_;
-    ConversionDisposition disposition_{
-        ConversionDisposition::lossless};
-    std::vector<ConversionIssue> issues_;
-};
-
-struct MeshExchangeGroup {
-    EntityKind location;
-    std::uint32_t tag;
-    std::string name;
-    std::vector<GlobalEntityId> members;
-};
-
-/// Source-preserving logical corner-point semantics.
-///
-/// COORD and ZCORN are stored in canonical SI metres while permeability is
-/// stored in square metres. PORO/PERM arrays are optional: geometry-only GRDECL
-/// documents keep them empty instead of inventing material properties.
-/// source_*_scale_to_si retains the explicit import scale so a GRDECL writer
-/// can reproduce the source numeric unit convention without guessing
-/// FIELD/METRIC semantics.
-struct LogicalCornerPointGrid3D {
-    std::array<std::size_t, 3> dimensions;
-    std::vector<double> coord_m;
-    std::vector<double> zcorn_m;
-    std::vector<std::uint8_t> active;
-    std::vector<double> porosity;
-    std::vector<double> permx_m2;
-    std::vector<double> permy_m2;
-    std::vector<double> permz_m2;
-    double source_coordinate_scale_to_m;
-    double source_permeability_scale_to_m2;
-};
-
 namespace mesh_exchange_detail {
 
-// Stable IDs may be sparse and unrelated to local order. The caller owns the
-// ID span for this lookup's lifetime. Build only on first query; empty groups
-// allocate no index. Keep missing-ID policy and diagnostics in the caller.
-class GroupEntityLookup {
-public:
-    explicit GroupEntityLookup(std::span<const GlobalEntityId> ids)
-        : ids_(ids) {}
-
-    [[nodiscard]] std::optional<std::size_t> find(GlobalEntityId id) {
-        if (sorted_.empty()) {
-            sorted_.reserve(ids_.size());
-            for (std::size_t local = 0U; local < ids_.size(); ++local) {
-                sorted_.emplace_back(ids_[local].value(), local);
-            }
-            std::sort(sorted_.begin(), sorted_.end());
-        }
-        const auto found = std::lower_bound(
-            sorted_.begin(), sorted_.end(), id.value(),
-            [](const auto& entry, GlobalEntityId::value_type value) {
-                return entry.first < value;
-            });
-        if (found == sorted_.end() || found->first != id.value()) {
-            return std::nullopt;
-        }
-        return found->second;
-    }
-
-private:
-    std::span<const GlobalEntityId> ids_;
-    std::vector<std::pair<GlobalEntityId::value_type, std::size_t>> sorted_;
+struct GrdeclIdentityMesh {
+    Topology topology;
+    std::vector<Coordinate3D> coordinates;
 };
 
-} // namespace mesh_exchange_detail
-
-class MeshExchangeDocument {
-public:
-    MeshExchangeDocument(
-        const MeshExchangeDocument&) = default;
-    MeshExchangeDocument(
-        MeshExchangeDocument&&) noexcept = default;
-    MeshExchangeDocument& operator=(
-        const MeshExchangeDocument&) = delete;
-    MeshExchangeDocument& operator=(
-        MeshExchangeDocument&&) = delete;
-    ~MeshExchangeDocument() = default;
-
-    [[nodiscard]] static MeshExchangeDocument
-    create(
-        MeshExchangeFormat source_format,
-        int dimension,
-        Topology topology,
-        std::vector<Coordinate3D>
-            vertex_coordinates_m,
-        std::optional<FaceBoundarySnapshot>
-            face_boundary,
-        std::vector<DenseFieldSnapshot> fields,
-        std::vector<MeshExchangeGroup> groups,
-        std::optional<LogicalCornerPointGrid3D>
-            logical_corner_point) {
-        if (dimension != 2 &&
-            dimension != 3) {
-            throw std::invalid_argument(
-                "mpmc::mesh::MeshExchangeDocument: dimension must be 2 or 3");
-        }
-        if (vertex_coordinates_m.size() !=
-            topology.entity_count(
-                EntityKind::vertex)) {
-            throw std::invalid_argument(
-                "mpmc::mesh::MeshExchangeDocument: vertex coordinate count does not match topology");
-        }
-        for (const auto coordinate :
-             vertex_coordinates_m) {
-            if (!std::isfinite(coordinate.x_m) ||
-                !std::isfinite(coordinate.y_m) ||
-                !std::isfinite(coordinate.z_m)) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::MeshExchangeDocument: vertex coordinates must be finite");
-            }
-            if (dimension == 2 &&
-                coordinate.z_m != 0.0) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::MeshExchangeDocument: 2D canonical coordinates must lie in z=0");
-            }
-        }
-
-        if (face_boundary.has_value() &&
-            face_boundary->face_count() !=
-                topology.entity_count(
-                    EntityKind::face)) {
-            throw std::invalid_argument(
-                "mpmc::mesh::MeshExchangeDocument: face boundary count does not match topology");
-        }
-
-        validate_groups(topology, groups);
-        if (logical_corner_point.has_value()) {
-            validate_corner_point(
-                *logical_corner_point);
-            if (dimension != 3) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::MeshExchangeDocument: logical corner-point semantics require dimension 3");
-            }
-        }
-
-        auto registry =
-            DenseFieldRegistry::create(
-                topology,
-                std::move(fields));
-
-        return MeshExchangeDocument{
-            source_format,
-            dimension,
-            std::move(topology),
-            std::move(vertex_coordinates_m),
-            std::move(face_boundary),
-            std::move(registry),
-            std::move(groups),
-            std::move(logical_corner_point)};
-    }
-
-    [[nodiscard]] MeshExchangeFormat
-    source_format() const noexcept {
-        return source_format_;
-    }
-
-    [[nodiscard]] int dimension()
-        const noexcept {
-        return dimension_;
-    }
-
-    [[nodiscard]] const Topology&
-    topology() const noexcept {
-        return topology_;
-    }
-
-    [[nodiscard]] std::span<const Coordinate3D>
-    vertex_coordinates_m() const noexcept {
-        return vertex_coordinates_m_;
-    }
-
-    [[nodiscard]] const std::optional<
-        FaceBoundarySnapshot>&
-    face_boundary() const noexcept {
-        return face_boundary_;
-    }
-
-    [[nodiscard]] const DenseFieldRegistry&
-    fields() const noexcept {
-        return fields_;
-    }
-
-    [[nodiscard]] std::span<
-        const MeshExchangeGroup>
-    groups() const noexcept {
-        return groups_;
-    }
-
-    [[nodiscard]] const std::optional<
-        LogicalCornerPointGrid3D>&
-    logical_corner_point() const noexcept {
-        return logical_corner_point_;
-    }
-
-private:
-    MeshExchangeDocument(
-        MeshExchangeFormat source_format,
-        int dimension,
-        Topology topology,
-        std::vector<Coordinate3D>
-            vertex_coordinates_m,
-        std::optional<FaceBoundarySnapshot>
-            face_boundary,
-        DenseFieldRegistry fields,
-        std::vector<MeshExchangeGroup> groups,
-        std::optional<LogicalCornerPointGrid3D>
-            logical_corner_point)
-        : source_format_(source_format),
-          dimension_(dimension),
-          topology_(std::move(topology)),
-          vertex_coordinates_m_(
-              std::move(vertex_coordinates_m)),
-          face_boundary_(
-              std::move(face_boundary)),
-          fields_(std::move(fields)),
-          groups_(std::move(groups)),
-          logical_corner_point_(
-              std::move(logical_corner_point)) {}
-
-    [[nodiscard]] static std::size_t
-    checked_add(
-        std::size_t left,
-        std::size_t right,
-        const char* message) {
-        if (left >
-            std::numeric_limits<std::size_t>::max() -
-                right) {
-            throw std::length_error(message);
-        }
-        return left + right;
-    }
-
-    [[nodiscard]] static std::size_t
-    checked_multiply(
-        std::size_t left,
-        std::size_t right,
-        const char* message) {
-        if (left != 0U &&
-            right >
-                std::numeric_limits<std::size_t>::max() /
-                    left) {
-            throw std::length_error(message);
-        }
-        return left * right;
-    }
-
-    static void validate_groups(
-        const Topology& topology,
-        const std::vector<MeshExchangeGroup>&
-            groups) {
-        // Reuse one index per entity kind across all groups in this validation.
-        std::array<std::optional<mesh_exchange_detail::GroupEntityLookup>, 4> lookups;
-        for (std::size_t index = 0U;
-             index < groups.size();
-             ++index) {
-            const auto& group = groups[index];
-            if (group.tag == 0U) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::MeshExchangeDocument: group tag zero is reserved");
-            }
-            if (group.name.find('\0') !=
-                std::string::npos) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::MeshExchangeDocument: group name cannot contain NUL");
-            }
-            for (std::size_t previous = 0U;
-                 previous < index;
-                 ++previous) {
-                if (groups[previous].location ==
-                        group.location &&
-                    groups[previous].tag ==
-                        group.tag) {
-                    throw std::invalid_argument(
-                        "mpmc::mesh::MeshExchangeDocument: duplicate group key");
+// Reuse the GRDECL geometry and active-grid implementation to predict the
+// actual readback identities. Do not duplicate its vertex/face numbering rule.
+[[nodiscard]] inline GrdeclIdentityMesh grdecl_identity_mesh(
+    const LogicalCornerPointGrid3D& data) {
+    const auto [nx, ny, nz] = data.dimensions;
+    const auto count = data.active.size();
+    const auto vertex_count = grdecl_detail::checked_multiply(
+        count, 8U, "GRDECL identity corner count overflow");
+    Topology::EntityIds ids;
+    std::vector<Coordinate3D> coordinates;
+    std::vector<double> volumes;
+    std::vector<CsrAdjacency::Offset> offsets{0U};
+    std::vector<LocalIndex> vertices;
+    ids.cells.reserve(count);
+    ids.vertices.reserve(vertex_count);
+    coordinates.reserve(vertex_count);
+    vertices.reserve(vertex_count);
+    volumes.reserve(count);
+    offsets.reserve(count + 1U);
+    for (std::size_t k = 0U; k < nz; ++k) {
+        for (std::size_t j = 0U; j < ny; ++j) {
+            for (std::size_t i = 0U; i < nx; ++i) {
+                const auto cell = i + nx * (j + ny * k);
+                ids.cells.emplace_back(static_cast<std::uint64_t>(cell) + 1U);
+                std::array<Coordinate3D, 8> corners{};
+                for (std::size_t corner = 0U; corner < 8U; ++corner) {
+                    const auto ci = corner % 2U;
+                    const auto cj = (corner / 2U) % 2U;
+                    const auto ck = corner / 4U;
+                    const auto pillar = (i + ci + (nx + 1U) * (j + cj)) * 6U;
+                    const auto z = (2U * i + ci) + 2U * nx *
+                        ((2U * j + cj) + 2U * ny * (2U * k + ck));
+                    corners[corner] = grdecl_detail::point_on_pillar(
+                        grdecl_detail::Pillar{
+                            {data.coord_m[pillar], data.coord_m[pillar + 1U], data.coord_m[pillar + 2U]},
+                            {data.coord_m[pillar + 3U], data.coord_m[pillar + 4U], data.coord_m[pillar + 5U]}},
+                        data.zcorn_m[z]);
+                    const auto vertex = coordinates.size();
+                    ids.vertices.emplace_back(static_cast<std::uint64_t>(vertex) + 1U);
+                    vertices.push_back(grdecl_detail::local_index(vertex, "GRDECL identity vertex overflow"));
+                    coordinates.push_back(corners[corner]);
                 }
-            }
-
-            const auto ids =
-                topology.global_ids(
-                    group.location);
-            // global_ids above validates the kind before it is used as an index.
-            auto& lookup = lookups[static_cast<std::size_t>(group.location)];
-            if (!lookup.has_value()) {
-                lookup.emplace(ids);
-            }
-            for (const auto member : group.members) {
-                if (!lookup->find(member).has_value()) {
-                    throw std::invalid_argument(
-                        "mpmc::mesh::MeshExchangeDocument: group member is absent from topology");
-                }
+                volumes.push_back(grdecl_detail::check_cell_volume(corners, data.active[cell] != 0U).volume_m3);
+                offsets.push_back(grdecl_detail::csr_offset(vertices.size(), "GRDECL identity CSR overflow"));
             }
         }
     }
+    std::vector<CsrAdjacency> relations;
+    relations.emplace_back(EntityKind::cell, EntityKind::vertex, vertex_count,
+                          std::move(offsets), std::move(vertices));
+    GrdeclImportResult raw{data.dimensions, Topology{std::move(ids), std::move(relations)},
+        CornerPointGeometry3D{std::move(coordinates), std::move(volumes)}, data.active,
+        {}, data.coord_m, data.zcorn_m, {1.0, 1.0}};
+    if (raw.active_cell_count() == 0U) {
+        const auto values = raw.geometry.vertex_coordinates_m();
+        return {std::move(raw.topology), {values.begin(), values.end()}};
+    }
+    auto processed = process_active_corner_point_grid(raw);
+    return {std::move(processed.topology), std::move(processed.vertex_coordinates_m)};
+}
 
-    static void validate_corner_point(
-        const LogicalCornerPointGrid3D& data) {
-        const auto nx = data.dimensions[0];
-        const auto ny = data.dimensions[1];
-        const auto nz = data.dimensions[2];
-        if (nx == 0U ||
-            ny == 0U ||
-            nz == 0U) {
-            throw std::invalid_argument(
-                "mpmc::mesh::MeshExchangeDocument: corner-point dimensions must be positive");
-        }
-
-        const std::size_t nxp1 =
-            checked_add(
-                nx,
-                1U,
-                "mpmc::mesh::MeshExchangeDocument: corner-point NX+1 overflow");
-        const std::size_t nyp1 =
-            checked_add(
-                ny,
-                1U,
-                "mpmc::mesh::MeshExchangeDocument: corner-point NY+1 overflow");
-        const std::size_t cell_count =
-            checked_multiply(
-                checked_multiply(
-                    nx,
-                    ny,
-                    "mpmc::mesh::MeshExchangeDocument: corner-point XY count overflow"),
-                nz,
-                "mpmc::mesh::MeshExchangeDocument: corner-point cell count overflow");
-        const std::size_t pillar_count =
-            checked_multiply(
-                nxp1,
-                nyp1,
-                "mpmc::mesh::MeshExchangeDocument: corner-point pillar count overflow");
-        const std::size_t expected_coord =
-            checked_multiply(
-                pillar_count,
-                6U,
-                "mpmc::mesh::MeshExchangeDocument: corner-point COORD size overflow");
-        const std::size_t expected_zcorn =
-            checked_multiply(
-                cell_count,
-                8U,
-                "mpmc::mesh::MeshExchangeDocument: corner-point ZCORN size overflow");
-
-        const auto optional_cell_array =
-            [cell_count](std::size_t size) {
-                return size == 0U ||
-                       size == cell_count;
-            };
-        if (data.coord_m.size() !=
-                expected_coord ||
-            data.zcorn_m.size() !=
-                expected_zcorn ||
-            data.active.size() !=
-                cell_count ||
-            !optional_cell_array(
-                data.porosity.size()) ||
-            !optional_cell_array(
-                data.permx_m2.size()) ||
-            !optional_cell_array(
-                data.permy_m2.size()) ||
-            !optional_cell_array(
-                data.permz_m2.size())) {
-            throw std::invalid_argument(
-                "mpmc::mesh::MeshExchangeDocument: corner-point geometry arrays must match dimensions and optional property arrays must be empty or cell-aligned");
-        }
-
-        const auto finite =
-            [](double value) {
-                return std::isfinite(value);
-            };
-        if (!std::all_of(
-                data.coord_m.begin(),
-                data.coord_m.end(),
-                finite) ||
-            !std::all_of(
-                data.zcorn_m.begin(),
-                data.zcorn_m.end(),
-                finite) ||
-            !std::all_of(
-                data.porosity.begin(),
-                data.porosity.end(),
-                finite) ||
-            !std::all_of(
-                data.permx_m2.begin(),
-                data.permx_m2.end(),
-                finite) ||
-            !std::all_of(
-                data.permy_m2.begin(),
-                data.permy_m2.end(),
-                finite) ||
-            !std::all_of(
-                data.permz_m2.begin(),
-                data.permz_m2.end(),
-                finite)) {
-            throw std::invalid_argument(
-                "mpmc::mesh::MeshExchangeDocument: corner-point numeric arrays must be finite");
-        }
-
-        for (const auto value : data.active) {
-            if (value != std::uint8_t{0U} &&
-                value != std::uint8_t{1U}) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::MeshExchangeDocument: corner-point ACTNUM must be 0/1");
+[[nodiscard]] inline bool grdecl_ids_change(
+    const MeshExchangeDocument& document, const GrdeclIdentityMesh& target) {
+    const auto coordinate_key = [](Coordinate3D coordinate) {
+        return std::array<double, 3>{coordinate.x_m, coordinate.y_m, coordinate.z_m};
+    };
+    for (const auto kind : {EntityKind::vertex, EntityKind::edge, EntityKind::face, EntityKind::cell}) {
+        const auto source_ids = document.topology().global_ids(kind);
+        const auto target_ids = target.topology.global_ids(kind);
+        if (source_ids.size() != target_ids.size()) return true;
+        GroupEntityLookup lookup{target_ids};
+        for (std::size_t local = 0U; local < source_ids.size(); ++local) {
+            const auto found = lookup.find(source_ids[local]);
+            if (!found) return true;
+            if (kind == EntityKind::vertex) {
+                if (coordinate_key(document.vertex_coordinates_m()[local]) !=
+                    coordinate_key(target.coordinates[*found])) return true;
+                continue;
             }
-        }
-        for (const auto value :
-             data.porosity) {
-            if (value < 0.0 ||
-                value > 1.0) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::MeshExchangeDocument: corner-point porosity must lie in [0,1]");
+            if (!document.topology().has_relation(kind, EntityKind::vertex) ||
+                !target.topology.has_relation(kind, EntityKind::vertex)) return true;
+            std::vector<std::array<double, 3>> source_corners, target_corners;
+            for (const auto vertex : document.topology().relation(kind, EntityKind::vertex).adjacent(
+                     grdecl_detail::local_index(local, "source identity index overflow"))) {
+                source_corners.push_back(coordinate_key(document.vertex_coordinates_m()[vertex.value()]));
             }
-        }
-        for (const auto* values :
-             {&data.permx_m2,
-              &data.permy_m2,
-              &data.permz_m2}) {
-            if (!std::all_of(
-                    values->begin(),
-                    values->end(),
-                    [](double value) {
-                        return value >= 0.0;
-                    })) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::MeshExchangeDocument: corner-point permeability must be non-negative");
+            for (const auto vertex : target.topology.relation(kind, EntityKind::vertex).adjacent(
+                     grdecl_detail::local_index(*found, "target identity index overflow"))) {
+                target_corners.push_back(coordinate_key(target.coordinates[vertex.value()]));
             }
-        }
-
-        if (!std::isfinite(
-                data.source_coordinate_scale_to_m) ||
-            data.source_coordinate_scale_to_m <=
-                0.0 ||
-            !std::isfinite(
-                data.source_permeability_scale_to_m2) ||
-            data.source_permeability_scale_to_m2 <=
-                0.0) {
-            throw std::invalid_argument(
-                "mpmc::mesh::MeshExchangeDocument: source unit scales must be finite and positive");
+            std::sort(source_corners.begin(), source_corners.end());
+            std::sort(target_corners.begin(), target_corners.end());
+            if (source_corners != target_corners) return true;
         }
     }
-
-    MeshExchangeFormat source_format_;
-    int dimension_;
-    Topology topology_;
-    std::vector<Coordinate3D>
-        vertex_coordinates_m_;
-    std::optional<FaceBoundarySnapshot>
-        face_boundary_;
-    DenseFieldRegistry fields_;
-    std::vector<MeshExchangeGroup> groups_;
-    std::optional<LogicalCornerPointGrid3D>
-        logical_corner_point_;
-};
-
-namespace mesh_exchange_detail {
+    return false;
+}
 
 [[nodiscard]] inline bool has_supported_generic_topology(
     const MeshExchangeDocument& document) {
@@ -692,6 +266,71 @@ namespace mesh_exchange_detail {
            element_ids.end();
 }
 
+
+// Both preflight and serialization use this preparation. A reconstructed
+// logical grid is retained for the writer, so no second reconstruction occurs.
+struct PreparedGrdeclConversion {
+    ConversionReport report{MeshExchangeFormat::grdecl};
+    std::optional<LogicalCornerPointGrid3D> reconstructed;
+};
+
+[[nodiscard]] inline PreparedGrdeclConversion prepare_grdecl_conversion(
+    const MeshExchangeDocument& document) {
+    PreparedGrdeclConversion prepared;
+    auto& report = prepared.report;
+    if (document.dimension() != 3) {
+        report.note_unsupported("grdecl.requires_3d", "GRDECL baseline requires a 3D document");
+        return prepared;
+    }
+    GrdeclRepresentabilityReport reconstruction_report;
+    if (!document.logical_corner_point()) {
+        auto reconstruction = reconstruct_structured_logical_grid_3d(document);
+        reconstruction_report = std::move(reconstruction.report);
+        if (!reconstruction_report.representable() || !reconstruction.logical_grid) {
+            for (const auto& issue : reconstruction_report.issues()) {
+                report.note_unsupported(issue.code, issue.message);
+            }
+            if (report.issues().empty()) {
+                report.note_unsupported("grdecl_reconstruction.unsupported",
+                    "generic canonical mesh is outside the structured GRDECL reconstruction baseline");
+            }
+            return prepared;
+        }
+        prepared.reconstructed.emplace(std::move(*reconstruction.logical_grid));
+    }
+    if (!document.groups().empty()) {
+        report.note_lossy("grdecl.groups_not_representable",
+            "minimal GRDECL baseline does not serialize generic named/physical groups");
+    }
+    if (has_tagged_faces(document)) {
+        report.note_lossy("grdecl.face_tags_not_representable",
+            "minimal GRDECL baseline does not serialize generic face physical tags");
+    }
+    for (const auto& field : document.fields().fields()) {
+        if (field.location() != EntityKind::cell ||
+            (field.metadata().id != "PORO" && field.metadata().id != "PERMX" &&
+             field.metadata().id != "PERMY" && field.metadata().id != "PERMZ")) {
+            report.note_lossy("grdecl.field_not_representable",
+                "minimal GRDECL baseline serializes only cell PORO/PERMX/PERMY/PERMZ");
+            break;
+        }
+    }
+    for (const auto& issue : reconstruction_report.issues()) {
+        report.note_lossy(issue.code, issue.message);
+    }
+    const auto& logical = prepared.reconstructed ? *prepared.reconstructed : *document.logical_corner_point();
+    try {
+        const auto target = grdecl_identity_mesh(logical);
+        if (grdecl_ids_change(document, target)) {
+            report.note_lossy("grdecl.entity_ids_remapped",
+                "GRDECL does not store arbitrary entity IDs; readback changes vertex, face or cell identity bindings");
+        }
+    } catch (const std::invalid_argument& error) {
+        report.note_unsupported("grdecl.computational_topology_unsupported", error.what());
+    }
+    return prepared;
+}
+
 } // namespace mesh_exchange_detail
 
 [[nodiscard]] inline ConversionReport
@@ -702,50 +341,8 @@ analyze_conversion(
 
     ConversionReport report{target_format};
 
-    if (target_format ==
-        MeshExchangeFormat::grdecl) {
-        if (document.dimension() != 3) {
-            report.note_unsupported(
-                "grdecl.requires_3d",
-                "GRDECL baseline requires a 3D document");
-            return report;
-        }
-        if (!document.logical_corner_point()
-                 .has_value()) {
-            report.note_unsupported(
-                "grdecl.logical_corner_point_missing",
-                "GRDECL export requires preserved logical corner-point semantics; arbitrary linear topology is not reverse-engineered");
-            return report;
-        }
-
-        if (!document.groups().empty()) {
-            report.note_lossy(
-                "grdecl.groups_not_representable",
-                "minimal GRDECL baseline does not serialize generic named/physical groups");
-        }
-        if (has_tagged_faces(document)) {
-            report.note_lossy(
-                "grdecl.face_tags_not_representable",
-                "minimal GRDECL baseline does not serialize generic face physical tags");
-        }
-
-        for (const auto& field :
-             document.fields().fields()) {
-            const bool supported =
-                field.location() ==
-                    EntityKind::cell &&
-                (field.metadata().id == "PORO" ||
-                 field.metadata().id == "PERMX" ||
-                 field.metadata().id == "PERMY" ||
-                 field.metadata().id == "PERMZ");
-            if (!supported) {
-                report.note_lossy(
-                    "grdecl.field_not_representable",
-                    "minimal GRDECL baseline serializes only cell PORO/PERMX/PERMY/PERMZ");
-                break;
-            }
-        }
-        return report;
+    if (target_format == MeshExchangeFormat::grdecl) {
+        return prepare_grdecl_conversion(document).report;
     }
 
     if (!has_supported_generic_topology(
@@ -758,6 +355,27 @@ analyze_conversion(
 
     if (target_format ==
         MeshExchangeFormat::gmsh_4_1_ascii) {
+        const auto& topology = document.topology();
+        std::vector<std::uint32_t> face_tags(topology.entity_count(EntityKind::face), 0U);
+        if (document.face_boundary()) {
+            const auto tags = document.face_boundary()->physical_tags();
+            for (std::size_t i = 0; i < tags.size(); ++i) face_tags[i] = tags[i].value();
+        }
+        GroupEntityLookup face_lookup{topology.global_ids(EntityKind::face)};
+        for (const auto& group : document.groups()) {
+            if (group.location != EntityKind::face) continue;
+            for (const auto member : group.members) {
+                const auto face = *face_lookup.find(member);
+                const auto support = topology.relation(EntityKind::face, EntityKind::cell).adjacent(
+                    LocalIndex{static_cast<LocalIndex::value_type>(face)});
+                if (support.size() != 1U || (face_tags[face] != 0U && face_tags[face] != group.tag)) {
+                    report.note_unsupported("gmsh.face_groups_not_representable",
+                        "current Gmsh boundary bridge requires one physical tag per boundary face; overlapping, internal or conflicting face groups cannot be serialized");
+                    return report;
+                }
+                face_tags[face] = group.tag;
+            }
+        }
         if (!document.fields().empty()) {
             report.note_lossy(
                 "gmsh.fields_not_serialized",
@@ -792,11 +410,6 @@ analyze_conversion(
 
     if (target_format ==
         MeshExchangeFormat::vtu_ascii) {
-        if (!document.groups().empty()) {
-            report.note_lossy(
-                "vtu.groups_not_serialized",
-                "current VTU bridge does not encode canonical named/physical groups");
-        }
         if (document.logical_corner_point()
                 .has_value()) {
             report.note_lossy(

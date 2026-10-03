@@ -1398,16 +1398,25 @@
           "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
           "modules/mesh/include/mpmc/mesh/topology.hpp",
           "tests/mesh/external_compatibility/**",
-          ".github/workflows/mesh_external_compatibility.yml"
+          ".github/workflows/mesh_external_compatibility.yml",
+          "modules/mesh/include/mpmc/mesh/cartesian_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/cell_face_geometric_operator_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/computational_mesh.hpp",
+          "modules/mesh/include/mpmc/mesh/dof_layout.hpp",
+          "modules/mesh/include/mpmc/mesh/dof_numbering.hpp",
+          "modules/mesh/include/mpmc/mesh/mesh_exchange_document.hpp",
+          "modules/mesh/include/mpmc/mesh/mesh_exchange_group.hpp",
+          "modules/mesh/include/mpmc/mesh/partition_snapshot.hpp",
+          "modules/mesh/include/mpmc/mesh/linear_cell_geometric_operator_3d.hpp"
         ]
       },
-      "retained_hash": "bae98779a6c1d438ce66983ce825095c9959135782484ef984274f2c0791b702",
+      "retained_hash": "c5162479b2d64304772ae25de981a2e641985f4961119a2bbe3f394d1a073564",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "compatibility": "legacy_mesh_external_compatibility__compatibility"
       },
       "central_hashes": {
-        "legacy_mesh_external_compatibility__compatibility": "964f138253097940c9225ea37e807844ca61a15a4eff58cc4a653fa94a2654ba"
+        "legacy_mesh_external_compatibility__compatibility": "6c00b202c563a3d3903961f52819e95416606528193b1a5108b66e1a3049f11a"
       }
     },
     ".github/workflows/mesh_petsc.yml": {

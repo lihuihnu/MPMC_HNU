@@ -28,6 +28,7 @@ struct VtuImportResult3D {
     FaceBoundarySnapshot face_boundary;
     std::vector<DenseFieldSnapshot> point_fields;
     std::vector<DenseFieldSnapshot> cell_fields;
+    std::vector<MeshExchangeGroup> groups{};
 };
 
 [[nodiscard]] inline VtuImportResult3D
@@ -565,6 +566,7 @@ import_vtu_ascii_3d(
                 std::move(field.metadata)));
     }
 
+    auto groups = parse_groups(grid, mesh.topology, 3);
     return VtuImportResult3D{
         std::move(mesh.topology),
         std::move(
@@ -573,7 +575,8 @@ import_vtu_ascii_3d(
         std::move(mesh.face_geometry),
         std::move(mesh.face_boundary),
         std::move(point_fields),
-        std::move(cell_fields)};
+        std::move(cell_fields),
+        std::move(groups)};
 }
 
 [[nodiscard]] inline std::string
@@ -677,7 +680,7 @@ export_vtu_ascii_3d(
     output << "<?xml version=\"1.0\"?>\n"
            << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n"
            << "  <UnstructuredGrid>\n";
-    write_face_identities(output, topology, mesh.face_boundary);
+    write_face_identities(output, topology, mesh.face_boundary, 3, mesh.groups);
     output << "    <Piece NumberOfPoints=\""
            << point_count
            << "\" NumberOfCells=\""

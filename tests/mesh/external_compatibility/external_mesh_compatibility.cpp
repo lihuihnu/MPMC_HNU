@@ -22,6 +22,10 @@ void emit_2d_exports(const char* output_directory);
 void emit_3d_exports(const char* output_directory);
 void convert_3d_file(const char* format, const char* input, const char* output_stem);
 void convert_2d_file(const char* format, const char* input, const char* output_stem);
+void convert_grdecl_file(const char* input, const char* output_stem,
+                         double coordinate_scale, double permeability_scale);
+void validate_computational_scale(const char* format, const char* extent, const char* output_stem);
+void convert_vtu_groups(const char* dimension, const char* input, const char* output_stem);
 
 namespace mesh = mpmc::mesh;
 
@@ -148,8 +152,8 @@ void verify_gmsh_2d(
     require(
         as_vtu.exported() &&
             as_vtu.report.disposition() ==
-                mesh::ConversionDisposition::lossy,
-        "Gmsh 2D canonical->VTU must report group/tag loss");
+                mesh::ConversionDisposition::lossless,
+        "Gmsh 2D canonical->VTU must preserve groups and tags");
     const auto vtu_second =
         mesh::import_vtu_ascii(
             *as_vtu.content);
@@ -171,7 +175,7 @@ void verify_gmsh_2d(
     std::cout
         << "[PASS] external.gmsh.2d.dealii\n"
         << "matrix.gmsh2d.gmsh=lossless\n"
-        << "matrix.gmsh2d.vtu=lossy\n"
+        << "matrix.gmsh2d.vtu=lossless\n"
         << "matrix.gmsh2d.grdecl=unsupported\n";
 }
 
@@ -217,8 +221,8 @@ void verify_gmsh_3d(
     require(
         as_vtu.exported() &&
             as_vtu.report.disposition() ==
-                mesh::ConversionDisposition::lossy,
-        "Gmsh 3D canonical->VTU must report group/tag loss");
+                mesh::ConversionDisposition::lossless,
+        "Gmsh 3D canonical->VTU must preserve groups and tags");
     const auto vtu_second =
         mesh::import_vtu_ascii_3d(
             *as_vtu.content);
@@ -263,7 +267,7 @@ void verify_gmsh_3d(
     std::cout
         << "[PASS] external.gmsh.3d.dealii\n"
         << "matrix.gmsh3d.gmsh=lossless\n"
-        << "matrix.gmsh3d.vtu=lossy\n"
+        << "matrix.gmsh3d.vtu=lossless\n"
         << "matrix.gmsh3d.grdecl=lossy\n";
 }
 
@@ -546,6 +550,35 @@ void verify_grdecl_wrapper_rejection(
 int main(
     int argc,
     char** argv) {
+    if (argc == 5 && std::string_view{argv[1]} == "--convert-vtu-groups") {
+        try {
+            convert_vtu_groups(argv[2], argv[3], argv[4]);
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "[FAIL] " << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (argc == 5 && std::string_view{argv[1]} == "--computational-scale") {
+        try {
+            validate_computational_scale(argv[2], argv[3], argv[4]);
+            std::cout << "[PASS] external.mesh.computational_scale\n";
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "[FAIL] " << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (argc == 6 && std::string_view{argv[1]} == "--convert-grdecl") {
+        try {
+            convert_grdecl_file(argv[2], argv[3], std::stod(argv[4]), std::stod(argv[5]));
+            std::cout << "[PASS] external.mesh.convert_grdecl_file\n";
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "[FAIL] " << error.what() << '\n';
+            return 1;
+        }
+    }
     if (argc == 5 && std::string_view{argv[1]} == "--convert-3d") {
         try {
             convert_3d_file(argv[2], argv[3], argv[4]);

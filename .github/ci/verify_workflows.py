@@ -46,7 +46,12 @@ def assert_mesh_independent_readers(root, select):
              'Validate externally generated 3D mixed mesh chains',
              'Preserve 3D chain evidence',
              'Validate externally generated 2D mixed mesh chains',
-             'Preserve 2D chain evidence')
+             'Preserve 2D chain evidence',
+             'Install pinned independent GRDECL reader',
+             'Validate independent GRDECL complete chains',
+             'Validate computational preparation through three formats',
+             'Validate independent VTU named group chains',
+             'Preserve GRDECL and computational evidence')
     for name in names:
         left = [step for step in manual['steps'] if step.get('name') == name]
         right = [step for step in central['steps'] if step.get('name') == name]
@@ -75,7 +80,10 @@ def assert_mesh_independent_readers(root, select):
     for filename in ('emit_2d_exports.cpp', 'verify_2d_readers.py', 'requirements-readers.txt',
                      'emit_3d_exports.cpp', 'verify_3d_readers.py',
                      'convert_3d_file.cpp', 'verify_3d_chains.py',
-                     'convert_2d_file.cpp', 'verify_2d_chains.py'):
+                     'convert_2d_file.cpp', 'verify_2d_chains.py',
+                     'convert_grdecl_file.cpp', 'verify_grdecl_chains.py', 'requirements-grdecl-reader.txt',
+                     'validate_computational_scale.cpp', 'convert_vtu_groups.cpp',
+                     'verify_vtu_group_chains.py', 'vtu_groups.py'):
         path = (directory / filename).as_posix()
         for action in ('opened', 'synchronize', 'ready_for_review'):
             chosen, _, _ = select([path], action=action)
@@ -92,6 +100,35 @@ def assert_mesh_independent_readers(root, select):
         if line and not line.startswith('#'):
             assert re.fullmatch(r'[a-zA-Z0-9_-]+==[0-9][a-zA-Z0-9.]*', line), line
     assert 'gmsh==' in requirements and 'vtk==' in requirements
+    for name, script, marker in (
+            ('Validate independent GRDECL complete chains', 'verify_grdecl_chains.py',
+             'chains=2 reports=2 negative_controls=13'),
+            ('Validate independent VTU named group chains', 'verify_vtu_group_chains.py',
+             'chains=3 reports=3 negative_controls=15')):
+        step = next(step for step in central['steps'] if step.get('name') == name)
+        assert not step.get('continue-on-error')
+        for token in ('set -euo pipefail', script + ' --producer', '--output-dir', marker):
+            assert token in step['run'], ('new independent chain execution/failure guard', token)
+    scale = next(step for step in central['steps'] if step.get('name') ==
+                 'Validate computational preparation through three formats')
+    assert not scale.get('continue-on-error')
+    for token in ('set -euo pipefail', 'for format in gmsh vtu grdecl', '--computational-scale', 'cells=64'):
+        assert token in scale['run'], ('computational preparation scale guard', token)
+    # Protect the transitive header closure of the only external producer.
+    pending = list(directory.glob('*.cpp'))
+    visited = set()
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        for header in re.findall(r'#include\s+[<"](mpmc/mesh/[^>"]+)[>"]', path.read_text(encoding='utf-8')):
+            dependency = Path('modules/mesh/include') / header
+            assert select([dependency.as_posix()])[0][owner], dependency
+            pending.append(dependency)
+    for line in (directory / 'requirements-grdecl-reader.txt').read_text(encoding='utf-8').splitlines():
+        if line and not line.startswith('#'):
+            assert re.fullmatch(r'[a-zA-Z0-9_-]+==[0-9][a-zA-Z0-9.]*', line), line
 
 def assert_root_build_selection(select):
     direct = [

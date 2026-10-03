@@ -500,7 +500,7 @@ def main():
                 print(f'[PASS] independent.3d.read.{filename}')
             check_report(directory / (name + '_from_vtu.msh.report'), {'gmsh.fields_not_serialized'})
             check_report(directory / (name + '_from_gmsh.vtu.report'),
-                         {'vtu.groups_not_serialized'})
+                         set())
         report['negative_control_rejections'] = negative_controls(directory)
         report['negative_control_rejections'].update(mixed_negative_controls(directory))
         report['negative_controls'] = len(report['negative_control_rejections'])

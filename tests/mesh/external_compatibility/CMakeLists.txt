@@ -11,7 +11,10 @@ add_executable(
     emit_2d_exports.cpp
     emit_3d_exports.cpp
     convert_3d_file.cpp
-    convert_2d_file.cpp)
+    convert_2d_file.cpp
+    convert_grdecl_file.cpp
+    convert_vtu_groups.cpp
+    validate_computational_scale.cpp)
 target_link_libraries(
     mpmc_mesh_external_compatibility
     PRIVATE mpmc::mesh)

@@ -288,7 +288,7 @@ def verify_vtu(path, name, with_fields):
 
 def check_report(path, expected_codes):
     lines = path.read_text(encoding='utf-8').splitlines()
-    require(lines and lines[0] == 'lossy' and set(lines[1:]) == expected_codes,
+    require(lines and lines[0] == ('lossy' if expected_codes else 'lossless') and set(lines[1:]) == expected_codes,
             f'conversion loss report mismatch: {path.name}: {lines}')
 
 
@@ -353,7 +353,7 @@ def main():
                 print(f'[PASS] independent.read.{filename}')
             check_report(directory / (name + '_from_vtu.msh.report'), {'gmsh.fields_not_serialized'})
             check_report(directory / (name + '_from_gmsh.vtu.report'),
-                         {'vtu.groups_not_serialized'})
+                         set())
         report['negative_controls'] = negative_controls(directory)
         report['conversion_reports_checked'] = 6
         report['status'] = 'passed'

@@ -6,6 +6,7 @@
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
 #include <mpmc/mesh/linear_cell_mesh_2d.hpp>
+#include <mpmc/mesh/mesh_exchange_group.hpp>
 #include <mpmc/mesh/topology.hpp>
 
 #include <algorithm>
@@ -39,6 +40,7 @@ struct VtuImportResult {
     std::vector<DenseFieldSnapshot> cell_fields;
     // Trailing default preserves existing four-member aggregate construction.
     FaceBoundarySnapshot face_boundary = make_face_boundary_snapshot(topology);
+    std::vector<MeshExchangeGroup> groups{};
 };
 
 namespace vtu_detail {
@@ -52,6 +54,53 @@ inline constexpr std::string_view global_face_id_name = "mpmc_global_face_id";
 inline constexpr std::string_view face_offsets_name = "mpmc_face_vertex_offsets";
 inline constexpr std::string_view face_vertices_name = "mpmc_face_vertex_ids";
 inline constexpr std::string_view face_physical_tag_name = "mpmc_face_physical_tag";
+
+// Dataset-level ragged table, schema version 1. Members use stable entity IDs;
+// EntityKind and topological dimension are both explicit. Group membership is
+// independent of the single-valued face PhysicalTag snapshot.
+inline constexpr std::array<std::string_view, 8> group_array_names{
+    "mpmc_group_schema_version", "mpmc_group_location", "mpmc_group_dimension", "mpmc_group_tag",
+    "mpmc_group_name_offsets", "mpmc_group_name_utf8", "mpmc_group_member_offsets", "mpmc_group_member_ids"};
+inline constexpr std::array<std::string_view, 8> group_array_types{
+    "UInt32", "UInt8", "UInt8", "UInt32", "UInt64", "UInt8", "UInt64", "UInt64"};
+
+[[nodiscard]] inline bool group_metadata_name(std::string_view name) noexcept {
+    return name.starts_with("mpmc_group_");
+}
+
+[[nodiscard]] inline std::uint64_t group_dimension(EntityKind kind, int dimension) {
+    switch (kind) {
+    case EntityKind::vertex: return 0U;
+    case EntityKind::edge: return 1U;
+    case EntityKind::face: return static_cast<std::uint64_t>(dimension - 1);
+    case EntityKind::cell: return static_cast<std::uint64_t>(dimension);
+    }
+    throw std::invalid_argument("invalid VTU group entity kind");
+}
+
+inline void validate_group_utf8(std::string_view name) {
+    for (std::size_t i = 0U; i < name.size();) {
+        const auto first = static_cast<unsigned char>(name[i]);
+        if (first < 0x80U) {
+            if (first == 0U) throw std::invalid_argument("VTU group name cannot contain NUL");
+            ++i;
+            continue;
+        }
+        const std::size_t width = first >= 0xc2U && first <= 0xdfU ? 2U :
+            first >= 0xe0U && first <= 0xefU ? 3U : first >= 0xf0U && first <= 0xf4U ? 4U : 0U;
+        if (width == 0U || width > name.size() - i) throw std::invalid_argument("VTU group name is not valid UTF-8");
+        for (std::size_t j = 1U; j < width; ++j) {
+            const auto next = static_cast<unsigned char>(name[i + j]);
+            if (next < 0x80U || next > 0xbfU) throw std::invalid_argument("VTU group name is not valid UTF-8");
+        }
+        const auto second = static_cast<unsigned char>(name[i + 1U]);
+        if ((first == 0xe0U && second < 0xa0U) || (first == 0xedU && second > 0x9fU) ||
+            (first == 0xf0U && second < 0x90U) || (first == 0xf4U && second > 0x8fU)) {
+            throw std::invalid_argument("VTU group name is not valid UTF-8");
+        }
+        i += width;
+    }
+}
 
 [[nodiscard]] inline bool face_metadata_name(std::string_view name) noexcept {
     return name == global_face_id_name || name == face_offsets_name || name == face_vertices_name || name == face_physical_tag_name;
@@ -613,7 +662,7 @@ inline void write_vertex_ids(std::ostringstream& output, const Topology& topolog
         require_attribute(
             array, "Name",
             "mpmc::mesh::import_vtu_ascii: point/cell field Name is required");
-    if (name == global_vertex_id_name || name == global_cell_id_name || face_metadata_name(name)) {
+    if (name == global_vertex_id_name || name == global_cell_id_name || face_metadata_name(name) || group_metadata_name(name)) {
         throw std::invalid_argument("identity array name is reserved for its entity association");
     }
     if (name.empty()) {
@@ -797,6 +846,77 @@ struct FaceIdentity {
     return result;
 }
 
+
+[[nodiscard]] inline std::vector<MeshExchangeGroup> parse_groups(
+    const XmlElement& grid, const Topology& topology, int dimension) {
+    const auto section = find_element(grid.body, "FieldData");
+    if (!section) return {};
+    std::array<std::optional<std::vector<std::uint64_t>>, group_array_names.size()> arrays;
+    std::size_t present = 0U;
+    for (const auto& array : data_arrays(section->body)) {
+        const auto& name = require_attribute(array, "Name", "FieldData array Name is required");
+        if (!group_metadata_name(name)) continue;
+        const auto found = std::find(group_array_names.begin(), group_array_names.end(), name);
+        if (found == group_array_names.end()) throw std::invalid_argument("unknown reserved VTU group array");
+        const auto index = static_cast<std::size_t>(std::distance(group_array_names.begin(), found));
+        require_ascii_data_array(array);
+        if (arrays[index] || component_count(array) != 1U ||
+            require_attribute(array, "type", "VTU group array type is required") != group_array_types[index]) {
+            throw std::invalid_argument("duplicate or invalid VTU group array type/components");
+        }
+        auto values = parse_integer_values<std::uint64_t>(array.body, "invalid VTU group integer");
+        const std::uint64_t maximum = group_array_types[index] == "UInt8" ? 255U :
+            group_array_types[index] == "UInt32" ? std::numeric_limits<std::uint32_t>::max() :
+            std::numeric_limits<std::uint64_t>::max();
+        if (std::any_of(values.begin(), values.end(), [maximum](auto value) { return value > maximum; })) {
+            throw std::invalid_argument("VTU group integer outside declared type");
+        }
+        const auto tuples = array.attributes.find("NumberOfTuples");
+        if (tuples != array.attributes.end() &&
+            parse_size(tuples->second, "invalid VTU group tuple count") != values.size()) {
+            throw std::invalid_argument("VTU group tuple count mismatch");
+        }
+        arrays[index].emplace(std::move(values));
+        ++present;
+    }
+    if (present == 0U) return {};
+    if (present != arrays.size()) throw std::invalid_argument("incomplete VTU group table");
+    if (*arrays[0] != std::vector<std::uint64_t>{1U}) throw std::invalid_argument("unsupported VTU group schema version");
+    const auto count = arrays[1]->size();
+    for (const auto index : {2U, 3U, 4U, 6U}) {
+        if (arrays[index]->size() != count) throw std::invalid_argument("VTU group row count mismatch");
+    }
+    std::vector<MeshExchangeGroup> groups;
+    groups.reserve(count);
+    std::size_t name_begin = 0U, member_begin = 0U;
+    for (std::size_t row = 0U; row < count; ++row) {
+        if ((*arrays[1])[row] > static_cast<std::uint64_t>(EntityKind::cell)) {
+            throw std::invalid_argument("invalid VTU group entity kind");
+        }
+        const auto location = static_cast<EntityKind>((*arrays[1])[row]);
+        if ((*arrays[2])[row] != group_dimension(location, dimension)) {
+            throw std::invalid_argument("VTU group dimension disagrees with entity kind");
+        }
+        const auto name_end = (*arrays[4])[row], member_end = (*arrays[6])[row];
+        if (name_end < name_begin || name_end > arrays[5]->size() ||
+            member_end < member_begin || member_end > arrays[7]->size()) {
+            throw std::invalid_argument("invalid VTU group ragged offset");
+        }
+        MeshExchangeGroup group{location, static_cast<std::uint32_t>((*arrays[3])[row]), {}, {}};
+        for (auto index = name_begin; index < name_end; ++index) group.name.push_back(static_cast<char>((*arrays[5])[index]));
+        validate_group_utf8(group.name);
+        for (auto index = member_begin; index < member_end; ++index) group.members.emplace_back((*arrays[7])[index]);
+        groups.push_back(std::move(group));
+        name_begin = static_cast<std::size_t>(name_end);
+        member_begin = static_cast<std::size_t>(member_end);
+    }
+    if (name_begin != arrays[5]->size() || member_begin != arrays[7]->size()) {
+        throw std::invalid_argument("unused VTU group ragged payload");
+    }
+    validate_mesh_exchange_groups(topology, groups);
+    return groups;
+}
+
 inline void validate_vtu_face_boundary(const Topology& topology, const FaceBoundarySnapshot& boundary) {
     if (boundary.face_count() != topology.entity_count(EntityKind::face)) {
         throw std::invalid_argument("VTU face boundary count mismatch");
@@ -813,7 +933,9 @@ inline void validate_vtu_face_boundary(const Topology& topology, const FaceBound
 }
 
 inline void write_face_identities(std::ostringstream& output, const Topology& topology,
-                                  const FaceBoundarySnapshot& boundary) {
+                                  const FaceBoundarySnapshot& boundary, int dimension,
+                                  std::span<const MeshExchangeGroup> groups) {
+    validate_mesh_exchange_groups(topology, groups);
     validate_vtu_face_boundary(topology, boundary);
     const auto face_ids = topology.global_ids(EntityKind::face);
     const auto vertex_ids = topology.global_ids(EntityKind::vertex);
@@ -840,6 +962,23 @@ inline void write_face_identities(std::ostringstream& output, const Topology& to
     write(face_offsets_name, offsets);
     write(face_vertices_name, vertices);
     write(face_physical_tag_name, tags, "UInt32");
+    if (!groups.empty()) {
+        std::array<std::vector<std::uint64_t>, group_array_names.size()> arrays;
+        arrays[0] = {1U};
+        for (const auto& group : groups) {
+            validate_group_utf8(group.name);
+            arrays[1].push_back(static_cast<std::uint64_t>(group.location));
+            arrays[2].push_back(group_dimension(group.location, dimension));
+            arrays[3].push_back(group.tag);
+            for (const auto byte : group.name) arrays[5].push_back(static_cast<unsigned char>(byte));
+            arrays[4].push_back(static_cast<std::uint64_t>(arrays[5].size()));
+            for (const auto member : group.members) arrays[7].push_back(member.value());
+            arrays[6].push_back(static_cast<std::uint64_t>(arrays[7].size()));
+        }
+        for (std::size_t index = 0U; index < arrays.size(); ++index) {
+            write(group_array_names[index], arrays[index], group_array_types[index]);
+        }
+    }
     output << "    </FieldData>\n";
 }
 
@@ -887,7 +1026,7 @@ inline void validate_export_fields(
                 "mpmc::mesh::export_vtu_ascii: duplicate field ID in one association");
         }
         if (field.metadata().id == global_cell_id_name ||
-            field.metadata().id == global_vertex_id_name || face_metadata_name(field.metadata().id)) {
+            field.metadata().id == global_vertex_id_name || face_metadata_name(field.metadata().id) || group_metadata_name(field.metadata().id)) {
             throw std::invalid_argument(
                 "mpmc::mesh::export_vtu_ascii: field name is reserved for stable entity identity");
         }
@@ -1397,12 +1536,14 @@ import_vtu_ascii(std::string_view content) {
                 std::move(field.metadata)));
     }
 
+    auto groups = parse_groups(grid, topology, 2);
     return VtuImportResult{
         std::move(topology),
         std::move(mesh.geometry),
         std::move(point_fields),
         std::move(cell_fields),
-        std::move(mesh.face_boundary)};
+        std::move(mesh.face_boundary),
+        std::move(groups)};
 }
 
 [[nodiscard]] inline std::string
@@ -1490,7 +1631,7 @@ export_vtu_ascii(const VtuImportResult& mesh) {
     output << "<?xml version=\"1.0\"?>\n"
            << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n"
            << "  <UnstructuredGrid>\n";
-    write_face_identities(output, topology, mesh.face_boundary);
+    write_face_identities(output, topology, mesh.face_boundary, 2, mesh.groups);
     output << "    <Piece NumberOfPoints=\""
            << point_count
            << "\" NumberOfCells=\""

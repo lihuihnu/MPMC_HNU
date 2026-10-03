@@ -15,6 +15,8 @@ import sys
 
 from verify_2d_readers import vtk_face_tags, vtk_face_ids
 
+from vtu_groups import physical_groups
+
 import gmsh
 
 import verify_3d_readers as reader
@@ -113,7 +115,7 @@ def read_official(path):
                 require(array.GetNumberOfTuples() == len(keys), 'chain field tuple count')
                 fields[location, array.GetName()] = {key: array.GetTuple(j) for j,key in enumerate(keys)}
         return dict(nodes=nodes, cells=cells, areas=areas, cell_faces=cell_faces,
-                    faces=vtk_face_ids(grid,required=False), face_tags=vtk_face_tags(grid,required=False), groups={}, fields=fields)
+                    faces=vtk_face_ids(grid,required=False), face_tags=vtk_face_tags(grid,required=False), groups=physical_groups(grid), fields=fields)
     gmsh.clear()
     gmsh.logger.start()
     try:
@@ -282,14 +284,12 @@ def run_case(directory, producer, name, source, disconnected):
             vtk_vertex_ids(reader.read_vtu(output))
         results[target] = check_geometry(actual,name,data,target_mapping,disconnected)
         check_fields(actual,data,target_mapping,source == target == 'vtu')
-        require(actual['groups'] == (GROUPS if source == target == 'gmsh' else {}), 'output physical groups')
+        require(actual['groups'] == (GROUPS if source == 'gmsh' else {}), 'output physical groups')
         if target in ('gmsh','vtu'):
             require(set(actual['faces']) == set(imported['faces']), 'exported imported/generated face identities')
             for tag,row in imported['faces'].items():
                 require(set(actual['faces'][tag]) == set(row), 'exported face identity binding')
         codes = set()
-        if source == 'gmsh' and target == 'vtu':
-            codes = {'vtu.groups_not_serialized'}
         if source == 'vtu' and target == 'gmsh':
             codes = {'gmsh.fields_not_serialized'}
         if target == 'vtu':

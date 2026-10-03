@@ -1,12 +1,15 @@
+#include <mpmc/mesh/linear_cell_geometric_operator_3d.hpp>
 #include <mpmc/mesh/gmsh_4_1_3d.hpp>
 #include <mpmc/mesh/linear_cell_mesh_3d.hpp>
 #include <mpmc/mesh/vtu_3d.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -514,6 +517,221 @@ void verify_shared_hexa_face() {
     require(
         found_internal,
         "hexa shared face must be materialized");
+
+    // Exact compatibility with the original eight-vertex reference convention.
+    const auto legacy = mesh::make_cell_face_geometric_operator_3d(
+        mesh3d.topology, mesh3d.vertex_coordinates_m, mesh3d.face_geometry);
+    const auto generic = mesh::make_cell_face_geometric_operator_3d(mesh3d);
+    for (std::size_t face = 0; face < legacy.face_count(); ++face) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(face)};
+        require(legacy.owner_normal_distance_m(local) ==
+                    generic.owner_normal_distance_m(local) &&
+                legacy.neighbour_normal_distance_m(local) ==
+                    generic.neighbour_normal_distance_m(local),
+                "linear hexahedron bridge must preserve legacy distances exactly");
+    }
+}
+
+// Synthetic, conforming analytic fixture: a unit cube capped by a square
+// pyramid, and a right triangular prism capped by a tetrahedron. It exercises
+// both mixed quadrilateral and triangular interfaces and all four cell types.
+// Analytic volumes and reference points below are independent of the builder.
+struct MixedGeometryFixture {
+    std::vector<mesh::GlobalEntityId> ids;
+    std::vector<mesh::Coordinate3D> points;
+    std::vector<mesh::LinearCell3D> cells;
+};
+
+MixedGeometryFixture mixed_geometry_fixture() {
+    using I = mesh::LocalIndex;
+    using G = mesh::GlobalEntityId;
+    using T = mesh::LinearCellType3D;
+    MixedGeometryFixture fixture{
+        {},
+        {{0,0,0}, {1,0,0}, {1,1,0}, {0,1,0},
+         {0,0,1}, {1,0,1}, {1,1,1}, {0,1,1}, {.5,.5,2},
+         {3,0,0}, {4,0,0}, {3,1,0},
+         {3,0,1}, {4,0,1}, {3,1,1}, {3,0,2}},
+        {{G{100}, T::hexahedron, {I{0},I{1},I{2},I{3},I{4},I{5},I{6},I{7}}},
+         {G{200}, T::pyramid, {I{4},I{5},I{6},I{7},I{8}}},
+         {G{300}, T::wedge, {I{9},I{10},I{11},I{12},I{13},I{14}}},
+         {G{400}, T::tetrahedron, {I{12},I{13},I{14},I{15}}}}};
+    for (std::size_t i = 0; i < fixture.points.size(); ++i) {
+        fixture.ids.push_back(G{101U + 17U * static_cast<std::uint64_t>(i)});
+    }
+    return fixture;
+}
+
+void verify_mixed_connection_geometry(const MixedGeometryFixture& fixture) {
+    const auto grid = mesh::make_linear_mesh_3d(
+        fixture.ids, fixture.points, fixture.cells);
+    const auto op = mesh::make_cell_face_geometric_operator_3d(grid);
+    require(grid.face_boundary.interior_face_count() == 2U,
+            "mixed mesh has one quad and one triangular interface");
+
+    const std::array<mesh::Coordinate3D, 4> reference_points{{
+        {.5,.5,.5}, {.5,.5,1.2}, {10.0/3.0,1.0/3.0,.5}, {3.25,.25,1.25}}};
+    constexpr std::array<double, 4> volumes{1.0, 1.0/3.0, .5, 1.0/6.0};
+    for (std::size_t cell = 0; cell < fixture.cells.size(); ++cell) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(cell)};
+        const auto oracle = static_cast<std::size_t>(
+            fixture.cells[cell].global_id.value() / 100U - 1U);
+        const auto point = op.cell_reference_point_m(local);
+        require_close(point.x_m, reference_points[oracle].x_m, 1e-14,
+                      "mixed cell reference x and stable identity");
+        require_close(point.y_m, reference_points[oracle].y_m, 1e-14,
+                      "mixed cell reference y and stable identity");
+        require_close(point.z_m, reference_points[oracle].z_m, 1e-14,
+                      "mixed cell reference z and stable identity");
+        require_close(grid.cell_volumes_m3[cell], volumes[oracle], 1e-14,
+                      "mixed cell analytic volume");
+        require(op.cell_centroid_m(local).z_m == point.z_m,
+                "legacy accessor remains a reference-point alias");
+
+        std::array<double, 3> closure{};
+        std::array<std::array<double, 3>, 3> moment{};
+        for (const auto face : grid.topology.relation(
+                 mesh::EntityKind::cell, mesh::EntityKind::face).adjacent(local)) {
+            const auto connection = op.face_connection_geometry(face);
+            const bool is_owner = connection.owner == local;
+            const double sign = is_owner ? 1.0 : -1.0;
+            const std::array<double, 3> normal{
+                sign * connection.owner_unit_normal.x,
+                sign * connection.owner_unit_normal.y,
+                sign * connection.owner_unit_normal.z};
+            const auto displacement = is_owner ?
+                op.owner_to_face_displacement_m(face) :
+                *op.neighbour_to_face_displacement_m(face);
+            const std::array<double, 3> d{
+                displacement.x_m, displacement.y_m, displacement.z_m};
+            for (std::size_t i = 0; i < 3U; ++i) {
+                closure[i] += connection.area_m2 * normal[i];
+                for (std::size_t j = 0; j < 3U; ++j) {
+                    moment[i][j] += connection.area_m2 * normal[i] * d[j];
+                }
+            }
+            require(connection.owner_normal_distance_m > 0.0,
+                    "all mixed owner normal distances positive");
+            if (connection.neighbour.has_value()) {
+                require(*connection.neighbour_normal_distance_m > 0.0,
+                        "all mixed neighbour normal distances positive");
+            }
+        }
+        // Divergence theorem: zero flux for a constant vector field; affine
+        // surface moments integral n_i (x_j-reference_j) dA = V delta_ij.
+        // Face-centroid quadrature is exact for these planar linear fields.
+        for (std::size_t i = 0; i < 3U; ++i) {
+            require_close(closure[i], 0.0, 1e-13, "constant-field closure");
+            for (std::size_t j = 0; j < 3U; ++j) {
+                require_close(moment[i][j], i == j ? volumes[oracle] : 0.0,
+                              1e-13, "analytic affine surface moment");
+            }
+        }
+    }
+    for (std::size_t face = 0; face < op.face_count(); ++face) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(face)};
+        const auto neighbour = op.face_neighbour(local);
+        if (!neighbour) {
+            require(!op.internal_non_orthogonality(local),
+                    "boundary faces have no internal non-orthogonality");
+            continue;
+        }
+        const auto degree = grid.topology.relation(
+            mesh::EntityKind::face, mesh::EntityKind::vertex).adjacent(local).size();
+        const auto measure = *op.internal_non_orthogonality(local);
+        require_close(op.owner_normal_distance_m(local) +
+                          *op.neighbour_normal_distance_m(local),
+                      degree == 4U ? .7 : .75, 1e-14,
+                      "mixed interface two-sided analytic normal distance");
+        require_close(measure.center_distance_m,
+                      degree == 4U ? .7 : std::sqrt(83.0)/12.0, 1e-14,
+                      "mixed interface analytic centre separation");
+        require_close(measure.normal_alignment_cosine,
+                      degree == 4U ? 1.0 : 9.0/std::sqrt(83.0), 1e-14,
+                      "mixed interface analytic non-orthogonality");
+    }
+}
+
+void verify_linear_geometry_bridge() {
+    auto fixture = mixed_geometry_fixture();
+    verify_mixed_connection_geometry(fixture);
+    // Reverse local vertex/cell ordering, while keeping element node ordering
+    // and stable identities. This also reverses interface owner/neighbour.
+    std::reverse(fixture.ids.begin(), fixture.ids.end());
+    std::reverse(fixture.points.begin(), fixture.points.end());
+    std::reverse(fixture.cells.begin(), fixture.cells.end());
+    for (auto& cell : fixture.cells) {
+        for (auto& vertex : cell.vertices) {
+            vertex = mesh::LocalIndex{static_cast<mesh::LocalIndex::value_type>(
+                fixture.points.size() - 1U - vertex.value())};
+        }
+    }
+    verify_mixed_connection_geometry(fixture);
+}
+
+void verify_explicit_reference_points() {
+    const auto fixture = mixed_geometry_fixture();
+    const auto grid = mesh::make_linear_mesh_3d(
+        fixture.ids, fixture.points, fixture.cells);
+    std::vector<mesh::Coordinate3D> points{
+        {.5,.5,.5}, {.5,.5,1.25}, {10.0/3.0,1.0/3.0,.5}, {3.25,.25,1.25}};
+    // For a height-one pyramid, the uniform-volume centroid is 1/4 of the
+    // height above the base, whereas its five-vertex mean is 1/5. The explicit
+    // API must honor the selected point instead of silently averaging vertices.
+    const auto op = mesh::make_cell_face_geometric_operator_3d_from_reference_points(
+        grid.topology, points, grid.face_geometry);
+    require_close(op.cell_reference_point_m(mesh::LocalIndex{1}).z_m,
+                  1.25, 0.0, "explicit pyramid volume-centroid reference");
+    bool found_quad = false;
+    for (std::size_t face = 0; face < op.face_count(); ++face) {
+        const auto local = mesh::LocalIndex{
+            static_cast<mesh::LocalIndex::value_type>(face)};
+        if (op.face_neighbour(local) == mesh::LocalIndex{1}) {
+            found_quad = true;
+            require_close(*op.neighbour_normal_distance_m(local), .25, 1e-14,
+                          "explicit pyramid reference changes base distance");
+        }
+    }
+    require(found_quad, "pyramid/cube explicit interface exists");
+
+    const auto rejects = [&](const std::vector<mesh::Coordinate3D>& invalid) {
+        bool rejected = false;
+        try {
+            (void)mesh::make_cell_face_geometric_operator_3d_from_reference_points(
+                grid.topology, invalid, grid.face_geometry);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        require(rejected, "invalid explicit reference points must be rejected");
+    };
+    auto invalid = points;
+    invalid.pop_back();
+    rejects(invalid);
+    invalid = points;
+    invalid[0].x_m = std::numeric_limits<double>::quiet_NaN();
+    rejects(invalid);
+    invalid = points;
+    invalid[0].x_m = std::numeric_limits<double>::infinity();
+    rejects(invalid);
+    invalid = points;
+    invalid[1].z_m = 1.0; // On the common face: zero neighbour distance.
+    rejects(invalid);
+    invalid[1].z_m = .9; // Wrong side of the common face.
+    rejects(invalid);
+    invalid = points;
+    invalid[0].z_m = 1.1; // Wrong side for the owner.
+    rejects(invalid);
+    bool legacy_rejected = false;
+    try {
+        (void)mesh::make_cell_face_geometric_operator_3d(
+            grid.topology, grid.vertex_coordinates_m, grid.face_geometry);
+    } catch (const std::invalid_argument&) {
+        legacy_rejected = true;
+    }
+    require(legacy_rejected, "legacy factory still requires eight-vertex cells");
 }
 
 
@@ -999,6 +1217,8 @@ int main() {
     try {
         verify_shared_tetra_face();
         verify_shared_hexa_face();
+        verify_linear_geometry_bridge();
+        verify_explicit_reference_points();
         verify_wedge_pyramid_geometry();
         verify_gmsh_reversed_orientation_canonicalization();
         verify_gmsh_roundtrip();

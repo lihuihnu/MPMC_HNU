@@ -18,6 +18,8 @@
 
 namespace mesh = mpmc::mesh;
 
+void verify_vtu_group_contract(const mesh::MeshExchangeDocument& source);
+
 namespace {
 
 void require(
@@ -154,6 +156,92 @@ PERMZ
 )GRDECL";
 }
 
+
+// Compare reports and actual reimported entity bindings. This oracle never
+// predicts the implementation's numbering convention.
+void verify_grdecl_preflight_readback(const mesh::MeshExchangeDocument& document) {
+    const auto preflight = mesh::analyze_conversion(document, mesh::MeshExchangeFormat::grdecl);
+    const auto output = mesh::export_grdecl_ascii(document, {1.0, 1.0});
+    require(preflight.disposition() == output.report.disposition() &&
+            preflight.issues().size() == output.report.issues().size(), "GRDECL preflight/writer report shape");
+    for (std::size_t index = 0U; index < preflight.issues().size(); ++index) {
+        require(preflight.issues()[index].code == output.report.issues()[index].code &&
+                preflight.issues()[index].message == output.report.issues()[index].message,
+                "GRDECL preflight/writer diagnostics must agree exactly");
+    }
+    require(output.exported() == (preflight.disposition() != mesh::ConversionDisposition::unsupported),
+            "GRDECL preflight must predict exportability");
+    if (!output.exported()) return;
+    const auto readback = mesh::make_mesh_exchange_document(mesh::import_grdecl(*output.content, {1.0, 1.0}));
+    const auto bindings = [](const mesh::MeshExchangeDocument& value, mesh::EntityKind kind) {
+        std::map<std::uint64_t, std::vector<std::array<double, 3>>> result;
+        const auto coordinates = value.vertex_coordinates_m();
+        const auto point = [&](std::size_t index) {
+            const auto coordinate = coordinates[index];
+            return std::array<double, 3>{coordinate.x_m, coordinate.y_m, coordinate.z_m};
+        };
+        const auto ids = value.topology().global_ids(kind);
+        for (std::size_t index = 0U; index < ids.size(); ++index) {
+            auto& corners = result[ids[index].value()];
+            if (kind == mesh::EntityKind::vertex) corners.push_back(point(index));
+            else for (const auto vertex : value.topology().relation(kind, mesh::EntityKind::vertex).adjacent(
+                         mesh::LocalIndex{static_cast<std::uint32_t>(index)})) corners.push_back(point(vertex.value()));
+            std::sort(corners.begin(), corners.end());
+        }
+        return result;
+    };
+    bool changed = false;
+    for (const auto kind : {mesh::EntityKind::vertex, mesh::EntityKind::face, mesh::EntityKind::cell}) {
+        changed = changed || bindings(document, kind) != bindings(readback, kind);
+    }
+    const bool reported = std::any_of(preflight.issues().begin(), preflight.issues().end(),
+        [](const auto& issue) { return issue.code == "grdecl.entity_ids_remapped"; });
+    require(changed == reported, "GRDECL identity loss report must match actual readback bindings");
+}
+
+void verify_grdecl_activity_identity_reports() {
+    // Manufactured three-cell row with an inactive middle cell: active cell IDs
+    // are logical 1 and 3, not compact 1 and 2. No fault or NNC is involved.
+    const auto original = mesh::make_mesh_exchange_document(mesh::import_grdecl(R"GRDECL(
+SPECGRID 3 1 1 1 F /
+COORD
+0 0 0 0 0 1  1 0 0 1 0 1  2 0 0 2 0 1  3 0 0 3 0 1
+0 1 0 0 1 1  1 1 0 1 1 1  2 1 0 2 1 1  3 1 0 3 1 1 /
+ZCORN 12*0 12*1 /
+ACTNUM 1 0 1 /
+PORO 0.2 0.3 0.4 /
+)GRDECL", {1.0, 1.0}));
+    verify_grdecl_preflight_readback(original);
+    require(mesh::analyze_conversion(original, mesh::MeshExchangeFormat::grdecl).lossless(),
+            "native active holes retain their actual logical identities");
+    for (const auto kind : {mesh::EntityKind::vertex, mesh::EntityKind::face, mesh::EntityKind::cell}) {
+        mesh::Topology::EntityIds ids;
+        const auto copy = [&](mesh::EntityKind location) {
+            const auto values = original.topology().global_ids(location);
+            auto result = std::vector<mesh::GlobalEntityId>{values.begin(), values.end()};
+            if (location == kind) std::swap(result.front(), result.back());
+            return result;
+        };
+        ids.vertices = copy(mesh::EntityKind::vertex);
+        ids.faces = copy(mesh::EntityKind::face);
+        ids.cells = copy(mesh::EntityKind::cell);
+        const auto coordinates = original.vertex_coordinates_m();
+        const auto rebound = mesh::MeshExchangeDocument::create(original.source_format(), 3,
+            mesh::Topology{std::move(ids), mesh::mesh_exchange_io_detail::copy_relations(original.topology())},
+            {coordinates.begin(), coordinates.end()}, original.face_boundary(),
+            mesh::mesh_exchange_io_detail::copy_fields(original), {}, original.logical_corner_point());
+        verify_grdecl_preflight_readback(rebound);
+        require(!mesh::analyze_conversion(rebound, mesh::MeshExchangeFormat::grdecl).lossless(),
+                "same ID set with different entity binding is still lossy");
+    }
+    const auto coordinates = original.vertex_coordinates_m();
+    const auto generic_holes = mesh::MeshExchangeDocument::create(mesh::MeshExchangeFormat::vtu_ascii, 3,
+        original.topology(), {coordinates.begin(), coordinates.end()}, original.face_boundary(), {}, {}, std::nullopt);
+    verify_grdecl_preflight_readback(generic_holes);
+    require(mesh::analyze_conversion(generic_holes, mesh::MeshExchangeFormat::grdecl).disposition() ==
+                mesh::ConversionDisposition::unsupported, "missing generic lattice cells must not invent ACTNUM semantics");
+}
+
 void verify_grdecl_canonical_roundtrip() {
     const mesh::GrdeclImportOptions options{
         2.0,
@@ -178,6 +266,7 @@ void verify_grdecl_canonical_roundtrip() {
                 .has_value(),
         "GRDECL canonical document");
 
+    verify_grdecl_preflight_readback(document);
     const auto report =
         mesh::analyze_conversion(
             document,
@@ -487,10 +576,9 @@ void verify_rectilinear_grdecl_reconstruction() {
     const auto exported =
         mesh::export_grdecl_ascii(
             document);
-    require(
-        exported.exported() &&
-            exported.report.lossless(),
-        "rectilinear canonical mesh must export exact reconstructed GRDECL");
+    verify_grdecl_preflight_readback(document);
+    require(exported.exported() && exported.report.disposition() == mesh::ConversionDisposition::lossy,
+            "rectilinear geometry is representable but arbitrary IDs are not preserved by GRDECL");
 
     const auto imported =
         mesh::import_grdecl(
@@ -559,6 +647,7 @@ void verify_slanted_hexa_reconstruction_rejection() {
     const auto exported =
         mesh::export_grdecl_ascii(
             document);
+    verify_grdecl_preflight_readback(document);
     require(
         !exported.exported() &&
             exported.report.disposition() ==
@@ -625,6 +714,7 @@ void verify_non_corner_point_report() {
             mesh::EntityKind::cell) == 1U,
         "VTU canonical Gmsh re-import");
 
+    verify_grdecl_preflight_readback(document);
     const auto report =
         mesh::analyze_conversion(
             document,
@@ -950,6 +1040,7 @@ void verify_face_id_contract(const mesh::MeshExchangeDocument& source) {
 
 // Labels are bound to stable faces, never inferred from named groups.
 void verify_face_tag_contract(const mesh::MeshExchangeDocument& source) {
+    verify_vtu_group_contract(source);
     const auto& topology = source.topology();
     const auto ids = topology.global_ids(mesh::EntityKind::face);
     const auto untagged = mesh::make_face_boundary_snapshot(topology);
@@ -1053,8 +1144,7 @@ void verify_face_tag_contract(const mesh::MeshExchangeDocument& source) {
         {mesh::EntityKind::face,31U,"group A",{ids[boundary[0]]}},
         {mesh::EntityKind::face,32U,"group B",{ids[boundary[0]]}}};
     const auto group_export = mesh::export_vtu_ascii(make_document(source_boundary,groups));
-    require(group_export.exported() && group_export.report.issues().size() == 1U &&
-        group_export.report.issues()[0].code == "vtu.groups_not_serialized", "only named groups lost");
+    require(group_export.exported() && group_export.report.lossless(), "named groups retained");
     check(parse(*group_export.content),true);
     check(parse(*mesh::export_vtu_ascii(make_document(std::nullopt,groups)).content),false);
     const auto bad_export = [&](auto imported, auto writer) {
@@ -1150,6 +1240,7 @@ int main() {
     try {
         verify_vtu_identity_losses();
         verify_grdecl_canonical_roundtrip();
+        verify_grdecl_activity_identity_reports();
         verify_gmsh_group_bridge();
         verify_sparse_group_lookup();
         verify_group_validation_lookup();

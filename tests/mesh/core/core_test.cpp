@@ -2619,15 +2619,20 @@ void grdecl_invalid() {
         require(
             begin != std::string::npos &&
                 end != std::string::npos,
-            "GRDECL missing-required-keyword marker");
+            "GRDECL optional ACTNUM marker");
         missing.erase(
             begin,
             end - begin);
-        expect_throw<std::invalid_argument>(
-            [&] {
-                (void)mesh::import_grdecl(
-                    missing, options);
-            });
+        const auto all_active = mesh::import_grdecl(missing, options);
+        require(all_active.active == std::vector<std::uint8_t>{1U, 1U},
+                "omitted ACTNUM must default to all active");
+        auto missing_geometry = grdecl_two_cell_fixture();
+        const auto zcorn_start = missing_geometry.find("ZCORN");
+        const auto activity_start = missing_geometry.find("ACTNUM", zcorn_start);
+        missing_geometry.erase(zcorn_start, activity_start - zcorn_start);
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_grdecl(missing_geometry, options);
+        });
     }
 
     {

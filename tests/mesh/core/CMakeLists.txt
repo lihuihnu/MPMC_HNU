@@ -52,16 +52,26 @@ target_link_libraries(
     PRIVATE mpmc::mesh)
 
 add_executable(mpmc_mesh_exchange_io_tests
-    exchange_io_test.cpp)
+    exchange_io_test.cpp
+    vtu_group_contract_test.cpp
+    mesh_exchange_group_header_self_contained.cpp)
 target_link_libraries(
     mpmc_mesh_exchange_io_tests
     PRIVATE mpmc::mesh)
+
+add_executable(mpmc_mesh_computational_tests
+    computational_mesh_test.cpp
+    computational_mesh_header_self_contained.cpp
+    linear_cell_geometric_operator_3d_header_self_contained.cpp
+    mesh_exchange_document_header_self_contained.cpp)
+target_link_libraries(mpmc_mesh_computational_tests PRIVATE mpmc::mesh)
 
 foreach(target IN ITEMS
         mpmc_mesh_core_tests
         mpmc_mesh_io3d_tests
         mpmc_mesh_cartesian_structured_tests
-        mpmc_mesh_exchange_io_tests)
+        mpmc_mesh_exchange_io_tests
+        mpmc_mesh_computational_tests)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
 
     if(MSVC)
@@ -83,7 +93,8 @@ if(MPMC_MESH_ENABLE_SANITIZERS)
             mpmc_mesh_core_tests
             mpmc_mesh_io3d_tests
             mpmc_mesh_cartesian_structured_tests
-            mpmc_mesh_exchange_io_tests)
+            mpmc_mesh_exchange_io_tests
+            mpmc_mesh_computational_tests)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -124,10 +135,15 @@ set_tests_properties(
         LABELS "mesh;mesh.core;io;exchange;unit"
         TIMEOUT 30)
 
+add_test(NAME mesh.core.computational_mesh COMMAND mpmc_mesh_computational_tests)
+set_tests_properties(mesh.core.computational_mesh PROPERTIES
+    LABELS "mesh;mesh.core;geometry;unit" TIMEOUT 30)
+
 add_custom_target(
     mpmc_mesh_core_all
     DEPENDS
         mpmc_mesh_core_tests
         mpmc_mesh_io3d_tests
         mpmc_mesh_cartesian_structured_tests
-        mpmc_mesh_exchange_io_tests)
+        mpmc_mesh_exchange_io_tests
+        mpmc_mesh_computational_tests)
