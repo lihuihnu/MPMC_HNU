@@ -24,7 +24,7 @@
 
 ## 当前计算能力
 
-以下“当前能力—证据—限制—里程碑”矩阵以 **2026-09-30 的 [main@10ea62aa](https://github.com/lihuihnu/MPMC_HNU/commit/10ea62aabe658eedd542bdbf363adfd735f70663)** 为本轮核对基线。未合并 PR 不计入主线能力；M0–M5 是下文定义的后续验收方向，不是完成标记。根 README 维护项目级矩阵，模块文档维护具体契约与来源。
+以下“当前能力—证据—限制—里程碑”矩阵保留 **2026-09-30 的 [main@10ea62aa](https://github.com/lihuihnu/MPMC_HNU/commit/10ea62aabe658eedd542bdbf363adfd735f70663)** 作为计算能力核对基线；本轮仅将“构建与 CI”行及 M0 状态更新至 **2026-10-03 的 [main@01ac491](https://github.com/lihuihnu/MPMC_HNU/commit/01ac491348f6697df45901c1b56bdb585c740d47)**，反映 #131/#132/#133 已合并的结果。其余能力与验证结论沿用原基线，不表示本轮重跑整仓验证。未合并 PR 不计入主线能力；M0–M5 是下文定义的验收方向，不是完成标记。根 README 维护项目级矩阵，模块文档维护具体契约与来源。
 
 证据按用途区分：**契约/数值**验证接口、不变量、解析导数或独立数值参考；**物理**对照明确体系与工况的实验或文献数据；**工程**验证平台、通信、装配、求解和产品集成；**性能**需要同环境、同工作量的重复测量。它们不能相互替代。制造解与 synthetic fixture 必须显式标注；从待测实现生成的期望值不能称为独立参考。
 
@@ -92,18 +92,18 @@
 
 | 工程层次 | 当前能力 | 证据与复现入口 | 限制／缺口 | 对应里程碑 |
 | --- | --- | --- | --- | --- |
-| 构建与 CI | 模块独立构建；一个常规自动入口按影响范围选测，保留手动/特殊 Gate | 工程：[根构建](CMakeLists.txt)、[CI 入口映射与规则](.github/ci/README.md)、[workflow verifier](.github/ci/verify_workflows.py) | 根构建只覆盖 AD；尚无统一的可选模块构建入口；当前根 README 路由仍选择 `sw92_profile_c_phase_set`，纯文档选测需另行审计；skipped/未执行不是通过，测试量不是覆盖率 | M0：明确入口、审计选测并另行补齐构建编排 |
+| 构建与 CI | 模块独立构建；根入口默认 AD，六个默认 OFF 选项按需引入 thermodynamics/flash/mesh/discretization/flow_discretization/well_discretization 及所需依赖；中央 CI 按影响选测，根 README 概览不选择科学 Gate | 工程：[根构建](CMakeLists.txt)、[库消费契约](tests/build/root_libraries/README.md)、[CI 入口与规则](.github/ci/README.md)；[CI #259](https://github.com/lihuihnu/MPMC_HNU/actions/runs/36706740100) 验证选测修复，[CI #263](https://github.com/lihuihnu/MPMC_HNU/actions/runs/36811992276) 验证 GCC/Clang/MSVC 各 64 种选项组合 | 根 CTest 仍仅注册 AD 算术；可选库入口不聚合模块专项测试、PETSc/MPI、服务或产品；消费探针不等于全部公共头编译或模型物理验证；skipped/未执行不是通过，测试量不是覆盖率 | M0：可选库入口与 README 选测切片已合入；完整判据见下表 |
 | 可维护性与效率 | Flow 已分层并共享校验/坐标算法，混合相数装配已有职责重构 | 工程/局部性能：[已合并 #130](https://github.com/lihuihnu/MPMC_HNU/pull/130)、[已合并 #127](https://github.com/lihuihnu/MPMC_HNU/pull/127) | #130 的局部库存组装与分配测量不是端到端求解加速；核对基线时 #126/#128/#129 尚未合并，不计入能力；缺统一完整算例的时间、内存和并行效率基线 | M0：审查待合并工作；M4：按实际瓶颈优化 |
 | PT 应用与运行时模型 | `PtService`、Web/Electron/Android 工程链；Electron PR76 Expert 用新参数快照重建不可变模型，支持组分增删/重排 | 工程：[前端与测试命令](frontend/README.md)、[运行时模型](modules/model_configuration/README.md)、[native 产品](products/pt/README.md)、[Android](products/pt_android/README.md)；产品路径见上表 | 预置 backend 仍是冻结快照；专家输入不是通用物性数据库；当前 PT RPC/UI 不代表完整流动任务、场结果分析或正式发行 | M3：计算任务基础；M5：流动产品与发行 |
 | 研究算例与恢复 | 已有库级时间推进、相变重建及测试夹具；网格格式可读写 | 工程：[Flow 调用链](modules/flow/README.md)、[PETSc 回归入口](tests/flow_discretization/petsc/CMakeLists.txt)、[Mesh I/O](modules/mesh/README.md) | 尚未形成配置驱动的完整流动算例产品与经过验收的持久化 checkpoint/restart；相变 same-dt restart 不等于进程中断恢复，网格 I/O 不等于场结果产品 | M3：可复现输入、运行、输出与恢复 |
 
 ### 里程碑与验收
 
-开发目标是形成**可独立配置运行、物理依据可追溯、支持恢复计算并能测量并行性能的研究级多相多组分模拟器**。下面列出依赖和完成判据，不承诺未经评估的日期或完成百分比。当前仅推进 M0 的文档矩阵切片；建立矩阵不等于完成整个 M0。后续编码、合并、算例运行或发布仍按 [AGENTS.md](AGENTS.md) 在具体任务授权下推进。
+开发目标是形成**可独立配置运行、物理依据可追溯、支持恢复计算并能测量并行性能的研究级多相多组分模拟器**。下面列出依赖和完成判据，不承诺未经评估的日期或完成百分比。M0 已合入能力矩阵、根 README 选测修复和可选模块根构建入口三个切片；整个 M0 仍按下表完成判据验收。后续编码、合并、算例运行或发布仍按 [AGENTS.md](AGENTS.md) 在具体任务授权下推进。
 
 | 里程碑 | 前置条件 | 工作与交付 | 完成判据 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| **M0 清晰基线** | 核对主分支、适用规则和未合并工作 | 维护本矩阵；审查处理已有独立 PR；整理构建/验证入口，后续单独实现可选模块构建编排 | 每项能力能追溯契约、证据类型、验证 owner 与限制；保留 AD 等基础模块独立构建，项目入口能明确选择和报告验证范围 | **进行中：本次仅文档矩阵**；构建编排和待合并 PR 另行验收 |
+| **M0 清晰基线** | 核对主分支、适用规则和未合并工作 | 维护本矩阵；审查处理已有独立 PR；整理构建/验证入口并维护已合入的可选模块构建编排 | 每项能力能追溯契约、证据类型、验证 owner 与限制；保留 AD 等基础模块独立构建，项目入口能明确选择和报告验证范围 | **进行中**：[#131](https://github.com/lihuihnu/MPMC_HNU/pull/131) 矩阵、[#132](https://github.com/lihuihnu/MPMC_HNU/pull/132) 根 README 选测、[#133](https://github.com/lihuihnu/MPMC_HNU/pull/133) 可选库入口已合并；待合并工作及上述项目级完成判据仍待验收 |
 | **M1 可信度基线** | M0 的范围和证据入口明确 | 选择代表算例，分别核对公式/单位、导数、离散/求解与模型适用性；在运行前确定误差判据 | 对适用算例分别报告守恒误差、Jacobian 独立核对、网格/时间步收敛和实验或独立数值偏差；保留失败与适用域，#102 不靠放宽容差变绿 | 待完成项目级基线；已有模块回归不能代替全部判据 |
 | **M2 SW92 实际流动闭环** | M1 中所选零盐 CO₂/H₂O 物性与算例证据足够；明确相身份及 absent-phase 扩展契约 | 从来源完整的简单体系建立 family/root-aware 跨相数面输运、ghost 同步与事务式相变，接入时间推进 | 非零通量、多单元、MPI 分区及相出现/消失情况下，独立导数核对、组分/能量守恒与最终 history/time commit 均通过；未知物性仍明确拒绝 | **受阻项明确**：当前 restart 禁止 faces/ghost；Sample-6 manufactured 数据不计作物理完成证据 |
 | **M3 可运行研究工具** | M1 的目标算例已验证；采用 SW92 相变流动时还需 M2 | 正式算例配置、初始化、边界/井配置、时间推进、结果输出与持久化 checkpoint/restart | 新算例无需修改内核；输入/模型/版本/求解配置可追溯；中断恢复与连续计算在预先声明误差内一致；失败状态不写入 accepted checkpoint | 待建立完整配置驱动链；现有库能力可复用 |
