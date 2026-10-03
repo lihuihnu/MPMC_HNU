@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -369,7 +370,7 @@ data_arrays(std::string_view section) {
     std::vector<XmlElement> arrays;
     std::size_t cursor = 0U;
     while (true) {
-        const auto element =
+        auto element =
             find_element(
                 section, "DataArray", cursor);
         if (!element.has_value()) break;
@@ -377,10 +378,46 @@ data_arrays(std::string_view section) {
             throw std::invalid_argument(
                 "mpmc::mesh::import_vtu_ascii: ASCII DataArray cannot be self-closing");
         }
-        if (element->body.find('<') !=
-            std::string_view::npos) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_vtu_ascii: nested DataArray content is unsupported in the minimal ASCII baseline");
+        const auto nested = element->body.find('<');
+        if (nested != std::string_view::npos) {
+            // Official VTK ASCII writers append this derived magnitude-range
+            // cache, including to Points. It is not array data or a physical
+            // unit. Accept only its documented shape; do not silently discard
+            // arbitrary InformationKey entries (which can carry semantics).
+            constexpr const char* invalid =
+                "mpmc::mesh::import_vtu_ascii: unsupported or malformed DataArray InformationKey";
+            const auto metadata = element->body.substr(nested);
+            if (!tag_name_matches(metadata, 0U, "InformationKey")) {
+                throw std::invalid_argument(invalid);
+            }
+            const auto key = find_element(metadata, "InformationKey");
+            if (!key || key->self_closing || key->attributes.size() != 3U ||
+                require_attribute(*key, "name", invalid) != "L2_NORM_RANGE" ||
+                require_attribute(*key, "location", invalid) != "vtkDataArray" ||
+                require_attribute(*key, "length", invalid) != "2" ||
+                !std::all_of(metadata.begin() + static_cast<std::ptrdiff_t>(key->next_offset),
+                             metadata.end(), is_xml_space)) {
+                throw std::invalid_argument(invalid);
+            }
+            std::size_t position = 0U;
+            for (const auto index : {"0", "1"}) {
+                while (position < key->body.size() && is_xml_space(key->body[position])) ++position;
+                if (!tag_name_matches(key->body, position, "Value")) {
+                    throw std::invalid_argument(invalid);
+                }
+                const auto value = find_element(key->body, "Value", position);
+                if (!value || value->self_closing || value->attributes.size() != 1U ||
+                    require_attribute(*value, "index", invalid) != index ||
+                    parse_double_values(value->body, invalid).size() != 1U) {
+                    throw std::invalid_argument(invalid);
+                }
+                position = value->next_offset;
+            }
+            if (!std::all_of(key->body.begin() + static_cast<std::ptrdiff_t>(position),
+                             key->body.end(), is_xml_space)) {
+                throw std::invalid_argument(invalid);
+            }
+            element->body = element->body.substr(0U, nested);
         }
         arrays.push_back(*element);
         cursor = element->next_offset;

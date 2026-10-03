@@ -906,6 +906,22 @@ jobs:
         git rev-parse HEAD > "$RUNNER_TEMP/mesh-3d-reader-evidence/commit.txt"
         "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_3d_readers.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-3d-reader-evidence/exports" 2>&1 | tee "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
         grep -Fqx '[PASS] independent.mesh.3d_readers files=24 reports=12 negative_controls=10' "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
+    - name: Validate externally generated 3D mixed mesh chains
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-3d-chain-evidence"
+        git rev-parse HEAD > "$RUNNER_TEMP/mesh-3d-chain-evidence/commit.txt"
+        "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_3d_chains.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-3d-chain-evidence/files" 2>&1 | tee "$RUNNER_TEMP/mesh-3d-chain-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.3d_chains inputs=4 chains=8 reports=8 disconnected_chains=8' "$RUNNER_TEMP/mesh-3d-chain-evidence/readback.log"
+    - name: Preserve 3D chain evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mesh-3d-chain-readback
+        path: ${{ runner.temp }}/mesh-3d-chain-evidence
+        if-no-files-found: warn
+        retention-days: 14
     - name: Preserve 3D independent reader evidence
       if: ${{ always() }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

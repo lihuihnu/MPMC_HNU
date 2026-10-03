@@ -155,6 +155,8 @@ OPM `27cellsAniso.grdecl` 包含顶层 `GRID` wrapper，而当前最小 GRDECL p
 
 三维输出现在也由同一外部 Gate 做独立读回：四面体、六面体、三棱柱、金字塔各包含两个尺度/位置不同的单元，原生及两个 canonical 方向含四类同类双单元及两种混合共享面样例，共 24 文件、12 报告、10 个损坏负对照。官方 Gmsh 的 Jacobian 积分及 VTK 的 CellSizeFilter 分别核对解析体积，同时核对节点顺序、稳定身份、面/体分组和多分量字段对应。四面体/三棱柱共享三角面、六面体/金字塔共享四边面的样例还按读取器节点身份重建面关联，检查内部/边界计数、相邻单元、面积和相反外法向；负对照证明体积不变的接口断开和内部面误标边界均被拒绝。范围是线性共形平面面 ASCII 样例，未覆盖非共形接口或任意畸变网格；具体输入、容差、复现和证据见[三维外部验证说明](../../tests/mesh/external_compatibility/README.md#三维四类线性单元的独立读回)。
 
+三维混合样例进一步通过完整外部文件链验收：官方 Gmsh/VTK 写出 4 个输入，MPMC 导入并经统一交换接口导出两种格式，官方读取器验证 8 条链；另有 8 条同坐标不同节点身份的断开对照链。导入后的原始拓扑快照和最终文件分别核验，明确区分原有、生成和丢失的实体身份。共享 VTU ASCII 解析器兼容官方 writer 的尾部 `L2_NORM_RANGE` 可重算缓存，仍拒绝未知或损坏的嵌套元信息；缓存不作为数值载荷或单位，`lossless` 不承诺保留这类缓存或 XML 字节。方法、回归与复现见[完整链路说明](../../tests/mesh/external_compatibility/README.md#官方生成mpmc-导入和导出的三维完整链路)。
+
 ## 5. 求解变量与拓扑索引
 
 最小 `DofLayout` 已实现 local scalar indexing 基线。每个 `DofVariable` 只包含稳定 ID、location 与 component count；location 现完整支持 cell/face/edge/vertex，component count 必须大于零，变量 ID 必须唯一。布局固定为 `[cell block][face block][edge block][vertex block]`；每个 location 内按 `entity-major -> variable declaration order -> component` 排列。同一实体上的变量 DoF 因此连续，且 location block 也连续。对没有 materialized edge 的既有 1D/2D/3D topology，edge block 宽度为 0，因此此前 cell/face/vertex scalar offsets 保持不变。

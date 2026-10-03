@@ -50,6 +50,22 @@
 
 使用下一节同一隔离环境与 producer，把脚本替换为 `verify_3d_readers.py` 并指定新的输出目录即可复现。总 PASS 应为 `files=24 reports=12 negative_controls=10`；`result.json` 还保存各文件逐单元的实际体积、8 个混合输出的面关联/面积/法向、断开接口负对照仍保持的体积、共享辅助脚本 hash、负对照拒绝原因，以及包括负对照文件在内的 SHA256。云端在原 external job 中执行一次，单独保存 `mesh-3d-independent-readback` artifact；二维命令及 artifact 均保留。
 
+## 官方生成、MPMC 导入和导出的三维完整链路
+
+`verify_3d_chains.py` 复用上述两种混合解析几何，由官方 Gmsh API 和 `vtkXMLUnstructuredGridWriter` 分别写出 MSH 4.1 ASCII、单 Piece VTU ASCII 输入。它们是官方写入器序列化的人工指定网格，不是 CAD 自动划分质量的验证。输入不经过 MPMC writer，也不做 XML 清洗。4 个正常输入分别经 MPMC 导入、`make_mesh_exchange_document`、两个 canonical writer 输出，形成 **8 条链路和 8 份转换报告**；官方读取器检查输入和最终输出。
+
+- Gmsh 输入使用稀疏乱序节点标签、混合类型的体单元块和重叠体区域组，只显式写两个有标签的外边界面。其余面（包括内部共享面）必须由导入器构建。VTK 输入反转点存储顺序、按 901/31 排列单元，带精确 UInt64 单元 ID、点标量/三分量字段和单元双分量字段。
+- 同一 C++ target 新增测试专用 `--convert-3d <gmsh|vtu> <输入路径> <输出前缀>`。`convert_3d_file.cpp` 在 canonical 导出前将真实导入结果写为 `.import` 快照；Python 独立核对顶点、单元、全部 face↔cell 关联、边界分类/标签、显式面 ID、体积及面面积/owner 外法向。快照是待检证据，不提供期望值。最终文件再次检查几何、类型、节点身份、分组与字段实体绑定；合法实体重排不视为错误。
+- 正常共享面的计数、3/6 m² 面积、16/32 m³ 总体积和 `1e-12` 容差沿用上节。检查只按节点身份建立邻接，不按相同坐标合并。VTU 缺失的稳定 vertex/face ID 按实际读回点顺序及面的节点关联推导默认编号，转换报告必须与身份绑定的实际变化一致。
+- 同格式链路要求声明的网格/字段/分组语义保持；Gmsh→VTU 明确报告组、面标签和 vertex/face ID 损失，VTU→Gmsh 报告字段损失。源 VTU 不提供单位属性或边界组，不能把导入生成的默认元数据冒充外部文件原有信息。`lossless` 不表示 XML 字节或可重算范围缓存原样保留。
+- 另由官方写入器生成 **4 个接口断开输入**（同坐标不同节点身份），通过相同导入和两种导出，形成 **8 条断开对照链、8 份额外报告**。它们是合法网格，转换应成功；导入快照与最终文件必须均保留 0 内部面，体积不变，并明确拒绝“应有一个共享面”的断言。静默焊接或错误拒绝合法输入都会失败。
+
+这条真实链路暴露并修复了共享 VTU ASCII 解析器对官方写入器所附 `vtkDataArray/L2_NORM_RANGE` 的拒绝。现在仅接受尾部一个结构完整、索引 0/1、两个有限值的范围缓存，再只解析原数值载荷；未知键（包括 `UNITS_LABEL`）、错误属性/索引、重复块、额外数字/嵌套及不完整 XML 仍拒绝。缓存不参与几何或字段计算，也不作为科学单位。二维 `mesh.core.vtu_ascii_roundtrip` 和 `mesh.core.vtu_ascii_invalid` 增加公共入口回归，原严格 ASCII/binary 拒绝不变；三维由上述官方文件直接覆盖。依据：[VTK XML InformationKey 结构](https://docs.vtk.org/en/v9.3.1/design_documents/IOXMLInformationFormat.html)、[固定版本官方 writer 源码](https://github.com/Kitware/VTK/blob/v9.7.1/IO/XML/vtkXMLWriter.cxx)。
+
+本测试唯一 owner 仍为 external compatibility 工程，无新增 CTest 或 workflow。`verify_3d_chains.py` 在同目录显式复用 `verify_3d_readers.py` 的解析几何/独立读取及面判据、`verify_2d_readers.py` 的数值比较；三者及 producer、公共 importer/writer 依赖均由中央路由覆盖。原二维/三维导出验证和公共上游样例保留。Windows MSVC 与云端 Ubuntu GCC 使用同一依赖、输入域及容差；生产头变更还由既有核心/离散/PETSc 下游选测。
+
+本地使用下一节同一 producer/隔离环境，将脚本替换为 `verify_3d_chains.py`，输出到新目录。PASS 为 `inputs=4 chains=8 reports=8 disconnected_chains=8`。`result.json` 分列正常和断开链，保存导入/最终拓扑、体积、共享面面积/法向、身份损失判定、拒绝原因，以及输入、快照、输出和报告的 SHA256、脚本/工具版本。云端由同一 external job 调用一次，保存 `mesh-3d-chain-readback` artifact。本项仍不覆盖非共形接口、高阶、binary、任意畸变或科学求解。
+
 ## 隔离依赖与复现
 
 选择官方读取器而非继续自读自写，能直接检查第三方软件是否理解输出；不引入额外通用格式转换层。依赖仅存在于测试 venv，生产 `mpmc::mesh` 仍只有标准库。固定完整 Python wheel 依赖闭包，禁止测试期间静默升级。Gmsh Python 包为官方 SDK（GPL-2.0-or-later），VTK 为 BSD-3-Clause；不复制其实现或把库链接进生产 target。VTK 的 matplotlib 依赖一并固定，但验证不使用绘图后端。

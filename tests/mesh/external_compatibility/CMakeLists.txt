@@ -9,7 +9,8 @@ add_executable(
     mpmc_mesh_external_compatibility
     external_mesh_compatibility.cpp
     emit_2d_exports.cpp
-    emit_3d_exports.cpp)
+    emit_3d_exports.cpp
+    convert_3d_file.cpp)
 target_link_libraries(
     mpmc_mesh_external_compatibility
     PRIVATE mpmc::mesh)
