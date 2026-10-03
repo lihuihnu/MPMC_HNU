@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -17,20 +18,33 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #if defined(__linux__)
 #include <sys/resource.h>
+#elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
 #endif
 
 namespace mesh = mpmc::mesh;
 
 namespace {
 
-constexpr std::size_t nx = 64U;
-constexpr std::size_t ny = 64U;
-constexpr std::size_t nz = 64U;
+struct Workload {
+    std::size_t nx{64U};
+    std::size_t ny{64U};
+    std::size_t nz{64U};
+};
 constexpr std::size_t field_components = 4U;
 constexpr std::size_t sample_count = 5U;
 constexpr std::size_t topology_repetitions = 8U;
@@ -70,6 +84,109 @@ template <typename T>
         sizeof(T));
 }
 
+struct ExpectedCounts {
+    std::size_t cells;
+    std::size_t vertices;
+    std::size_t faces;
+    std::size_t boundary_faces;
+};
+
+[[nodiscard]] ExpectedCounts expected_counts(Workload size) {
+    const auto product3 = [](std::size_t a, std::size_t b, std::size_t c) {
+        return checked_multiply(checked_multiply(a, b), c);
+    };
+    const std::size_t cells = product3(size.nx, size.ny, size.nz);
+    const std::size_t vertices = product3(
+        checked_add(size.nx, 1U), checked_add(size.ny, 1U), checked_add(size.nz, 1U));
+    const std::size_t faces = checked_add(
+        checked_add(product3(checked_add(size.nx, 1U), size.ny, size.nz),
+                    product3(size.nx, checked_add(size.ny, 1U), size.nz)),
+        product3(size.nx, size.ny, checked_add(size.nz, 1U)));
+    const std::size_t boundary = checked_multiply(2U, checked_add(
+        checked_add(checked_multiply(size.nx, size.ny), checked_multiply(size.nx, size.nz)),
+        checked_multiply(size.ny, size.nz)));
+    const std::uint64_t capacity =
+        static_cast<std::uint64_t>(std::numeric_limits<mesh::LocalIndex::value_type>::max()) + 1ULL;
+    // Check all dimensions/counts before axis allocation. The Cartesian builder
+    // also reserves up to two face-to-cell entries per face.
+    if (cells == 0U || cells > capacity || vertices > capacity || faces > capacity ||
+        checked_multiply(cells, 8U) > std::numeric_limits<mesh::CsrAdjacency::Offset>::max() ||
+        checked_multiply(faces, 4U) > std::numeric_limits<mesh::CsrAdjacency::Offset>::max()) {
+        throw std::length_error("mesh benchmark workload exceeds local/CSR capacity");
+    }
+    return {cells, vertices, faces, boundary};
+}
+
+[[nodiscard]] std::size_t parse_dimension(std::string_view text) {
+    std::size_t value{};
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (text.empty() || parsed.ec != std::errc{} ||
+        parsed.ptr != text.data() + text.size() || value == 0U) {
+        throw std::invalid_argument("mesh benchmark dimensions must be positive decimal integers");
+    }
+    return value;
+}
+
+[[nodiscard]] Workload parse_workload(std::span<const std::string_view> args) {
+    Workload result;
+    if (!args.empty()) {
+        if (args.size() != 4U || args[0] != "--grid") {
+            throw std::invalid_argument("usage: mpmc_mesh_baseline_benchmark [--grid NX NY NZ]");
+        }
+        result = {parse_dimension(args[1]), parse_dimension(args[2]), parse_dimension(args[3])};
+    }
+    static_cast<void>(expected_counts(result));
+    return result;
+}
+
+// This benchmark is its own existing CI owner. Exercise the new configuration
+// contract on every invocation, including the unchanged no-argument cloud run.
+void verify_configuration_contract() {
+    const auto default_size = parse_workload({});
+    const auto default_counts = expected_counts(default_size);
+    const std::array<std::string_view, 4U> asymmetric{"--grid", "2", "3", "4"};
+    const auto counts = expected_counts(parse_workload(asymmetric));
+    if (default_size.nx != 64U || default_size.ny != 64U || default_size.nz != 64U ||
+        default_counts.cells != 262144U || counts.cells != 24U ||
+        counts.vertices != 60U || counts.faces != 98U || counts.boundary_faces != 52U) {
+        throw std::logic_error("mesh benchmark configuration regression");
+    }
+    for (const auto invalid : {"", "0", "-1", "+1", "1.5", "2x", " 2", "2 ",
+                               "18446744073709551616"}) {
+        bool rejected = false;
+        try {
+            static_cast<void>(parse_dimension(invalid));
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        if (!rejected) {
+            throw std::logic_error("invalid benchmark dimension accepted");
+        }
+    }
+    const std::array<std::string_view, 3U> missing{"--grid", "2", "3"};
+    bool rejected = false;
+    try {
+        static_cast<void>(parse_workload(missing));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    if (!rejected) {
+        throw std::logic_error("incomplete benchmark workload accepted");
+    }
+    for (const auto oversized : {Workload{std::numeric_limits<std::size_t>::max(), 1U, 1U},
+                                 Workload{65536U, 65536U, 1U}}) {
+        rejected = false;
+        try {
+            static_cast<void>(expected_counts(oversized));
+        } catch (const std::length_error&) {
+            rejected = true;
+        }
+        if (!rejected) {
+            throw std::logic_error("oversized benchmark workload accepted");
+        }
+    }
+}
+
 [[nodiscard]] std::vector<double> axis(
     std::size_t cell_count) {
     std::vector<double> values;
@@ -84,13 +201,14 @@ template <typename T>
 }
 
 [[nodiscard]] mesh::DenseFieldMetadata
-field_metadata() {
+field_metadata(Workload size) {
     return mesh::DenseFieldMetadata{
         "benchmark.cell.field4",
         "1",
         mesh::FieldSourceMetadata{
             mesh::FieldSourceKind::synthetic_test,
-            "benchmark://mesh/fixed-64-cubed",
+            "benchmark://mesh/cartesian/" + std::to_string(size.nx) + "x" +
+                std::to_string(size.ny) + "x" + std::to_string(size.nz),
             "baseline-v1",
             "mesh_baseline_benchmark.cpp"}};
 }
@@ -324,9 +442,45 @@ peak_rss_kib() {
     }
     return static_cast<std::uint64_t>(
         usage.ru_maxrss);
+#elif defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = static_cast<DWORD>(sizeof(counters));
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, counters.cb) == 0) {
+        throw std::runtime_error("GetProcessMemoryInfo failed");
+    }
+    return static_cast<std::uint64_t>(counters.PeakWorkingSetSize) / 1024ULL;
 #else
     return 0U;
 #endif
+}
+
+[[nodiscard]] const char* peak_rss_source() {
+#if defined(__linux__)
+    return "linux_getrusage_ru_maxrss";
+#elif defined(_WIN32)
+    return "windows_peak_working_set";
+#else
+    return "unavailable";
+#endif
+}
+
+void verify_grid(const mesh::LinearMesh3D& grid, const ExpectedCounts& expected) {
+    const auto& topology = grid.topology;
+    const auto boundaries = grid.face_boundary.classifications();
+    if (topology.entity_count(mesh::EntityKind::cell) != expected.cells ||
+        topology.entity_count(mesh::EntityKind::vertex) != expected.vertices ||
+        topology.entity_count(mesh::EntityKind::face) != expected.faces ||
+        topology.relation(mesh::EntityKind::cell, mesh::EntityKind::vertex).entry_count() != 8U * expected.cells ||
+        topology.relation(mesh::EntityKind::cell, mesh::EntityKind::face).entry_count() != 6U * expected.cells ||
+        topology.relation(mesh::EntityKind::face, mesh::EntityKind::vertex).entry_count() != 4U * expected.faces ||
+        topology.relation(mesh::EntityKind::face, mesh::EntityKind::cell).entry_count() != 6U * expected.cells ||
+        static_cast<std::size_t>(std::count(boundaries.begin(), boundaries.end(),
+                                          mesh::FaceClassification::boundary)) != expected.boundary_faces ||
+        grid.cell_volumes_m3.size() != expected.cells ||
+        !std::all_of(grid.cell_volumes_m3.begin(), grid.cell_volumes_m3.end(),
+                     [](double volume) { return volume == 1.0; })) {
+        throw std::runtime_error("Cartesian benchmark analytic invariant failure");
+    }
 }
 
 void print_samples(
@@ -346,8 +500,21 @@ void print_samples(
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        verify_configuration_contract();
+        if (argc == 2 && std::string_view{argv[1]} == "--help") {
+            std::cout << "usage: mpmc_mesh_baseline_benchmark [--grid NX NY NZ]\n";
+            return 0;
+        }
+        std::vector<std::string_view> arguments;
+        for (int index = 1; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        const auto workload = parse_workload(arguments);
+        const auto [nx, ny, nz] = workload;
+        const auto expected = expected_counts(workload);
+        const auto construction_begin = std::chrono::steady_clock::now();
         const auto x = axis(nx);
         const auto y = axis(ny);
         const auto z = axis(nz);
@@ -357,15 +524,15 @@ int main() {
                 y,
                 z);
 
+        const double mesh_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - construction_begin).count();
+        const auto rss_after_mesh = peak_rss_kib();
+        verify_grid(grid, expected);
+
         const std::size_t cell_count =
             grid.topology.entity_count(
                 mesh::EntityKind::cell);
-        if (cell_count !=
-            nx * ny * nz) {
-            throw std::runtime_error(
-                "fixed workload cell count drift");
-        }
-
+        const auto field_begin = std::chrono::steady_clock::now();
         std::vector<double> values;
         values.resize(
             checked_multiply(
@@ -392,7 +559,10 @@ int main() {
                 mesh::EntityKind::cell,
                 field_components,
                 std::move(values),
-                field_metadata());
+                field_metadata(workload));
+        const double field_construction_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - field_begin).count();
+        const auto rss_after_field = peak_rss_kib();
 
         const std::size_t topology_bytes =
             topology_payload_bytes(
@@ -476,7 +646,16 @@ int main() {
             << std::setprecision(6);
         std::cout
             << "benchmark_schema=mpmc.mesh.baseline.v1\n"
-            << "workload=cartesian_3d_64x64x64_field4\n"
+            << "workload=cartesian_3d_" << nx << 'x' << ny << 'x' << nz << "_field4\n"
+            << "configuration_contract=passed\n"
+            << "analytic_grid_invariants=passed\n"
+            << std::setprecision(9)
+            << "mesh_construction_seconds=" << mesh_seconds << '\n'
+            << "field_construction_seconds=" << field_construction_seconds << '\n'
+            << std::setprecision(6)
+            << "peak_rss_source=" << peak_rss_source() << '\n'
+            << "peak_rss_after_mesh_kib=" << rss_after_mesh << '\n'
+            << "peak_rss_after_field_kib=" << rss_after_field << '\n'
             << "nx=" << nx << '\n'
             << "ny=" << ny << '\n'
             << "nz=" << nz << '\n'
