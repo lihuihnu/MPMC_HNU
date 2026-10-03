@@ -113,7 +113,7 @@ jobs:
         mkdir -p "$RUNNER_TEMP/mesh-3d-reader-evidence"
         git rev-parse HEAD > "$RUNNER_TEMP/mesh-3d-reader-evidence/commit.txt"
         "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_3d_readers.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-3d-reader-evidence/exports" 2>&1 | tee "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
-        grep -Fqx '[PASS] independent.mesh.3d_readers files=16 reports=8 negative_controls=6' "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.3d_readers files=24 reports=12 negative_controls=10' "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
     - name: Preserve 3D independent reader evidence
       if: ${{ always() }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -49,7 +49,7 @@ def assert_mesh_independent_readers(root, select):
         assert len(left) == len(right) == 1 and left == right, ('mesh reader step parity', name)
     entry = (directory / 'external_mesh_compatibility.cpp').read_text(encoding='utf-8')
     for dimension, marker in ((2, 'files=12 reports=6 negative_controls=5'),
-                              (3, 'files=16 reports=8 negative_controls=6')):
+                              (3, 'files=24 reports=12 negative_controls=10')):
         run = next(step for step in central['steps'] if step.get('name') ==
                    f'Independently read {dimension}D exports with Gmsh and VTK')
         assert not run.get('continue-on-error') and not central.get('continue-on-error')
