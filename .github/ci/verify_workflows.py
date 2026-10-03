@@ -181,7 +181,7 @@ def assert_root_readme_selection(select):
 def main():
     catalog = json.loads(Path('.github/ci/workflow_map.json').read_text(encoding='utf-8'))
     router_path = '.github/workflows/pr_incremental_ci.yml'
-    paths = {str(p) for p in Path('.github/workflows').glob('*.yml')}
+    paths = {p.as_posix() for p in Path('.github/workflows').glob('*.yml')}
     assert paths == set(catalog['workflows']), 'workflow added or removed without an entry mapping'
     root = load(router_path)
     auto = []
@@ -209,7 +209,7 @@ def main():
     assert '-U CMAKE_CXX_FLAGS_RELEASE' in petsc_run
     assert petsc_run.count('ctest --test-dir') == 1
     assert '--rerun-failed' not in petsc_run and '|| true' not in petsc_run
-    restart_test = Path('tests/flow_discretization/petsc/sw92_transactional_phase_transition_restart_test.cpp').read_text()
+    restart_test = Path('tests/flow_discretization/petsc/sw92_transactional_phase_transition_restart_test.cpp').read_text(encoding='utf-8')
     assert 'sw92_transactional_phase_transition_sample6_test(' not in restart_test, 'Sample-6 must execute only from main'
     # Private Linux runners are reserved for audited long-running gates and
     # explicitly authorized PETSc/MPI integration/solver gates.
@@ -438,6 +438,10 @@ def main():
     assert root['jobs']['sw92-phase-assigned-no-w']['with']['dependencies_prevalidated'] is True
 
     assert_root_build_selection(select)
+
+    # Local execution shares the selector and existing test owners. No new CI job.
+    local_tests = runpy.run_path('.github/ci/test_local.py')
+    local_tests['run_tests']()
 
     print('WORKFLOW_MAP_OK', len(paths), 'entries; single automatic entry; reusable closure:', len(seen))
     print(
