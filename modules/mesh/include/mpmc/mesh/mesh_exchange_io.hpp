@@ -7,6 +7,7 @@
 #include <mpmc/mesh/grdecl.hpp>
 #include <mpmc/mesh/grdecl_reconstruction.hpp>
 #include <mpmc/mesh/mesh_exchange.hpp>
+#include <mpmc/mesh/linear_cell_mesh_2d.hpp>
 #include <mpmc/mesh/vtu.hpp>
 #include <mpmc/mesh/vtu_3d.hpp>
 
@@ -275,22 +276,6 @@ copy_groups(
         document.groups().end()};
 }
 
-[[nodiscard]] inline MeshExchangeDocument
-with_logical_corner_point(
-    const MeshExchangeDocument& document,
-    LogicalCornerPointGrid3D logical) {
-    return MeshExchangeDocument::create(
-        document.source_format(),
-        document.dimension(),
-        document.topology(),
-        std::vector<Coordinate3D>{
-            document.vertex_coordinates_m().begin(),
-            document.vertex_coordinates_m().end()},
-        document.face_boundary(),
-        copy_fields(document),
-        copy_groups(document),
-        std::move(logical));
-}
 
 struct GmshTargetIds {
     std::vector<GlobalEntityId> vertices;
@@ -689,7 +674,7 @@ canonical_geometry_2d(
                         vertex.value())]);
         }
         const auto metric =
-            vtu_detail::polygon_metric(
+            linear_cell_mesh_2d_detail::polygon_metric(
                 polygon);
         cell_centroids.push_back(
             metric.centroid);
@@ -1050,13 +1035,12 @@ make_mesh_exchange_document(
         source.topology,
         mesh_exchange_io_detail::
             coordinates_3d(source.geometry),
-        make_face_boundary_snapshot(
-            source.topology),
+        source.face_boundary,
         mesh_exchange_io_detail::
             combine_fields(
                 source.point_fields,
                 source.cell_fields),
-        {},
+        source.groups,
         std::nullopt);
 }
 
@@ -1073,7 +1057,7 @@ make_mesh_exchange_document(
             combine_fields(
                 source.point_fields,
                 source.cell_fields),
-        {},
+        source.groups,
         std::nullopt);
 }
 
@@ -1275,6 +1259,10 @@ export_vtu_ascii(
         point_fields,
         cell_fields);
 
+    const auto boundary = document.face_boundary().value_or(
+        make_face_boundary_snapshot(document.topology()));
+    vtu_detail::validate_vtu_face_boundary(document.topology(), boundary);
+
     if (document.dimension() == 2) {
         auto geometry =
             canonical_geometry_2d(
@@ -1284,7 +1272,9 @@ export_vtu_ascii(
             document.topology(),
             std::move(geometry),
             std::move(point_fields),
-            std::move(cell_fields)};
+            std::move(cell_fields),
+            boundary,
+            {document.groups().begin(), document.groups().end()}};
         return MeshTextExportResult{
             export_vtu_ascii(target),
             std::move(report)};
@@ -1299,10 +1289,6 @@ export_vtu_ascii(
     const auto cell_ids =
         document.topology().global_ids(
             EntityKind::cell);
-    const auto boundary =
-        canonical_face_boundary(
-            document,
-            document.topology());
     auto linear =
         canonical_linear_mesh_3d(
             document,
@@ -1322,7 +1308,8 @@ export_vtu_ascii(
         std::move(
             linear.face_boundary),
         std::move(point_fields),
-        std::move(cell_fields)};
+        std::move(cell_fields),
+        {document.groups().begin(), document.groups().end()}};
     return MeshTextExportResult{
         export_vtu_ascii_3d(target),
         std::move(report)};
@@ -1341,67 +1328,12 @@ export_grdecl_ascii(
         options.permeability_scale_to_m2,
         "mpmc::mesh::export_grdecl_ascii: permeability_scale_to_m2 must be finite and positive");
 
-    std::optional<MeshExchangeDocument>
-        reconstructed;
-    const MeshExchangeDocument* source =
-        &document;
-    GrdeclRepresentabilityReport
-        reconstruction_report;
-
-    if (!document.logical_corner_point()
-             .has_value()) {
-        auto result =
-            reconstruct_structured_logical_grid_3d(
-                document);
-        reconstruction_report =
-            result.report;
-        if (!result.report.representable() ||
-            !result.logical_grid.has_value()) {
-            ConversionReport report{
-                MeshExchangeFormat::grdecl};
-            if (result.report.issues().empty()) {
-                report.note_unsupported(
-                    "grdecl_reconstruction.unsupported",
-                    "generic canonical mesh is not representable by the current structured GRDECL reconstruction baseline");
-            } else {
-                for (const auto& issue :
-                     result.report.issues()) {
-                    report.note_unsupported(
-                        issue.code,
-                        issue.message);
-                }
-            }
-            return MeshTextExportResult{
-                std::nullopt,
-                std::move(report)};
-        }
-        reconstructed.emplace(
-            with_logical_corner_point(
-                document,
-                std::move(
-                    *result.logical_grid)));
-        source = &*reconstructed;
+    auto prepared = mesh_exchange_detail::prepare_grdecl_conversion(document);
+    if (prepared.report.disposition() == ConversionDisposition::unsupported) {
+        return MeshTextExportResult{std::nullopt, std::move(prepared.report)};
     }
-
-    auto report =
-        analyze_conversion(
-            *source,
-            MeshExchangeFormat::grdecl);
-    if (report.disposition() ==
-        ConversionDisposition::unsupported) {
-        return MeshTextExportResult{
-            std::nullopt,
-            std::move(report)};
-    }
-    for (const auto& issue :
-         reconstruction_report.issues()) {
-        report.note_lossy(
-            issue.code,
-            issue.message);
-    }
-
-    const auto& data =
-        *source->logical_corner_point();
+    auto report = std::move(prepared.report);
+    const auto& data = prepared.reconstructed ? *prepared.reconstructed : *document.logical_corner_point();
 
     std::ostringstream output;
     output <<

@@ -7,6 +7,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   impact:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: Compute current PR update impact
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -848,6 +849,14 @@ jobs:
         test "$(git hash-object build/external-samples/opm-27cellsAniso.grdecl)" = "c427da4f83663b071c657ecded06bea30da50415"
 
         '
+    - name: Install pinned independent mesh readers
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y python3-venv libglu1-mesa
+        python3 -m venv "$RUNNER_TEMP/mesh-readers"
+        "$RUNNER_TEMP/mesh-readers/bin/python" -m pip install --only-binary=:all: -r tests/mesh/external_compatibility/requirements-readers.txt
     - name: Configure external compatibility test
       run: 'cmake -S tests/mesh/external_compatibility -B build/mesh-external -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
 
@@ -869,7 +878,7 @@ jobs:
 
         grep -Fqx ''[PASS] external.grdecl.opm_tube_to_gmsh'' build/external-compatibility.txt
 
-        grep -Fqx ''matrix.gmsh3d.vtu=lossy'' build/external-compatibility.txt
+        grep -Fqx ''matrix.gmsh3d.vtu=lossless'' build/external-compatibility.txt
 
         grep -Fqx ''matrix.gmsh3d.grdecl=lossy'' build/external-compatibility.txt
 
@@ -882,6 +891,113 @@ jobs:
         grep -Fqx ''grdecl_native_export=implemented_minimal_baseline'' build/external-compatibility.txt
 
         '
+    - name: Independently read 2D exports with Gmsh and VTK
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-reader-evidence"
+        git rev-parse HEAD > "$RUNNER_TEMP/mesh-reader-evidence/commit.txt"
+        "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_2d_readers.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-reader-evidence/exports" 2>&1 | tee "$RUNNER_TEMP/mesh-reader-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.2d_readers files=12 reports=6 negative_controls=5' "$RUNNER_TEMP/mesh-reader-evidence/readback.log"
+    - name: Independently read 3D exports with Gmsh and VTK
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-3d-reader-evidence"
+        git rev-parse HEAD > "$RUNNER_TEMP/mesh-3d-reader-evidence/commit.txt"
+        "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_3d_readers.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-3d-reader-evidence/exports" 2>&1 | tee "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.3d_readers files=24 reports=12 negative_controls=10' "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
+    - name: Validate externally generated 3D mixed mesh chains
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-3d-chain-evidence"
+        git rev-parse HEAD > "$RUNNER_TEMP/mesh-3d-chain-evidence/commit.txt"
+        "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_3d_chains.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-3d-chain-evidence/files" 2>&1 | tee "$RUNNER_TEMP/mesh-3d-chain-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.3d_chains inputs=4 chains=8 reports=8 disconnected_chains=8' "$RUNNER_TEMP/mesh-3d-chain-evidence/readback.log"
+    - name: Preserve 3D chain evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mesh-3d-chain-readback
+        path: ${{ runner.temp }}/mesh-3d-chain-evidence
+        if-no-files-found: warn
+        retention-days: 14
+    - name: Validate externally generated 2D mixed mesh chains
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-2d-chain-evidence"
+        git rev-parse HEAD > "$RUNNER_TEMP/mesh-2d-chain-evidence/commit.txt"
+        "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_2d_chains.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-2d-chain-evidence/files" 2>&1 | tee "$RUNNER_TEMP/mesh-2d-chain-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.2d_chains inputs=2 chains=4 reports=4 disconnected_chains=4' "$RUNNER_TEMP/mesh-2d-chain-evidence/readback.log"
+    - name: Preserve 2D chain evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mesh-2d-chain-readback
+        path: ${{ runner.temp }}/mesh-2d-chain-evidence
+        if-no-files-found: warn
+        retention-days: 14
+    - name: Preserve 3D independent reader evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mesh-3d-independent-readback
+        path: ${{ runner.temp }}/mesh-3d-reader-evidence
+        if-no-files-found: warn
+        retention-days: 14
+    - name: Preserve independent reader evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mesh-2d-independent-readback
+        path: ${{ runner.temp }}/mesh-reader-evidence
+        if-no-files-found: warn
+        retention-days: 14
+    - name: Install pinned independent GRDECL reader
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -m venv "$RUNNER_TEMP/grdecl-reader"
+        "$RUNNER_TEMP/grdecl-reader/bin/python" -m pip install --only-binary=:all: -r tests/mesh/external_compatibility/requirements-grdecl-reader.txt
+        "$RUNNER_TEMP/grdecl-reader/bin/python" -m pip check
+    - name: Validate independent GRDECL complete chains
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-grdecl-evidence"
+        git rev-parse HEAD > "$RUNNER_TEMP/mesh-grdecl-evidence/commit.txt"
+        "$RUNNER_TEMP/grdecl-reader/bin/python" -B tests/mesh/external_compatibility/verify_grdecl_chains.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-grdecl-evidence/files" 2>&1 | tee "$RUNNER_TEMP/mesh-grdecl-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.grdecl_chains chains=2 reports=2 negative_controls=13' "$RUNNER_TEMP/mesh-grdecl-evidence/readback.log"
+    - name: Validate computational preparation through three formats
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-computational-evidence"
+        for format in gmsh vtu grdecl; do
+          build/mesh-external/mpmc_mesh_external_compatibility --computational-scale "$format" 4 "$RUNNER_TEMP/mesh-computational-evidence/$format" | tee "$RUNNER_TEMP/mesh-computational-evidence/$format.log"
+          grep -Fqx "[PASS] computational.mesh.scale format=$format cells=64" "$RUNNER_TEMP/mesh-computational-evidence/$format.log"
+        done
+    - name: Validate independent VTU named group chains
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-group-evidence"
+        git rev-parse HEAD > "$RUNNER_TEMP/mesh-group-evidence/commit.txt"
+        "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_vtu_group_chains.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-group-evidence/files" 2>&1 | tee "$RUNNER_TEMP/mesh-group-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.vtu_group_chains chains=3 reports=3 negative_controls=15' "$RUNNER_TEMP/mesh-group-evidence/readback.log"
+    - name: Preserve GRDECL and computational evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mesh-grdecl-computational-readback
+        path: |
+          ${{ runner.temp }}/mesh-grdecl-evidence
+          ${{ runner.temp }}/mesh-computational-evidence
+          ${{ runner.temp }}/mesh-group-evidence
+        if-no-files-found: warn
+        retention-days: 14
     - name: Publish compatibility summary
       shell: bash
       run: "{\n  echo '## External mesh compatibility'\n  echo\n  echo 'Pinned upstream samples are downloaded only for this run and verified by Git blob SHA.'\n\
@@ -2717,7 +2833,7 @@ jobs:
       contents: read
   result:
     name: Required CI result
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     needs:
     - impact
     - flow-core
@@ -2804,6 +2920,7 @@ jobs:
     - reopened
     - synchronize
     - ready_for_review
+    - converted_to_draft
   workflow_dispatch: null
   push:
     branches:

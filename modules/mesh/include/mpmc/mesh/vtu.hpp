@@ -5,6 +5,8 @@
 #include <mpmc/mesh/dense_field.hpp>
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
+#include <mpmc/mesh/linear_cell_mesh_2d.hpp>
+#include <mpmc/mesh/mesh_exchange_group.hpp>
 #include <mpmc/mesh/topology.hpp>
 
 #include <algorithm>
@@ -14,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -35,39 +38,79 @@ struct VtuImportResult {
     Geometry2D geometry;
     std::vector<DenseFieldSnapshot> point_fields;
     std::vector<DenseFieldSnapshot> cell_fields;
+    // Trailing default preserves existing four-member aggregate construction.
+    FaceBoundarySnapshot face_boundary = make_face_boundary_snapshot(topology);
+    std::vector<MeshExchangeGroup> groups{};
 };
 
 namespace vtu_detail {
 
 inline constexpr std::string_view global_cell_id_name =
     "mpmc_global_cell_id";
+inline constexpr std::string_view global_vertex_id_name =
+    "mpmc_global_vertex_id";
+
+inline constexpr std::string_view global_face_id_name = "mpmc_global_face_id";
+inline constexpr std::string_view face_offsets_name = "mpmc_face_vertex_offsets";
+inline constexpr std::string_view face_vertices_name = "mpmc_face_vertex_ids";
+inline constexpr std::string_view face_physical_tag_name = "mpmc_face_physical_tag";
+
+// Dataset-level ragged table, schema version 1. Members use stable entity IDs;
+// EntityKind and topological dimension are both explicit. Group membership is
+// independent of the single-valued face PhysicalTag snapshot.
+inline constexpr std::array<std::string_view, 8> group_array_names{
+    "mpmc_group_schema_version", "mpmc_group_location", "mpmc_group_dimension", "mpmc_group_tag",
+    "mpmc_group_name_offsets", "mpmc_group_name_utf8", "mpmc_group_member_offsets", "mpmc_group_member_ids"};
+inline constexpr std::array<std::string_view, 8> group_array_types{
+    "UInt32", "UInt8", "UInt8", "UInt32", "UInt64", "UInt8", "UInt64", "UInt64"};
+
+[[nodiscard]] inline bool group_metadata_name(std::string_view name) noexcept {
+    return name.starts_with("mpmc_group_");
+}
+
+[[nodiscard]] inline std::uint64_t group_dimension(EntityKind kind, int dimension) {
+    switch (kind) {
+    case EntityKind::vertex: return 0U;
+    case EntityKind::edge: return 1U;
+    case EntityKind::face: return static_cast<std::uint64_t>(dimension - 1);
+    case EntityKind::cell: return static_cast<std::uint64_t>(dimension);
+    }
+    throw std::invalid_argument("invalid VTU group entity kind");
+}
+
+inline void validate_group_utf8(std::string_view name) {
+    for (std::size_t i = 0U; i < name.size();) {
+        const auto first = static_cast<unsigned char>(name[i]);
+        if (first < 0x80U) {
+            if (first == 0U) throw std::invalid_argument("VTU group name cannot contain NUL");
+            ++i;
+            continue;
+        }
+        const std::size_t width = first >= 0xc2U && first <= 0xdfU ? 2U :
+            first >= 0xe0U && first <= 0xefU ? 3U : first >= 0xf0U && first <= 0xf4U ? 4U : 0U;
+        if (width == 0U || width > name.size() - i) throw std::invalid_argument("VTU group name is not valid UTF-8");
+        for (std::size_t j = 1U; j < width; ++j) {
+            const auto next = static_cast<unsigned char>(name[i + j]);
+            if (next < 0x80U || next > 0xbfU) throw std::invalid_argument("VTU group name is not valid UTF-8");
+        }
+        const auto second = static_cast<unsigned char>(name[i + 1U]);
+        if ((first == 0xe0U && second < 0xa0U) || (first == 0xedU && second > 0x9fU) ||
+            (first == 0xf0U && second < 0x90U) || (first == 0xf4U && second > 0x8fU)) {
+            throw std::invalid_argument("VTU group name is not valid UTF-8");
+        }
+        i += width;
+    }
+}
+
+[[nodiscard]] inline bool face_metadata_name(std::string_view name) noexcept {
+    return name == global_face_id_name || name == face_offsets_name || name == face_vertices_name || name == face_physical_tag_name;
+}
 
 struct XmlElement {
     std::map<std::string, std::string> attributes;
     std::string_view body;
     std::size_t next_offset;
     bool self_closing;
-};
-
-struct EdgeKey {
-    std::size_t first;
-    std::size_t second;
-
-    [[nodiscard]] friend bool operator<(const EdgeKey& left,
-                                        const EdgeKey& right) noexcept {
-        return std::tie(left.first, left.second) <
-               std::tie(right.first, right.second);
-    }
-};
-
-struct FaceBuild {
-    EdgeKey key;
-    std::vector<std::size_t> adjacent_cells;
-};
-
-struct CellMetric {
-    Coordinate2D centroid;
-    double area;
 };
 
 struct ParsedField {
@@ -389,7 +432,7 @@ data_arrays(std::string_view section) {
     std::vector<XmlElement> arrays;
     std::size_t cursor = 0U;
     while (true) {
-        const auto element =
+        auto element =
             find_element(
                 section, "DataArray", cursor);
         if (!element.has_value()) break;
@@ -397,10 +440,46 @@ data_arrays(std::string_view section) {
             throw std::invalid_argument(
                 "mpmc::mesh::import_vtu_ascii: ASCII DataArray cannot be self-closing");
         }
-        if (element->body.find('<') !=
-            std::string_view::npos) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_vtu_ascii: nested DataArray content is unsupported in the minimal ASCII baseline");
+        const auto nested = element->body.find('<');
+        if (nested != std::string_view::npos) {
+            // Official VTK ASCII writers append this derived magnitude-range
+            // cache, including to Points. It is not array data or a physical
+            // unit. Accept only its documented shape; do not silently discard
+            // arbitrary InformationKey entries (which can carry semantics).
+            constexpr const char* invalid =
+                "mpmc::mesh::import_vtu_ascii: unsupported or malformed DataArray InformationKey";
+            const auto metadata = element->body.substr(nested);
+            if (!tag_name_matches(metadata, 0U, "InformationKey")) {
+                throw std::invalid_argument(invalid);
+            }
+            const auto key = find_element(metadata, "InformationKey");
+            if (!key || key->self_closing || key->attributes.size() != 3U ||
+                require_attribute(*key, "name", invalid) != "L2_NORM_RANGE" ||
+                require_attribute(*key, "location", invalid) != "vtkDataArray" ||
+                require_attribute(*key, "length", invalid) != "2" ||
+                !std::all_of(metadata.begin() + static_cast<std::ptrdiff_t>(key->next_offset),
+                             metadata.end(), is_xml_space)) {
+                throw std::invalid_argument(invalid);
+            }
+            std::size_t position = 0U;
+            for (const auto index : {"0", "1"}) {
+                while (position < key->body.size() && is_xml_space(key->body[position])) ++position;
+                if (!tag_name_matches(key->body, position, "Value")) {
+                    throw std::invalid_argument(invalid);
+                }
+                const auto value = find_element(key->body, "Value", position);
+                if (!value || value->self_closing || value->attributes.size() != 1U ||
+                    require_attribute(*value, "index", invalid) != index ||
+                    parse_double_values(value->body, invalid).size() != 1U) {
+                    throw std::invalid_argument(invalid);
+                }
+                position = value->next_offset;
+            }
+            if (!std::all_of(key->body.begin() + static_cast<std::ptrdiff_t>(position),
+                             key->body.end(), is_xml_space)) {
+                throw std::invalid_argument(invalid);
+            }
+            element->body = element->body.substr(0U, nested);
         }
         arrays.push_back(*element);
         cursor = element->next_offset;
@@ -519,6 +598,52 @@ parse_source_kind(std::string_view value) {
     return metadata;
 }
 
+// Identity is integer metadata, never a floating-point scientific field.
+[[nodiscard]] inline std::vector<GlobalEntityId> parse_vertex_ids(
+    const XmlElement& array, std::size_t count) {
+    require_ascii_data_array(array);
+    if (component_count(array) != 1U) {
+        throw std::invalid_argument("mpmc::mesh::import_vtu_ascii: vertex IDs require one component");
+    }
+    const auto tuples = array.attributes.find("NumberOfTuples");
+    if (tuples != array.attributes.end() &&
+        parse_size(tuples->second, "invalid vertex ID NumberOfTuples") != count) {
+        throw std::invalid_argument("mpmc::mesh::import_vtu_ascii: vertex ID tuple count mismatch");
+    }
+    const auto& type = require_attribute(array, "type", "vertex ID type is required");
+    std::vector<std::uint64_t> values;
+    if (type == "UInt64") {
+        values = parse_integer_values<std::uint64_t>(array.body, "invalid UInt64 vertex IDs");
+    } else if (type == "Int64") {
+        for (const auto value : parse_integer_values<std::int64_t>(array.body, "invalid Int64 vertex IDs")) {
+            if (value < 0) throw std::invalid_argument("vertex ID cannot be negative");
+            values.push_back(static_cast<std::uint64_t>(value));
+        }
+    } else {
+        throw std::invalid_argument("vertex IDs must use UInt64 or Int64");
+    }
+    if (values.size() != count) throw std::invalid_argument("vertex ID count mismatch");
+    std::set<std::uint64_t> unique;
+    std::vector<GlobalEntityId> result;
+    result.reserve(count);
+    for (const auto value : values) {
+        if (!unique.insert(value).second) throw std::invalid_argument("vertex IDs must be unique");
+        result.emplace_back(value);
+    }
+    return result;
+}
+
+inline void write_vertex_ids(std::ostringstream& output, const Topology& topology) {
+    output << "        <DataArray type=\"UInt64\" Name=\"" << global_vertex_id_name
+           << "\" NumberOfComponents=\"1\" format=\"ascii\">\n          ";
+    const auto ids = topology.global_ids(EntityKind::vertex);
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        if (i != 0U) output << ' ';
+        output << ids[i].value();
+    }
+    output << "\n        </DataArray>\n";
+}
+
 [[nodiscard]] inline ParsedField parse_field(
     const XmlElement& array,
     EntityKind location,
@@ -537,6 +662,9 @@ parse_source_kind(std::string_view value) {
         require_attribute(
             array, "Name",
             "mpmc::mesh::import_vtu_ascii: point/cell field Name is required");
+    if (name == global_vertex_id_name || name == global_cell_id_name || face_metadata_name(name) || group_metadata_name(name)) {
+        throw std::invalid_argument("identity array name is reserved for its entity association");
+    }
     if (name.empty()) {
         throw std::invalid_argument(
             "mpmc::mesh::import_vtu_ascii: field Name cannot be empty");
@@ -567,140 +695,6 @@ parse_source_kind(std::string_view value) {
             array, name, location)};
 }
 
-[[nodiscard]] inline EdgeKey edge_key(
-    std::size_t first,
-    std::size_t second) {
-    if (first == second) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_vtu_ascii: cell edge has repeated point index");
-    }
-    return first < second
-               ? EdgeKey{first, second}
-               : EdgeKey{second, first};
-}
-
-[[nodiscard]] inline double cross(
-    Coordinate2D a,
-    Coordinate2D b,
-    Coordinate2D c) {
-    return (b.x_m - a.x_m) *
-               (c.y_m - a.y_m) -
-           (b.y_m - a.y_m) *
-               (c.x_m - a.x_m);
-}
-
-[[nodiscard]] inline bool segments_intersect_strictly(
-    Coordinate2D a,
-    Coordinate2D b,
-    Coordinate2D c,
-    Coordinate2D d,
-    double tolerance) {
-    const double c1 = cross(a, b, c);
-    const double c2 = cross(a, b, d);
-    const double c3 = cross(c, d, a);
-    const double c4 = cross(c, d, b);
-    if (std::abs(c1) <= tolerance ||
-        std::abs(c2) <= tolerance ||
-        std::abs(c3) <= tolerance ||
-        std::abs(c4) <= tolerance) {
-        return false;
-    }
-    return (c1 > 0.0) != (c2 > 0.0) &&
-           (c3 > 0.0) != (c4 > 0.0);
-}
-
-[[nodiscard]] inline CellMetric polygon_metric(
-    const std::vector<Coordinate2D>& points) {
-    if (points.size() != 3U &&
-        points.size() != 4U) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_vtu_ascii: only linear triangle and quad cells are supported");
-    }
-
-    double scale = 1.0;
-    for (const auto point : points) {
-        scale = std::max(
-            scale,
-            std::max(
-                std::abs(point.x_m),
-                std::abs(point.y_m)));
-    }
-    const double tolerance =
-        256.0 *
-        std::numeric_limits<double>::epsilon() *
-        scale * scale;
-
-    if (points.size() == 4U) {
-        if (segments_intersect_strictly(
-                points[0], points[1],
-                points[2], points[3],
-                tolerance) ||
-            segments_intersect_strictly(
-                points[1], points[2],
-                points[3], points[0],
-                tolerance)) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_vtu_ascii: self-intersecting quad is unsupported");
-        }
-        double sign = 0.0;
-        for (std::size_t i = 0U; i < 4U; ++i) {
-            const double turn =
-                cross(
-                    points[i],
-                    points[(i + 1U) % 4U],
-                    points[(i + 2U) % 4U]);
-            if (std::abs(turn) <= tolerance) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::import_vtu_ascii: degenerate quad corner");
-            }
-            if (sign == 0.0) sign = turn;
-            else if ((turn > 0.0) !=
-                     (sign > 0.0)) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::import_vtu_ascii: concave quad is unsupported by the minimal baseline");
-            }
-        }
-    }
-
-    double twice_area = 0.0;
-    double centroid_x = 0.0;
-    double centroid_y = 0.0;
-    for (std::size_t i = 0U;
-         i < points.size();
-         ++i) {
-        const auto& a = points[i];
-        const auto& b =
-            points[(i + 1U) %
-                   points.size()];
-        const double term =
-            a.x_m * b.y_m -
-            b.x_m * a.y_m;
-        twice_area += term;
-        centroid_x +=
-            (a.x_m + b.x_m) * term;
-        centroid_y +=
-            (a.y_m + b.y_m) * term;
-    }
-    if (!std::isfinite(twice_area) ||
-        std::abs(twice_area) <= tolerance) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_vtu_ascii: degenerate cell area");
-    }
-    const Coordinate2D centroid{
-        centroid_x / (3.0 * twice_area),
-        centroid_y / (3.0 * twice_area)};
-    const double area =
-        0.5 * std::abs(twice_area);
-    if (!std::isfinite(centroid.x_m) ||
-        !std::isfinite(centroid.y_m) ||
-        !std::isfinite(area) ||
-        area <= 0.0) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_vtu_ascii: invalid cell metric");
-    }
-    return CellMetric{centroid, area};
-}
-
 [[nodiscard]] inline LocalIndex local_index(
     std::size_t value,
     const char* message) {
@@ -726,6 +720,266 @@ parse_source_kind(std::string_view value) {
     }
     return static_cast<
         CsrAdjacency::Offset>(value);
+}
+
+// The three arrays form a complete, unordered table of codimension-one
+// identities. Connectivity uses stable vertex IDs, not Piece point indices.
+struct FaceIdentity {
+    GlobalEntityId id;
+    std::vector<LocalIndex> vertices;
+    PhysicalTag physical_tag;
+};
+
+[[nodiscard]] inline std::vector<std::uint64_t> parse_face_integer_array(const XmlElement& array) {
+    require_ascii_data_array(array);
+    if (component_count(array) != 1U) throw std::invalid_argument("face identity requires scalar arrays");
+    const auto& type = require_attribute(array, "type", "face identity type is required");
+    std::vector<std::uint64_t> values;
+    if (type == "UInt64") {
+        values = parse_integer_values<std::uint64_t>(array.body, "invalid UInt64 face identity");
+    } else if (type == "Int64") {
+        for (const auto value : parse_integer_values<std::int64_t>(array.body, "invalid Int64 face identity")) {
+            if (value < 0) throw std::invalid_argument("face identity integers cannot be negative");
+            values.push_back(static_cast<std::uint64_t>(value));
+        }
+    } else {
+        throw std::invalid_argument("face identity arrays require UInt64 or Int64");
+    }
+    const auto tuples = array.attributes.find("NumberOfTuples");
+    if (tuples != array.attributes.end() &&
+        parse_size(tuples->second, "invalid face identity NumberOfTuples") != values.size()) {
+        throw std::invalid_argument("face identity tuple count mismatch");
+    }
+    return values;
+}
+
+// PhysicalTag is an opaque UInt32 label; repeated labels are valid.
+[[nodiscard]] inline std::vector<std::uint64_t> parse_face_physical_tags(const XmlElement& array) {
+    require_ascii_data_array(array);
+    if (component_count(array) != 1U ||
+        require_attribute(array, "type", "face physical tag type is required") != "UInt32") {
+        throw std::invalid_argument("face physical tags require scalar UInt32");
+    }
+    const auto values = parse_integer_values<std::uint32_t>(array.body, "invalid UInt32 face physical tag");
+    const auto tuples = array.attributes.find("NumberOfTuples");
+    if (tuples != array.attributes.end() &&
+        parse_size(tuples->second, "invalid face tag NumberOfTuples") != values.size()) {
+        throw std::invalid_argument("face physical tag tuple count mismatch");
+    }
+    return {values.begin(), values.end()};
+}
+
+[[nodiscard]] inline std::optional<std::vector<FaceIdentity>> parse_face_identities(
+    const XmlElement& grid, const XmlElement& piece,
+    std::span<const GlobalEntityId> vertex_ids, int dimension) {
+    if (find_element(piece.body, "FieldData")) {
+        throw std::invalid_argument("face FieldData must belong to UnstructuredGrid, not Piece");
+    }
+    const auto section = find_element(grid.body, "FieldData");
+    if (!section) return std::nullopt;
+    if (find_element(grid.body, "FieldData", section->next_offset)) {
+        throw std::invalid_argument("duplicate FieldData section");
+    }
+    std::map<std::string, std::vector<std::uint64_t>> arrays;
+    for (const auto& array : data_arrays(section->body)) {
+        const auto& name = require_attribute(array, "Name", "FieldData array Name is required");
+        if (name == global_vertex_id_name || name == global_cell_id_name) {
+            throw std::invalid_argument("point/cell identity cannot be stored in FieldData");
+        }
+        if (face_metadata_name(name) && !arrays.emplace(name, name == face_physical_tag_name ?
+                parse_face_physical_tags(array) : parse_face_integer_array(array)).second) {
+            throw std::invalid_argument("duplicate face identity array");
+        }
+    }
+    if (arrays.empty()) return std::nullopt; // Other dataset metadata keeps legacy behavior.
+    if (!arrays.contains(std::string(global_face_id_name)) ||
+        !arrays.contains(std::string(face_offsets_name)) || !arrays.contains(std::string(face_vertices_name))) {
+        throw std::invalid_argument("incomplete face identity table for face metadata");
+    }
+    const auto& ids = arrays.at(std::string(global_face_id_name));
+    const auto& offsets = arrays.at(std::string(face_offsets_name));
+    const auto& vertices = arrays.at(std::string(face_vertices_name));
+    if (ids.empty() || offsets.size() != ids.size()) {
+        throw std::invalid_argument("face identity/offset count mismatch");
+    }
+    const auto tags = arrays.find(std::string(face_physical_tag_name));
+    if (tags != arrays.end() && tags->second.size() != ids.size()) {
+        throw std::invalid_argument("face physical tag count mismatch");
+    }
+    std::map<std::uint64_t, LocalIndex> lookup;
+    for (std::size_t i = 0; i < vertex_ids.size(); ++i) {
+        if (!lookup.emplace(vertex_ids[i].value(), local_index(i, "face vertex index overflow")).second) {
+            throw std::invalid_argument("face table requires unique vertex IDs");
+        }
+    }
+    std::set<std::uint64_t> unique_ids;
+    std::set<std::vector<std::uint64_t>> unique_faces;
+    std::vector<FaceIdentity> result;
+    std::size_t begin = 0U;
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        if (offsets[i] > vertices.size() || offsets[i] <= begin) {
+            throw std::invalid_argument("invalid face vertex offset");
+        }
+        const auto end = static_cast<std::size_t>(offsets[i]);
+        const auto width = end - begin;
+        if ((dimension == 2 && width != 2U) || (dimension == 3 && width != 3U && width != 4U)) {
+            throw std::invalid_argument("invalid face identity width for dimension");
+        }
+        FaceIdentity face{GlobalEntityId{ids[i]}, {}, PhysicalTag{tags == arrays.end() ? 0U :
+            static_cast<std::uint32_t>(tags->second[i])}};
+        std::vector<std::uint64_t> key;
+        for (auto j = begin; j < end; ++j) {
+            const auto vertex = lookup.find(vertices[j]);
+            if (vertex == lookup.end()) throw std::invalid_argument("face references unknown vertex ID");
+            face.vertices.push_back(vertex->second);
+            key.push_back(vertices[j]);
+        }
+        std::sort(key.begin(), key.end());
+        if (std::adjacent_find(key.begin(), key.end()) != key.end() ||
+            !unique_ids.insert(ids[i]).second || !unique_faces.insert(key).second) {
+            throw std::invalid_argument("duplicate face ID, face binding or face vertex");
+        }
+        result.push_back(std::move(face));
+        begin = end;
+    }
+    if (begin != vertices.size()) throw std::invalid_argument("unused face vertex payload");
+    return result;
+}
+
+
+[[nodiscard]] inline std::vector<MeshExchangeGroup> parse_groups(
+    const XmlElement& grid, const Topology& topology, int dimension) {
+    const auto section = find_element(grid.body, "FieldData");
+    if (!section) return {};
+    std::array<std::optional<std::vector<std::uint64_t>>, group_array_names.size()> arrays;
+    std::size_t present = 0U;
+    for (const auto& array : data_arrays(section->body)) {
+        const auto& name = require_attribute(array, "Name", "FieldData array Name is required");
+        if (!group_metadata_name(name)) continue;
+        const auto found = std::find(group_array_names.begin(), group_array_names.end(), name);
+        if (found == group_array_names.end()) throw std::invalid_argument("unknown reserved VTU group array");
+        const auto index = static_cast<std::size_t>(std::distance(group_array_names.begin(), found));
+        require_ascii_data_array(array);
+        if (arrays[index] || component_count(array) != 1U ||
+            require_attribute(array, "type", "VTU group array type is required") != group_array_types[index]) {
+            throw std::invalid_argument("duplicate or invalid VTU group array type/components");
+        }
+        auto values = parse_integer_values<std::uint64_t>(array.body, "invalid VTU group integer");
+        const std::uint64_t maximum = group_array_types[index] == "UInt8" ? 255U :
+            group_array_types[index] == "UInt32" ? std::numeric_limits<std::uint32_t>::max() :
+            std::numeric_limits<std::uint64_t>::max();
+        if (std::any_of(values.begin(), values.end(), [maximum](auto value) { return value > maximum; })) {
+            throw std::invalid_argument("VTU group integer outside declared type");
+        }
+        const auto tuples = array.attributes.find("NumberOfTuples");
+        if (tuples != array.attributes.end() &&
+            parse_size(tuples->second, "invalid VTU group tuple count") != values.size()) {
+            throw std::invalid_argument("VTU group tuple count mismatch");
+        }
+        arrays[index].emplace(std::move(values));
+        ++present;
+    }
+    if (present == 0U) return {};
+    if (present != arrays.size()) throw std::invalid_argument("incomplete VTU group table");
+    if (*arrays[0] != std::vector<std::uint64_t>{1U}) throw std::invalid_argument("unsupported VTU group schema version");
+    const auto count = arrays[1]->size();
+    for (const auto index : {2U, 3U, 4U, 6U}) {
+        if (arrays[index]->size() != count) throw std::invalid_argument("VTU group row count mismatch");
+    }
+    std::vector<MeshExchangeGroup> groups;
+    groups.reserve(count);
+    std::size_t name_begin = 0U, member_begin = 0U;
+    for (std::size_t row = 0U; row < count; ++row) {
+        if ((*arrays[1])[row] > static_cast<std::uint64_t>(EntityKind::cell)) {
+            throw std::invalid_argument("invalid VTU group entity kind");
+        }
+        const auto location = static_cast<EntityKind>((*arrays[1])[row]);
+        if ((*arrays[2])[row] != group_dimension(location, dimension)) {
+            throw std::invalid_argument("VTU group dimension disagrees with entity kind");
+        }
+        const auto name_end = (*arrays[4])[row], member_end = (*arrays[6])[row];
+        if (name_end < name_begin || name_end > arrays[5]->size() ||
+            member_end < member_begin || member_end > arrays[7]->size()) {
+            throw std::invalid_argument("invalid VTU group ragged offset");
+        }
+        MeshExchangeGroup group{location, static_cast<std::uint32_t>((*arrays[3])[row]), {}, {}};
+        for (auto index = name_begin; index < name_end; ++index) group.name.push_back(static_cast<char>((*arrays[5])[index]));
+        validate_group_utf8(group.name);
+        for (auto index = member_begin; index < member_end; ++index) group.members.emplace_back((*arrays[7])[index]);
+        groups.push_back(std::move(group));
+        name_begin = static_cast<std::size_t>(name_end);
+        member_begin = static_cast<std::size_t>(member_end);
+    }
+    if (name_begin != arrays[5]->size() || member_begin != arrays[7]->size()) {
+        throw std::invalid_argument("unused VTU group ragged payload");
+    }
+    validate_mesh_exchange_groups(topology, groups);
+    return groups;
+}
+
+inline void validate_vtu_face_boundary(const Topology& topology, const FaceBoundarySnapshot& boundary) {
+    if (boundary.face_count() != topology.entity_count(EntityKind::face)) {
+        throw std::invalid_argument("VTU face boundary count mismatch");
+    }
+    const auto& support = topology.relation(EntityKind::face, EntityKind::cell);
+    for (std::size_t i = 0; i < boundary.face_count(); ++i) {
+        const auto face = local_index(i, "face index overflow");
+        const auto count = support.adjacent(face).size();
+        if ((count != 1U && count != 2U) || boundary.is_boundary(face) != (count == 1U) ||
+            (count == 2U && boundary.has_physical_tag(face))) {
+            throw std::invalid_argument("VTU face classification/tag disagrees with topology");
+        }
+    }
+}
+
+inline void write_face_identities(std::ostringstream& output, const Topology& topology,
+                                  const FaceBoundarySnapshot& boundary, int dimension,
+                                  std::span<const MeshExchangeGroup> groups) {
+    validate_mesh_exchange_groups(topology, groups);
+    validate_vtu_face_boundary(topology, boundary);
+    const auto face_ids = topology.global_ids(EntityKind::face);
+    const auto vertex_ids = topology.global_ids(EntityKind::vertex);
+    const auto& relation = topology.relation(EntityKind::face, EntityKind::vertex);
+    std::vector<std::uint64_t> ids, offsets, vertices, tags;
+    for (std::size_t i = 0; i < face_ids.size(); ++i) {
+        ids.push_back(face_ids[i].value());
+        tags.push_back(boundary.physical_tags()[i].value());
+        for (const auto vertex : relation.adjacent(local_index(i, "face index overflow"))) {
+            vertices.push_back(vertex_ids[vertex.value()].value());
+        }
+        offsets.push_back(static_cast<std::uint64_t>(vertices.size()));
+    }
+    output << "    <FieldData>\n";
+    const auto write = [&](std::string_view name, const std::vector<std::uint64_t>& values,
+                           std::string_view type = "UInt64") {
+        output << "      <DataArray type=\"" << type << "\" Name=\"" << name
+               << "\" NumberOfComponents=\"1\" NumberOfTuples=\"" << values.size()
+               << "\" format=\"ascii\">\n        ";
+        for (const auto value : values) output << value << ' ';
+        output << "\n      </DataArray>\n";
+    };
+    write(global_face_id_name, ids);
+    write(face_offsets_name, offsets);
+    write(face_vertices_name, vertices);
+    write(face_physical_tag_name, tags, "UInt32");
+    if (!groups.empty()) {
+        std::array<std::vector<std::uint64_t>, group_array_names.size()> arrays;
+        arrays[0] = {1U};
+        for (const auto& group : groups) {
+            validate_group_utf8(group.name);
+            arrays[1].push_back(static_cast<std::uint64_t>(group.location));
+            arrays[2].push_back(group_dimension(group.location, dimension));
+            arrays[3].push_back(group.tag);
+            for (const auto byte : group.name) arrays[5].push_back(static_cast<unsigned char>(byte));
+            arrays[4].push_back(static_cast<std::uint64_t>(arrays[5].size()));
+            for (const auto member : group.members) arrays[7].push_back(member.value());
+            arrays[6].push_back(static_cast<std::uint64_t>(arrays[7].size()));
+        }
+        for (std::size_t index = 0U; index < arrays.size(); ++index) {
+            write(group_array_names[index], arrays[index], group_array_types[index]);
+        }
+    }
+    output << "    </FieldData>\n";
 }
 
 [[nodiscard]] inline std::string attribute(
@@ -771,12 +1025,10 @@ inline void validate_export_fields(
             throw std::invalid_argument(
                 "mpmc::mesh::export_vtu_ascii: duplicate field ID in one association");
         }
-        if (expected_location ==
-                EntityKind::cell &&
-            field.metadata().id ==
-                global_cell_id_name) {
+        if (field.metadata().id == global_cell_id_name ||
+            field.metadata().id == global_vertex_id_name || face_metadata_name(field.metadata().id) || group_metadata_name(field.metadata().id)) {
             throw std::invalid_argument(
-                "mpmc::mesh::export_vtu_ascii: cell field name is reserved for stable cell identity");
+                "mpmc::mesh::export_vtu_ascii: field name is reserved for stable entity identity");
         }
     }
 }
@@ -1201,6 +1453,12 @@ import_vtu_ascii(std::string_view content) {
         }
     }
 
+    std::vector<GlobalEntityId> vertex_ids;
+    vertex_ids.reserve(point_count);
+    for (std::size_t point = 0; point < point_count; ++point) {
+        vertex_ids.emplace_back(static_cast<std::uint64_t>(point) + 1U);
+    }
+
     std::vector<ParsedField>
         parsed_point_fields;
     const auto point_data =
@@ -1217,6 +1475,10 @@ import_vtu_ascii(std::string_view content) {
                 throw std::invalid_argument(
                     "mpmc::mesh::import_vtu_ascii: duplicate PointData Name");
             }
+            if (name == global_vertex_id_name) {
+                vertex_ids = parse_vertex_ids(array, point_count);
+                continue;
+            }
             parsed_point_fields.push_back(
                 parse_field(
                     array,
@@ -1225,288 +1487,27 @@ import_vtu_ascii(std::string_view content) {
         }
     }
 
-    std::vector<CellMetric> cell_metrics;
-    cell_metrics.reserve(cell_count);
-    std::map<EdgeKey, FaceBuild> faces_by_edge;
-    for (std::size_t cell = 0U;
-         cell < cell_count;
-         ++cell) {
-        std::vector<Coordinate2D> polygon;
-        polygon.reserve(
-            cell_point_indices[cell].size());
-        for (const auto point :
-             cell_point_indices[cell]) {
-            polygon.push_back(
-                coordinates[point]);
+    std::vector<LinearCell2D> cells;
+    cells.reserve(cell_count);
+    for (std::size_t i = 0; i < cell_count; ++i) {
+        LinearCell2D cell{GlobalEntityId{cell_global_ids[i]},
+            types[i] == 5 ? LinearCellType2D::triangle : LinearCellType2D::quadrilateral, {}};
+        for (const auto point : cell_point_indices[i]) {
+            cell.vertices.push_back(local_index(point,
+                "mpmc::mesh::import_vtu_ascii: vertex local index overflow"));
         }
-        cell_metrics.push_back(
-            polygon_metric(polygon));
-
-        const auto& points =
-            cell_point_indices[cell];
-        for (std::size_t edge = 0U;
-             edge < points.size();
-             ++edge) {
-            const auto key =
-                edge_key(
-                    points[edge],
-                    points[
-                        (edge + 1U) %
-                        points.size()]);
-            auto [found, inserted] =
-                faces_by_edge.emplace(
-                    key,
-                    FaceBuild{key, {}});
-            found->second.adjacent_cells
-                .push_back(cell);
-            if (found->second
-                    .adjacent_cells.size() >
-                2U) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::import_vtu_ascii: non-manifold edge belongs to more than two cells");
-            }
-            (void)inserted;
-        }
+        cells.push_back(std::move(cell));
     }
-
-    std::vector<FaceBuild> faces;
-    faces.reserve(faces_by_edge.size());
-    for (auto& [key, face] :
-         faces_by_edge) {
-        std::sort(
-            face.adjacent_cells.begin(),
-            face.adjacent_cells.end());
-        faces.push_back(std::move(face));
-        (void)key;
+    const auto identities = parse_face_identities(grid, piece, vertex_ids, 2);
+    std::vector<LinearFaceAnnotation2D> annotations;
+    if (identities) for (const auto& face : *identities) {
+        annotations.push_back({{face.vertices[0], face.vertices[1]}, face.id, face.physical_tag});
     }
-
-    Topology::EntityIds ids;
-    ids.vertices.reserve(point_count);
-    for (std::size_t point = 0U;
-         point < point_count;
-         ++point) {
-        ids.vertices.emplace_back(
-            static_cast<std::uint64_t>(
-                point) +
-            1U);
+    auto mesh = make_linear_mesh_2d(std::move(vertex_ids), std::move(coordinates), cells, annotations);
+    if (identities && identities->size() != mesh.topology.entity_count(EntityKind::face)) {
+        throw std::invalid_argument("face identity table must cover every mesh face");
     }
-    ids.faces.reserve(faces.size());
-    for (std::size_t face = 0U;
-         face < faces.size();
-         ++face) {
-        ids.faces.emplace_back(
-            static_cast<std::uint64_t>(
-                face) +
-            1U);
-    }
-    ids.cells.reserve(cell_count);
-    for (const auto id : cell_global_ids) {
-        ids.cells.emplace_back(id);
-    }
-
-    std::map<EdgeKey, std::size_t>
-        face_local_by_edge;
-    for (std::size_t face = 0U;
-         face < faces.size();
-         ++face) {
-        face_local_by_edge.emplace(
-            faces[face].key, face);
-    }
-
-    std::vector<CsrAdjacency::Offset>
-        cell_vertex_offsets{0U};
-    std::vector<LocalIndex> cell_vertices;
-    std::vector<CsrAdjacency::Offset>
-        cell_face_offsets{0U};
-    std::vector<LocalIndex> cell_faces;
-    cell_vertex_offsets.reserve(
-        cell_count + 1U);
-    cell_face_offsets.reserve(
-        cell_count + 1U);
-
-    for (const auto& points :
-         cell_point_indices) {
-        for (const auto point : points) {
-            cell_vertices.push_back(
-                local_index(
-                    point,
-                    "mpmc::mesh::import_vtu_ascii: vertex local index overflow"));
-        }
-        for (std::size_t edge = 0U;
-             edge < points.size();
-             ++edge) {
-            const auto key =
-                edge_key(
-                    points[edge],
-                    points[
-                        (edge + 1U) %
-                        points.size()]);
-            const auto found =
-                face_local_by_edge.find(key);
-            if (found ==
-                face_local_by_edge.end()) {
-                throw std::logic_error(
-                    "mpmc::mesh::import_vtu_ascii: internal face lookup failed");
-            }
-            cell_faces.push_back(
-                local_index(
-                    found->second,
-                    "mpmc::mesh::import_vtu_ascii: face local index overflow"));
-        }
-        cell_vertex_offsets.push_back(
-            offset_value(
-                cell_vertices.size(),
-                "mpmc::mesh::import_vtu_ascii: cell->vertex CSR overflow"));
-        cell_face_offsets.push_back(
-            offset_value(
-                cell_faces.size(),
-                "mpmc::mesh::import_vtu_ascii: cell->face CSR overflow"));
-    }
-
-    std::vector<CsrAdjacency::Offset>
-        face_vertex_offsets{0U};
-    std::vector<LocalIndex> face_vertices;
-    std::vector<CsrAdjacency::Offset>
-        face_cell_offsets{0U};
-    std::vector<LocalIndex> face_cells;
-    face_vertex_offsets.reserve(
-        faces.size() + 1U);
-    face_cell_offsets.reserve(
-        faces.size() + 1U);
-
-    for (const auto& face : faces) {
-        face_vertices.push_back(
-            local_index(
-                face.key.first,
-                "mpmc::mesh::import_vtu_ascii: face vertex local index overflow"));
-        face_vertices.push_back(
-            local_index(
-                face.key.second,
-                "mpmc::mesh::import_vtu_ascii: face vertex local index overflow"));
-        for (const auto cell :
-             face.adjacent_cells) {
-            face_cells.push_back(
-                local_index(
-                    cell,
-                    "mpmc::mesh::import_vtu_ascii: face cell local index overflow"));
-        }
-        face_vertex_offsets.push_back(
-            offset_value(
-                face_vertices.size(),
-                "mpmc::mesh::import_vtu_ascii: face->vertex CSR overflow"));
-        face_cell_offsets.push_back(
-            offset_value(
-                face_cells.size(),
-                "mpmc::mesh::import_vtu_ascii: face->cell CSR overflow"));
-    }
-
-    std::vector<CsrAdjacency> relations;
-    relations.reserve(4U);
-    relations.emplace_back(
-        EntityKind::cell,
-        EntityKind::vertex,
-        point_count,
-        std::move(cell_vertex_offsets),
-        std::move(cell_vertices));
-    relations.emplace_back(
-        EntityKind::cell,
-        EntityKind::face,
-        faces.size(),
-        std::move(cell_face_offsets),
-        std::move(cell_faces));
-    relations.emplace_back(
-        EntityKind::face,
-        EntityKind::vertex,
-        point_count,
-        std::move(face_vertex_offsets),
-        std::move(face_vertices));
-    relations.emplace_back(
-        EntityKind::face,
-        EntityKind::cell,
-        cell_count,
-        std::move(face_cell_offsets),
-        std::move(face_cells));
-
-    Topology topology{
-        std::move(ids),
-        std::move(relations)};
-
-    std::vector<Coordinate2D> cell_centroids;
-    std::vector<double> cell_areas;
-    cell_centroids.reserve(cell_count);
-    cell_areas.reserve(cell_count);
-    for (const auto metric : cell_metrics) {
-        cell_centroids.push_back(
-            metric.centroid);
-        cell_areas.push_back(
-            metric.area);
-    }
-
-    std::vector<Coordinate2D> face_centroids;
-    std::vector<double> face_lengths;
-    std::vector<LocalIndex> face_owners;
-    std::vector<UnitVector2D> face_normals;
-    face_centroids.reserve(faces.size());
-    face_lengths.reserve(faces.size());
-    face_owners.reserve(faces.size());
-    face_normals.reserve(faces.size());
-
-    for (const auto& face : faces) {
-        const auto a =
-            coordinates[face.key.first];
-        const auto b =
-            coordinates[face.key.second];
-        const double dx = b.x_m - a.x_m;
-        const double dy = b.y_m - a.y_m;
-        const double length =
-            std::hypot(dx, dy);
-        if (!std::isfinite(length) ||
-            length <= 0.0) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_vtu_ascii: face length must be finite and positive");
-        }
-        const Coordinate2D centroid{
-            std::midpoint(a.x_m, b.x_m),
-            std::midpoint(a.y_m, b.y_m)};
-        const std::size_t owner =
-            face.adjacent_cells.front();
-        const auto owner_centroid =
-            cell_metrics[owner].centroid;
-        UnitVector2D normal{
-            -dy / length,
-            dx / length};
-        const double dot =
-            normal.x *
-                (centroid.x_m -
-                 owner_centroid.x_m) +
-            normal.y *
-                (centroid.y_m -
-                 owner_centroid.y_m);
-        if (dot == 0.0) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_vtu_ascii: cannot orient face normal");
-        }
-        if (dot < 0.0) {
-            normal.x = -normal.x;
-            normal.y = -normal.y;
-        }
-        face_centroids.push_back(centroid);
-        face_lengths.push_back(length);
-        face_owners.push_back(
-            local_index(
-                owner,
-                "mpmc::mesh::import_vtu_ascii: face owner local index overflow"));
-        face_normals.push_back(normal);
-    }
-
-    Geometry2D geometry{
-        std::move(coordinates),
-        std::move(cell_centroids),
-        std::move(cell_areas),
-        std::move(face_centroids),
-        std::move(face_lengths),
-        std::move(face_owners),
-        std::move(face_normals)};
+    auto& topology = mesh.topology;
 
     std::vector<DenseFieldSnapshot> point_fields;
     point_fields.reserve(
@@ -1535,11 +1536,14 @@ import_vtu_ascii(std::string_view content) {
                 std::move(field.metadata)));
     }
 
+    auto groups = parse_groups(grid, topology, 2);
     return VtuImportResult{
         std::move(topology),
-        std::move(geometry),
+        std::move(mesh.geometry),
         std::move(point_fields),
-        std::move(cell_fields)};
+        std::move(cell_fields),
+        std::move(mesh.face_boundary),
+        std::move(groups)};
 }
 
 [[nodiscard]] inline std::string
@@ -1626,14 +1630,16 @@ export_vtu_ascii(const VtuImportResult& mesh) {
         std::numeric_limits<double>::max_digits10);
     output << "<?xml version=\"1.0\"?>\n"
            << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n"
-           << "  <UnstructuredGrid>\n"
-           << "    <Piece NumberOfPoints=\""
+           << "  <UnstructuredGrid>\n";
+    write_face_identities(output, topology, mesh.face_boundary, 2, mesh.groups);
+    output << "    <Piece NumberOfPoints=\""
            << point_count
            << "\" NumberOfCells=\""
            << cell_count
            << "\">\n";
 
     output << "      <PointData>\n";
+    write_vertex_ids(output, topology);
     for (const auto& field :
          mesh.point_fields) {
         write_field(output, field, 8U);

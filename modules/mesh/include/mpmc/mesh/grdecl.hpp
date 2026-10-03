@@ -674,9 +674,12 @@ import_grdecl(
                     token, message);
             },
             "mpmc::mesh::import_grdecl: invalid ZCORN value");
-    const auto actnum =
-        expand_numeric_record(
-            require_record(records, "ACTNUM"),
+    // GRDECL writers may omit ACTNUM for an all-active grid (OPM ACTNUM
+    // default 1; independently exercised with XTGeo 4.26.0 output).
+    const auto activity_record = records.find("ACTNUM");
+    const auto actnum = activity_record == records.end() ?
+        std::vector<std::int64_t>(cell_count, 1) : expand_numeric_record(
+            activity_record->second,
             [](std::string_view token,
                const char* message) {
                 return parse_integer<std::int64_t>(

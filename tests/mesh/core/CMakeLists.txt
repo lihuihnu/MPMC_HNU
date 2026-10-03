@@ -6,6 +6,8 @@ enable_testing()
 
 add_executable(mpmc_mesh_core_tests
     core_test.cpp
+    linear_cell_mesh_2d_test.cpp
+    linear_cell_mesh_2d_header_self_contained.cpp
     entity_header_self_contained.cpp
     csr_header_self_contained.cpp
     corner_point_geometry_3d_header_self_contained.cpp
@@ -50,16 +52,26 @@ target_link_libraries(
     PRIVATE mpmc::mesh)
 
 add_executable(mpmc_mesh_exchange_io_tests
-    exchange_io_test.cpp)
+    exchange_io_test.cpp
+    vtu_group_contract_test.cpp
+    mesh_exchange_group_header_self_contained.cpp)
 target_link_libraries(
     mpmc_mesh_exchange_io_tests
     PRIVATE mpmc::mesh)
+
+add_executable(mpmc_mesh_computational_tests
+    computational_mesh_test.cpp
+    computational_mesh_header_self_contained.cpp
+    linear_cell_geometric_operator_3d_header_self_contained.cpp
+    mesh_exchange_document_header_self_contained.cpp)
+target_link_libraries(mpmc_mesh_computational_tests PRIVATE mpmc::mesh)
 
 foreach(target IN ITEMS
         mpmc_mesh_core_tests
         mpmc_mesh_io3d_tests
         mpmc_mesh_cartesian_structured_tests
-        mpmc_mesh_exchange_io_tests)
+        mpmc_mesh_exchange_io_tests
+        mpmc_mesh_computational_tests)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
 
     if(MSVC)
@@ -81,7 +93,8 @@ if(MPMC_MESH_ENABLE_SANITIZERS)
             mpmc_mesh_core_tests
             mpmc_mesh_io3d_tests
             mpmc_mesh_cartesian_structured_tests
-            mpmc_mesh_exchange_io_tests)
+            mpmc_mesh_exchange_io_tests
+            mpmc_mesh_computational_tests)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -89,7 +102,7 @@ if(MPMC_MESH_ENABLE_SANITIZERS)
     endforeach()
 endif()
 
-foreach(case IN ITEMS strong_indices two_cell_quad invalid_csr topology_snapshot topology_invalid cartesian_2d_topology cartesian_2d_invalid cartesian_2d_geometry cartesian_2d_geometry_invalid face_boundary_snapshot face_boundary_invalid dense_field_snapshot dense_field_registry dense_field_registry_invalid dense_field_invalid gmsh_4_1_import gmsh_4_1_roundtrip gmsh_4_1_invalid vtu_ascii_import vtu_ascii_roundtrip vtu_ascii_invalid grdecl_import grdecl_inactive_degenerate grdecl_invalid active_corner_point_i_neighbor active_corner_point_k_neighbor active_corner_point_activity_mapping active_corner_point_invalid cell_face_geometric_operator_3d cell_face_geometric_operator_3d_skewed cell_face_geometric_operator_3d_invalid permeability_tensor_3d symmetric_permeability_tensor_3d symmetric_permeability_tensor_3d_invalid conductivity_field_contract conductivity_field_contract_invalid permeability_tensor_3d_invalid dof_layout_snapshot dof_layout_invalid partition_serial_snapshot partition_local_snapshot partition_invalid dof_numbering_serial dof_numbering_local dof_numbering_invalid shared_entity_plan_pair shared_entity_plan_invalid headers)
+foreach(case IN ITEMS linear_cell_mesh_2d_contract linear_cell_mesh_2d_invalid linear_cell_mesh_2d_import_parity linear_cell_mesh_2d_header strong_indices two_cell_quad invalid_csr topology_snapshot topology_invalid cartesian_2d_topology cartesian_2d_invalid cartesian_2d_geometry cartesian_2d_geometry_invalid face_boundary_snapshot face_boundary_invalid dense_field_snapshot dense_field_registry dense_field_registry_invalid dense_field_invalid gmsh_4_1_import gmsh_4_1_roundtrip gmsh_4_1_invalid vtu_ascii_import vtu_ascii_roundtrip vtu_ascii_invalid grdecl_import grdecl_inactive_degenerate grdecl_invalid active_corner_point_i_neighbor active_corner_point_k_neighbor active_corner_point_activity_mapping active_corner_point_invalid cell_face_geometric_operator_3d cell_face_geometric_operator_3d_skewed cell_face_geometric_operator_3d_invalid permeability_tensor_3d symmetric_permeability_tensor_3d symmetric_permeability_tensor_3d_invalid conductivity_field_contract conductivity_field_contract_invalid permeability_tensor_3d_invalid dof_layout_snapshot dof_layout_invalid partition_serial_snapshot partition_local_snapshot partition_invalid dof_numbering_serial dof_numbering_local dof_numbering_invalid shared_entity_plan_pair shared_entity_plan_invalid headers)
     add_test(NAME mesh.core.${case} COMMAND mpmc_mesh_core_tests ${case})
     set_tests_properties(mesh.core.${case}
         PROPERTIES LABELS "mesh;mesh.core;unit" TIMEOUT 30)
@@ -122,10 +135,15 @@ set_tests_properties(
         LABELS "mesh;mesh.core;io;exchange;unit"
         TIMEOUT 30)
 
+add_test(NAME mesh.core.computational_mesh COMMAND mpmc_mesh_computational_tests)
+set_tests_properties(mesh.core.computational_mesh PROPERTIES
+    LABELS "mesh;mesh.core;geometry;unit" TIMEOUT 30)
+
 add_custom_target(
     mpmc_mesh_core_all
     DEPENDS
         mpmc_mesh_core_tests
         mpmc_mesh_io3d_tests
         mpmc_mesh_cartesian_structured_tests
-        mpmc_mesh_exchange_io_tests)
+        mpmc_mesh_exchange_io_tests
+        mpmc_mesh_computational_tests)
