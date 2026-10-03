@@ -19,6 +19,7 @@
 #include <mpmc/mesh/topology.hpp>
 #include <mpmc/mesh/vtu.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -178,6 +179,22 @@ mesh::Topology two_cell_quad_topology() {
 }
 
 void topology_snapshot() {
+    // Both the increasing-ID path and the arbitrary-order path preserve input.
+    using Id = mesh::GlobalEntityId;
+    const auto maximum_id = std::numeric_limits<Id::value_type>::max();
+    for (const auto& input : std::vector<std::vector<Id>>{
+             {}, {Id{maximum_id}}, {Id{0U}, Id{3U}, Id{maximum_id}},
+             {Id{maximum_id}, Id{3U}, Id{0U}}, {Id{3U}, Id{0U}, Id{maximum_id}}}) {
+        mesh::Topology::EntityIds ids{input, input, input, input};
+        const mesh::Topology snapshot{std::move(ids), {}};
+        for (const auto kind : {mesh::EntityKind::vertex, mesh::EntityKind::edge,
+                               mesh::EntityKind::face, mesh::EntityKind::cell}) {
+            const auto actual = snapshot.global_ids(kind);
+            require(actual.size() == input.size() &&
+                        std::equal(actual.begin(), actual.end(), input.begin()),
+                    "ID validation must preserve every entity kind's local order");
+        }
+    }
     const auto topology = two_cell_quad_topology();
     require(topology.entity_count(mesh::EntityKind::vertex) == 6U, "vertex count");
     require(topology.entity_count(mesh::EntityKind::edge) == 0U, "edge count");
@@ -210,6 +227,26 @@ void topology_snapshot() {
 }
 
 void topology_invalid() {
+    using Id = mesh::GlobalEntityId;
+    const auto maximum_id = std::numeric_limits<Id::value_type>::max();
+    for (const auto& input : std::vector<std::vector<Id>>{
+             {Id{0U}, Id{0U}}, {Id{0U}, Id{maximum_id}, Id{maximum_id}},
+             {Id{3U}, Id{0U}, Id{3U}}, {Id{maximum_id}, Id{0U}, Id{maximum_id}}}) {
+        for (std::size_t kind = 0U; kind < mesh::Topology::entity_kind_count; ++kind) {
+            mesh::Topology::EntityIds ids;
+            const std::array<std::vector<Id>*, 4> arrays{
+                &ids.vertices, &ids.edges, &ids.faces, &ids.cells};
+            *arrays[kind] = input;
+            bool rejected = false;
+            try {
+                (void)mesh::Topology{std::move(ids), {}};
+            } catch (const std::invalid_argument& error) {
+                rejected = std::string_view(error.what()) ==
+                    "mpmc::mesh::Topology: duplicate global ID within entity kind";
+            }
+            require(rejected, "sorted and unsorted duplicates must retain their diagnostic");
+        }
+    }
     {
         mesh::Topology::EntityIds ids;
         ids.vertices = {mesh::GlobalEntityId{10U}, mesh::GlobalEntityId{10U}};

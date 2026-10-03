@@ -106,29 +106,42 @@ private:
         throw std::invalid_argument("mpmc::mesh::Topology: invalid entity kind");
     }
 
-    void validate_global_ids() const {
+    static void validate_entity_ids(const GlobalIdArray& ids) {
         constexpr auto local_max = std::numeric_limits<LocalIndex::value_type>::max();
         const std::uint64_t local_capacity = static_cast<std::uint64_t>(local_max) + 1ULL;
+        if (static_cast<std::uint64_t>(ids.size()) > local_capacity) {
+            throw std::length_error(
+                "mpmc::mesh::Topology: entity count exceeds LocalIndex capacity");
+        }
+
+        // Structured builders already emit increasing IDs. Prove uniqueness in
+        // one pass without allocating, while preserving the caller's ordering.
+        const auto first_non_increasing = std::adjacent_find(
+            ids.begin(), ids.end(), [](GlobalEntityId previous, GlobalEntityId next) {
+                return previous.value() >= next.value();
+            });
+        if (first_non_increasing == ids.end()) {
+            return;
+        }
+
+        // Arbitrary ID order remains valid; sort only a temporary scalar copy.
+        std::vector<GlobalEntityId::value_type> sorted;
+        sorted.reserve(ids.size());
+        for (const GlobalEntityId id : ids) {
+            sorted.push_back(id.value());
+        }
+        std::sort(sorted.begin(), sorted.end());
+        if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
+            throw std::invalid_argument(
+                "mpmc::mesh::Topology: duplicate global ID within entity kind");
+        }
+    }
+
+    void validate_global_ids() const {
         const std::array<const GlobalIdArray*, entity_kind_count> arrays{
             &entity_ids_.vertices, &entity_ids_.edges, &entity_ids_.faces, &entity_ids_.cells};
-
         for (const GlobalIdArray* ids : arrays) {
-            if (static_cast<std::uint64_t>(ids->size()) > local_capacity) {
-                throw std::length_error(
-                    "mpmc::mesh::Topology: entity count exceeds LocalIndex capacity");
-            }
-
-            // Preserve caller ordering: duplicate detection uses a temporary scalar copy.
-            std::vector<GlobalEntityId::value_type> sorted;
-            sorted.reserve(ids->size());
-            for (const GlobalEntityId id : *ids) {
-                sorted.push_back(id.value());
-            }
-            std::sort(sorted.begin(), sorted.end());
-            if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::Topology: duplicate global ID within entity kind");
-            }
+            validate_entity_ids(*ids);
         }
     }
 
