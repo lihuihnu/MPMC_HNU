@@ -469,27 +469,25 @@ topology_with_gmsh_ids(
         copy_relations(source)};
 }
 
-[[nodiscard]] inline std::size_t
-local_from_global(
-    const Topology& topology,
-    EntityKind location,
-    GlobalEntityId id) {
-    const auto ids =
-        topology.global_ids(location);
-    const auto found =
-        std::find(
-            ids.begin(),
-            ids.end(),
-            id);
-    if (found == ids.end()) {
-        throw std::invalid_argument(
-            "mpmc::mesh::canonical writer: group member is absent from topology");
+// The index is shared with document validation; the writer retains its own
+// missing-member diagnostic. Each wrapper belongs to one export and entity kind.
+class CanonicalEntityLookup {
+public:
+    explicit CanonicalEntityLookup(std::span<const GlobalEntityId> ids)
+        : lookup_(ids) {}
+
+    [[nodiscard]] std::size_t local(GlobalEntityId id) {
+        const auto local = lookup_.find(id);
+        if (!local.has_value()) {
+            throw std::invalid_argument(
+                "mpmc::mesh::canonical writer: group member is absent from topology");
+        }
+        return *local;
     }
-    return static_cast<std::size_t>(
-        std::distance(
-            ids.begin(),
-            found));
-}
+
+private:
+    mesh_exchange_detail::GroupEntityLookup lookup_;
+};
 
 [[nodiscard]] inline FaceBoundarySnapshot
 canonical_face_boundary(
@@ -517,6 +515,8 @@ canonical_face_boundary(
             source_tags.end());
     }
 
+    CanonicalEntityLookup face_lookup(
+        document.topology().global_ids(EntityKind::face));
     for (const auto& group :
          document.groups()) {
         if (group.location !=
@@ -526,10 +526,7 @@ canonical_face_boundary(
         for (const auto member :
              group.members) {
             const std::size_t local =
-                local_from_global(
-                    document.topology(),
-                    EntityKind::face,
-                    member);
+                face_lookup.local(member);
             if (tags[local].is_tagged() &&
                 tags[local].value() !=
                     group.tag) {
@@ -594,6 +591,8 @@ canonical_cell_groups(
     std::vector<std::vector<std::uint32_t>>
         tags(cell_count);
 
+    CanonicalEntityLookup cell_lookup(
+        document.topology().global_ids(EntityKind::cell));
     for (const auto& group :
          document.groups()) {
         if (group.location !=
@@ -603,10 +602,7 @@ canonical_cell_groups(
         for (const auto member :
              group.members) {
             const std::size_t local =
-                local_from_global(
-                    document.topology(),
-                    EntityKind::cell,
-                    member);
+                cell_lookup.local(member);
             tags[local].push_back(
                 group.tag);
         }

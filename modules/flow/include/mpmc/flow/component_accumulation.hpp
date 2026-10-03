@@ -1,6 +1,8 @@
 #ifndef MPMC_FLOW_COMPONENT_ACCUMULATION_HPP
 #define MPMC_FLOW_COMPONENT_ACCUMULATION_HPP
 
+#include <mpmc/flow/detail/composition_coordinates.hpp>
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/natural_variable_cell_state.hpp>
 
 #include <algorithm>
@@ -124,20 +126,7 @@ namespace component_accumulation_detail {
 [[nodiscard]] inline bool near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        4096.0 *
-            std::numeric_limits<double>::
-                epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<4096>(first, second);
 }
 
 inline void validate_porosity(
@@ -248,25 +237,8 @@ d_composition(
     std::size_t phase,
     std::size_t component,
     std::size_t column) {
-    const auto identity =
-        layout.composition_unknown_identity(
-            column);
-    if (!identity ||
-        natural_variable_detail::
-                checked_phase_index(
-                    identity->phase) !=
-            phase) {
-        return 0.0;
-    }
-    if (component == identity->component) {
-        return 1.0;
-    }
-    if (component ==
-        layout.dependent_composition_component(
-            static_cast<PhaseSlot3>(phase))) {
-        return -1.0;
-    }
-    return 0.0;
+    return mpmc::flow::composition_coordinate_detail::derivative(
+        layout, phase, component, column);
 }
 
 inline void validate_density_linearization(
