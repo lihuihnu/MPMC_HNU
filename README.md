@@ -86,7 +86,7 @@
 
 ## 构建、验证与待完成方向
 
-根 [CMakeLists.txt](CMakeLists.txt) 和 [CMakePresets.json](CMakePresets.json) 当前只配置 AD；热力学、闪蒸、physics、服务和产品采用各自独立入口。请从上述模块文档选择构建命令，避免把根目录构建误认为整个项目的验证。
+根 [CMakeLists.txt](CMakeLists.txt) 和 [CMakePresets.json](CMakePresets.json) 默认仍只配置 AD，可按需启用 thermodynamics、flash、mesh、discretization，以及 flow_discretization / well_discretization 桥接库。flash 自动带入 thermodynamics 和 AD，discretization 自动带入 mesh；flow_discretization 带入 flow、thermodynamics、discretization 与 mesh，并提供 flow_thermodynamics 消费目标；well_discretization 带入 well 和完整 flow 桥接依赖链。各选项可同时启用。选项、preset 与下游消费示例见 [根入口用法](tests/build/root_libraries/README.md)。根 CTest 仍只注册 AD 算术，启用库不会自动执行模块专项测试；其他模块、PETSc 桥接、服务与产品保留各自独立入口。配置日志明确报告库集合和测试范围，不能把根目录构建误认为整个项目的验证。
 
 开发流程以 [AGENTS.md](AGENTS.md) 为唯一规则入口：先审计，做可回退增量，再按受影响依赖选择测试。正式自动化中，普通 Linux 编译、单元测试和常规矩阵默认使用 GitHub 官方 `ubuntu-24.04`，Windows/macOS 使用对应官方托管 runner；当前私有 `mpmc_hnu` 白名单仅覆盖 `flow_discretization_petsc.yml` 的 PETSc/MPI 2-rank 集成/求解 Gate，以及 `cpa_performance_audit.yml` 的经审计长时 paired performance audit。workflow 在私有 runner 上仍必须显式安装/核验固定依赖，不依赖持久机器的偶然环境。纯文档核对内容、相对引用和差异范围，代码变更运行必要增量及受影响下游。解析/数值回归、synthetic fixture、实验验证与性能基准分别报告，不把已有工作流当作已经通过的证据。
 

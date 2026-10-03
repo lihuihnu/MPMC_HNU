@@ -566,6 +566,50 @@ def expected_route(**overrides):
     expected.update(overrides)
     return expected
 
+# Root optional-library consumers are owned by the arithmetic matrix. This
+# precise header closure comes from the root consumers, not every module header.
+root_build_inputs = {
+    "modules/thermodynamics/CMakeLists.txt",
+    "modules/flash/CMakeLists.txt",
+    "modules/thermodynamics/include/mpmc/thermodynamics/pr76_pure.hpp",
+    "modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp",
+    "modules/thermodynamics/include/mpmc/thermodynamics/components.hpp",
+    "modules/flash/include/mpmc/flash/rachford_rice.hpp",
+    "modules/flash/include/mpmc/flash/pt_stability.hpp",
+    "modules/mesh/CMakeLists.txt",
+    "modules/discretization/CMakeLists.txt",
+    "modules/mesh/include/mpmc/mesh/entity.hpp",
+    "modules/discretization/include/mpmc/discretization/tpfa_half_transmissibility_3d.hpp",
+    "modules/discretization/include/mpmc/discretization/tpfa_half_connection_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/cell_face_geometric_operator_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/corner_point_geometry_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/topology.hpp",
+    "modules/mesh/include/mpmc/mesh/csr_adjacency.hpp",
+    "modules/mesh/include/mpmc/mesh/permeability_tensor_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/cartesian_symmetric_tensor_3d.hpp",
+    "modules/mesh/include/mpmc/mesh/dense_field.hpp",
+    "modules/mesh/include/mpmc/mesh/dense_field_registry.hpp",
+    "modules/flow/CMakeLists.txt",
+    "modules/flow/discretization/CMakeLists.txt",
+    "modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp",
+    "modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp",
+    "modules/well/CMakeLists.txt",
+    "modules/well/discretization/CMakeLists.txt",
+    "modules/well/include/mpmc/well/peaceman_well_index_3d.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/cell_source_adapter.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/component_molar_rate.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/energy_rate.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/hydraulic_conductance.hpp",
+    "modules/well/discretization/include/mpmc/well_discretization/pressure_drawdown_rate.hpp",
+    "modules/flow/include/mpmc/flow/component_accumulation.hpp",
+    "modules/flow/include/mpmc/flow/detail/composition_coordinates.hpp",
+    "modules/flow/include/mpmc/flow/detail/validation.hpp",
+    "modules/flow/include/mpmc/flow/energy_accumulation.hpp",
+    "modules/flow/include/mpmc/flow/phase_transport.hpp",
+    "modules/flow/include/mpmc/flow/saturation_constitutive.hpp",
+}
+
 def ad_suites_for(paths):
     selected = set()
     infrastructure = False
@@ -581,6 +625,9 @@ def ad_suites_for(paths):
         ".github/workflows/ad.yml",
     }
     for path in paths:
+        if path in root_build_inputs or path.startswith("tests/build/root_libraries/"):
+            selected.add("arithmetic")
+            continue
         owned = (
             path.startswith("modules/ad/") or
             path.startswith("tests/ad/") or
@@ -792,6 +839,39 @@ ad_checks = [
     (["modules/ad/include/mpmc/ad/math.hpp", "tests/ad/runtime/runtime_test.cpp"],
      ["jacobian", "math", "runtime"]),
     (["modules/ad/runtime_differentiate.md"], []),
+    (["tests/build/root_libraries/consumer.cpp"], ["arithmetic"]),
+    (["tests/build/root_libraries/verify.py"], ["arithmetic"]),
+    (["tests/build/root_libraries/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/thermodynamics/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/flash/CMakeLists.txt"], ["arithmetic"]),
+    (["tests/build/root_libraries/README.md"], ["arithmetic"]),
+    (["modules/thermodynamics/include/mpmc/thermodynamics/pr_parameters.hpp"], ["arithmetic"]),
+    (["modules/flash/include/mpmc/flash/rachford_rice.hpp"], ["arithmetic"]),
+    (["modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp"], []),
+    (["tests/build/root_libraries/old.cpp", "tests/ad/math/math_test.cpp"], ["arithmetic", "math"]),
+    (["tests/build/root_libraries/spatial_consumer.cpp"], ["arithmetic"]),
+    (["modules/mesh/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/discretization/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/mesh/include/mpmc/mesh/entity.hpp"], ["arithmetic"]),
+    (["modules/discretization/include/mpmc/discretization/tpfa_half_connection_3d.hpp"], ["arithmetic"]),
+    (["modules/mesh/include/mpmc/mesh/dense_field_registry.hpp"], ["arithmetic"]),
+    (["modules/mesh/include/mpmc/mesh/vtu.hpp"], []),
+    (["tests/build/root_libraries/flow_consumer.cpp"], ["arithmetic"]),
+    (["tests/build/root_libraries/flow_discretization_consumer.cpp"], ["arithmetic"]),
+    (["modules/flow/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/flow/discretization/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/flow/include/mpmc/flow/natural_variable_cell_state.hpp"], ["arithmetic"]),
+    (["modules/flow/discretization/include/mpmc/flow_discretization/cell_source.hpp"], ["arithmetic"]),
+    (["modules/flow/include/mpmc/flow/sw92_co2_water_properties.hpp"], []),
+    (["tests/build/root_libraries/well_consumer.cpp"], ["arithmetic"]),
+    (["tests/build/root_libraries/well_discretization_consumer.cpp"], ["arithmetic"]),
+    (["modules/well/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/well/discretization/CMakeLists.txt"], ["arithmetic"]),
+    (["modules/well/include/mpmc/well/peaceman_well_index_3d.hpp"], ["arithmetic"]),
+    (["modules/well/discretization/include/mpmc/well_discretization/cell_source_adapter.hpp"], ["arithmetic"]),
+    (["modules/flow/include/mpmc/flow/detail/composition_coordinates.hpp"], ["arithmetic"]),
+    (["modules/well/include/mpmc/well/single_well_control_policy.hpp"], []),
+    (["modules/well/discretization/petsc/CMakeLists.txt"], []),
 ]
 for paths, expected in ad_checks:
     actual = ad_suites_for(paths)
