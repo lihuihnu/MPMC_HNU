@@ -1334,6 +1334,7 @@
             "modules/mesh/include/mpmc/mesh/face_boundary.hpp",
             "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
             "modules/mesh/include/mpmc/mesh/geometry_2d.hpp",
+            "modules/mesh/include/mpmc/mesh/linear_cell_mesh_2d.hpp",
             "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
             "modules/mesh/include/mpmc/mesh/topology.hpp",
             "tests/mesh/external_compatibility/**",
@@ -1393,13 +1394,14 @@
           "modules/mesh/include/mpmc/mesh/face_boundary.hpp",
           "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
           "modules/mesh/include/mpmc/mesh/geometry_2d.hpp",
+          "modules/mesh/include/mpmc/mesh/linear_cell_mesh_2d.hpp",
           "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
           "modules/mesh/include/mpmc/mesh/topology.hpp",
           "tests/mesh/external_compatibility/**",
           ".github/workflows/mesh_external_compatibility.yml"
         ]
       },
-      "retained_hash": "09b44ded0bc1e294e951168dbb99a0a635f71c0d71a412ad2449ea4b1afa9e0f",
+      "retained_hash": "f1faf39701d64d6309c0d4108f21e54622d21f16f1bdd6b2883fa37fcfd1cb39",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "compatibility": "legacy_mesh_external_compatibility__compatibility"

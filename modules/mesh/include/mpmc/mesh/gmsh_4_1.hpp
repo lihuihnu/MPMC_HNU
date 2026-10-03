@@ -5,6 +5,7 @@
 #include <mpmc/mesh/entity.hpp>
 #include <mpmc/mesh/face_boundary.hpp>
 #include <mpmc/mesh/geometry_2d.hpp>
+#include <mpmc/mesh/linear_cell_mesh_2d.hpp>
 #include <mpmc/mesh/topology.hpp>
 
 #include <algorithm>
@@ -90,35 +91,6 @@ struct LineRecord {
     std::array<std::uint64_t, 2> node_tags;
 };
 
-struct EdgeKey {
-    std::uint64_t first;
-    std::uint64_t second;
-
-    [[nodiscard]] friend bool operator<(const EdgeKey& left,
-                                        const EdgeKey& right) noexcept {
-        return std::tie(left.first, left.second) <
-               std::tie(right.first, right.second);
-    }
-};
-
-struct FaceBuild {
-    EdgeKey key;
-    std::vector<std::size_t> adjacent_cells;
-    std::uint64_t global_id{0U};
-    std::uint32_t physical_tag{0U};
-    bool has_line_element{false};
-};
-
-struct CellBuild {
-    std::uint64_t global_id;
-    std::int64_t entity_tag;
-    std::vector<std::uint64_t> node_tags;
-    std::vector<LocalIndex> vertex_locals;
-    std::vector<EdgeKey> edge_keys;
-    Coordinate2D centroid;
-    double area_m2;
-};
-
 template <typename T>
 inline void read_value(std::istream& input, T& value, const char* message) {
     if (!(input >> value)) {
@@ -185,146 +157,6 @@ inline void require_positive_tag(std::int64_t value,
     if (value <= 0) {
         throw std::invalid_argument(message);
     }
-}
-
-[[nodiscard]] inline EdgeKey edge_key(std::uint64_t left,
-                                      std::uint64_t right) {
-    if (left == right) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_gmsh_4_1_ascii: degenerate edge with repeated node tag");
-    }
-    return left < right ? EdgeKey{left, right}
-                        : EdgeKey{right, left};
-}
-
-[[nodiscard]] inline double cross(Coordinate2D a,
-                                  Coordinate2D b,
-                                  Coordinate2D c) {
-    return (b.x_m - a.x_m) * (c.y_m - a.y_m) -
-           (b.y_m - a.y_m) * (c.x_m - a.x_m);
-}
-
-[[nodiscard]] inline bool segments_strictly_intersect(
-    Coordinate2D a,
-    Coordinate2D b,
-    Coordinate2D c,
-    Coordinate2D d,
-    double tolerance) {
-    const double c1 = cross(a, b, c);
-    const double c2 = cross(a, b, d);
-    const double c3 = cross(c, d, a);
-    const double c4 = cross(c, d, b);
-    if (std::abs(c1) <= tolerance ||
-        std::abs(c2) <= tolerance ||
-        std::abs(c3) <= tolerance ||
-        std::abs(c4) <= tolerance) {
-        return false;
-    }
-    return (c1 > 0.0) != (c2 > 0.0) &&
-           (c3 > 0.0) != (c4 > 0.0);
-}
-
-struct PolygonMetric {
-    Coordinate2D centroid;
-    double area;
-};
-
-[[nodiscard]] inline PolygonMetric polygon_metric(
-    const std::vector<Coordinate2D>& coordinates) {
-    if (coordinates.size() != 3U &&
-        coordinates.size() != 4U) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_gmsh_4_1_ascii: only linear triangles and quadrilaterals are supported");
-    }
-
-    double magnitude_scale = 1.0;
-    for (const auto coordinate : coordinates) {
-        if (!std::isfinite(coordinate.x_m) ||
-            !std::isfinite(coordinate.y_m)) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: non-finite cell coordinate");
-        }
-        magnitude_scale = std::max(
-            magnitude_scale,
-            std::max(
-                std::abs(coordinate.x_m),
-                std::abs(coordinate.y_m)));
-    }
-    const double tolerance =
-        256.0 * std::numeric_limits<double>::epsilon() *
-        magnitude_scale * magnitude_scale;
-
-    if (coordinates.size() == 4U) {
-        if (segments_strictly_intersect(
-                coordinates[0], coordinates[1],
-                coordinates[2], coordinates[3],
-                tolerance) ||
-            segments_strictly_intersect(
-                coordinates[1], coordinates[2],
-                coordinates[3], coordinates[0],
-                tolerance)) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: self-intersecting quadrilateral is unsupported");
-        }
-
-        double turn_sign = 0.0;
-        for (std::size_t i = 0U; i < 4U; ++i) {
-            const double turn = cross(
-                coordinates[i],
-                coordinates[(i + 1U) % 4U],
-                coordinates[(i + 2U) % 4U]);
-            if (std::abs(turn) <= tolerance) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::import_gmsh_4_1_ascii: degenerate quadrilateral corner");
-            }
-            if (turn_sign == 0.0) {
-                turn_sign = turn;
-            } else if ((turn > 0.0) !=
-                       (turn_sign > 0.0)) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::import_gmsh_4_1_ascii: concave quadrilateral is unsupported by the minimal baseline");
-            }
-        }
-    }
-
-    double twice_area = 0.0;
-    double centroid_numerator_x = 0.0;
-    double centroid_numerator_y = 0.0;
-    for (std::size_t i = 0U;
-         i < coordinates.size();
-         ++i) {
-        const auto& a = coordinates[i];
-        const auto& b =
-            coordinates[
-                (i + 1U) % coordinates.size()];
-        const double edge_cross =
-            a.x_m * b.y_m - b.x_m * a.y_m;
-        twice_area += edge_cross;
-        centroid_numerator_x +=
-            (a.x_m + b.x_m) * edge_cross;
-        centroid_numerator_y +=
-            (a.y_m + b.y_m) * edge_cross;
-    }
-    if (!std::isfinite(twice_area) ||
-        std::abs(twice_area) <= tolerance) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_gmsh_4_1_ascii: degenerate cell area");
-    }
-
-    const double centroid_denominator =
-        3.0 * twice_area;
-    const Coordinate2D centroid{
-        centroid_numerator_x / centroid_denominator,
-        centroid_numerator_y / centroid_denominator};
-    const double area = 0.5 * std::abs(twice_area);
-    if (!std::isfinite(centroid.x_m) ||
-        !std::isfinite(centroid.y_m) ||
-        !std::isfinite(area) ||
-        area <= 0.0) {
-        throw std::invalid_argument(
-            "mpmc::mesh::import_gmsh_4_1_ascii: invalid polygon metric");
-    }
-    return PolygonMetric{centroid, area};
 }
 
 [[nodiscard]] inline const EntityInfo* find_entity(
@@ -985,416 +817,39 @@ entity_physical_tags(
             return left.tag < right.tag;
         });
 
-    std::vector<CellBuild> cells;
-    cells.reserve(cell_records.size());
-    std::map<EdgeKey, FaceBuild> faces_by_edge;
-
-    for (std::size_t cell_local = 0U;
-         cell_local < cell_records.size();
-         ++cell_local) {
-        const auto& record =
-            cell_records[cell_local];
-        std::set<std::uint64_t> unique_nodes(
-            record.node_tags.begin(),
-            record.node_tags.end());
-        if (unique_nodes.size() !=
-            record.node_tags.size()) {
+    const auto resolve_node = [&](std::uint64_t tag) {
+        const auto found = node_local_by_tag.find(tag);
+        if (found == node_local_by_tag.end()) {
             throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: cell contains repeated node tags");
+                "mpmc::mesh::import_gmsh_4_1_ascii: element references missing node");
         }
-
-        CellBuild cell;
-        cell.global_id = record.tag;
-        cell.entity_tag = record.entity_tag;
-        cell.node_tags = record.node_tags;
-        cell.vertex_locals.reserve(
-            record.node_tags.size());
-        cell.edge_keys.reserve(
-            record.node_tags.size());
-
-        std::vector<Coordinate2D> coordinates;
-        coordinates.reserve(
-            record.node_tags.size());
-        for (const auto node_tag :
-             record.node_tags) {
-            const auto found =
-                node_local_by_tag.find(node_tag);
-            if (found == node_local_by_tag.end()) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::import_gmsh_4_1_ascii: cell references missing node");
-            }
-            cell.vertex_locals.push_back(
-                checked_local(
-                    found->second,
-                    "mpmc::mesh::import_gmsh_4_1_ascii: vertex local index overflow"));
-            coordinates.push_back(
-                vertex_coordinates[
-                    found->second]);
-        }
-        const auto metric =
-            polygon_metric(coordinates);
-        cell.centroid = metric.centroid;
-        cell.area_m2 = metric.area;
-
-        for (std::size_t edge = 0U;
-             edge < record.node_tags.size();
-             ++edge) {
-            const EdgeKey key = edge_key(
-                record.node_tags[edge],
-                record.node_tags[
-                    (edge + 1U) %
-                    record.node_tags.size()]);
-            cell.edge_keys.push_back(key);
-            auto [found, inserted] =
-                faces_by_edge.emplace(
-                    key,
-                    FaceBuild{
-                        key, {}, 0U, 0U, false});
-            found->second.adjacent_cells.push_back(
-                cell_local);
-            if (found->second.adjacent_cells.size() >
-                2U) {
-                throw std::invalid_argument(
-                    "mpmc::mesh::import_gmsh_4_1_ascii: non-manifold edge belongs to more than two cells");
-            }
-            (void)inserted;
+        return checked_local(found->second,
+            "mpmc::mesh::import_gmsh_4_1_ascii: vertex local index overflow");
+    };
+    std::vector<LinearCell2D> cells;
+    cells.reserve(cell_records.size());
+    for (const auto& record : cell_records) {
+        LinearCell2D cell{GlobalEntityId{record.tag},
+            record.node_tags.size() == 3U ? LinearCellType2D::triangle :
+                                           LinearCellType2D::quadrilateral, {}};
+        for (const auto tag : record.node_tags) {
+            cell.vertices.push_back(resolve_node(tag));
         }
         cells.push_back(std::move(cell));
     }
-
+    std::vector<LinearFaceAnnotation2D> annotations;
+    annotations.reserve(line_records.size());
     for (const auto& line : line_records) {
-        const EdgeKey key = edge_key(
-            line.node_tags[0],
-            line.node_tags[1]);
-        auto found = faces_by_edge.find(key);
-        if (found == faces_by_edge.end()) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: line element does not coincide with a triangle/quad cell edge");
-        }
-        if (found->second.has_line_element) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: multiple line elements map to the same face");
-        }
-
-        const auto physical_tags =
-            entity_physical_tags(
-                entities,
-                entities_seen,
-                1,
-                line.entity_tag);
-        if (physical_tags.size() > 1U) {
+        const auto tags = entity_physical_tags(entities, entities_seen, 1, line.entity_tag);
+        if (tags.size() > 1U) {
             throw std::invalid_argument(
                 "mpmc::mesh::import_gmsh_4_1_ascii: a boundary curve belongs to multiple Physical Groups but FaceBoundarySnapshot stores one PhysicalTag");
         }
-        const std::uint32_t physical_tag =
-            physical_tags.empty()
-                ? 0U
-                : physical_tags.front();
-        if (found->second.adjacent_cells.size() ==
-                2U &&
-            physical_tag != 0U) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: physical line element maps to an interior face");
-        }
-
-        found->second.has_line_element = true;
-        found->second.global_id = line.tag;
-        found->second.physical_tag =
-            physical_tag;
+        annotations.push_back({{resolve_node(line.node_tags[0]), resolve_node(line.node_tags[1])},
+            GlobalEntityId{line.tag}, PhysicalTag{tags.empty() ? 0U : tags.front()}});
     }
-
-    std::uint64_t next_generated_face_id =
-        maximum_element_tag;
-    for (auto& [key, face] : faces_by_edge) {
-        if (face.has_line_element) {
-            continue;
-        }
-        if (next_generated_face_id ==
-            std::numeric_limits<std::uint64_t>::max()) {
-            throw std::length_error(
-                "mpmc::mesh::import_gmsh_4_1_ascii: cannot allocate generated internal-face GlobalEntityId");
-        }
-        ++next_generated_face_id;
-        face.global_id =
-            next_generated_face_id;
-        face.physical_tag = 0U;
-        (void)key;
-    }
-
-    std::vector<FaceBuild> faces;
-    faces.reserve(faces_by_edge.size());
-    for (auto& [key, face] : faces_by_edge) {
-        std::sort(
-            face.adjacent_cells.begin(),
-            face.adjacent_cells.end());
-        faces.push_back(std::move(face));
-        (void)key;
-    }
-    std::sort(
-        faces.begin(),
-        faces.end(),
-        [](const FaceBuild& left,
-           const FaceBuild& right) {
-            return left.global_id <
-                   right.global_id;
-        });
-
-    std::map<EdgeKey, std::size_t>
-        face_local_by_edge;
-    entity_ids.faces.reserve(faces.size());
-    for (std::size_t face_local = 0U;
-         face_local < faces.size();
-         ++face_local) {
-        if (!face_local_by_edge
-                 .emplace(
-                     faces[face_local].key,
-                     face_local)
-                 .second) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: duplicate final face edge");
-        }
-        entity_ids.faces.emplace_back(
-            faces[face_local].global_id);
-    }
-    entity_ids.cells.reserve(cells.size());
-    for (const auto& cell : cells) {
-        entity_ids.cells.emplace_back(
-            cell.global_id);
-    }
-
-    std::vector<CsrAdjacency::Offset>
-        cell_vertex_offsets;
-    std::vector<LocalIndex>
-        cell_vertices;
-    std::vector<CsrAdjacency::Offset>
-        cell_face_offsets;
-    std::vector<LocalIndex>
-        cell_faces;
-    cell_vertex_offsets.reserve(cells.size() + 1U);
-    cell_face_offsets.reserve(cells.size() + 1U);
-    cell_vertex_offsets.push_back(
-        CsrAdjacency::Offset{0U});
-    cell_face_offsets.push_back(
-        CsrAdjacency::Offset{0U});
-
-    for (const auto& cell : cells) {
-        cell_vertices.insert(
-            cell_vertices.end(),
-            cell.vertex_locals.begin(),
-            cell.vertex_locals.end());
-        for (const auto& key :
-             cell.edge_keys) {
-            const auto found =
-                face_local_by_edge.find(key);
-            if (found ==
-                face_local_by_edge.end()) {
-                throw std::logic_error(
-                    "mpmc::mesh::import_gmsh_4_1_ascii: internal face lookup failed");
-            }
-            cell_faces.push_back(
-                checked_local(
-                    found->second,
-                    "mpmc::mesh::import_gmsh_4_1_ascii: face local index overflow"));
-        }
-        cell_vertex_offsets.push_back(
-            checked_offset(
-                cell_vertices.size(),
-                "mpmc::mesh::import_gmsh_4_1_ascii: cell->vertex CSR overflow"));
-        cell_face_offsets.push_back(
-            checked_offset(
-                cell_faces.size(),
-                "mpmc::mesh::import_gmsh_4_1_ascii: cell->face CSR overflow"));
-    }
-
-    std::vector<CsrAdjacency::Offset>
-        face_vertex_offsets;
-    std::vector<LocalIndex>
-        face_vertices;
-    std::vector<CsrAdjacency::Offset>
-        face_cell_offsets;
-    std::vector<LocalIndex>
-        face_cells;
-    face_vertex_offsets.reserve(faces.size() + 1U);
-    face_cell_offsets.reserve(faces.size() + 1U);
-    face_vertex_offsets.push_back(
-        CsrAdjacency::Offset{0U});
-    face_cell_offsets.push_back(
-        CsrAdjacency::Offset{0U});
-
-    for (const auto& face : faces) {
-        for (const auto node_tag :
-             {face.key.first,
-              face.key.second}) {
-            const auto found =
-                node_local_by_tag.find(node_tag);
-            if (found ==
-                node_local_by_tag.end()) {
-                throw std::logic_error(
-                    "mpmc::mesh::import_gmsh_4_1_ascii: internal face node lookup failed");
-            }
-            face_vertices.push_back(
-                checked_local(
-                    found->second,
-                    "mpmc::mesh::import_gmsh_4_1_ascii: face vertex local index overflow"));
-        }
-        for (const auto cell_local :
-             face.adjacent_cells) {
-            face_cells.push_back(
-                checked_local(
-                    cell_local,
-                    "mpmc::mesh::import_gmsh_4_1_ascii: face cell local index overflow"));
-        }
-        face_vertex_offsets.push_back(
-            checked_offset(
-                face_vertices.size(),
-                "mpmc::mesh::import_gmsh_4_1_ascii: face->vertex CSR overflow"));
-        face_cell_offsets.push_back(
-            checked_offset(
-                face_cells.size(),
-                "mpmc::mesh::import_gmsh_4_1_ascii: face->cell CSR overflow"));
-    }
-
-    std::vector<CsrAdjacency> relations;
-    relations.reserve(4U);
-    relations.emplace_back(
-        EntityKind::cell,
-        EntityKind::vertex,
-        entity_ids.vertices.size(),
-        std::move(cell_vertex_offsets),
-        std::move(cell_vertices));
-    relations.emplace_back(
-        EntityKind::cell,
-        EntityKind::face,
-        entity_ids.faces.size(),
-        std::move(cell_face_offsets),
-        std::move(cell_faces));
-    relations.emplace_back(
-        EntityKind::face,
-        EntityKind::vertex,
-        entity_ids.vertices.size(),
-        std::move(face_vertex_offsets),
-        std::move(face_vertices));
-    relations.emplace_back(
-        EntityKind::face,
-        EntityKind::cell,
-        entity_ids.cells.size(),
-        std::move(face_cell_offsets),
-        std::move(face_cells));
-
-    Topology topology{
-        std::move(entity_ids),
-        std::move(relations)};
-
-    std::vector<Coordinate2D> cell_centroids;
-    std::vector<double> cell_areas;
-    cell_centroids.reserve(cells.size());
-    cell_areas.reserve(cells.size());
-    for (const auto& cell : cells) {
-        cell_centroids.push_back(
-            cell.centroid);
-        cell_areas.push_back(
-            cell.area_m2);
-    }
-
-    std::vector<Coordinate2D> face_centroids;
-    std::vector<double> face_lengths;
-    std::vector<LocalIndex> face_owners;
-    std::vector<UnitVector2D>
-        face_owner_normals;
-    std::vector<PhysicalTag> physical_tags;
-    face_centroids.reserve(faces.size());
-    face_lengths.reserve(faces.size());
-    face_owners.reserve(faces.size());
-    face_owner_normals.reserve(faces.size());
-    physical_tags.reserve(faces.size());
-
-    for (std::size_t face_local = 0U;
-         face_local < faces.size();
-         ++face_local) {
-        const auto& face = faces[face_local];
-        if (face.adjacent_cells.empty() ||
-            face.adjacent_cells.size() > 2U) {
-            throw std::logic_error(
-                "mpmc::mesh::import_gmsh_4_1_ascii: invalid finalized face adjacency");
-        }
-        const auto first_vertex =
-            node_local_by_tag.at(
-                face.key.first);
-        const auto second_vertex =
-            node_local_by_tag.at(
-                face.key.second);
-        const auto a =
-            vertex_coordinates[
-                first_vertex];
-        const auto b =
-            vertex_coordinates[
-                second_vertex];
-        const double dx = b.x_m - a.x_m;
-        const double dy = b.y_m - a.y_m;
-        const double length =
-            std::hypot(dx, dy);
-        if (!std::isfinite(length) ||
-            length <= 0.0) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: face length must be finite and positive");
-        }
-        const Coordinate2D centroid{
-            std::midpoint(a.x_m, b.x_m),
-            std::midpoint(a.y_m, b.y_m)};
-
-        const std::size_t owner =
-            face.adjacent_cells.front();
-        const auto owner_centroid =
-            cells[owner].centroid;
-        UnitVector2D normal{
-            -dy / length,
-            dx / length};
-        const double outward_dot =
-            normal.x *
-                (centroid.x_m -
-                 owner_centroid.x_m) +
-            normal.y *
-                (centroid.y_m -
-                 owner_centroid.y_m);
-        const double direction_tolerance =
-            256.0 *
-            std::numeric_limits<double>::epsilon() *
-            std::max(
-                1.0,
-                length);
-        if (std::abs(outward_dot) <=
-            direction_tolerance) {
-            throw std::invalid_argument(
-                "mpmc::mesh::import_gmsh_4_1_ascii: cannot orient face normal from owner centroid");
-        }
-        if (outward_dot < 0.0) {
-            normal.x = -normal.x;
-            normal.y = -normal.y;
-        }
-
-        face_centroids.push_back(centroid);
-        face_lengths.push_back(length);
-        face_owners.push_back(
-            checked_local(
-                owner,
-                "mpmc::mesh::import_gmsh_4_1_ascii: face owner local index overflow"));
-        face_owner_normals.push_back(normal);
-        physical_tags.emplace_back(
-            face.physical_tag);
-    }
-
-    Geometry2D geometry{
-        std::move(vertex_coordinates),
-        std::move(cell_centroids),
-        std::move(cell_areas),
-        std::move(face_centroids),
-        std::move(face_lengths),
-        std::move(face_owners),
-        std::move(face_owner_normals)};
-
-    FaceBoundarySnapshot face_boundary =
-        make_face_boundary_snapshot(
-            topology, physical_tags);
+    auto mesh = make_linear_mesh_2d(std::move(entity_ids.vertices),
+        std::move(vertex_coordinates), cells, annotations, maximum_element_tag);
 
     std::vector<GmshPhysicalName>
         physical_names;
@@ -1414,12 +869,12 @@ entity_physical_tags(
     std::vector<GmshCellPhysicalGroups>
         cell_physical_groups;
     cell_physical_groups.reserve(
-        cells.size());
-    for (const auto& cell : cells) {
+        cell_records.size());
+    for (const auto& cell : cell_records) {
         cell_physical_groups.push_back(
             GmshCellPhysicalGroups{
                 GlobalEntityId{
-                    cell.global_id},
+                    cell.tag},
                 entity_physical_tags(
                     entities,
                     entities_seen,
@@ -1428,9 +883,9 @@ entity_physical_tags(
     }
 
     return Gmsh41ImportResult{
-        std::move(topology),
-        std::move(geometry),
-        std::move(face_boundary),
+        std::move(mesh.topology),
+        std::move(mesh.geometry),
+        std::move(mesh.face_boundary),
         std::move(physical_names),
         std::move(cell_physical_groups)};
 }

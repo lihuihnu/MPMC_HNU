@@ -35,6 +35,11 @@
 #include <utility>
 #include <vector>
 
+void linear_cell_mesh_2d_contract();
+void linear_cell_mesh_2d_invalid();
+void linear_cell_mesh_2d_import_parity();
+void linear_cell_mesh_2d_header();
+
 namespace {
 namespace mesh = mpmc::mesh;
 
@@ -5712,7 +5717,11 @@ int main(int argc, char** argv) {
     try {
         require(argc == 2, "provide one named mesh core test");
         const std::string_view name{argv[1]};
-        if (name == "strong_indices") { strong_indices(); }
+        if (name == "linear_cell_mesh_2d_contract") { linear_cell_mesh_2d_contract(); }
+        else if (name == "linear_cell_mesh_2d_invalid") { linear_cell_mesh_2d_invalid(); }
+        else if (name == "linear_cell_mesh_2d_import_parity") { linear_cell_mesh_2d_import_parity(); }
+        else if (name == "linear_cell_mesh_2d_header") { linear_cell_mesh_2d_header(); }
+        else if (name == "strong_indices") { strong_indices(); }
         else if (name == "two_cell_quad") { two_cell_quad(); }
         else if (name == "invalid_csr") { invalid_csr(); }
         else if (name == "topology_snapshot") { topology_snapshot(); }

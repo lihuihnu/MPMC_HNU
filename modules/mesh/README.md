@@ -35,6 +35,23 @@
 
 2D Cartesian builder 使用零基、确定性编号：vertex/cell 按 `(j,i)` row-major；所有竖向 face 先编号，再按 `(j,i)` 编号横向 face。`cell->vertex` 固定为 logical lower-left/lower-right/upper-right/upper-left，`cell->face` 固定为 left/right/bottom/top；这些只是拓扑顺序，不代表已经计算几何法向。
 
+### 2.1 共同二维 triangle/quad 构建契约
+
+`linear_cell_mesh_2d.hpp` 提供格式无关的 `LinearCellType2D`、`LinearCell2D`、`LinearFaceAnnotation2D`、`LinearMesh2D` 和 `make_linear_mesh_2d()`。输入是以 m 为单位的 XY 坐标、稳定 vertex IDs，以及显式类型和循环顶点序的 cells；输出拥有 `Topology + Geometry2D + FaceBoundarySnapshot + cell_types`，不引用输入缓冲区，不依赖 Gmsh、VTK、PETSc 或物理模块。
+
+- 范围：非退化三角形、严格凸四边形及两者混合的二维网格。顺/逆时针均接受并保留输入循环序；凹四边形、自交、重复顶点、非有限几何和近退化单元拒绝。这里的 `face` 是线段，不另造重复 edge 实体；曲面二维、高阶、多边形、非共形和坐标自动焊接不属于该契约。
+- 身份：vertex/cell 本地顺序不重排，稳定 ID 在各 entity kind 内唯一且允许 0；connectivity 使用 `LocalIndex`。共享 face 按两个端点的稳定 ID 无向配对，不能按坐标相近合并。显式 face annotation 保留 ID/标签；缺失 ID 按稳定端点 key 排序，从 `max(generated_face_id_floor, 所有显式 face ID)+1` 分配，溢出拒绝。最终 face 按 ID 升序排列，`face->vertex` 按稳定端点 ID 排序。
+- 关联：生成 cell→vertex、cell→face、face→vertex、face→cell 四类 CSR；cell→face 按输入 cell 的循环边序。face 的首个输入 incident cell 为 owner，第二个为 neighbour；支持数只能为 1 或 2。两侧 cell centroid 必须严格位于共享直线两侧，拒绝同侧重叠和重复单元；这不是全域重叠/悬挂节点搜索，调用方仍须提供共形网格。
+- 几何：cell area 与面积质心使用有符号多边形鞋带公式及一阶矩（Green 定理），在以首顶点为原点、以最大坐标差为尺度的局部坐标中计算，再变换回 SI；面积为 m²，质心/face midpoint/face length 为 m。不把顶点均值当作面积质心。转角和两倍面积使用归一化阈值 `256*epsilon(double)`；face normal 定向距离阈值为 `256*epsilon(double)*face_length`。无法表示的差值、面积或质心拒绝；不通过取绝对值接受凹/折叠单元。
+- 边界：normal 指向 owner 外侧；boundary/internal 由支持数确定。annotation 必须恰好对应一张已有 face，ID 与面不能重复。继续遵守当前 `FaceBoundarySnapshot` 的每面单标签规则：内部 face 可保留显式 ID，但不能携带 boundary PhysicalTag。多组/内部界面标签是后续独立契约扩展。
+- 错误：非法类型、重复身份、几何或 annotation 抛 `invalid_argument`，越界 connectivity 抛 `out_of_range`，LocalIndex/CSR/face ID 容量问题抛 `length_error`。入口可额外给出文件上下文，但不保证旧几何错误文本或多个同时错误的诊断先后次序。
+
+Gmsh 与 VTU 的二维 import 都在解析完成后调用此构建器。Gmsh 仍按来源 tag 排列节点/cells，传入显式 line ID/PhysicalTag，生成 face ID 的 floor 仍为最大 element tag，并保留 PhysicalNames 和 cell 多组成员。VTU 仍保留 point/cell 文件顺序、稳定 cell ID 和对应字段；没有显式 face ID 时从 1 生成。两个格式的本地顺序、生成 ID 和 canonical owner 因来源不同可以不同，比较必须按稳定身份/端点及 owner 相对方向进行，不能逐数组误判。
+
+已有 import/export 结果类型保持兼容；公共共同构建器显式保存 `cell_types`，旧格式结果仍通过原有结构返回。交换导出的二维多边形 metric 复用同一个几何内核。相较旧实现，本次有两项有意的正确性变化：面积阈值不再依赖世界坐标原点（远离原点或小尺度的合法单元不再因此误拒绝），共享面两侧同侧单元现在拒绝。既有严格告警、有效/无效 I/O、字段、标签和下游回归保留。
+
+测试由现有 `tests/mesh/core` 的 `mpmc_mesh_core_tests` 唯一拥有，新增 `mesh.core.linear_cell_mesh_2d_{contract,invalid,import_parity,header}`；独立判据包括矩形/三角形/非平行四边形梯形的解析面积质心、闭合单元法向长度和、旋转/缩放/平移、身份重排、独立手写 MSH/VTU 输入及实际读写回归。公共头探针单独编译并以 CTest 实际调用。旧外部样例 Gate 和 PETSc/离散消费者继续按影响验证，不把自身 round-trip 当作独立软件读取输出的证明。
+
 ## 3. 几何与字段
 
 几何层至少提供：

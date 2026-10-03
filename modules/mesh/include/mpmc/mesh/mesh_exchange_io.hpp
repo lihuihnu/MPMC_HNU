@@ -7,6 +7,7 @@
 #include <mpmc/mesh/grdecl.hpp>
 #include <mpmc/mesh/grdecl_reconstruction.hpp>
 #include <mpmc/mesh/mesh_exchange.hpp>
+#include <mpmc/mesh/linear_cell_mesh_2d.hpp>
 #include <mpmc/mesh/vtu.hpp>
 #include <mpmc/mesh/vtu_3d.hpp>
 
@@ -689,7 +690,7 @@ canonical_geometry_2d(
                         vertex.value())]);
         }
         const auto metric =
-            vtu_detail::polygon_metric(
+            linear_cell_mesh_2d_detail::polygon_metric(
                 polygon);
         cell_centroids.push_back(
             metric.centroid);

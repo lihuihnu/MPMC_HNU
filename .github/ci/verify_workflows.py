@@ -316,6 +316,19 @@ def main():
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')
     select = planner['select']
+    # Shared 2D geometry affects both importers and their downstream adapters.
+    # A deletion is represented by this path too; a rename contributes both sides.
+    mesh2d_path = 'modules/mesh/include/mpmc/mesh/linear_cell_mesh_2d.hpp'
+    for action in ('opened', 'synchronize', 'ready_for_review'):
+        selected, _, _ = select([mesh2d_path], action=action)
+        for owner in ('legacy_mesh_core', 'legacy_mesh_external_compatibility', 'legacy_mesh_petsc'):
+            assert selected[owner], ('shared 2D builder lost consumer coverage', owner, action)
+        assert not selected['legacy_frontend'] and not selected['flow_core']
+    before, _, _ = select([mesh2d_path])
+    renamed, _, _ = select([mesh2d_path, 'modules/mesh/include/mpmc/mesh/renamed_2d.hpp'])
+    assert all(not value or renamed[key] for key, value in before.items())
+    unrelated, _, _ = select(['modules/mesh/README.md'])
+    assert not unrelated['legacy_mesh_external_compatibility']
     assert_root_readme_selection(select)
     results, ad, thermo = select(['.github/AGENTS.md', 'tests/AGENTS.md'])
     assert not any(results.values()) and not ad and not thermo
