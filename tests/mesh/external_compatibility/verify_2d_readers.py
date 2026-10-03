@@ -62,6 +62,7 @@ def analytic_geometry(points, expected):
     require(area != 0., 'zero signed area')
     close(mx/area, expected[3][0], 'analytic centroid x')
     close(my/area, expected[3][1], 'analytic centroid y')
+    return (mx/area, my/area)
 
 
 def expected_faces(name, ids, cells):

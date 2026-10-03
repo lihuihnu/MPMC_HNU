@@ -157,6 +157,8 @@ OPM `27cellsAniso.grdecl` 包含顶层 `GRID` wrapper，而当前最小 GRDECL p
 
 三维混合样例进一步通过完整外部文件链验收：官方 Gmsh/VTK 写出 4 个输入，MPMC 导入并经统一交换接口导出两种格式，官方读取器验证 8 条链；另有 8 条同坐标不同节点身份的断开对照链。导入后的原始拓扑快照和最终文件分别核验，明确区分原有、生成和丢失的实体身份。共享 VTU ASCII 解析器兼容官方 writer 的尾部 `L2_NORM_RANGE` 可重算缓存，仍拒绝未知或损坏的嵌套元信息；缓存不作为数值载荷或单位，`lossless` 不承诺保留这类缓存或 XML 字节。方法、回归与复现见[完整链路说明](../../tests/mesh/external_compatibility/README.md#官方生成mpmc-导入和导出的三维完整链路)。
 
+二维三角形/四边形混合网格也通过官方生成输入的完整链验证：2 个正常输入形成 4 条转换链，另有 4 条同坐标不同身份的断开对照链。导入快照与最终读回分别检查面积/质心、共享边、owner 外法向、循环方向及标签/字段/ID 损失；正常网格为 6/1/5 条唯一/内部/边界边，断开网格为 7/0/7，面积均为 6 m²。见[二维完整链路说明](../../tests/mesh/external_compatibility/README.md#官方生成mpmc-导入和导出的二维完整链路)。
+
 ## 5. 求解变量与拓扑索引
 
 最小 `DofLayout` 已实现 local scalar indexing 基线。每个 `DofVariable` 只包含稳定 ID、location 与 component count；location 现完整支持 cell/face/edge/vertex，component count 必须大于零，变量 ID 必须唯一。布局固定为 `[cell block][face block][edge block][vertex block]`；每个 location 内按 `entity-major -> variable declaration order -> component` 排列。同一实体上的变量 DoF 因此连续，且 location block 也连续。对没有 materialized edge 的既有 1D/2D/3D topology，edge block 宽度为 0，因此此前 cell/face/vertex scalar offsets 保持不变。

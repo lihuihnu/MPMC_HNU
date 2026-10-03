@@ -66,6 +66,20 @@
 
 本地使用下一节同一 producer/隔离环境，将脚本替换为 `verify_3d_chains.py`，输出到新目录。PASS 为 `inputs=4 chains=8 reports=8 disconnected_chains=8`。`result.json` 分列正常和断开链，保存导入/最终拓扑、体积、共享面面积/法向、身份损失判定、拒绝原因，以及输入、快照、输出和报告的 SHA256、脚本/工具版本。云端由同一 external job 调用一次，保存 `mesh-3d-chain-readback` artifact。本项仍不覆盖非共形接口、高阶、binary、任意畸变或科学求解。
 
+## 官方生成、MPMC 导入和导出的二维完整链路
+
+`verify_2d_chains.py` 复用二维混合样例（逆时针三角形 + 顺时针非矩形凸四边形），以官方 Gmsh API 和 VTK writer 各写一个输入，实际导入 MPMC 后经 `make_mesh_exchange_document` 分别导出 MSH/VTU，由官方软件读取输入和输出。共 **2 个正常输入、4 条链、4 份报告**。官方文件直接用于导入，包括 VTK writer 附加的 `L2_NORM_RANGE`，不清洗 XML。Gmsh/VTK 在这里序列化人工指定的网格，不代表 CAD 自动划分验证。
+
+- 正常网格应有 **6 条唯一边、1 条内部边、5 条边界边**；三角形/四边形面积分别为 **1 / 5 m²**，总面积 6 m²，面积质心分别为 `(3,2/3)` / `(19/15,14/15) m`。共享边长度为 `sqrt(5) m`，四边形朝向三角形的单位法向为 `(2,1)/sqrt(5)`，另一侧相反。Gmsh 官方 Jacobian 积分、VTK `vtkCellSizeFilter` 面积和独立三角扇面积/质心分别与解析值比较；节点身份、类型、循环方向与边关联精确检查，数值沿用 `1e-12` 绝对/相对容差。
+- Gmsh 输入保留稀疏乱序节点 ID、两条显式外边界边 701/702、边界组和重叠二维区域组；其余边由 MPMC 构建。VTK 输入反转点顺序，单元按 901/31 排列，包含 UInt64 单元 ID、点标量/三分量字段及单元双分量字段。读回检查字段与实际节点/单元身份的绑定，不按坐标去重。
+- 同一 C++ target 的 `convert_2d_file.cpp` 通过 `--convert-2d <gmsh|vtu> <输入路径> <输出前缀>` 调用实际 importer，在统一导出之前写出原始 `.import` 快照。检查全部 cell↔edge 双向关系、显式/生成边身份、面积和面积质心、边长/边中点、owner 外法向及 Gmsh 边界标签。二维 `VtuImportResult` 没有边界元数据，快照以 `-1` 标示缺失；边界计数由实际关联数推导，不能冒充输入已提供标签。
+- 同格式报告须为 `lossless`；Gmsh→VTU 必须报告组、边界标签及 vertex/face ID 损失，VTU→Gmsh 必须报告字段损失。VTU 身份变化通过实际读取的点顺序与边关联重新推导默认 ID，并逐实体对照报告；不把相同 ID 集合当作绑定未变。
+- 官方 writer 另生成 **2 个断开输入**，仅给三角形复制共享边两端节点，坐标不变、身份不同。形成 **4 条对照链及 4 份额外报告**。转换必须成功，导入和最终文件均保持 **7 条边、0 内部边、7 边界边**且面积不变；最终读回必须因共享边关联缺失而拒绝连接网格契约，防止静默焊接。
+
+唯一执行 owner 仍为 external compatibility job，无新增 CTest/workflow。脚本显式复用同目录 `verify_2d_readers.py` 的二维解析判据，`verify_3d_readers.py` 的官方 VTU reader，以及 `verify_3d_chains.py` 中维度无关的官方 VTU 写入、关联/字段/报告检查；VTK 类型映射由二维调用方显式提供，三维默认行为保留。共享依赖和新增文件的直接命中、删除/重命名、生产头间接命中由中央路由回归覆盖。旧公共样例、二维/三维导出和三维完整链均保留。
+
+本地将下节脚本替换为 `verify_2d_chains.py`，使用新的输出目录。总 PASS 为 `inputs=2 chains=4 reports=4 disconnected_chains=4`；`result.json` 保存 4 份导入快照对应的度量、8 份最终输出结果、控制拒绝原因、全部 24 个输入/快照/输出/报告文件的 SHA256，以及工具版本和 4 个 oracle 脚本 hash。中央/手动入口在原 job 中各按其触发模式执行一次，保存 `mesh-2d-chain-readback` artifact。范围仍为 XY 平面共形线性网格、MSH 4.1 ASCII 和单 Piece VTU ASCII，不覆盖曲面、高阶、binary、任意畸变、大规模性能或科学求解。
+
 ## 隔离依赖与复现
 
 选择官方读取器而非继续自读自写，能直接检查第三方软件是否理解输出；不引入额外通用格式转换层。依赖仅存在于测试 venv，生产 `mpmc::mesh` 仍只有标准库。固定完整 Python wheel 依赖闭包，禁止测试期间静默升级。Gmsh Python 包为官方 SDK（GPL-2.0-or-later），VTK 为 BSD-3-Clause；不复制其实现或把库链接进生产 target。VTK 的 matplotlib 依赖一并固定，但验证不使用绘图后端。

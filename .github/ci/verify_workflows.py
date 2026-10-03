@@ -44,7 +44,9 @@ def assert_mesh_independent_readers(root, select):
              'Independently read 3D exports with Gmsh and VTK',
              'Preserve 3D independent reader evidence',
              'Validate externally generated 3D mixed mesh chains',
-             'Preserve 3D chain evidence')
+             'Preserve 3D chain evidence',
+             'Validate externally generated 2D mixed mesh chains',
+             'Preserve 2D chain evidence')
     for name in names:
         left = [step for step in manual['steps'] if step.get('name') == name]
         right = [step for step in central['steps'] if step.get('name') == name]
@@ -60,18 +62,20 @@ def assert_mesh_independent_readers(root, select):
             assert token in run['run'], ('mesh reader failure/execution guard', token)
         assert f'emit_{dimension}d_exports.cpp' in (directory / 'CMakeLists.txt').read_text(encoding='utf-8')
         assert f'--emit-{dimension}d' in entry and f'emit_{dimension}d_exports(argv[2])' in entry
-    chain = next(step for step in central['steps'] if step.get('name') ==
-                 'Validate externally generated 3D mixed mesh chains')
-    assert not chain.get('continue-on-error')
-    for token in ('set -euo pipefail', 'verify_3d_chains.py --producer',
-                  '/mpmc_mesh_external_compatibility', '--output-dir',
-                  'inputs=4 chains=8 reports=8 disconnected_chains=8'):
-        assert token in chain['run'], ('3D chain execution/failure guard', token)
-    assert 'convert_3d_file.cpp' in (directory / 'CMakeLists.txt').read_text(encoding='utf-8')
-    assert '--convert-3d' in entry and 'convert_3d_file(argv[2], argv[3], argv[4])' in entry
+    for dimension, marker in ((2, 'inputs=2 chains=4 reports=4 disconnected_chains=4'),
+                              (3, 'inputs=4 chains=8 reports=8 disconnected_chains=8')):
+        chain = next(step for step in central['steps'] if step.get('name') ==
+                     f'Validate externally generated {dimension}D mixed mesh chains')
+        assert not chain.get('continue-on-error')
+        for token in ('set -euo pipefail', f'verify_{dimension}d_chains.py --producer',
+                      '/mpmc_mesh_external_compatibility', '--output-dir', marker):
+            assert token in chain['run'], ('chain execution/failure guard', token)
+        assert f'convert_{dimension}d_file.cpp' in (directory / 'CMakeLists.txt').read_text(encoding='utf-8')
+        assert f'--convert-{dimension}d' in entry and f'convert_{dimension}d_file(argv[2], argv[3], argv[4])' in entry
     for filename in ('emit_2d_exports.cpp', 'verify_2d_readers.py', 'requirements-readers.txt',
                      'emit_3d_exports.cpp', 'verify_3d_readers.py',
-                     'convert_3d_file.cpp', 'verify_3d_chains.py'):
+                     'convert_3d_file.cpp', 'verify_3d_chains.py',
+                     'convert_2d_file.cpp', 'verify_2d_chains.py'):
         path = (directory / filename).as_posix()
         for action in ('opened', 'synchronize', 'ready_for_review'):
             chosen, _, _ = select([path], action=action)
@@ -79,7 +83,8 @@ def assert_mesh_independent_readers(root, select):
         before, _, _ = select([path])  # Deletion retains the old path.
         renamed, _, _ = select([path, (directory / ('renamed_' + filename)).as_posix()])
         assert all(not value or renamed[key] for key, value in before.items())
-    for header in ('gmsh_4_1_3d.hpp', 'vtu_3d.hpp', 'linear_cell_mesh_3d.hpp', 'mesh_exchange.hpp'):
+    for header in ('gmsh_4_1.hpp', 'vtu.hpp', 'linear_cell_mesh_2d.hpp', 'mesh_exchange_io.hpp',
+                   'gmsh_4_1_3d.hpp', 'vtu_3d.hpp', 'linear_cell_mesh_3d.hpp', 'mesh_exchange.hpp'):
         assert select(['modules/mesh/include/mpmc/mesh/' + header])[0][owner], header
     assert not select(['modules/mesh/README.md'])[0][owner]
     requirements = (directory / 'requirements-readers.txt').read_text(encoding='utf-8')
