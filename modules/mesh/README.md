@@ -153,6 +153,8 @@ OPM `27cellsAniso.grdecl` 包含顶层 `GRID` wrapper，而当前最小 GRDECL p
 
 同一个 Gate 现在还执行二维输出的独立软件读回：测试 driver 生成三角形、凸四边形和混合网格的原生/跨格式 MSH、VTU 共 12 个文件，由固定版本 Gmsh 4.15.2 与 VTK 9.7.1 官方读取器逐项检查坐标、类型、循环连接、格式声明保留的身份/组/字段，并对照解析面积质心。另核对 6 份损失报告，要求 5 个损坏负对照均失败；原有公共样例链不变。依赖仅存在于测试隔离环境，生产库不增加第三方依赖。范围、容差、许可、结果证据和本地命令见[外部验证说明](../../tests/mesh/external_compatibility/README.md)。这项证据仅覆盖二维 ASCII 子集，不宣称三维独立读回或 VTK 理解自定义单位/来源属性。
 
+三维输出现在也由同一外部 Gate 做独立读回：四面体、六面体、三棱柱、金字塔各包含两个尺度/位置不同的单元，原生及两个 canonical 方向共 16 文件、8 报告、6 个损坏负对照。官方 Gmsh 的 Jacobian 积分及 VTK 的 CellSizeFilter 分别核对解析体积，同时核对节点顺序、稳定身份、面/体分组和多分量字段对应。范围是四类线性平面边界 ASCII 样例，未覆盖共享面/混合单元的独立读回或任意畸变网格；具体输入、容差、复现和证据见[三维外部验证说明](../../tests/mesh/external_compatibility/README.md#三维四类线性单元的独立读回)。
+
 ## 5. 求解变量与拓扑索引
 
 最小 `DofLayout` 已实现 local scalar indexing 基线。每个 `DofVariable` 只包含稳定 ID、location 与 component count；location 现完整支持 cell/face/edge/vertex，component count 必须大于零，变量 ID 必须唯一。布局固定为 `[cell block][face block][edge block][vertex block]`；每个 location 内按 `entity-major -> variable declaration order -> component` 排列。同一实体上的变量 DoF 因此连续，且 location block 也连续。对没有 materialized edge 的既有 1D/2D/3D topology，edge block 宽度为 0，因此此前 cell/face/vertex scalar offsets 保持不变。

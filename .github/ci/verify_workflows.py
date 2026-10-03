@@ -40,21 +40,26 @@ def assert_mesh_independent_readers(root, select):
     # Check execution, not just a path match or a compiled-but-unused producer.
     names = ('Install pinned independent mesh readers',
              'Independently read 2D exports with Gmsh and VTK',
-             'Preserve independent reader evidence')
+             'Preserve independent reader evidence',
+             'Independently read 3D exports with Gmsh and VTK',
+             'Preserve 3D independent reader evidence')
     for name in names:
         left = [step for step in manual['steps'] if step.get('name') == name]
         right = [step for step in central['steps'] if step.get('name') == name]
         assert len(left) == len(right) == 1 and left == right, ('mesh reader step parity', name)
-    run = next(step for step in central['steps'] if step.get('name') == names[1])
-    assert not run.get('continue-on-error') and not central.get('continue-on-error')
-    for token in ('set -euo pipefail', 'verify_2d_readers.py --producer',
-                  '/mpmc_mesh_external_compatibility', '--output-dir',
-                  'files=12 reports=6 negative_controls=5'):
-        assert token in run['run'], ('mesh reader failure/execution guard', token)
-    assert 'emit_2d_exports.cpp' in (directory / 'CMakeLists.txt').read_text(encoding='utf-8')
     entry = (directory / 'external_mesh_compatibility.cpp').read_text(encoding='utf-8')
-    assert '--emit-2d' in entry and 'emit_2d_exports(argv[2])' in entry
-    for filename in ('emit_2d_exports.cpp', 'verify_2d_readers.py', 'requirements-readers.txt'):
+    for dimension, marker in ((2, 'files=12 reports=6 negative_controls=5'),
+                              (3, 'files=16 reports=8 negative_controls=6')):
+        run = next(step for step in central['steps'] if step.get('name') ==
+                   f'Independently read {dimension}D exports with Gmsh and VTK')
+        assert not run.get('continue-on-error') and not central.get('continue-on-error')
+        for token in ('set -euo pipefail', f'verify_{dimension}d_readers.py --producer',
+                      '/mpmc_mesh_external_compatibility', '--output-dir', marker):
+            assert token in run['run'], ('mesh reader failure/execution guard', token)
+        assert f'emit_{dimension}d_exports.cpp' in (directory / 'CMakeLists.txt').read_text(encoding='utf-8')
+        assert f'--emit-{dimension}d' in entry and f'emit_{dimension}d_exports(argv[2])' in entry
+    for filename in ('emit_2d_exports.cpp', 'verify_2d_readers.py', 'requirements-readers.txt',
+                     'emit_3d_exports.cpp', 'verify_3d_readers.py'):
         path = (directory / filename).as_posix()
         for action in ('opened', 'synchronize', 'ready_for_review'):
             chosen, _, _ = select([path], action=action)
@@ -62,6 +67,8 @@ def assert_mesh_independent_readers(root, select):
         before, _, _ = select([path])  # Deletion retains the old path.
         renamed, _, _ = select([path, (directory / ('renamed_' + filename)).as_posix()])
         assert all(not value or renamed[key] for key, value in before.items())
+    for header in ('gmsh_4_1_3d.hpp', 'vtu_3d.hpp', 'linear_cell_mesh_3d.hpp', 'mesh_exchange.hpp'):
+        assert select(['modules/mesh/include/mpmc/mesh/' + header])[0][owner], header
     assert not select(['modules/mesh/README.md'])[0][owner]
     requirements = (directory / 'requirements-readers.txt').read_text(encoding='utf-8')
     for line in requirements.splitlines():

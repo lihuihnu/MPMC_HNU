@@ -106,6 +106,22 @@ jobs:
         git rev-parse HEAD > "$RUNNER_TEMP/mesh-reader-evidence/commit.txt"
         "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_2d_readers.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-reader-evidence/exports" 2>&1 | tee "$RUNNER_TEMP/mesh-reader-evidence/readback.log"
         grep -Fqx '[PASS] independent.mesh.2d_readers files=12 reports=6 negative_controls=5' "$RUNNER_TEMP/mesh-reader-evidence/readback.log"
+    - name: Independently read 3D exports with Gmsh and VTK
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/mesh-3d-reader-evidence"
+        git rev-parse HEAD > "$RUNNER_TEMP/mesh-3d-reader-evidence/commit.txt"
+        "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_3d_readers.py --producer "$PWD/build/mesh-external/mpmc_mesh_external_compatibility" --output-dir "$RUNNER_TEMP/mesh-3d-reader-evidence/exports" 2>&1 | tee "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
+        grep -Fqx '[PASS] independent.mesh.3d_readers files=16 reports=8 negative_controls=6' "$RUNNER_TEMP/mesh-3d-reader-evidence/readback.log"
+    - name: Preserve 3D independent reader evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: mesh-3d-independent-readback
+        path: ${{ runner.temp }}/mesh-3d-reader-evidence
+        if-no-files-found: warn
+        retention-days: 14
     - name: Preserve independent reader evidence
       if: ${{ always() }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
