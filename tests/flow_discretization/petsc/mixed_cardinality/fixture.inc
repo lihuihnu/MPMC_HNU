@@ -1895,5 +1895,3 @@ phase_identity_map_for_stable(
             UINT64_C(1));
     return maps.at(index);
 }
-
-

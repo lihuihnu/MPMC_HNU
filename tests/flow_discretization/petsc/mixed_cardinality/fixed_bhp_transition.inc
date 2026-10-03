@@ -547,4 +547,3 @@ void run_phase_transition_rebound_fixed_bhp_case(
     audit->well_timestep_compressibility =
         false;
 }
-

@@ -842,5 +842,3 @@ local_solution_matches_target(
     }
     return true;
 }
-
-

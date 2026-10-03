@@ -5,8 +5,9 @@
 #include <mpmc/flow/energy_accumulation.hpp>
 #include <mpmc/flow/fugacity_equilibrium_linearization.hpp>
 #include <mpmc/flow/phase_transport.hpp>
-#include <mpmc/flow/single_phase_natural_variable.hpp>
-#include <mpmc/flow/two_phase_natural_variable.hpp>
+#include <mpmc/flow/component_accumulation.hpp>
+#include <mpmc/flow/single_phase_properties.hpp>
+#include <mpmc/flow/two_phase_properties.hpp>
 #include <mpmc/thermodynamics/selected_phase_density.hpp>
 #include <mpmc/thermodynamics/selected_phase_fugacity.hpp>
 

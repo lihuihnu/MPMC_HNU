@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_PHASE_TRANSPORT_HPP
 #define MPMC_FLOW_PHASE_TRANSPORT_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/natural_variable_cell_state.hpp>
 #include <mpmc/flow/saturation_constitutive.hpp>
 
@@ -138,19 +139,7 @@ namespace phase_transport_detail {
 [[nodiscard]] inline bool near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        4096.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<4096>(first, second);
 }
 
 inline void validate_provenance(
@@ -201,10 +190,8 @@ inline void validate_state_identity(
     const NaturalVariableStateIdentity3P& identity) {
     const auto& layout =
         state.layout();
-    if (identity.component_ids !=
-            std::vector<std::string>{
-                state.component_ids().begin(),
-                state.component_ids().end()} ||
+    if (!mpmc::flow::validation_detail::same_component_ids(
+            identity.component_ids, state.component_ids()) ||
         identity.layout.component_count() !=
             layout.component_count() ||
         identity.layout.phase_count() !=

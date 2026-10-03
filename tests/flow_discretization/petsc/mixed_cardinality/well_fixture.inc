@@ -727,5 +727,3 @@ global_fixed_bhp_well_production_rate(
         global_count;
     return global_rate;
 }
-
-

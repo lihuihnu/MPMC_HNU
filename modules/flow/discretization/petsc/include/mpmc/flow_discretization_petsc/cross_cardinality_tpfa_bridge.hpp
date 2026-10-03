@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_CROSS_CARDINALITY_TPFA_BRIDGE_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_CROSS_CARDINALITY_TPFA_BRIDGE_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow_discretization_petsc/mixed_cardinality_physical_snes_assembly.hpp>
 
 #include <algorithm>
@@ -127,22 +128,7 @@ near_roundoff(
     double first,
     double second,
     double extra_scale = 0.0) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second) ||
-        !std::isfinite(extra_scale) ||
-        extra_scale < 0.0) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second),
-             extra_scale});
-    return std::abs(first - second) <=
-        16384.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<16384>(first, second, extra_scale);
 }
 
 inline void require_gradient(

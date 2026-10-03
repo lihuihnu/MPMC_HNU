@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_ENERGY_ACCUMULATION_HPP
 #define MPMC_FLOW_ENERGY_ACCUMULATION_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/phase_transport.hpp>
 
 #include <algorithm>
@@ -125,59 +126,8 @@ namespace energy_accumulation_detail {
 [[nodiscard]] inline bool same_state_identity(
     const NaturalVariableStateIdentity3P& first,
     const NaturalVariableStateIdentity3P& second) {
-    if (first.component_ids != second.component_ids ||
-        first.layout.component_count() !=
-            second.layout.component_count() ||
-        first.layout.phase_count() !=
-            second.layout.phase_count() ||
-        first.layout.unknown_count() !=
-            second.layout.unknown_count() ||
-        first.layout.composition_pivot()
-                .dependent_components() !=
-            second.layout.composition_pivot()
-                .dependent_components() ||
-        !phase_transport_detail::near_roundoff(
-            first.reference_pressure_pa,
-            second.reference_pressure_pa) ||
-        !phase_transport_detail::near_roundoff(
-            first.temperature_k,
-            second.temperature_k)) {
-        return false;
-    }
-
-    for (std::size_t phase = 0U;
-         phase < first.layout.phase_count();
-         ++phase) {
-        if (!phase_transport_detail::near_roundoff(
-                first.saturation[phase],
-                second.saturation[phase]) ||
-            first.phase_composition[phase].size() !=
-                second.phase_composition[phase].size()) {
-            return false;
-        }
-        for (std::size_t component = 0U;
-             component <
-             first.phase_composition[phase].size();
-             ++component) {
-            if (!phase_transport_detail::near_roundoff(
-                    first.phase_composition[phase][component],
-                    second.phase_composition[phase][component])) {
-                return false;
-            }
-        }
-    }
-    for (std::size_t phase =
-             first.layout.phase_count();
-         phase < fixed_three_phase_count;
-         ++phase) {
-        if (first.saturation[phase] != 0.0 ||
-            second.saturation[phase] != 0.0 ||
-            !first.phase_composition[phase].empty() ||
-            !second.phase_composition[phase].empty()) {
-            return false;
-        }
-    }
-    return true;
+    return mpmc::flow::validation_detail::same_state_identity(
+        first, second, phase_transport_detail::near_roundoff);
 }
 
 inline void validate_porosity(

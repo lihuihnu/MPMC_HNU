@@ -109,6 +109,15 @@ jobs:
           cmake --build build/standalone --config ${{ matrix.build_type }} --parallel 2
           ctest --test-dir build/standalone -C ${{ matrix.build_type }} --verbose --no-tests=error
 
+      - name: Root optional library consumer contract
+        if: matrix.suite == 'arithmetic'
+        run: |
+          compiler='${{ matrix.compiler }}'
+          python3 tests/build/root_libraries/verify.py \
+            --config '${{ matrix.build_type }}' \
+            --compiler="${compiler#-DCMAKE_CXX_COMPILER=}" \
+            --sanitizer '${{ matrix.sanitizer }}'
+
   validation-result:
     name: AD reusable result
     needs:

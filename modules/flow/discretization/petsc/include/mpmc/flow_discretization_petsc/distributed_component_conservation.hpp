@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_DISTRIBUTED_COMPONENT_CONSERVATION_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_DISTRIBUTED_COMPONENT_CONSERVATION_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/discretization_petsc/adapter.hpp>
 #include <mpmc/flow_discretization/owned_multi_cell_component_conservation.hpp>
 
@@ -241,22 +242,7 @@ inline constexpr std::size_t endpoint_metadata_word_count = 6U;
     double first,
     double second,
     double scale = 0.0) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second) ||
-        !std::isfinite(scale) ||
-        scale < 0.0) {
-        return false;
-    }
-    const double reference =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second),
-             scale});
-    return std::abs(first - second) <=
-        16384.0 *
-            std::numeric_limits<double>::epsilon() *
-            reference;
+    return mpmc::flow::validation_detail::near_roundoff<16384>(first, second, scale);
 }
 
 inline void hash_byte(

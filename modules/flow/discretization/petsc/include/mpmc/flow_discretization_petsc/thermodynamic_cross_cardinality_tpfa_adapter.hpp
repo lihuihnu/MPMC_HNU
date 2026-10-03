@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_THERMODYNAMIC_CROSS_CARDINALITY_TPFA_ADAPTER_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_THERMODYNAMIC_CROSS_CARDINALITY_TPFA_ADAPTER_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/thermodynamics_absent_phase_extension.hpp>
 #include <mpmc/flow_discretization_petsc/cross_cardinality_tpfa_bridge.hpp>
 
@@ -83,20 +84,7 @@ state_identity(
 near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::
-                epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second);
 }
 
 [[nodiscard]] inline bool
@@ -105,31 +93,7 @@ same_layout(
         NaturalVariableLayoutDescriptor& first,
     const mpmc::flow::
         NaturalVariableLayoutDescriptor& second) {
-    if (first.component_count() !=
-            second.component_count() ||
-        first.phase_count() !=
-            second.phase_count() ||
-        first.unknown_count() !=
-            second.unknown_count()) {
-        return false;
-    }
-    for (std::size_t phase = 0U;
-         phase < first.phase_count();
-         ++phase) {
-        const auto slot =
-            static_cast<
-                mpmc::flow::PhaseSlot3>(
-                    phase);
-        if (first
-                .dependent_composition_component(
-                    slot) !=
-            second
-                .dependent_composition_component(
-                    slot)) {
-            return false;
-        }
-    }
-    return true;
+    return mpmc::flow::validation_detail::same_layout(first, second);
 }
 
 [[nodiscard]] inline bool

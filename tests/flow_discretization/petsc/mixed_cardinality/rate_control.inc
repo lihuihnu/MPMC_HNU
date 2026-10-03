@@ -3999,4 +3999,3 @@ void run_fixed_total_molar_rate_control_case(
     audit->well_timestep_compressibility =
         false;
 }
-

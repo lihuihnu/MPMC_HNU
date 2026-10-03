@@ -924,5 +924,3 @@ make_outer_rebuild_cells(
 
     return result;
 }
-
-
