@@ -167,6 +167,42 @@ def vtk_vertex_ids(grid, required=True):
     return ids
 
 
+FACE_ARRAYS = ('mpmc_global_face_id','mpmc_face_vertex_offsets','mpmc_face_vertex_ids')
+
+
+def vtk_face_ids(grid, required=True):
+    """Typed official VTK arrays, checked against native VTK cell faces/edges."""
+    arrays = [grid.GetFieldData().GetArray(name) for name in FACE_ARRAYS]
+    if all(array is None for array in arrays) and not required:
+        return {}
+    values = []
+    for array in arrays:
+        require(array is not None and array.IsA('vtkUnsignedLongLongArray') and
+                array.GetNumberOfComponents() == 1, 'VTK UInt64 face table required')
+        values.append([int(array.GetValue(i)) for i in range(array.GetNumberOfTuples())])
+    ids, offsets, vertices = values
+    require(len(ids) == len(offsets) and len(set(ids)) == len(ids), 'VTK face ID/offset count or uniqueness')
+    point_ids = vtk_vertex_ids(grid,required=False)
+    native = set()
+    for i in range(grid.GetNumberOfCells()):
+        cell = grid.GetCell(i)
+        dim = cell.GetCellDimension()
+        require(dim in (2,3), 'VTK face identity cell dimension')
+        for j in range(cell.GetNumberOfEdges() if dim == 2 else cell.GetNumberOfFaces()):
+            face = cell.GetEdge(j) if dim == 2 else cell.GetFace(j)
+            native.add(tuple(sorted(point_ids[face.GetPointId(k)] for k in range(face.GetNumberOfPoints()))))
+    faces, begin = {}, 0
+    for tag, end in zip(ids,offsets,strict=True):
+        require(begin < end <= len(vertices), 'VTK face offset range')
+        row = tuple(sorted(vertices[begin:end]))
+        require(len(set(row)) == len(row) and row in native, 'VTK face table references actual topology')
+        faces[tag] = row
+        begin = end
+    require(begin == len(vertices) and len(set(faces.values())) == len(faces) and
+            set(faces.values()) == native, 'VTK complete unique face coverage')
+    return faces
+
+
 def verify_vtu(path, name, with_fields):
     vertex_ids, coords, expected_cells = case_data(name)
     reader = vtkXMLUnstructuredGridReader()
@@ -179,6 +215,7 @@ def verify_vtu(path, name, with_fields):
     grid = reader.GetOutput()
     require(grid.GetNumberOfPoints() == len(coords) and grid.GetNumberOfCells() == len(expected_cells),
             'VTK mesh counts')
+    require(vtk_face_ids(grid) == expected_faces(name,vertex_ids,expected_cells), "VTK stable edge bindings")
     require(vtk_vertex_ids(grid) == vertex_ids, 'VTK stable vertex IDs/order')
     actual_points = [grid.GetPoint(i) for i in range(grid.GetNumberOfPoints())]
     source_indices = []
@@ -288,8 +325,7 @@ def main():
                 print(f'[PASS] independent.read.{filename}')
             check_report(directory / (name + '_from_vtu.msh.report'), {'gmsh.fields_not_serialized'})
             check_report(directory / (name + '_from_gmsh.vtu.report'),
-                         {'vtu.groups_not_serialized', 'vtu.face_tags_not_serialized',
-                          'vtu.face_ids_remapped'})
+                         {'vtu.groups_not_serialized', 'vtu.face_tags_not_serialized'})
         report['negative_controls'] = negative_controls(directory)
         report['conversion_reports_checked'] = 6
         report['status'] = 'passed'

@@ -12,6 +12,9 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
+
+from verify_2d_readers import vtk_face_ids, FACE_ARRAYS
 
 import gmsh
 from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkIdList, vtkPoints, vtkUnsignedLongLongArray
@@ -69,7 +72,7 @@ def write_gmsh(path, data):
     return {i: tag for i, tag in enumerate(ids)}
 
 
-def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False):
+def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False, face_ids=None):
     kinds, vertex_ids, points, rows, _ = data
     # Rotate/reverse point storage independently of cell connectivity and IDs.
     order = list(reversed(range(len(points))))
@@ -89,7 +92,8 @@ def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False):
     identity = vtkUnsignedLongLongArray()
     identity.SetName('mpmc_global_cell_id')
     # Source order 901,31 differs from the usual MPMC Gmsh sort order 31,901.
-    for tag in (901,31):
+    cell_order = (31,901) if face_ids is not None else (901,31)
+    for tag in cell_order:
         row = vtkIdList()
         for i in rows[tag]:
             row.InsertNextId(lookup[i])
@@ -99,7 +103,7 @@ def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False):
     for target, name, values in (
         (grid.GetPointData(), 'point_marker', [(float(i)+0.25,) for i in order]),
         (grid.GetPointData(), 'position', [points[i] for i in order]),
-        (grid.GetCellData(), 'cell_pair', [(90.1,-90.1), (3.1,-3.1)]),
+        (grid.GetCellData(), 'cell_pair', [(tag/10,-tag/10) for tag in cell_order]),
     ):
         array = vtkDoubleArray()
         array.SetName(name)
@@ -107,6 +111,20 @@ def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False):
         for value in values:
             array.InsertNextTuple(value)
         target.AddArray(array)
+    if face_ids is not None:
+        offsets, vertices = [], []
+        # Deliberately reverse record order and rotate each vertex list. This
+        # table describes identity only; it carries no normal/orientation.
+        records = list(reversed(list(face_ids.items())))
+        for _, row in records:
+            vertices.extend(row[1:]+row[:1])
+            offsets.append(len(vertices))
+        for name, values in zip(FACE_ARRAYS,([tag for tag,_ in records],offsets,vertices),strict=True):
+            array = vtkUnsignedLongLongArray()
+            array.SetName(name)
+            for value in values:
+                array.InsertNextValue(value)
+            grid.GetFieldData().AddArray(array)
     writer = vtkXMLUnstructuredGridWriter()
     errors = []
     writer.AddObserver('ErrorEvent', lambda *_: errors.append('writer error'))
@@ -154,7 +172,7 @@ def read_official(path):
                 require(array.GetNumberOfTuples() == len(keys), 'chain field tuple count')
                 fields[location, array.GetName()] = {key: array.GetTuple(j) for j,key in enumerate(keys)}
         return dict(nodes=nodes, cells=cells, volumes=volumes, cell_faces=cell_faces,
-                    faces={}, groups={}, fields=fields)
+                    faces=vtk_face_ids(grid,required=False), groups={}, fields=fields)
     gmsh.clear()
     gmsh.logger.start()
     try:
@@ -327,33 +345,27 @@ def run_case(directory, producer, name, source, disconnected):
     for target in ('gmsh','vtu'):
         output = directory/(stem+('.msh' if target == 'gmsh' else '.vtu'))
         actual = read_official(output)
-        lookup = {tag:i+1 for i,tag in enumerate(imported['nodes'])}
         target_mapping = mapping
         if target == 'vtu':
             vtk_vertex_ids(oracle.read_vtu(output))
         results[target] = check_geometry(actual,name,data,target_mapping,disconnected)
         check_fields(actual,data,target_mapping,source == target == 'vtu')
         require(actual['groups'] == (GROUPS if source == target == 'gmsh' else {}), 'output physical groups')
-        if target == 'gmsh':
+        if target in ('gmsh','vtu'):
             require(set(actual['faces']) == set(imported['faces']), 'exported imported/generated face identities')
             for tag,row in imported['faces'].items():
                 require(set(actual['faces'][tag]) == set(row), 'exported face identity binding')
         codes = set()
         if source == 'gmsh' and target == 'vtu':
-            codes = {'vtu.groups_not_serialized','vtu.face_tags_not_serialized',
-                     'vtu.face_ids_remapped'}
+            codes = {'vtu.groups_not_serialized','vtu.face_tags_not_serialized'}
         if source == 'vtu' and target == 'gmsh':
             codes = {'gmsh.fields_not_serialized'}
         if target == 'vtu':
-            # Compare stable point identity and regenerated face bindings.
+            vtk_face_ids(oracle.read_vtu(output))
             vertex_loss = set(actual['nodes']) != set(imported['nodes'])
-            keys = sorted((tuple(sorted(lookup[v] for v in key)) for key in incidence(actual)),
-                          key=lambda key:(len(key),key))
-            reimported_faces = {key:i+1 for i,key in enumerate(keys)}
-            face_loss = any(tag != reimported_faces[tuple(sorted(lookup[v] for v in row))]
-                            for tag,row in imported['faces'].items())
-            require(not vertex_loss, 'actual VTU vertex identities changed')
-            require(face_loss == ('vtu.face_ids_remapped' in codes), 'actual VTU face ID loss differs')
+            face_loss = {tag:tuple(sorted(row)) for tag,row in actual['faces'].items()} != {
+                tag:tuple(sorted(row)) for tag,row in imported['faces'].items()}
+            require(not vertex_loss and not face_loss, 'actual VTU entity identity loss')
             results[target]['identity_losses'] = {'vertices':vertex_loss,'faces':face_loss}
         check_report(Path(str(output)+'.report'),codes)
         if disconnected:
@@ -368,17 +380,76 @@ def run_case(directory, producer, name, source, disconnected):
     return {'input':path.name, 'imported':imported_result, 'outputs':results, 'converter_stdout':run.stdout}
 
 
-def run_vertex_identity_case(directory, producer, name, dimension, data, read, imported_read, geometry):
+def face_identity_fixture(data,dimension):
+    kinds, ids, _, rows, _ = data
+    keys = set()
+    for tag,row in rows.items():
+        local_faces = [(i,(i+1)%len(row)) for i in range(len(row))] if dimension == 2 else PATTERNS[kinds[tag]]
+        keys.update(tuple(sorted(ids[row[i]] for i in face)) for face in local_faces)
+    tags = [0,2**64-1]+[2**53+i for i in range(1,len(keys)-1)]
+    return dict(zip(tags,sorted(keys),strict=True))
+
+
+def check_face_binding(snapshot,expected):
+    require({tag:tuple(sorted(row)) for tag,row in snapshot['faces'].items()} ==
+            {tag:tuple(sorted(row)) for tag,row in expected.items()}, 'stable face ID binding')
+
+
+def face_identity_controls(directory,producer,dimension,source,output,read,expected):
+    # The official writer created the source. Corrupt table metadata only;
+    # coordinates, volume/surface cells and scientific fields stay untouched.
+    reasons = {}
+    for label in ('duplicate_id','unknown_vertex','missing_record','wrong_binding'):
+        tree = ET.parse(source if label != 'wrong_binding' else output)
+        section = tree.find('./UnstructuredGrid/FieldData')
+        arrays = {node.get('Name'):node for node in section.findall('DataArray')}
+        ids, offsets, vertices = [arrays[name].text.split() for name in FACE_ARRAYS]
+        if label == 'duplicate_id':
+            ids[0] = ids[1]
+        elif label == 'unknown_vertex':
+            vertices[0] = '18446744073709551614'
+        elif label == 'missing_record':
+            ids.pop(); offsets.pop(); vertices = vertices[:int(offsets[-1])]
+        else:
+            ids[0],ids[1] = ids[1],ids[0]
+        for name,values in zip(FACE_ARRAYS,(ids,offsets,vertices),strict=True):
+            arrays[name].text = ' '.join(values)
+            arrays[name].set('NumberOfTuples',str(len(values)))
+        path = directory/(source.stem+'_'+label+'.vtu')
+        tree.write(path,encoding='utf-8',xml_declaration=True)
+        if label == 'wrong_binding':
+            # Well-formed table still opens in official VTK, but the identity
+            # oracle must reject exchanging two face IDs with unchanged ID set.
+            actual = read(path)
+            try:
+                check_face_binding(actual,expected)
+            except VerificationError as error:
+                reasons[label] = str(error)
+            else:
+                raise VerificationError('swapped face identity escaped independent oracle')
+        else:
+            run = subprocess.run([str(producer),f'--convert-{dimension}d','vtu',path.name,path.stem],
+                                 cwd=directory,capture_output=True,text=True,timeout=60)
+            require(run.returncode != 0 and 'face' in run.stderr.lower(),
+                    f'invalid face table not rejected for identity: {label}: {run.stdout} {run.stderr}')
+            reasons[label] = run.stderr.strip()
+    return reasons
+
+
+def run_vertex_identity_case(directory, producer, name, dimension, data, read, imported_read, geometry, face_identity=False):
     kinds, ids, points, rows, measures = data
     ids = list(ids)
     ids[:3] = [0,2**64-1,2**53+1]
     data = kinds, ids, points, rows, measures
-    stem = name+'_vertex_ids'
+    stem = name+('_face_ids' if face_identity else '_vertex_ids')
+    expected_faces = face_identity_fixture(data,dimension) if face_identity else None
     path = directory/(stem+'_input.vtu')
-    mapping = write_vtu(path,data,{2:5,3:9} if dimension == 2 else VTK_KIND,stable_ids=True)
+    mapping = write_vtu(path,data,{2:5,3:9} if dimension == 2 else VTK_KIND,stable_ids=True,face_ids=expected_faces)
     disconnected = name.endswith('_disconnected')
     fixture_name = name.removesuffix('_disconnected')
     original = read(path)
+    if face_identity:
+        require(original['faces'] == expected_faces, 'official face table input bindings')
     geometry(original,fixture_name,data,mapping,disconnected)
     check_fields(original,data,mapping,True)
     run = subprocess.run([str(producer),f'--convert-{dimension}d','vtu',path.name,stem],cwd=directory,
@@ -386,14 +457,21 @@ def run_vertex_identity_case(directory, producer, name, dimension, data, read, i
     require(run.returncode == 0, f'vertex identity conversion failed: {run.stdout} {run.stderr}')
     imported, _ = imported_read(directory/(stem+'.import'))
     before = geometry(imported,fixture_name,data,mapping,disconnected)
+    if face_identity:
+        check_face_binding(imported,expected_faces)
     output = directory/(stem+'.vtu')
     actual = read(output)
     vtk_vertex_ids(oracle.read_vtu(output))
     after = geometry(actual,fixture_name,data,mapping,disconnected)
+    check_face_binding(actual,imported['faces'])
+    if face_identity:
+        check_face_binding(actual,expected_faces)
     check_fields(actual,data,mapping,True)
     check_report(Path(str(output)+'.report'),set())
-    print(f'[PASS] independent.{dimension}d.vertex_ids.{name}')
+    negatives = face_identity_controls(directory,producer,dimension,path,output,read,expected_faces) if face_identity else {}
+    print(f'[PASS] independent.{dimension}d.{"face_ids" if face_identity else "vertex_ids"}.{name}')
     return dict(input=path.name,imported=before,output=after,vertex_ids=ids,
+                face_bindings=actual["faces"],negative_controls=negatives,
                 converter_stdout=run.stdout)
 
 
@@ -425,6 +503,12 @@ def main():
                 read_official,read_import,check_geometry)
             for name in ('tetra_wedge','hexa_pyramid') for disconnected in (False,True)}
         report['vertex_identity_inputs'] = len(report['vertex_identity_cases'])
+        report['face_identity_cases'] = {
+            name+('_disconnected' if disconnected else ''): run_vertex_identity_case(
+                directory,producer,name+('_disconnected' if disconnected else ''),3,fixture(name,disconnected),
+                read_official,read_import,check_geometry,face_identity=True)
+            for name in ('tetra_wedge','hexa_pyramid') for disconnected in (False,True)}
+        report['face_identity_inputs'] = len(report['face_identity_cases'])
         report.update(status='passed',inputs=4,chains=8,conversion_reports=8,
                       disconnected_inputs=4,disconnected_chains=8,disconnected_reports=8,import_snapshots=8)
         print('[PASS] independent.mesh.3d_chains inputs=4 chains=8 reports=8 disconnected_chains=8')

@@ -765,7 +765,11 @@ void verify_vertex_id_contract(const mesh::MeshExchangeDocument& source) {
             mesh::make_mesh_exchange_document(mesh::import_vtu_ascii(text)) :
             mesh::make_mesh_exchange_document(mesh::import_vtu_ascii_3d(text));
     };
-    const auto xml = *mesh::export_vtu_ascii(source).content;
+    auto xml = *mesh::export_vtu_ascii(source).content;
+    // This test changes node identities independently: exercise legacy files
+    // without a face table, whose bindings would otherwise become invalid.
+    const auto field_begin = xml.find("<FieldData>");
+    xml.erase(field_begin, xml.find("</FieldData>", field_begin)+12U-field_begin);
     const auto name = xml.find("Name=\"mpmc_global_vertex_id\"");
     require(name != std::string::npos, "writer must emit vertex identity");
     const auto begin = xml.rfind("<DataArray", name);
@@ -824,7 +828,8 @@ void verify_vertex_id_contract(const mesh::MeshExchangeDocument& source) {
 
     const auto collisions = [](auto imported, auto writer) {
         for (const auto location : {mesh::EntityKind::vertex, mesh::EntityKind::cell}) {
-            for (const auto* reserved : {"mpmc_global_vertex_id", "mpmc_global_cell_id"}) {
+            for (const auto* reserved : {"mpmc_global_vertex_id", "mpmc_global_cell_id",
+                    "mpmc_global_face_id", "mpmc_face_vertex_offsets", "mpmc_face_vertex_ids"}) {
                 imported.point_fields.clear(); imported.cell_fields.clear();
                 auto value = mesh::DenseFieldSnapshot::create(imported.topology, location, 1U,
                     std::vector<double>(imported.topology.entity_count(location), 1.0),
@@ -842,7 +847,105 @@ void verify_vertex_id_contract(const mesh::MeshExchangeDocument& source) {
         collisions(mesh::import_vtu_ascii_3d(xml), [](const auto& input) { return mesh::export_vtu_ascii_3d(input); });
     }
     std::cout << "[PASS] mesh.core.exchange_io.vtu_vertex_ids dimension=" << source.dimension()
-              << " invalid_arrays=" << invalid.size()+1U << " reserved_collisions=4\n";
+              << " invalid_arrays=" << invalid.size()+1U << " reserved_collisions=10\n";
+}
+
+// Literal table shapes independently exercise the shared format contract.
+void verify_face_id_contract(const mesh::MeshExchangeDocument& source) {
+    const auto parse = [&](const std::string& text) {
+        return source.dimension() == 2 ?
+            mesh::make_mesh_exchange_document(mesh::import_vtu_ascii(text)) :
+            mesh::make_mesh_exchange_document(mesh::import_vtu_ascii_3d(text));
+    };
+    const auto xml = *mesh::export_vtu_ascii(source).content;
+    const auto start = xml.find("<FieldData>");
+    const auto finish = xml.find("</FieldData>", start)+12U;
+    require(start != std::string::npos && finish > start, "writer must emit face table");
+    const auto array = [](const std::string& name, const std::string& values,
+                          const std::string& attributes = "type=\"UInt64\" format=\"ascii\"") {
+        return "<DataArray Name=\""+name+"\" "+attributes+">"+values+"</DataArray>";
+    };
+    const auto table = [&](const std::string& ids, const std::string& offsets, const std::string& vertices) {
+        return array("mpmc_global_face_id",ids)+array("mpmc_face_vertex_offsets",offsets)+
+               array("mpmc_face_vertex_ids",vertices);
+    };
+    const auto replace = [&](const std::string& body) {
+        auto text = xml;
+        text.replace(start,finish-start,body);
+        return text;
+    };
+    const auto legacy = parse(replace(""));
+    require(face_identities(legacy.topology()) == face_identities(source.topology()), "legacy face numbering");
+    const auto original_table = xml.substr(start,finish-start);
+    const auto parsed = parse(xml);
+    require(face_identities(parsed.topology()) == face_identities(source.topology()), "face identity binding");
+    const std::string one = table("42","2","1 2");
+    const std::string one3 = table("42","3","1 2 5");
+    const auto row = source.dimension() == 2 ? one : one3;
+    const std::string row_vertices = source.dimension() == 2 ? "1 2" : "1 2 5";
+    const std::string row_width = source.dimension() == 2 ? "2" : "3";
+    std::vector<std::string> bad_bodies{
+        array("mpmc_global_face_id","42"), // Incomplete table.
+        row, // Well-formed but not all faces.
+        table("42 42",source.dimension() == 2 ? "2 4" : "3 6",
+              source.dimension() == 2 ? "1 2 2 3" : "1 2 5 2 3 5"),
+        table("42 43",source.dimension() == 2 ? "2 4" : "3 6",row_vertices+" "+row_vertices),
+        table("42",row_width,source.dimension() == 2 ? "1 999" : "1 2 999"),
+        table("42",row_width,source.dimension() == 2 ? "1 1" : "1 1 2"),
+        table("42","0",row_vertices), table("42","18446744073709551615",row_vertices),
+        table("42","1","1"), table("42",row_width,row_vertices+" 3"),
+        table("42 43",row_width,row_vertices),
+        table("42",row_width,source.dimension() == 2 ? "1 3" : "1 3 5"), // Not a cell face.
+        row+array("mpmc_global_face_id","43"),
+        array("mpmc_global_vertex_id","1")
+    };
+    for (const auto& name : {"mpmc_global_face_id","mpmc_face_vertex_offsets","mpmc_face_vertex_ids"}) {
+        const auto valid = array(name,name == std::string("mpmc_global_face_id") ? "42" :
+            name == std::string("mpmc_face_vertex_offsets") ? row_width : row_vertices);
+        for (const auto& [attributes, payload] : std::vector<std::pair<std::string,std::string>>{
+                {"type=\"Float64\" format=\"ascii\"","1"},
+                {"type=\"UInt32\" format=\"ascii\"","1"},
+                {"type=\"UInt64\" format=\"binary\"","1"},
+                {"type=\"UInt64\" format=\"ascii\" NumberOfComponents=\"2\"","1 2"},
+                {"type=\"UInt64\" format=\"ascii\" NumberOfTuples=\"2\"","1"},
+                {"type=\"Int64\" format=\"ascii\"","-1"},
+                {"type=\"UInt64\" format=\"ascii\"","-1"},
+                {"type=\"UInt64\" format=\"ascii\"","1.5"},
+                {"type=\"UInt64\" format=\"ascii\"","18446744073709551616"},
+                {"type=\"Int64\" format=\"ascii\"","9223372036854775808"}}) {
+            auto body = row;
+            body.replace(body.find(valid),valid.size(),array(name,payload,attributes));
+            bad_bodies.push_back(body);
+        }
+    }
+    std::vector<std::string> invalid;
+    for (const auto& body : bad_bodies) invalid.push_back(replace("<FieldData>"+body+"</FieldData>"));
+    invalid.push_back(replace(original_table+original_table));
+    auto misplaced = replace("");
+    misplaced.insert(misplaced.find("</Piece>"),original_table);
+    invalid.push_back(misplaced);
+    for (const auto* association : {"</PointData>","</CellData>"}) {
+        for (const auto* name : {"mpmc_global_face_id","mpmc_face_vertex_offsets","mpmc_face_vertex_ids"}) {
+            auto text = xml;
+            text.insert(text.find(association),array(name,"1","type=\"Float64\" format=\"ascii\""));
+            invalid.push_back(text);
+        }
+    }
+    for (std::size_t i = 0; i < invalid.size(); ++i) {
+        bool rejected = false;
+        try { (void)parse(invalid[i]); } catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected,("invalid face table must be rejected, case "+std::to_string(i)).c_str());
+    }
+    // All three integer arrays also accept nonnegative Int64 without rounding.
+    auto signed_text = xml;
+    auto signed_table = original_table;
+    for (std::size_t at = 0; (at = signed_table.find("UInt64",at)) != std::string::npos;) {
+        signed_table.replace(at,6U,"Int64"); at += 5U;
+    }
+    signed_text.replace(start,finish-start,signed_table);
+    require(face_identities(parse(signed_text).topology()) == face_identities(source.topology()), "Int64 face table");
+    std::cout << "[PASS] mesh.core.exchange_io.vtu_face_ids dimension=" << source.dimension()
+              << " invalid_tables=" << invalid.size() << '\n';
 }
 
 void verify_vtu_identity_losses() {
@@ -864,6 +967,7 @@ void verify_vtu_identity_losses() {
 </Piece></UnstructuredGrid></VTKFile>)VTU"));
     for (const auto* source : {&two, &three}) {
         verify_vertex_id_contract(*source);
+        verify_face_id_contract(*source);
         const auto v = source->topology().global_ids(mesh::EntityKind::vertex);
         const auto f = source->topology().global_ids(mesh::EntityKind::face);
         const std::vector<mesh::GlobalEntityId> vertices{v.begin(), v.end()}, faces{f.begin(), f.end()};
@@ -872,18 +976,20 @@ void verify_vtu_identity_losses() {
         auto sparse_vertices = vertices;
         sparse_vertices[0] = mesh::GlobalEntityId{0};
         sparse_vertices[1] = mesh::GlobalEntityId{std::numeric_limits<std::uint64_t>::max()};
-        verify_identity_report(identity_variant(*source, sparse_vertices, faces), false, source->dimension() == 2);
+        verify_identity_report(identity_variant(*source, sparse_vertices, faces), false, false);
         auto permuted_vertices = vertices;
         std::swap(permuted_vertices[0], permuted_vertices[1]);
-        verify_identity_report(identity_variant(*source, permuted_vertices, faces), false, source->dimension() == 2);
+        verify_identity_report(identity_variant(*source, permuted_vertices, faces), false, false);
         auto sparse_faces = faces;
-        sparse_faces[0] = mesh::GlobalEntityId{9007199254740999ULL};
-        verify_identity_report(identity_variant(*source, vertices, sparse_faces), false, true);
+        sparse_faces[0] = mesh::GlobalEntityId{0U};
+        sparse_faces[1] = mesh::GlobalEntityId{std::numeric_limits<std::uint64_t>::max()};
+        sparse_faces[2] = mesh::GlobalEntityId{9007199254740999ULL};
+        verify_identity_report(identity_variant(*source, vertices, sparse_faces), false, false);
         auto permuted_faces = faces;
         std::swap(permuted_faces[0], permuted_faces[1]);
-        verify_identity_report(identity_variant(*source, vertices, permuted_faces), false, true);
-        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces), false, true);
-        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces, true), false, true);
+        verify_identity_report(identity_variant(*source, vertices, permuted_faces), false, false);
+        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces), false, false);
+        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces, true), false, false);
     }
     std::cout << "[PASS] mesh.core.exchange_io.vtu_identity_losses cases=16\n";
 }

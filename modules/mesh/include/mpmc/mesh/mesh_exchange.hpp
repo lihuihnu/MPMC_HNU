@@ -692,46 +692,6 @@ namespace mesh_exchange_detail {
            element_ids.end();
 }
 
-[[nodiscard]] inline bool vtu_face_ids_require_remap(
-    const Topology& topology, int dimension) {
-    // Faces are not serialized: 2D orders by stable endpoint IDs; 3D
-    // orders by width and local point indices. Compare actual bindings.
-    using Key = std::array<std::uint64_t, 5>;
-    std::vector<std::pair<Key, GlobalEntityId>> faces;
-    const auto ids = topology.global_ids(EntityKind::face);
-    const auto& relation = topology.relation(EntityKind::face, EntityKind::vertex);
-    faces.reserve(ids.size());
-    for (std::size_t i = 0U; i < ids.size(); ++i) {
-        const auto vertices = relation.adjacent(
-            LocalIndex{static_cast<LocalIndex::value_type>(i)});
-        Key key{};
-        key[0] = static_cast<LocalIndex::value_type>(vertices.size());
-        // Width is already validated as 2 (2D) or 3/4 (3D). Bounded insertion
-        // avoids general sort over a runtime-sized prefix of a fixed array.
-        for (std::size_t j = 0U; j < vertices.size(); ++j) {
-            const auto value = dimension == 2 ?
-                topology.global_ids(EntityKind::vertex)[vertices[j].value()].value() :
-                static_cast<std::uint64_t>(vertices[j].value());
-            std::size_t slot = j + 1U;
-            while (slot > 1U && value < key[slot - 1U]) {
-                key[slot] = key[slot - 1U];
-                --slot;
-            }
-            key[slot] = value;
-        }
-        faces.emplace_back(key, ids[i]);
-    }
-    std::sort(faces.begin(), faces.end(), [](const auto& a, const auto& b) {
-        return a.first < b.first;
-    });
-    for (std::size_t i = 0U; i < faces.size(); ++i) {
-        if (faces[i].second.value() != static_cast<std::uint64_t>(i) + 1U) {
-            return true;
-        }
-    }
-    return false;
-}
-
 } // namespace mesh_exchange_detail
 
 [[nodiscard]] inline ConversionReport
@@ -832,11 +792,6 @@ analyze_conversion(
 
     if (target_format ==
         MeshExchangeFormat::vtu_ascii) {
-        if (vtu_face_ids_require_remap(document.topology(), document.dimension())) {
-            report.note_lossy(
-                "vtu.face_ids_remapped",
-                "VTU does not encode stable face IDs; regenerated IDs ordered by stable endpoints (2D) or face width and point indices (3D) differ from source identities");
-        }
         if (!document.groups().empty()) {
             report.note_lossy(
                 "vtu.groups_not_serialized",

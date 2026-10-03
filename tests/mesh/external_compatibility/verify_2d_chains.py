@@ -13,6 +13,8 @@ import platform
 import subprocess
 import sys
 
+from verify_2d_readers import vtk_face_ids
+
 import gmsh
 
 import verify_3d_readers as reader
@@ -111,7 +113,7 @@ def read_official(path):
                 require(array.GetNumberOfTuples() == len(keys), 'chain field tuple count')
                 fields[location, array.GetName()] = {key: array.GetTuple(j) for j,key in enumerate(keys)}
         return dict(nodes=nodes, cells=cells, areas=areas, cell_faces=cell_faces,
-                    faces={}, groups={}, fields=fields)
+                    faces=vtk_face_ids(grid,required=False), groups={}, fields=fields)
     gmsh.clear()
     gmsh.logger.start()
     try:
@@ -280,25 +282,21 @@ def run_case(directory, producer, name, source, disconnected):
         results[target] = check_geometry(actual,name,data,target_mapping,disconnected)
         check_fields(actual,data,target_mapping,source == target == 'vtu')
         require(actual['groups'] == (GROUPS if source == target == 'gmsh' else {}), 'output physical groups')
-        if target == 'gmsh':
+        if target in ('gmsh','vtu'):
             require(set(actual['faces']) == set(imported['faces']), 'exported imported/generated face identities')
             for tag,row in imported['faces'].items():
                 require(set(actual['faces'][tag]) == set(row), 'exported face identity binding')
         codes = set()
         if source == 'gmsh' and target == 'vtu':
-            codes = {'vtu.groups_not_serialized','vtu.face_tags_not_serialized',
-                     'vtu.face_ids_remapped'}
+            codes = {'vtu.groups_not_serialized','vtu.face_tags_not_serialized'}
         if source == 'vtu' and target == 'gmsh':
             codes = {'gmsh.fields_not_serialized'}
         if target == 'vtu':
-            # Compare stable point identity and regenerated face bindings.
+            vtk_face_ids(reader.read_vtu(output))
             vertex_loss = set(actual['nodes']) != set(imported['nodes'])
-            keys = sorted(incidence(actual))
-            reimported_faces = {key:i+1 for i,key in enumerate(keys)}
-            face_loss = any(tag != reimported_faces[tuple(sorted(row))]
-                            for tag,row in imported['faces'].items())
-            require(not vertex_loss, 'actual VTU vertex identities changed')
-            require(face_loss == ('vtu.face_ids_remapped' in codes), 'actual VTU face ID loss differs')
+            face_loss = {tag:tuple(sorted(row)) for tag,row in actual['faces'].items()} != {
+                tag:tuple(sorted(row)) for tag,row in imported['faces'].items()}
+            require(not vertex_loss and not face_loss, 'actual VTU entity identity loss')
             results[target]['identity_losses'] = {'vertices':vertex_loss,'faces':face_loss}
         check_report(Path(str(output)+'.report'),codes)
         if disconnected:
@@ -341,6 +339,12 @@ def main():
                 read_official,lambda path: read_import(path,'vtu'),check_geometry)
             for disconnected in (False,True)}
         report['vertex_identity_inputs'] = len(report['vertex_identity_cases'])
+        report['face_identity_cases'] = {
+            'mixed'+('_disconnected' if disconnected else ''): run_vertex_identity_case(
+                directory,producer,'mixed'+('_disconnected' if disconnected else ''),2,fixture('mixed',disconnected),
+                read_official,lambda path: read_import(path,'vtu'),check_geometry,face_identity=True)
+            for disconnected in (False,True)}
+        report['face_identity_inputs'] = len(report['face_identity_cases'])
         report.update(status='passed',inputs=2,chains=4,conversion_reports=4,
                       disconnected_inputs=2,disconnected_chains=4,disconnected_reports=4,import_snapshots=4)
         print('[PASS] independent.mesh.2d_chains inputs=2 chains=4 reports=4 disconnected_chains=4')

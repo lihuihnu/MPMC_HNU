@@ -161,7 +161,11 @@ OPM `27cellsAniso.grdecl` 包含顶层 `GRID` wrapper，而当前最小 GRDECL p
 
 VTU 二维/三维现在共享稳定节点身份契约：在标准 `PointData` 中用 MPMC 保留名 `mpmc_global_vertex_id` 写入单分量 UInt64 数组，元素顺序与 Points 一致；这是 MPMC 的数组语义约定，不是 VTK 内建的全局身份协议。读入支持 UInt64 全范围（含 0）及非负 Int64，整数直接解析，绝不经过 double。数组缺省时兼容旧文件的 1..N 节点编号；数组存在但类型、数量、分量、NumberOfTuples、唯一性或数值非法时拒绝，不能静默回退。节点/单元身份保留名不能用作普通科学字段，也不能放错 association。导出总是写出节点身份，输入输出均不把该数组计入浮点 PointData 字段。
 
-节点身份保留后，不再报告 `vtu.vertex_ids_remapped`。面身份仍未序列化：二维边按稳定端点 ID 排序生成，三维面按面宽及局部点索引排序生成；报告按相应规则比较实体绑定，继续保留真实的 `vtu.face_ids_remapped`、组和面标签损失。节点 ID 保留不等于任意网格转换已完全无损。
+二维边与三维面共用稳定身份表，位于 `UnstructuredGrid/FieldData`，由 `mpmc_global_face_id`、`mpmc_face_vertex_offsets`、`mpmc_face_vertex_ids` 三个单分量 UInt64 数组组成。offsets 是逐面累计终止位置（不含起始 0），长度等于面 ID 数；vertices 是稳定节点 ID 的扁平列表。二维每条边含 2 个节点，三维每个面含 3 或 4 个节点；包括全部内部面和边界面，记录顺序无关。节点集合只定义身份，不携带外法向/owner；这些仍由单元连接与几何重建。身份表不会添加 VTK 单元或改变科学字段的关联。
+
+读入也接受非负 Int64，整数不经过浮点转换；检查数组类型、分量、可选 NumberOfTuples、偏移、节点引用、面 ID/面绑定唯一性及完整拓扑覆盖。缺少整个身份表时保持旧生成规则（二维按稳定端点 ID，三维按面宽和局部点索引）；部分数组、损坏表、重复表、错误 association 或不存在的单元面均拒绝，不能回退。保留的五个身份数组名不能被普通 point/cell 科学字段占用。其他 dataset FieldData 保持原有忽略行为，当前不承诺保留一般 FieldData。
+
+节点及面身份均被序列化，不再报告 `vtu.vertex_ids_remapped` 或 `vtu.face_ids_remapped`；组、面物理标签和其他真实损失继续报告。MPMC 身份表是标准 VTU 整数数组承载的应用语义，不是 VTK 内建的 face association，也不承诺任意第三方过滤/重网格操作保留它。官方 VTK 读写、混合网格关联与损坏负对照见[外部验证契约](../../tests/mesh/external_compatibility/README.md#稳定面身份的统一-vtu-契约)。
 
 ## 5. 求解变量与拓扑索引
 

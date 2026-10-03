@@ -525,11 +525,15 @@ import_vtu_ascii_3d(
                     cell_vertices[cell])});
     }
 
-    auto mesh =
-        make_linear_mesh_3d(
-            vertex_ids,
-            coordinates,
-            cells);
+    const auto identities = parse_face_identities(grid, piece, vertex_ids, 3);
+    std::vector<LinearFaceAnnotation3D> annotations;
+    if (identities) for (const auto& face : *identities) {
+        annotations.push_back({face.vertices, face.id, PhysicalTag{0U}});
+    }
+    auto mesh = make_linear_mesh_3d(vertex_ids, coordinates, cells, annotations);
+    if (identities && identities->size() != mesh.topology.entity_count(EntityKind::face)) {
+        throw std::invalid_argument("face identity table must cover every mesh face");
+    }
 
     std::vector<DenseFieldSnapshot>
         point_fields;
@@ -672,8 +676,9 @@ export_vtu_ascii_3d(
         std::numeric_limits<double>::max_digits10);
     output << "<?xml version=\"1.0\"?>\n"
            << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n"
-           << "  <UnstructuredGrid>\n"
-           << "    <Piece NumberOfPoints=\""
+           << "  <UnstructuredGrid>\n";
+    write_face_identities(output, topology);
+    output << "    <Piece NumberOfPoints=\""
            << point_count
            << "\" NumberOfCells=\""
            << cell_count
