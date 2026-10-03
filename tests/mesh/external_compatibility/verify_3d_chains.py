@@ -20,7 +20,7 @@ from vtkmodules.vtkIOXML import vtkXMLUnstructuredGridWriter
 
 import verify_3d_readers as oracle
 import verify_2d_readers as shared
-from verify_2d_readers import VerificationError, require, close
+from verify_2d_readers import VerificationError, require, close, vtk_vertex_ids
 
 
 PATTERNS = {solid[0]: solid[3] for solid in oracle.SOLIDS.values()}
@@ -69,8 +69,8 @@ def write_gmsh(path, data):
     return {i: tag for i, tag in enumerate(ids)}
 
 
-def write_vtu(path, data, vtk_kind=VTK_KIND):
-    kinds, _, points, rows, _ = data
+def write_vtu(path, data, vtk_kind=VTK_KIND, stable_ids=False):
+    kinds, vertex_ids, points, rows, _ = data
     # Rotate/reverse point storage independently of cell connectivity and IDs.
     order = list(reversed(range(len(points))))
     lookup = {old: new for new, old in enumerate(order)}
@@ -80,6 +80,12 @@ def write_vtu(path, data, vtk_kind=VTK_KIND):
     for i in order:
         vtk_points.InsertNextPoint(points[i])
     grid.SetPoints(vtk_points)
+    if stable_ids:
+        vertex_identity = vtkUnsignedLongLongArray()
+        vertex_identity.SetName('mpmc_global_vertex_id')
+        for i in order:
+            vertex_identity.InsertNextValue(vertex_ids[i])
+        grid.GetPointData().AddArray(vertex_identity)
     identity = vtkUnsignedLongLongArray()
     identity.SetName('mpmc_global_cell_id')
     # Source order 901,31 differs from the usual MPMC Gmsh sort order 31,901.
@@ -109,13 +115,14 @@ def write_vtu(path, data, vtk_kind=VTK_KIND):
     writer.SetDataModeToAscii()
     writer.SetCompressorTypeToNone()
     require(writer.Write() == 1 and not errors and writer.GetErrorCode() == 0, 'official VTK write failed')
-    return {old: new+1 for old, new in lookup.items()}
+    return {old: vertex_ids[old] if stable_ids else new+1 for old, new in lookup.items()}
 
 
 def read_official(path):
     if path.suffix == '.vtu':
         grid = oracle.read_vtu(path)
-        nodes = {i+1: grid.GetPoint(i) for i in range(grid.GetNumberOfPoints())}
+        point_ids = vtk_vertex_ids(grid, required=False)
+        nodes = {tag: grid.GetPoint(i) for i,tag in enumerate(point_ids)}
         ids = grid.GetCellData().GetArray('mpmc_global_cell_id')
         require(ids is not None and ids.IsA('vtkUnsignedLongLongArray') and
                 ids.GetNumberOfComponents() == 1 and ids.GetNumberOfTuples() == grid.GetNumberOfCells(),
@@ -129,11 +136,11 @@ def read_official(path):
             cell = grid.GetCell(i)
             kind = {v:k for k,v in VTK_KIND.items()}.get(grid.GetCellType(i))
             require(kind is not None, 'unsupported chain VTU type')
-            cells[tag] = kind, tuple(cell.GetPointId(j)+1 for j in range(cell.GetNumberOfPoints()))
+            cells[tag] = kind, tuple(point_ids[cell.GetPointId(j)] for j in range(cell.GetNumberOfPoints()))
             cell_faces[tag] = []
             for j in range(cell.GetNumberOfFaces()):
                 face = cell.GetFace(j)
-                cell_faces[tag].append(tuple(face.GetPointId(k)+1 for k in range(face.GetNumberOfPoints())))
+                cell_faces[tag].append(tuple(point_ids[face.GetPointId(k)] for k in range(face.GetNumberOfPoints())))
             volumes[tag] = float(volumes_array.GetValue(i))
             tags.append(tag)
         fields = {}
@@ -142,7 +149,7 @@ def read_official(path):
             for i in range(arrays.GetNumberOfArrays()):
                 array = arrays.GetArray(i)
                 require(array is not None, 'non-numeric chain field')
-                if array.GetName() == 'mpmc_global_cell_id':
+                if array.GetName() in ('mpmc_global_cell_id','mpmc_global_vertex_id'):
                     continue
                 require(array.GetNumberOfTuples() == len(keys), 'chain field tuple count')
                 fields[location, array.GetName()] = {key: array.GetTuple(j) for j,key in enumerate(keys)}
@@ -321,7 +328,9 @@ def run_case(directory, producer, name, source, disconnected):
         output = directory/(stem+('.msh' if target == 'gmsh' else '.vtu'))
         actual = read_official(output)
         lookup = {tag:i+1 for i,tag in enumerate(imported['nodes'])}
-        target_mapping = mapping if target == 'gmsh' else {i:lookup[tag] for i,tag in mapping.items()}
+        target_mapping = mapping
+        if target == 'vtu':
+            vtk_vertex_ids(oracle.read_vtu(output))
         results[target] = check_geometry(actual,name,data,target_mapping,disconnected)
         check_fields(actual,data,target_mapping,source == target == 'vtu')
         require(actual['groups'] == (GROUPS if source == target == 'gmsh' else {}), 'output physical groups')
@@ -332,19 +341,18 @@ def run_case(directory, producer, name, source, disconnected):
         codes = set()
         if source == 'gmsh' and target == 'vtu':
             codes = {'vtu.groups_not_serialized','vtu.face_tags_not_serialized',
-                     'vtu.vertex_ids_remapped','vtu.face_ids_remapped'}
+                     'vtu.face_ids_remapped'}
         if source == 'vtu' and target == 'gmsh':
             codes = {'gmsh.fields_not_serialized'}
         if target == 'vtu':
-            # VTU carries neither stable point nor face IDs. Derive the IDs
-            # that its documented 1..N import convention assigns to the actual
-            # reader connectivity, then compare entity bindings, not ID sets.
-            keys = sorted(incidence(actual), key=lambda key:(len(key),key))
+            # Compare stable point identity and regenerated face bindings.
+            vertex_loss = set(actual['nodes']) != set(imported['nodes'])
+            keys = sorted((tuple(sorted(lookup[v] for v in key)) for key in incidence(actual)),
+                          key=lambda key:(len(key),key))
             reimported_faces = {key:i+1 for i,key in enumerate(keys)}
-            vertex_loss = any(tag != index for tag,index in lookup.items())
             face_loss = any(tag != reimported_faces[tuple(sorted(lookup[v] for v in row))]
                             for tag,row in imported['faces'].items())
-            require(vertex_loss == ('vtu.vertex_ids_remapped' in codes), 'actual VTU vertex ID loss differs')
+            require(not vertex_loss, 'actual VTU vertex identities changed')
             require(face_loss == ('vtu.face_ids_remapped' in codes), 'actual VTU face ID loss differs')
             results[target]['identity_losses'] = {'vertices':vertex_loss,'faces':face_loss}
         check_report(Path(str(output)+'.report'),codes)
@@ -358,6 +366,35 @@ def run_case(directory, producer, name, source, disconnected):
                 raise VerificationError('disconnected input was silently welded')
     print(f'[PASS] independent.3d.chain.{stem}')
     return {'input':path.name, 'imported':imported_result, 'outputs':results, 'converter_stdout':run.stdout}
+
+
+def run_vertex_identity_case(directory, producer, name, dimension, data, read, imported_read, geometry):
+    kinds, ids, points, rows, measures = data
+    ids = list(ids)
+    ids[:3] = [0,2**64-1,2**53+1]
+    data = kinds, ids, points, rows, measures
+    stem = name+'_vertex_ids'
+    path = directory/(stem+'_input.vtu')
+    mapping = write_vtu(path,data,{2:5,3:9} if dimension == 2 else VTK_KIND,stable_ids=True)
+    disconnected = name.endswith('_disconnected')
+    fixture_name = name.removesuffix('_disconnected')
+    original = read(path)
+    geometry(original,fixture_name,data,mapping,disconnected)
+    check_fields(original,data,mapping,True)
+    run = subprocess.run([str(producer),f'--convert-{dimension}d','vtu',path.name,stem],cwd=directory,
+                         capture_output=True,text=True,timeout=60)
+    require(run.returncode == 0, f'vertex identity conversion failed: {run.stdout} {run.stderr}')
+    imported, _ = imported_read(directory/(stem+'.import'))
+    before = geometry(imported,fixture_name,data,mapping,disconnected)
+    output = directory/(stem+'.vtu')
+    actual = read(output)
+    vtk_vertex_ids(oracle.read_vtu(output))
+    after = geometry(actual,fixture_name,data,mapping,disconnected)
+    check_fields(actual,data,mapping,True)
+    check_report(Path(str(output)+'.report'),set())
+    print(f'[PASS] independent.{dimension}d.vertex_ids.{name}')
+    return dict(input=path.name,imported=before,output=after,vertex_ids=ids,
+                converter_stdout=run.stdout)
 
 
 def main():
@@ -382,6 +419,12 @@ def main():
                 for disconnected in (False,True):
                     key=name+'_'+source+('_disconnected' if disconnected else '')
                     report['cases'][key]=run_case(directory,producer,name,source,disconnected)
+        report['vertex_identity_cases'] = {
+            name+('_disconnected' if disconnected else ''): run_vertex_identity_case(
+                directory,producer,name+('_disconnected' if disconnected else ''),3,fixture(name,disconnected),
+                read_official,read_import,check_geometry)
+            for name in ('tetra_wedge','hexa_pyramid') for disconnected in (False,True)}
+        report['vertex_identity_inputs'] = len(report['vertex_identity_cases'])
         report.update(status='passed',inputs=4,chains=8,conversion_reports=8,
                       disconnected_inputs=4,disconnected_chains=8,disconnected_reports=8,import_snapshots=8)
         print('[PASS] independent.mesh.3d_chains inputs=4 chains=8 reports=8 disconnected_chains=8')

@@ -126,7 +126,7 @@ admissibility-gated internal-face transmissibility snapshot 现在由 `modules/d
 
 `ConversionReport` 以 `lossless/lossy/unsupported` 明确描述目标格式表达能力。canonical Gmsh/VTU writer bridge 已接通；GRDECL writer 在 document 尚无 logical semantics 时会先调用 `detect_grdecl_representability()` / `reconstruct_structured_logical_grid_3d()`。v1 detector 只接受 3D 全-hexa、完整 rectilinear tensor-product lattice：x/y/z 坐标按 scale-aware floating-point tolerance 聚类成 coordinate planes，vertex 数必须等于 `(NX+1)(NY+1)(NZ+1)`，cell 数必须等于 `NX*NY*NZ`，每个 hexa 必须恰好跨相邻的一组 x/y/z interval，且每个 logical cell 恰好出现一次；源 node/cell tag 和 local ordering 不参与 IJK 推断。成功时重建 vertical `COORD`、I-fastest `ZCORN` 与全 active `ACTNUM`；canonical 中若存在 contract-valid `PORO/PERM*` 则按 reconstructed logical cell ordering 投影，否则保持 absent，绝不补默认岩石属性。当前 straight-but-slanted/curvilinear pillars、缺 cell 的 sparse structured grid、tet/wedge/pyramid 以及 fault/pinch/NNC 均明确 unsupported。GRDECL writer 现在与 Gmsh/VTU writer 一样：`lossy` 仍生成可加载目标文件并报告丢失项，只有 `unsupported` 才不产生 content。
 
-VTU 的 `lossless` 判据包含**实体与稳定 ID 的绑定**，不只比较几何或 ID 集合。当前 writer 保留 point/cell 文件顺序并编码 UInt64 cell ID；reader 将 vertex ID 重建为点顺序 `1..N`，face ID 按 `(节点数, 排序后的文件点索引)` 从 1 重建。二维与三维转换分析分别检查 `vtu.vertex_ids_remapped` 和 `vtu.face_ids_remapped`：只有实际绑定会改变时记为 `lossy`，默认编号可还原时不误报；稀疏 ID、同一 ID 集合绑定到不同实体也会被发现。面局部存储顺序、面节点起点/方向变化本身不视为身份损失，连接须按实体对应解释；几何、字段及标签仍遵守各自既有检查。报告描述的是本项目已声明 ASCII 子集的 export/import 契约，不承诺任意第三方软件都采用相同重编号。该分析为 vertex O(V)、face O(F log F) 时间和 O(F) 临时空间，不调用文本解析器、不重建完整几何，也不改变导出字节或导入编号。Gmsh 已有的冲突/零 ID 重映射报告继续保留；本项不扩展 GRDECL 的逻辑网格身份契约。
+VTU 的 `lossless` 判据包含**实体与稳定 ID 的绑定**，不只比较几何或 ID 集合。当前 writer 保留 point/cell 文件顺序，并通过 UInt64 数组编码 vertex/cell ID；reader 对缺少节点身份数组的旧文件仍采用 `1..N`。face ID 仍需生成：二维按排序后的稳定端点 ID，三维按 `(节点数, 排序后的文件点索引)` 从 1 编号。转换分析只在实际 face 绑定改变时报告 `vtu.face_ids_remapped`；默认编号可还原时不误报，同 ID 集合错绑也会被发现。面局部存储顺序、面节点起点/方向变化本身不视为身份损失；几何、字段及标签遵守各自检查。报告描述本项目声明的 ASCII 子集和 MPMC 身份数组契约，不承诺任意第三方软件自动理解该数组的身份语义。面身份分析采用 O(F log F) 时间及 O(F) 临时空间，不调用文本解析器或重建几何。Gmsh 的冲突/零 ID 重映射报告继续保留；本项不扩展 GRDECL 逻辑网格身份契约。
 
 现有 `mesh.core.exchange_io` 增加 16 个二维混合单元/三维金字塔身份场景，使用无组、无字段输入隔离损失来源。测试实际 export/import 后按点位置及面的节点集合核对 ID 绑定，覆盖默认/稀疏/同集合错绑、纯面存储重排、零/UInt64 极值顶点、超出 double 精确整数范围的稳定单元 ID；并核对坐标、循环连接、直接分析与导出附带报告。官方二维读取器同时确认文件点顺序及更新后的身份损失项，原几何/字段容差保持。
 
@@ -158,6 +158,10 @@ OPM `27cellsAniso.grdecl` 包含顶层 `GRID` wrapper，而当前最小 GRDECL p
 三维混合样例进一步通过完整外部文件链验收：官方 Gmsh/VTK 写出 4 个输入，MPMC 导入并经统一交换接口导出两种格式，官方读取器验证 8 条链；另有 8 条同坐标不同节点身份的断开对照链。导入后的原始拓扑快照和最终文件分别核验，明确区分原有、生成和丢失的实体身份。共享 VTU ASCII 解析器兼容官方 writer 的尾部 `L2_NORM_RANGE` 可重算缓存，仍拒绝未知或损坏的嵌套元信息；缓存不作为数值载荷或单位，`lossless` 不承诺保留这类缓存或 XML 字节。方法、回归与复现见[完整链路说明](../../tests/mesh/external_compatibility/README.md#官方生成mpmc-导入和导出的三维完整链路)。
 
 二维三角形/四边形混合网格也通过官方生成输入的完整链验证：2 个正常输入形成 4 条转换链，另有 4 条同坐标不同身份的断开对照链。导入快照与最终读回分别检查面积/质心、共享边、owner 外法向、循环方向及标签/字段/ID 损失；正常网格为 6/1/5 条唯一/内部/边界边，断开网格为 7/0/7，面积均为 6 m²。见[二维完整链路说明](../../tests/mesh/external_compatibility/README.md#官方生成mpmc-导入和导出的二维完整链路)。
+
+VTU 二维/三维现在共享稳定节点身份契约：在标准 `PointData` 中用 MPMC 保留名 `mpmc_global_vertex_id` 写入单分量 UInt64 数组，元素顺序与 Points 一致；这是 MPMC 的数组语义约定，不是 VTK 内建的全局身份协议。读入支持 UInt64 全范围（含 0）及非负 Int64，整数直接解析，绝不经过 double。数组缺省时兼容旧文件的 1..N 节点编号；数组存在但类型、数量、分量、NumberOfTuples、唯一性或数值非法时拒绝，不能静默回退。节点/单元身份保留名不能用作普通科学字段，也不能放错 association。导出总是写出节点身份，输入输出均不把该数组计入浮点 PointData 字段。
+
+节点身份保留后，不再报告 `vtu.vertex_ids_remapped`。面身份仍未序列化：二维边按稳定端点 ID 排序生成，三维面按面宽及局部点索引排序生成；报告按相应规则比较实体绑定，继续保留真实的 `vtu.face_ids_remapped`、组和面标签损失。节点 ID 保留不等于任意网格转换已完全无损。
 
 ## 5. 求解变量与拓扑索引
 

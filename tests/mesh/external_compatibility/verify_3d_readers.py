@@ -15,6 +15,8 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
+from verify_2d_readers import vtk_vertex_ids
+
 import gmsh
 from vtkmodules.vtkCommonCore import vtkVersion
 from vtkmodules.vtkFiltersVerdict import vtkCellSizeFilter
@@ -287,9 +289,11 @@ def vtk_volumes(grid):
 
 
 def verify_vtu(path, name, with_fields):
-    _, kind, _, coords, cells, _ = case_data(name)
+    _, kind, vertex_ids, coords, cells, _ = case_data(name)
     grid = read_vtu(path)
+    actual_vertex_ids = vtk_vertex_ids(grid)
     topology = check_vtk_topology(name, grid)
+    require(actual_vertex_ids == vertex_ids, 'VTK stable vertex IDs/order')
     require(grid.GetNumberOfPoints() == len(coords) and grid.GetNumberOfCells() == len(cells), 'VTK counts')
     for i, point in enumerate(coords):
         for a, b in zip(grid.GetPoint(i), point, strict=True):
@@ -310,7 +314,7 @@ def verify_vtu(path, name, with_fields):
     close(sum(volumes.GetValue(i) for i in range(len(tags))),
           sum(volume for _, volume in cells.values()), 'VTK total volume m^3')
     require({pd.GetArrayName(i) for i in range(pd.GetNumberOfArrays())} ==
-            ({'temperature','position'} if with_fields else set()), 'VTK point field names')
+            ({'temperature','position','mpmc_global_vertex_id'} if with_fields else {'mpmc_global_vertex_id'}), 'VTK point field names')
     require({cd.GetArrayName(i) for i in range(cd.GetNumberOfArrays())} ==
             ({'mpmc_global_cell_id','marker','cell_pair'} if with_fields else {'mpmc_global_cell_id'}),
             'VTK cell field names')
@@ -392,7 +396,10 @@ def mixed_negative_controls(directory):
         for node in [points, *tree.findall('.//PointData/DataArray')]:
             width = int(node.get('NumberOfComponents', '1'))
             values = node.text.split()
-            extra = [value for old in interface for value in values[width*old:width*(old+1)]]
+            if node.get('Name') == 'mpmc_global_vertex_id':
+                extra = [str(max(map(int,values))+i+1) for i in range(len(interface))]
+            else:
+                extra = [value for old in interface for value in values[width*old:width*(old+1)]]
             node.text = ' '.join(values + extra)
         piece.set('NumberOfPoints', str(point_count+len(interface)))
         values = [int(value) for value in arrays['connectivity'].text.split()]
@@ -491,7 +498,7 @@ def main():
             check_report(directory / (name + '_from_vtu.msh.report'), {'gmsh.fields_not_serialized'})
             check_report(directory / (name + '_from_gmsh.vtu.report'),
                          {'vtu.groups_not_serialized', 'vtu.face_tags_not_serialized',
-                          'vtu.vertex_ids_remapped', 'vtu.face_ids_remapped'})
+                          'vtu.face_ids_remapped'})
         report['negative_control_rejections'] = negative_controls(directory)
         report['negative_control_rejections'].update(mixed_negative_controls(directory))
         report['negative_controls'] = len(report['negative_control_rejections'])

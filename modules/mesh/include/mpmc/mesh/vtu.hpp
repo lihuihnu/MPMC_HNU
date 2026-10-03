@@ -43,6 +43,8 @@ namespace vtu_detail {
 
 inline constexpr std::string_view global_cell_id_name =
     "mpmc_global_cell_id";
+inline constexpr std::string_view global_vertex_id_name =
+    "mpmc_global_vertex_id";
 
 struct XmlElement {
     std::map<std::string, std::string> attributes;
@@ -536,6 +538,52 @@ parse_source_kind(std::string_view value) {
     return metadata;
 }
 
+// Identity is integer metadata, never a floating-point scientific field.
+[[nodiscard]] inline std::vector<GlobalEntityId> parse_vertex_ids(
+    const XmlElement& array, std::size_t count) {
+    require_ascii_data_array(array);
+    if (component_count(array) != 1U) {
+        throw std::invalid_argument("mpmc::mesh::import_vtu_ascii: vertex IDs require one component");
+    }
+    const auto tuples = array.attributes.find("NumberOfTuples");
+    if (tuples != array.attributes.end() &&
+        parse_size(tuples->second, "invalid vertex ID NumberOfTuples") != count) {
+        throw std::invalid_argument("mpmc::mesh::import_vtu_ascii: vertex ID tuple count mismatch");
+    }
+    const auto& type = require_attribute(array, "type", "vertex ID type is required");
+    std::vector<std::uint64_t> values;
+    if (type == "UInt64") {
+        values = parse_integer_values<std::uint64_t>(array.body, "invalid UInt64 vertex IDs");
+    } else if (type == "Int64") {
+        for (const auto value : parse_integer_values<std::int64_t>(array.body, "invalid Int64 vertex IDs")) {
+            if (value < 0) throw std::invalid_argument("vertex ID cannot be negative");
+            values.push_back(static_cast<std::uint64_t>(value));
+        }
+    } else {
+        throw std::invalid_argument("vertex IDs must use UInt64 or Int64");
+    }
+    if (values.size() != count) throw std::invalid_argument("vertex ID count mismatch");
+    std::set<std::uint64_t> unique;
+    std::vector<GlobalEntityId> result;
+    result.reserve(count);
+    for (const auto value : values) {
+        if (!unique.insert(value).second) throw std::invalid_argument("vertex IDs must be unique");
+        result.emplace_back(value);
+    }
+    return result;
+}
+
+inline void write_vertex_ids(std::ostringstream& output, const Topology& topology) {
+    output << "        <DataArray type=\"UInt64\" Name=\"" << global_vertex_id_name
+           << "\" NumberOfComponents=\"1\" format=\"ascii\">\n          ";
+    const auto ids = topology.global_ids(EntityKind::vertex);
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        if (i != 0U) output << ' ';
+        output << ids[i].value();
+    }
+    output << "\n        </DataArray>\n";
+}
+
 [[nodiscard]] inline ParsedField parse_field(
     const XmlElement& array,
     EntityKind location,
@@ -554,6 +602,9 @@ parse_source_kind(std::string_view value) {
         require_attribute(
             array, "Name",
             "mpmc::mesh::import_vtu_ascii: point/cell field Name is required");
+    if (name == global_vertex_id_name || name == global_cell_id_name) {
+        throw std::invalid_argument("identity array name is reserved for its entity association");
+    }
     if (name.empty()) {
         throw std::invalid_argument(
             "mpmc::mesh::import_vtu_ascii: field Name cannot be empty");
@@ -654,12 +705,10 @@ inline void validate_export_fields(
             throw std::invalid_argument(
                 "mpmc::mesh::export_vtu_ascii: duplicate field ID in one association");
         }
-        if (expected_location ==
-                EntityKind::cell &&
-            field.metadata().id ==
-                global_cell_id_name) {
+        if (field.metadata().id == global_cell_id_name ||
+            field.metadata().id == global_vertex_id_name) {
             throw std::invalid_argument(
-                "mpmc::mesh::export_vtu_ascii: cell field name is reserved for stable cell identity");
+                "mpmc::mesh::export_vtu_ascii: field name is reserved for stable entity identity");
         }
     }
 }
@@ -1084,6 +1133,12 @@ import_vtu_ascii(std::string_view content) {
         }
     }
 
+    std::vector<GlobalEntityId> vertex_ids;
+    vertex_ids.reserve(point_count);
+    for (std::size_t point = 0; point < point_count; ++point) {
+        vertex_ids.emplace_back(static_cast<std::uint64_t>(point) + 1U);
+    }
+
     std::vector<ParsedField>
         parsed_point_fields;
     const auto point_data =
@@ -1100,6 +1155,10 @@ import_vtu_ascii(std::string_view content) {
                 throw std::invalid_argument(
                     "mpmc::mesh::import_vtu_ascii: duplicate PointData Name");
             }
+            if (name == global_vertex_id_name) {
+                vertex_ids = parse_vertex_ids(array, point_count);
+                continue;
+            }
             parsed_point_fields.push_back(
                 parse_field(
                     array,
@@ -1108,11 +1167,6 @@ import_vtu_ascii(std::string_view content) {
         }
     }
 
-    std::vector<GlobalEntityId> vertex_ids;
-    vertex_ids.reserve(point_count);
-    for (std::size_t point = 0; point < point_count; ++point) {
-        vertex_ids.emplace_back(static_cast<std::uint64_t>(point) + 1U);
-    }
     std::vector<LinearCell2D> cells;
     cells.reserve(cell_count);
     for (std::size_t i = 0; i < cell_count; ++i) {
@@ -1253,6 +1307,7 @@ export_vtu_ascii(const VtuImportResult& mesh) {
            << "\">\n";
 
     output << "      <PointData>\n";
+    write_vertex_ids(output, topology);
     for (const auto& field :
          mesh.point_fields) {
         write_field(output, field, 8U);

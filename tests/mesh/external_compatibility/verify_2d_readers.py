@@ -155,8 +155,20 @@ def check_array(array, width, expected):
             close(array.GetComponent(row, component), value, 'VTK field value/association')
 
 
+def vtk_vertex_ids(grid, required=True):
+    array = grid.GetPointData().GetArray('mpmc_global_vertex_id')
+    if array is None and not required:
+        return list(range(1,grid.GetNumberOfPoints()+1))
+    require(array is not None and array.IsA('vtkUnsignedLongLongArray'), 'VTK UInt64 vertex IDs required')
+    require(array.GetNumberOfComponents() == 1 and array.GetNumberOfTuples() == grid.GetNumberOfPoints(),
+            'VTK vertex ID shape')
+    ids = [int(array.GetValue(i)) for i in range(grid.GetNumberOfPoints())]
+    require(len(set(ids)) == len(ids), 'VTK duplicate vertex identity')
+    return ids
+
+
 def verify_vtu(path, name, with_fields):
-    _, coords, expected_cells = case_data(name)
+    vertex_ids, coords, expected_cells = case_data(name)
     reader = vtkXMLUnstructuredGridReader()
     errors = []
     reader.AddObserver('ErrorEvent', lambda *_: errors.append('ErrorEvent'))
@@ -167,8 +179,7 @@ def verify_vtu(path, name, with_fields):
     grid = reader.GetOutput()
     require(grid.GetNumberOfPoints() == len(coords) and grid.GetNumberOfCells() == len(expected_cells),
             'VTK mesh counts')
-    # VTU stores point order, not the MPMC stable vertex tags. Map by this
-    # fixture's unique coordinates; do not claim that arbitrary IDs survived.
+    require(vtk_vertex_ids(grid) == vertex_ids, 'VTK stable vertex IDs/order')
     actual_points = [grid.GetPoint(i) for i in range(grid.GetNumberOfPoints())]
     source_indices = []
     for point in actual_points:
@@ -197,7 +208,7 @@ def verify_vtu(path, name, with_fields):
         require(tuple(source_indices[j] for j in local_ids) == expected[1], 'VTK cyclic connectivity')
         analytic_geometry([actual_points[j] for j in local_ids], expected)
     require({pd.GetArrayName(i) for i in range(pd.GetNumberOfArrays())} ==
-            ({'temperature', 'point_vector'} if with_fields else set()), 'VTK point field names')
+            ({'temperature', 'point_vector', 'mpmc_global_vertex_id'} if with_fields else {'mpmc_global_vertex_id'}), 'VTK point field names')
     require({cd.GetArrayName(i) for i in range(cd.GetNumberOfArrays())} ==
             ({'mpmc_global_cell_id', 'marker', 'cell_pair'} if with_fields else {'mpmc_global_cell_id'}),
             'VTK cell field names')
@@ -278,7 +289,7 @@ def main():
             check_report(directory / (name + '_from_vtu.msh.report'), {'gmsh.fields_not_serialized'})
             check_report(directory / (name + '_from_gmsh.vtu.report'),
                          {'vtu.groups_not_serialized', 'vtu.face_tags_not_serialized',
-                          'vtu.vertex_ids_remapped', 'vtu.face_ids_remapped'})
+                          'vtu.face_ids_remapped'})
         report['negative_controls'] = negative_controls(directory)
         report['conversion_reports_checked'] = 6
         report['status'] = 'passed'

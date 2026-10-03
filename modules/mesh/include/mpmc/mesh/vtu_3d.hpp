@@ -499,6 +499,10 @@ import_vtu_ascii_3d(
                 throw std::invalid_argument(
                     "mpmc::mesh::import_vtu_ascii_3d: duplicate PointData Name");
             }
+            if (name == global_vertex_id_name) {
+                vertex_ids = parse_vertex_ids(array, point_count);
+                continue;
+            }
             parsed_point_fields.push_back(
                 parse_field(
                     array,
@@ -676,6 +680,7 @@ export_vtu_ascii_3d(
            << "\">\n";
 
     output << "      <PointData>\n";
+    write_vertex_ids(output, topology);
     for (const auto& field :
          mesh.point_fields) {
         write_field(

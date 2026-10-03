@@ -692,25 +692,11 @@ namespace mesh_exchange_detail {
            element_ids.end();
 }
 
-[[nodiscard]] inline bool vtu_vertex_ids_require_remap(
-    const Topology& topology) {
-    const auto ids = topology.global_ids(EntityKind::vertex);
-    // Both VTU writers retain point order; readers regenerate IDs as 1..N.
-    for (std::size_t i = 0U; i < ids.size(); ++i) {
-        if (ids[i].value() != static_cast<std::uint64_t>(i) + 1U) {
-            return true;
-        }
-    }
-    return false;
-}
-
 [[nodiscard]] inline bool vtu_face_ids_require_remap(
-    const Topology& topology) {
-    // The supported VTU readers regenerate faces without annotations/floors.
-    // Their ID order is (face width, sorted file-point indices), starting at 1.
-    // Compare bindings, not ID sets or source face storage order. In 2D the
-    // regenerated vertex IDs are point index + 1, so the ordering is identical.
-    using Key = std::array<LocalIndex::value_type, 5>;
+    const Topology& topology, int dimension) {
+    // Faces are not serialized: 2D orders by stable endpoint IDs; 3D
+    // orders by width and local point indices. Compare actual bindings.
+    using Key = std::array<std::uint64_t, 5>;
     std::vector<std::pair<Key, GlobalEntityId>> faces;
     const auto ids = topology.global_ids(EntityKind::face);
     const auto& relation = topology.relation(EntityKind::face, EntityKind::vertex);
@@ -723,7 +709,9 @@ namespace mesh_exchange_detail {
         // Width is already validated as 2 (2D) or 3/4 (3D). Bounded insertion
         // avoids general sort over a runtime-sized prefix of a fixed array.
         for (std::size_t j = 0U; j < vertices.size(); ++j) {
-            const auto value = vertices[j].value();
+            const auto value = dimension == 2 ?
+                topology.global_ids(EntityKind::vertex)[vertices[j].value()].value() :
+                static_cast<std::uint64_t>(vertices[j].value());
             std::size_t slot = j + 1U;
             while (slot > 1U && value < key[slot - 1U]) {
                 key[slot] = key[slot - 1U];
@@ -844,15 +832,10 @@ analyze_conversion(
 
     if (target_format ==
         MeshExchangeFormat::vtu_ascii) {
-        if (vtu_vertex_ids_require_remap(document.topology())) {
-            report.note_lossy(
-                "vtu.vertex_ids_remapped",
-                "VTU does not encode stable vertex IDs; point-order 1..N IDs on re-import differ from source identities");
-        }
-        if (vtu_face_ids_require_remap(document.topology())) {
+        if (vtu_face_ids_require_remap(document.topology(), document.dimension())) {
             report.note_lossy(
                 "vtu.face_ids_remapped",
-                "VTU does not encode stable face IDs; regenerated IDs ordered by face width and sorted point indices differ from source identities");
+                "VTU does not encode stable face IDs; regenerated IDs ordered by stable endpoints (2D) or face width and point indices (3D) differ from source identities");
         }
         if (!document.groups().empty()) {
             report.note_lossy(

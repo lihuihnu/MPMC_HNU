@@ -758,6 +758,93 @@ mesh::MeshExchangeDocument identity_variant(const mesh::MeshExchangeDocument& or
         std::nullopt, {}, {}, std::nullopt);
 }
 
+// Same textual contract for both public importers, independent of writer internals.
+void verify_vertex_id_contract(const mesh::MeshExchangeDocument& source) {
+    const auto parse = [&](const std::string& text) {
+        return source.dimension() == 2 ?
+            mesh::make_mesh_exchange_document(mesh::import_vtu_ascii(text)) :
+            mesh::make_mesh_exchange_document(mesh::import_vtu_ascii_3d(text));
+    };
+    const auto xml = *mesh::export_vtu_ascii(source).content;
+    const auto name = xml.find("Name=\"mpmc_global_vertex_id\"");
+    require(name != std::string::npos, "writer must emit vertex identity");
+    const auto begin = xml.rfind("<DataArray", name);
+    const auto end = xml.find("</DataArray>", name) + std::string_view{"</DataArray>"}.size();
+    const auto make = [&](const std::string& attributes, const std::string& values) {
+        return "<DataArray Name=\"mpmc_global_vertex_id\" " + attributes + ">" + values + "</DataArray>";
+    };
+    const auto replace = [&](const std::string& array) {
+        auto text = xml;
+        text.replace(begin, end-begin, array);
+        return text;
+    };
+    const auto missing = parse(replace(""));
+    for (std::size_t i = 0; i < 5U; ++i) {
+        require(missing.topology().global_ids(mesh::EntityKind::vertex)[i].value() == i+1U,
+                "legacy VTU missing identity must retain 1..N convention");
+    }
+    for (const auto& [type, payload] : std::array<std::pair<std::string, std::string>, 2>{{
+            {"UInt64", "0 18446744073709551615 9007199254740993 12 7"},
+            {"Int64", "0 9223372036854775807 9007199254740993 12 7"}}}) {
+        const auto imported = parse(replace(make("type=\""+type+"\" NumberOfComponents=\"1\" NumberOfTuples=\"5\" format=\"ascii\"", payload)));
+        const auto ids = imported.topology().global_ids(mesh::EntityKind::vertex);
+        require(ids[0].value() == 0U && ids[2].value() == 9007199254740993ULL &&
+                ids[3].value() == 12U && ids[4].value() == 7U, "exact vertex identity values");
+        require(ids[1].value() == (type == "UInt64" ? std::numeric_limits<std::uint64_t>::max() :
+                static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())), "full-width vertex identity");
+        require(imported.fields().fields().empty(), "identity must not become a floating field");
+        verify_identity_report(imported, false, false);
+    }
+    const std::string valid = make("type=\"UInt64\" format=\"ascii\"", "5 4 3 2 1");
+    const std::vector<std::string> invalid{
+        make("type=\"Float64\" format=\"ascii\"", "5 4 3 2 1"),
+        make("type=\"UInt32\" format=\"ascii\"", "5 4 3 2 1"),
+        make("type=\"UInt64\" format=\"ascii\"", "1 1 3 4 5"),
+        make("type=\"UInt64\" format=\"ascii\"", "1 2 3 4"),
+        make("type=\"UInt64\" format=\"ascii\"", "1 2 3 4 5 6"),
+        make("type=\"UInt64\" format=\"ascii\"", "-1 2 3 4 5"),
+        make("type=\"Int64\" format=\"ascii\"", "-1 2 3 4 5"),
+        make("type=\"UInt64\" format=\"ascii\"", "18446744073709551616 2 3 4 5"),
+        make("type=\"Int64\" format=\"ascii\"", "9223372036854775808 2 3 4 5"),
+        make("type=\"UInt64\" format=\"ascii\"", "1.0 2 3 4 5"),
+        make("type=\"UInt64\" NumberOfComponents=\"2\" format=\"ascii\"", "1 2 3 4 5"),
+        make("type=\"UInt64\" NumberOfComponents=\"0\" format=\"ascii\"", "1 2 3 4 5"),
+        make("type=\"UInt64\" NumberOfTuples=\"4\" format=\"ascii\"", "1 2 3 4 5"),
+        make("type=\"UInt64\" format=\"binary\"", "1 2 3 4 5"), valid+valid};
+    for (const auto& array : invalid) {
+        bool rejected = false;
+        try { (void)parse(replace(array)); } catch (const std::invalid_argument&) { rejected = true; }
+        require(rejected, "invalid vertex identity array must be rejected");
+    }
+    auto misplaced = replace("");
+    misplaced.insert(misplaced.find("</CellData>"), valid);
+    bool rejected = false;
+    try { (void)parse(misplaced); } catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected, "vertex identity is reserved to PointData");
+
+    const auto collisions = [](auto imported, auto writer) {
+        for (const auto location : {mesh::EntityKind::vertex, mesh::EntityKind::cell}) {
+            for (const auto* reserved : {"mpmc_global_vertex_id", "mpmc_global_cell_id"}) {
+                imported.point_fields.clear(); imported.cell_fields.clear();
+                auto value = mesh::DenseFieldSnapshot::create(imported.topology, location, 1U,
+                    std::vector<double>(imported.topology.entity_count(location), 1.0),
+                    {reserved, "1", {mesh::FieldSourceKind::synthetic_test, "identity-contract", "v1", ""}});
+                (location == mesh::EntityKind::vertex ? imported.point_fields : imported.cell_fields).push_back(value);
+                bool failed = false;
+                try { (void)writer(imported); } catch (const std::invalid_argument&) { failed = true; }
+                require(failed, "scientific fields cannot shadow reserved identity names");
+            }
+        }
+    };
+    if (source.dimension() == 2) {
+        collisions(mesh::import_vtu_ascii(xml), [](const auto& input) { return mesh::export_vtu_ascii(input); });
+    } else {
+        collisions(mesh::import_vtu_ascii_3d(xml), [](const auto& input) { return mesh::export_vtu_ascii_3d(input); });
+    }
+    std::cout << "[PASS] mesh.core.exchange_io.vtu_vertex_ids dimension=" << source.dimension()
+              << " invalid_arrays=" << invalid.size()+1U << " reserved_collisions=4\n";
+}
+
 void verify_vtu_identity_losses() {
     // Handwritten geometry; mixed 2D has a shared edge, pyramid mixes triangle
     // and quad faces. Default IDs are checked against actual readers below.
@@ -776,6 +863,7 @@ void verify_vtu_identity_losses() {
 <DataArray type="UInt8" Name="types" format="ascii">14</DataArray></Cells>
 </Piece></UnstructuredGrid></VTKFile>)VTU"));
     for (const auto* source : {&two, &three}) {
+        verify_vertex_id_contract(*source);
         const auto v = source->topology().global_ids(mesh::EntityKind::vertex);
         const auto f = source->topology().global_ids(mesh::EntityKind::face);
         const std::vector<mesh::GlobalEntityId> vertices{v.begin(), v.end()}, faces{f.begin(), f.end()};
@@ -784,18 +872,18 @@ void verify_vtu_identity_losses() {
         auto sparse_vertices = vertices;
         sparse_vertices[0] = mesh::GlobalEntityId{0};
         sparse_vertices[1] = mesh::GlobalEntityId{std::numeric_limits<std::uint64_t>::max()};
-        verify_identity_report(identity_variant(*source, sparse_vertices, faces), true, false);
+        verify_identity_report(identity_variant(*source, sparse_vertices, faces), false, source->dimension() == 2);
         auto permuted_vertices = vertices;
         std::swap(permuted_vertices[0], permuted_vertices[1]);
-        verify_identity_report(identity_variant(*source, permuted_vertices, faces), true, false);
+        verify_identity_report(identity_variant(*source, permuted_vertices, faces), false, source->dimension() == 2);
         auto sparse_faces = faces;
         sparse_faces[0] = mesh::GlobalEntityId{9007199254740999ULL};
         verify_identity_report(identity_variant(*source, vertices, sparse_faces), false, true);
         auto permuted_faces = faces;
         std::swap(permuted_faces[0], permuted_faces[1]);
         verify_identity_report(identity_variant(*source, vertices, permuted_faces), false, true);
-        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces), true, true);
-        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces, true), true, true);
+        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces), false, true);
+        verify_identity_report(identity_variant(*source, sparse_vertices, sparse_faces, true), false, true);
     }
     std::cout << "[PASS] mesh.core.exchange_io.vtu_identity_losses cases=16\n";
 }
