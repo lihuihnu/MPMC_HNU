@@ -13,6 +13,10 @@
 
 `plan.py` 仅采用同 PR、同 base、祖先可达且中央新版本完整成功的 checkpoint。失败、取消或排队的提交不前移基线；无证据、首次运行、Ready-for-review 回退累计 PR 差异。删除/重命名按旧新路径共同选测。未知可执行路径明确失败，不能静默漏测。首次迁移没有新版本 checkpoint，会验证累计受影响范围，不能为节省本轮时间伪造成功基线。
 
+根 `README.md` 是项目概览、能力矩阵与导航，不被 SW92 科学构建或测试消费。仅修改该文件不选择科学 Gate；中央 impact 中的 workflow/注册测试 inventory/选测检查和最终 Required CI result 仍执行。此前它直接命中 `sw92_profile_c_phase_set`，继而触发共享 topology 依赖闭包；现已移除这一条项目概览绑定。科学专题文档仍保持原 owner，例如 `modules/flash/sw92_profile_c_phase_set.md`；不全局排除 Markdown，也不因一次提交包含 README 而跳过同行源码、共享 fixture、CMake 或 workflow 的必要验证。若未来在根 README 引入可执行科学示例，须重新审计其执行 owner。
+
+`verify_workflows.py` 的 `assert_root_readme_selection` 覆盖四种 PR action、纯概览/治理文档、源码/共享夹具/科学专题/CMake/workflow 混合提交，以及删除/重命名两侧路径的选测并集；混合提交的选择应与其实际科学输入单独变更一致，AD suite 也不能因 README 同行而丢失。该回归由现有 impact job 执行，不新增 workflow 或科学测试入口。
+
 Linux 科学测试默认使用 GitHub 官方 `ubuntu-24.04`，Windows/macOS 保留官方平台。私有 `mpmc_hnu` 仅用于明确白名单中的长时 Gate，以及项目负责人已显式授权的 PETSc/MPI Linux 集成/求解 Gate；当前白名单包含 CPA performance audit 与 `flow_discretization_petsc`。新增私有 runner 消费必须同时更新治理白名单，并给出长时/稳定硬件需求或明确的项目负责人授权。`Required CI result` 汇总失败/取消，不将 skipped 当作已跑过测试。分支保护不在此次修改范围内。
 
 ## 后续编写

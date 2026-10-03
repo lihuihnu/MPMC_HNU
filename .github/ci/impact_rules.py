@@ -393,7 +393,6 @@ ownership = {
         "tests/flash/sw92_phase_assigned_pt/**",
         "tests/flash/pt_split/phase_set_test.cpp",
         "tests/flash/pt_split/CMakeLists.txt",
-        "README.md",
         ".github/workflows/sw92_profile_c_phase_set.yml",
     ],
     "sw92_profile_c_sensitivity": [
@@ -733,7 +732,7 @@ checks = [
     ([".github/workflows/sw92_family_vle.yml"], expected_route(sw92_family_vle=True)),
     ([".github/workflows/sw92_phase_assigned_pt.yml"], expected_route(sw92_profile_c_pt=True)),
     ([".github/workflows/pr_incremental_ci.yml"], expected_route()),
-    (["README.md"], expected_route(sw92_profile_c_phase_set=True)),
+    (["README.md"], expected_route()),
     (["modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp"], expected_route(pt_flash_backend=True, sw92_profile_c_phase_set=True, sw92_profile_c_sensitivity=True, sw92_physics_closure=True)),
     (["tests/flash/sw92_profile_c_phase_set/publication_test.cpp"], expected_route(sw92_profile_c_phase_set=True)),
     (["tests/flash/sw92_profile_c_sensitivity/sensitivity_test.cpp"], expected_route(sw92_profile_c_sensitivity=True, sw92_physics_closure=True)),
