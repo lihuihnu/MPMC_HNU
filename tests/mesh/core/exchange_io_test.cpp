@@ -4,10 +4,16 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace mesh = mpmc::mesh;
 
@@ -293,6 +299,128 @@ void verify_gmsh_group_bridge() {
         "Gmsh boundary tags bridge");
 }
 
+// Stable IDs need not be sorted, contiguous, or fit a local index. The writer
+// must map group members to the original local order before canonical renaming.
+void verify_sparse_group_lookup() {
+    const std::array ids{
+        mesh::GlobalEntityId{900U}, mesh::GlobalEntityId{0U},
+        mesh::GlobalEntityId{std::numeric_limits<std::uint64_t>::max()},
+        mesh::GlobalEntityId{3U}};
+    mesh::mesh_exchange_io_detail::CanonicalEntityLookup lookup(ids);
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        for (std::size_t local = 0U; local < ids.size(); ++local) {
+            require(lookup.local(ids[local]) == local,
+                    "sparse global ID must retain its original local index");
+        }
+    }
+    const auto rejects_missing = [](auto& index) {
+        try {
+            (void)index.local(mesh::GlobalEntityId{42U});
+        } catch (const std::invalid_argument& error) {
+            return std::string_view(error.what()) ==
+                "mpmc::mesh::canonical writer: group member is absent from topology";
+        }
+        return false;
+    };
+    require(rejects_missing(lookup), "missing group member must be rejected");
+    mesh::mesh_exchange_io_detail::CanonicalEntityLookup empty({});
+    require(rejects_missing(empty), "empty topology must reject a group member");
+
+    const auto raw = mesh::import_gmsh_4_1_ascii(gmsh_group_fixture(), 1.0);
+    const auto original = mesh::make_mesh_exchange_document(raw);
+    mesh::Topology::EntityIds remapped;
+    const auto copy_ids = [&](mesh::EntityKind kind) {
+        const auto source = original.topology().global_ids(kind);
+        return std::vector<mesh::GlobalEntityId>(source.begin(), source.end());
+    };
+    remapped.vertices = copy_ids(mesh::EntityKind::vertex);
+    remapped.edges = copy_ids(mesh::EntityKind::edge);
+    remapped.faces = copy_ids(mesh::EntityKind::face);
+    remapped.cells = {ids[0], ids[3]};
+    for (std::size_t local = 0U; local < remapped.faces.size(); ++local) {
+        remapped.faces[local] = mesh::GlobalEntityId{
+            1000U + static_cast<std::uint64_t>(remapped.faces.size() - local) * 7U};
+    }
+    const std::vector<mesh::MeshExchangeGroup> groups{
+        {mesh::EntityKind::face, 11U, "boundary", {remapped.faces[0], remapped.faces[2]}},
+        {mesh::EntityKind::cell, 21U, "second", {remapped.cells[1]}},
+        {mesh::EntityKind::cell, 22U, "both", {remapped.cells[1], remapped.cells[0]}}};
+    const auto coordinates = original.vertex_coordinates_m();
+    const auto document = mesh::MeshExchangeDocument::create(
+        original.source_format(), original.dimension(),
+        mesh::Topology{std::move(remapped),
+            mesh::mesh_exchange_io_detail::copy_relations(original.topology())},
+        {coordinates.begin(), coordinates.end()}, std::nullopt, {}, groups, std::nullopt);
+    const auto boundary = mesh::mesh_exchange_io_detail::canonical_face_boundary(
+        document, original.topology());
+    const auto tags = boundary.physical_tags();
+    for (std::size_t local = 0U; local < tags.size(); ++local) {
+        require(tags[local].value() == (local == 0U || local == 2U ? 11U : 0U),
+                "face groups must follow local order after canonical renaming");
+    }
+    const auto cells = mesh::mesh_exchange_io_detail::canonical_cell_groups(
+        document, original.topology());
+    require(cells.size() == 2U &&
+            cells[0].physical_tags == std::vector<std::uint32_t>{22U} &&
+            cells[1].physical_tags == std::vector<std::uint32_t>{21U, 22U},
+            "cell groups must retain memberships and sorted tags after renaming");
+}
+
+// Validation must distinguish entity kinds even when stable IDs overlap, and
+// retain the first diagnostic when an input violates more than one rule.
+void verify_group_validation_lookup() {
+    using Kind = mesh::EntityKind;
+    using Id = mesh::GlobalEntityId;
+    const auto create = [](std::vector<mesh::MeshExchangeGroup> groups) {
+        mesh::Topology::EntityIds ids;
+        ids.vertices = {Id{0U}, Id{std::numeric_limits<std::uint64_t>::max()}};
+        ids.edges = {Id{900U}};
+        ids.faces = {Id{900U}};
+        ids.cells = {Id{3U}};
+        return mesh::MeshExchangeDocument::create(
+            mesh::MeshExchangeFormat::gmsh_4_1_ascii, 2,
+            mesh::Topology{std::move(ids), {}}, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}},
+            std::nullopt, {}, std::move(groups), std::nullopt);
+    };
+    const auto valid = create({
+        {Kind::vertex, 1U, "vertices", {Id{std::numeric_limits<std::uint64_t>::max()}, Id{0U}, Id{0U}}},
+        {Kind::vertex, 2U, "first", {Id{0U}}},
+        {Kind::edge, 1U, "edge", {Id{900U}}},
+        {Kind::face, 1U, "face", {Id{900U}}},
+        {Kind::cell, 1U, "cell", {Id{3U}}}});
+    require(valid.groups().size() == 5U && valid.groups()[0].members.size() == 3U,
+            "validation must preserve group order and repeated members");
+    require(create({}).groups().empty(), "empty groups must remain valid");
+    const auto rejects = [&](std::vector<mesh::MeshExchangeGroup> groups,
+                             std::string_view expected) {
+        try {
+            (void)create(std::move(groups));
+        } catch (const std::invalid_argument& error) {
+            return std::string_view(error.what()) == expected;
+        }
+        return false;
+    };
+    constexpr std::string_view missing =
+        "mpmc::mesh::MeshExchangeDocument: group member is absent from topology";
+    require(rejects({{Kind::vertex, 1U, "wrong kind", {Id{900U}}}}, missing),
+            "an ID from another entity kind must be rejected");
+    require(rejects({{Kind::cell, 1U, "valid", {Id{3U}}},
+                     {Kind::cell, 2U, "missing", {Id{42U}}}}, missing),
+            "reused index must still reject absent members");
+    require(rejects({{Kind::cell, 0U, "zero", {Id{42U}}}},
+            "mpmc::mesh::MeshExchangeDocument: group tag zero is reserved"),
+            "zero tag must precede missing-member diagnostic");
+    require(rejects({{Kind::cell, 1U, std::string("bad\0name", 8U), {Id{42U}}}},
+            "mpmc::mesh::MeshExchangeDocument: group name cannot contain NUL"),
+            "invalid name must precede missing-member diagnostic");
+    require(rejects({{Kind::cell, 1U, "first", {}}, {Kind::cell, 1U, "duplicate", {Id{42U}}}},
+            "mpmc::mesh::MeshExchangeDocument: duplicate group key"),
+            "duplicate key must precede missing-member diagnostic");
+    require(rejects({{static_cast<Kind>(99), 1U, "invalid kind", {}}},
+            "mpmc::mesh::Topology: invalid entity kind"),
+            "invalid kind must be rejected before indexing the lookup array");
+}
+
 void verify_rectilinear_grdecl_reconstruction() {
     const auto source =
         mesh::import_vtu_ascii_3d(
@@ -527,6 +655,8 @@ int main() {
     try {
         verify_grdecl_canonical_roundtrip();
         verify_gmsh_group_bridge();
+        verify_sparse_group_lookup();
+        verify_group_validation_lookup();
         verify_rectilinear_grdecl_reconstruction();
         verify_slanted_hexa_reconstruction_rejection();
         verify_non_corner_point_report();
