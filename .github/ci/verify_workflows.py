@@ -32,6 +32,68 @@ def workflow_run_text(path):
         for job in (workflow.get('jobs') or {}).values()
     )
 
+def assert_root_build_selection(select):
+    direct = [
+        'tests/build/root_libraries/CMakeLists.txt',
+        'tests/build/root_libraries/consumer.cpp',
+        'tests/build/root_libraries/spatial_consumer.cpp',
+        'tests/build/root_libraries/flow_consumer.cpp',
+        'tests/build/root_libraries/flow_discretization_consumer.cpp',
+        'tests/build/root_libraries/well_consumer.cpp',
+        'tests/build/root_libraries/well_discretization_consumer.cpp',
+        'tests/build/root_libraries/verify.py',
+        'modules/thermodynamics/CMakeLists.txt',
+        'modules/flash/CMakeLists.txt',
+        'modules/mesh/CMakeLists.txt',
+        'modules/discretization/CMakeLists.txt',
+        'modules/flow/CMakeLists.txt',
+        'modules/flow/discretization/CMakeLists.txt',
+        'modules/well/CMakeLists.txt',
+        'modules/well/discretization/CMakeLists.txt',
+        'tests/build/root_libraries/README.md',
+    ]
+    # Discover the probe's actual project-header closure, so a future include
+    # cannot silently escape the explicit build-consumer ownership list.
+    pending = [Path(path) for path in direct if path.endswith('.cpp')]
+    visited = set()
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        text = path.read_text(encoding='utf-8')
+        for header in re.findall(r'#include\s+[<"](mpmc/[^>"]+)[>"]', text):
+            module = header.split('/')[1]
+            # Bridge namespaces live under their owning module, not at root.
+            module_dir = {
+                'flow_discretization': 'flow/discretization',
+                'well_discretization': 'well/discretization',
+            }.get(module, module)
+            pending.append(Path('modules') / module_dir / 'include' / header)
+    direct.extend(str(path).replace('\\', '/') for path in visited)
+    for action in ('opened', 'reopened', 'synchronize', 'ready_for_review'):
+        for path in direct:
+            assert 'arithmetic' in select([path], action=action)[1], (action, path)
+        for path in ('modules/mesh/include/mpmc/mesh/vtu.hpp',
+                     'modules/well/include/mpmc/well/single_well_control_policy.hpp',
+                     'modules/well/discretization/petsc/CMakeLists.txt',
+                     'modules/flow/include/mpmc/flow/sw92_co2_water_properties.hpp',
+                     'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp',
+                     'tests/unknown/new.cpp', '.github/AGENTS.md'):
+            assert not select([path], action=action)[1], ('unrelated AD fanout', path)
+        # Includes old/new paths for deletion and rename selection; preserve the
+        # science/legacy owners as well as the newly selected arithmetic suite.
+        paths = ['tests/build/root_libraries/old.cpp', 'frontend/src/new.ts']
+        left, right = (select([path], action=action) for path in paths)
+        combined = select(paths, action=action)
+        assert combined[1] == sorted(set(left[1]) | set(right[1]))
+        assert all(combined[0][key] == (left[0][key] or right[0][key])
+                   for key in combined[0])
+    ad = load('.github/workflows/ad.yml')
+    consumers = [step for job in ad['jobs'].values() for step in job.get('steps', [])
+                 if 'tests/build/root_libraries/verify.py' in str(step.get('run', ''))]
+    assert len(consumers) == 1 and consumers[0]['if'] == "matrix.suite == 'arithmetic'"
+
 def configured_ctest_names(source_dir):
     with tempfile.TemporaryDirectory(prefix='mpmc-ci-inventory-') as build_dir:
         configured = subprocess.run(
@@ -84,6 +146,37 @@ def assert_workflow_covers_registered_ctests(source_dir, workflow_path, required
         required_targets,
     )
     return registered
+
+def assert_root_readme_selection(select):
+    # Root overview edits have no scientific execution dependency. Topic docs,
+    # source, fixtures and build inputs keep their existing owners even when
+    # README.md is also changed (including either side of a rename).
+    science_paths = (
+        'modules/flash/include/mpmc/flash/sw92_profile_c_phase_set.hpp',
+        'tests/flash/sw92_profile_c_phase_set/publication_test.cpp',
+        'tests/support/sw92/test_support.hpp',
+        'modules/thermodynamics/include/mpmc/thermodynamics/sw92_phase.hpp',
+        'modules/flash/sw92_profile_c_phase_set.md',
+        'tests/flash/sw92_profile_c_phase_set/CMakeLists.txt',
+        '.github/workflows/sw92_profile_c_phase_set.yml',
+    )
+    for action in ('opened', 'reopened', 'synchronize', 'ready_for_review'):
+        for paths in (['README.md'], ['README.md', 'AGENTS.md', '.github/AGENTS.md']):
+            results, ad, thermo = select(paths, action=action)
+            assert not any(results.values()) and not ad and not thermo, (
+                'root overview edits selected scientific gates', action, paths,
+            )
+        for path in science_paths:
+            expected = select([path], action=action)
+            assert expected[0]['sw92_profile_c_phase_set'], ('lost Profile-C owner', path)
+            for paths in (['README.md', path], [path, 'README.md']):
+                assert select(paths, action=action) == expected, (
+                    'root overview changed scientific ownership', action, paths,
+                )
+        path = 'modules/ad/include/mpmc/ad/math.hpp'
+        expected = select([path], action=action)
+        assert expected[1], 'AD change must retain its selected suites'
+        assert select(['README.md', path], action=action) == expected
 
 def main():
     catalog = json.loads(Path('.github/ci/workflow_map.json').read_text(encoding='utf-8'))
@@ -223,6 +316,7 @@ def main():
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')
     select = planner['select']
+    assert_root_readme_selection(select)
     results, ad, thermo = select(['.github/AGENTS.md', 'tests/AGENTS.md'])
     assert not any(results.values()) and not ad and not thermo
     results, _, _ = select(['tests/flash/cpa_clapeyron_oracle/changed.json'])
@@ -342,6 +436,8 @@ def main():
     assert root['jobs']['sw92-profile-c-phase-set']['with']['dependencies_prevalidated'] is True
     assert root['jobs']['sw92-profile-c-sensitivity']['with']['dependencies_prevalidated'] is True
     assert root['jobs']['sw92-phase-assigned-no-w']['with']['dependencies_prevalidated'] is True
+
+    assert_root_build_selection(select)
 
     print('WORKFLOW_MAP_OK', len(paths), 'entries; single automatic entry; reusable closure:', len(seen))
     print(

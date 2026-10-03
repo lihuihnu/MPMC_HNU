@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_TWO_PHASE_SNES_ASSEMBLY_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_TWO_PHASE_SNES_ASSEMBLY_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/two_phase_natural_variable.hpp>
 #include <mpmc/flow_discretization/two_phase_tpfa.hpp>
 #include <mpmc/flow_discretization_petsc/distributed_component_conservation.hpp>
@@ -146,19 +147,7 @@ same_layout(
 near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second);
 }
 
 } // namespace two_phase_snes_assembly_detail

@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_MIXED_CARDINALITY_PHYSICAL_SNES_ASSEMBLY_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_MIXED_CARDINALITY_PHYSICAL_SNES_ASSEMBLY_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/cross_cardinality_phase_identity.hpp>
 #include <mpmc/flow_discretization/cell_source.hpp>
 #include <mpmc/flow_discretization_petsc/fixed_three_phase_snes_assembly.hpp>
@@ -248,20 +249,7 @@ state_identity(
 near_roundoff(
     double first,
     double second) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second)) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second)});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::
-                epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second);
 }
 
 [[nodiscard]] inline PetscErrorCode
@@ -371,6 +359,49 @@ insert_dense_cell_assembly(
     return PETSC_SUCCESS;
 }
 
+// One face side contributes component rows followed by one energy row.
+// insert_face_side validates these spans before calling this packing helper.
+// Columns belong to either adjacent cell, so the block may be rectangular.
+[[nodiscard]] inline PetscErrorCode
+insert_face_jacobian_block(
+    Mat jacobian,
+    std::span<const PetscInt> rows,
+    const VariableCardinalityNaturalVariableCellDof3D& column_cell,
+    std::size_t component_count,
+    std::span<const double> component,
+    std::span<const double> energy) {
+    const std::size_t column_count = column_cell.scalar_count;
+    std::vector<PetscInt> columns(column_count);
+    for (std::size_t slot = 0U; slot < column_count; ++slot) {
+        columns[slot] =
+            column_cell.petsc_global_scalar_start +
+            static_cast<PetscInt>(slot);
+    }
+
+    std::vector<PetscScalar> values(
+        (component_count + 1U) * column_count,
+        PetscScalar{0.0});
+    for (std::size_t row = 0U; row < component_count; ++row) {
+        for (std::size_t column = 0U; column < column_count; ++column) {
+            values[row * column_count + column] =
+                static_cast<PetscScalar>(component[row * column_count + column]);
+        }
+    }
+    for (std::size_t column = 0U; column < column_count; ++column) {
+        values[component_count * column_count + column] =
+            static_cast<PetscScalar>(energy[column]);
+    }
+
+    return MatSetValues(
+        jacobian,
+        static_cast<PetscInt>(rows.size()),
+        rows.data(),
+        static_cast<PetscInt>(columns.size()),
+        columns.data(),
+        values.data(),
+        ADD_VALUES);
+}
+
 [[nodiscard]] inline PetscErrorCode
 insert_face_side(
     const VariableCardinalityNaturalVariableCellDof3D&
@@ -445,98 +476,148 @@ insert_face_side(
         return PETSC_SUCCESS;
     }
 
-    const auto make_block =
-        [&](std::size_t column_count,
-            std::span<const double> component,
-            std::span<const double> energy) {
-            std::vector<PetscScalar>
-                values(
-                    conservation_rows *
-                    column_count,
-                    PetscScalar{0.0});
-            for (std::size_t row = 0U;
-                 row < component_count;
-                 ++row) {
-                for (std::size_t column = 0U;
-                     column < column_count;
-                     ++column) {
-                    values[
-                        row * column_count +
-                        column] =
-                        static_cast<PetscScalar>(
-                            component[
-                                row * column_count +
-                                column]);
-                }
-            }
-            for (std::size_t column = 0U;
-                 column < column_count;
-                 ++column) {
-                values[
-                    component_count *
-                        column_count +
-                    column] =
-                    static_cast<PetscScalar>(
-                        energy[column]);
-            }
-            return values;
-        };
-
-    std::vector<PetscInt>
-        diagonal_columns(
-            row_cell.scalar_count);
-    for (std::size_t slot = 0U;
-         slot < row_cell.scalar_count;
-         ++slot) {
-        diagonal_columns[slot] =
-            row_cell.petsc_global_scalar_start +
-            static_cast<PetscInt>(slot);
-    }
-    auto diagonal_values =
-        make_block(
-            row_cell.scalar_count,
+    // Assemble the diagonal block first; preserve early return on PETSc errors.
+    const PetscErrorCode error =
+        insert_face_jacobian_block(
+            jacobian,
+            rows,
+            row_cell,
+            component_count,
             component_diagonal,
             energy_diagonal);
-    PetscErrorCode error =
-        MatSetValues(
-            jacobian,
-            static_cast<PetscInt>(
-                rows.size()),
-            rows.data(),
-            static_cast<PetscInt>(
-                diagonal_columns.size()),
-            diagonal_columns.data(),
-            diagonal_values.data(),
-            ADD_VALUES);
     if (error != PETSC_SUCCESS) {
         return error;
     }
 
-    std::vector<PetscInt>
-        off_columns(
-            other_cell.scalar_count);
-    for (std::size_t slot = 0U;
-         slot < other_cell.scalar_count;
-         ++slot) {
-        off_columns[slot] =
-            other_cell.petsc_global_scalar_start +
-            static_cast<PetscInt>(slot);
-    }
-    auto off_values =
-        make_block(
-            other_cell.scalar_count,
-            component_off_diagonal,
-            energy_off_diagonal);
-    return MatSetValues(
+    return insert_face_jacobian_block(
         jacobian,
-        static_cast<PetscInt>(
-            rows.size()),
-        rows.data(),
-        static_cast<PetscInt>(
-            off_columns.size()),
-        off_columns.data(),
-        off_values.data(),
-        ADD_VALUES);
+        rows,
+        other_cell,
+        component_count,
+        component_off_diagonal,
+        energy_off_diagonal);
+}
+
+// Cell rows are [component balances, energy balance, fugacity equalities].
+// Accumulation adds to the conservation rows; equilibrium writes the remaining
+// rows. Keep these operations distinct so sources can later add to balances.
+// nc is the component count; q is the frozen cell unknown count. The caller
+// allocates q residual entries and a q-by-q row-major diagonal block.
+inline void add_accumulation_rows(
+    const mpmc::flow::BackwardEulerComponentAccumulationResidual3P& component,
+    const mpmc::flow::BackwardEulerEnergyAccumulationResidual3P& energy,
+    std::size_t nc,
+    std::size_t q,
+    VariableCardinalityNaturalVariableCellAssembly3D& assembly,
+    VariableCardinalityNaturalVariableJacobianBlock3D& diagonal) {
+    if (component.component_count() != nc ||
+        component.input_count != q || energy.input_count != q) {
+        throw std::invalid_argument("mixed-cardinality accumulation shape mismatch");
+    }
+    for (std::size_t row = 0U; row < nc; ++row) {
+        assembly.residual[row] += component.residual(row);
+        for (std::size_t column = 0U; column < q; ++column) {
+            diagonal.values_row_major[row * q + column] +=
+                component.d_residual(row, column);
+        }
+    }
+    assembly.residual[nc] += energy.residual_w_per_bulk_m3;
+    for (std::size_t column = 0U; column < q; ++column) {
+        diagonal.values_row_major[nc * q + column] += energy.d_residual(column);
+    }
+}
+
+// Two phases supply Nc equalities. Preserve the checked derivative accessor.
+inline void write_fugacity_rows(
+    const mpmc::flow::TwoPhaseFugacityEquilibriumLinearization& fugacity,
+    std::size_t nc,
+    std::size_t q,
+    VariableCardinalityNaturalVariableCellAssembly3D& assembly,
+    VariableCardinalityNaturalVariableJacobianBlock3D& diagonal) {
+    if (fugacity.residual_count() != nc || fugacity.input_count != q) {
+        throw std::invalid_argument(
+            "two-phase fugacity shape mismatch in mixed dispatcher");
+    }
+    for (std::size_t component_index = 0U; component_index < nc; ++component_index) {
+        const std::size_t row = nc + 1U + component_index;
+        assembly.residual[row] = fugacity.residual[component_index];
+        for (std::size_t column = 0U; column < q; ++column) {
+            diagonal.values_row_major[row * q + column] =
+                fugacity.d_residual(component_index, column);
+        }
+    }
+}
+
+// Three phases supply 2*Nc equalities from the validated dense linearization.
+inline void write_fugacity_rows(
+    const mpmc::flow::FugacityEquilibriumResidualLinearization3P& fugacity,
+    std::size_t nc,
+    std::size_t q,
+    VariableCardinalityNaturalVariableCellAssembly3D& assembly,
+    VariableCardinalityNaturalVariableJacobianBlock3D& diagonal) {
+    if (fugacity.residual_count() != 2U * nc || fugacity.input_count() != q) {
+        throw std::invalid_argument(
+            "three-phase fugacity shape mismatch in mixed dispatcher");
+    }
+    const auto values = fugacity.values();
+    const auto jacobian = fugacity.jacobian();
+    for (std::size_t local_row = 0U; local_row < values.size(); ++local_row) {
+        const std::size_t row = nc + 1U + local_row;
+        assembly.residual[row] = values[local_row];
+        for (std::size_t column = 0U; column < q; ++column) {
+            diagonal.values_row_major[row * q + column] =
+                jacobian[local_row * q + column];
+        }
+    }
+}
+
+// Phase-specific mobility formulas stay explicit; the callback protocol below
+// is shared. Three phases additionally consume the saturation constitutive law.
+[[nodiscard]] inline mpmc::flow::SinglePhaseMobilityLinearization
+build_current_mobility(const SinglePhaseCurrentCellLinearization3D& evaluated) {
+    return mpmc::flow::build_single_phase_mobility_linearization(
+        evaluated.state, evaluated.transport);
+}
+
+[[nodiscard]] inline mpmc::flow::TwoPhaseMobilityLinearization
+build_current_mobility(const TwoPhaseCurrentCellLinearization3D& evaluated) {
+    return mpmc::flow::build_two_phase_mobility_linearization(
+        evaluated.state, evaluated.transport);
+}
+
+[[nodiscard]] inline mpmc::flow::LocalPhaseMobilityLinearization3P
+build_current_mobility(const FixedThreePhaseCurrentCellLinearization3D& evaluated) {
+    return mpmc::flow::build_local_phase_mobility_linearization(
+        evaluated.state, evaluated.transport, evaluated.saturation_constitutive);
+}
+
+// Called after evaluate_cell validates output pointers and resets candidates.
+// Forward the frozen chart and canonical component order unchanged. A failed,
+// domain-invalid or empty evaluation must not produce mobility/current output.
+// Keep mobility construction before moving the evaluated closure into current.
+template <class CellInput, class CellLinearization, class EvaluatorBinding>
+[[nodiscard]] inline PetscErrorCode evaluate_phase_cell(
+    const MixedCardinalityPhysicalSnesCellInput3D& input,
+    std::span<const double> values,
+    const EvaluatorBinding& binding,
+    std::optional<MixedCardinalityPhysicalCurrentCellLinearization3D>* current,
+    std::optional<MixedCardinalityPhysicalMobilityLinearization3D>* mobility,
+    NaturalVariableSnesEvaluationStatus3D* status) {
+    const auto* typed = std::get_if<CellInput>(&input);
+    if (typed == nullptr) {
+        return PETSC_ERR_ARG_INCOMP;
+    }
+    std::optional<CellLinearization> evaluated;
+    const PetscErrorCode error = binding.evaluator(
+        typed->cell, typed->cell_global, values, typed->frozen_layout,
+        typed->component_ids, binding.user_context, &evaluated, status);
+    if (error == PETSC_SUCCESS &&
+        *status == NaturalVariableSnesEvaluationStatus3D::success &&
+        evaluated.has_value()) {
+        mobility->emplace(build_current_mobility(*evaluated));
+        current->emplace(std::move(*evaluated));
+    }
+    return error;
 }
 
 } // namespace mixed_cardinality_physical_detail
@@ -1535,119 +1616,23 @@ private:
         PetscErrorCode error =
             PETSC_SUCCESS;
 
+        // Dispatch only the phase-specific types and binding. Candidate validity
+        // and identity checks below apply uniformly to all three phase counts.
         if (record.phase_count == 1U) {
-            const auto* typed =
-                std::get_if<
-                    SinglePhaseSnesCellInput3D>(
-                        &input);
-            if (typed == nullptr) {
-                return PETSC_ERR_ARG_INCOMP;
-            }
-            std::optional<
-                SinglePhaseCurrentCellLinearization3D>
-                evaluated;
-            error =
-                cell_evaluators_
-                    .single_phase.evaluator(
-                        typed->cell,
-                        typed->cell_global,
-                        values,
-                        typed->frozen_layout,
-                        typed->component_ids,
-                        cell_evaluators_
-                            .single_phase
-                            .user_context,
-                        &evaluated,
-                        &cell_status);
-            if (error == PETSC_SUCCESS &&
-                cell_status ==
-                    NaturalVariableSnesEvaluationStatus3D::
-                        success &&
-                evaluated.has_value()) {
-                mobility->emplace(
-                    mpmc::flow::
-                        build_single_phase_mobility_linearization(
-                            evaluated->state,
-                            evaluated->transport));
-                current->emplace(
-                    std::move(*evaluated));
-            }
+            error = evaluate_phase_cell<
+                SinglePhaseSnesCellInput3D, SinglePhaseCurrentCellLinearization3D>(
+                input, values, cell_evaluators_.single_phase,
+                current, mobility, &cell_status);
         } else if (record.phase_count == 2U) {
-            const auto* typed =
-                std::get_if<
-                    TwoPhaseSnesCellInput3D>(
-                        &input);
-            if (typed == nullptr) {
-                return PETSC_ERR_ARG_INCOMP;
-            }
-            std::optional<
-                TwoPhaseCurrentCellLinearization3D>
-                evaluated;
-            error =
-                cell_evaluators_
-                    .two_phase.evaluator(
-                        typed->cell,
-                        typed->cell_global,
-                        values,
-                        typed->frozen_layout,
-                        typed->component_ids,
-                        cell_evaluators_
-                            .two_phase
-                            .user_context,
-                        &evaluated,
-                        &cell_status);
-            if (error == PETSC_SUCCESS &&
-                cell_status ==
-                    NaturalVariableSnesEvaluationStatus3D::
-                        success &&
-                evaluated.has_value()) {
-                mobility->emplace(
-                    mpmc::flow::
-                        build_two_phase_mobility_linearization(
-                            evaluated->state,
-                            evaluated->transport));
-                current->emplace(
-                    std::move(*evaluated));
-            }
+            error = evaluate_phase_cell<
+                TwoPhaseSnesCellInput3D, TwoPhaseCurrentCellLinearization3D>(
+                input, values, cell_evaluators_.two_phase,
+                current, mobility, &cell_status);
         } else if (record.phase_count == 3U) {
-            const auto* typed =
-                std::get_if<
-                    FixedThreePhaseSnesCellInput3D>(
-                        &input);
-            if (typed == nullptr) {
-                return PETSC_ERR_ARG_INCOMP;
-            }
-            std::optional<
-                FixedThreePhaseCurrentCellLinearization3D>
-                evaluated;
-            error =
-                cell_evaluators_
-                    .three_phase.evaluator(
-                        typed->cell,
-                        typed->cell_global,
-                        values,
-                        typed->frozen_layout,
-                        typed->component_ids,
-                        cell_evaluators_
-                            .three_phase
-                            .user_context,
-                        &evaluated,
-                        &cell_status);
-            if (error == PETSC_SUCCESS &&
-                cell_status ==
-                    NaturalVariableSnesEvaluationStatus3D::
-                        success &&
-                evaluated.has_value()) {
-                mobility->emplace(
-                    mpmc::flow::
-                        build_local_phase_mobility_linearization(
-                            evaluated->state,
-                            evaluated->transport,
-                            evaluated
-                                ->saturation_constitutive));
-                current->emplace(
-                    std::move(*evaluated));
-            }
+            error = evaluate_phase_cell<
+                FixedThreePhaseSnesCellInput3D, FixedThreePhaseCurrentCellLinearization3D>(
+                input, values, cell_evaluators_.three_phase,
+                current, mobility, &cell_status);
         } else {
             return PETSC_ERR_ARG_INCOMP;
         }
@@ -1898,50 +1883,6 @@ private:
             q * q,
             0.0);
 
-        const auto add_conservation =
-            [&](const mpmc::flow::
-                    BackwardEulerComponentAccumulationResidual3P&
-                        component,
-                const mpmc::flow::
-                    BackwardEulerEnergyAccumulationResidual3P&
-                        energy) {
-                if (component.component_count() !=
-                        nc ||
-                    component.input_count !=
-                        q ||
-                    energy.input_count !=
-                        q) {
-                    throw std::invalid_argument(
-                        "mixed-cardinality accumulation shape mismatch");
-                }
-                for (std::size_t row = 0U;
-                     row < nc;
-                     ++row) {
-                    assembly.residual[row] +=
-                        component.residual(row);
-                    for (std::size_t column = 0U;
-                         column < q;
-                         ++column) {
-                        diagonal.values_row_major[
-                            row * q +
-                            column] +=
-                            component.d_residual(
-                                row,
-                                column);
-                    }
-                }
-                assembly.residual[nc] +=
-                    energy.residual_w_per_bulk_m3;
-                for (std::size_t column = 0U;
-                     column < q;
-                     ++column) {
-                    diagonal.values_row_major[
-                        nc * q +
-                        column] +=
-                        energy.d_residual(
-                            column);
-                }
-            };
 
         if (record.phase_count == 1U) {
             const auto& evaluated =
@@ -1993,9 +1934,7 @@ private:
                         energy_linearization,
                         *previous_energy(input),
                         time_step_seconds_);
-            add_conservation(
-                component,
-                energy);
+            add_accumulation_rows(component, energy, nc, q, assembly, diagonal);
         } else if (
             record.phase_count == 2U) {
             const auto& evaluated =
@@ -2047,39 +1986,9 @@ private:
                         energy_linearization,
                         *previous_energy(input),
                         time_step_seconds_);
-            add_conservation(
-                component,
-                energy);
+            add_accumulation_rows(component, energy, nc, q, assembly, diagonal);
 
-            if (evaluated.fugacity.residual_count() !=
-                    nc ||
-                evaluated.fugacity.input_count !=
-                    q) {
-                throw std::invalid_argument(
-                    "two-phase fugacity shape mismatch in mixed dispatcher");
-            }
-            for (std::size_t component_index = 0U;
-                 component_index < nc;
-                 ++component_index) {
-                const std::size_t row =
-                    nc + 1U +
-                    component_index;
-                assembly.residual[row] =
-                    evaluated.fugacity
-                        .residual[
-                            component_index];
-                for (std::size_t column = 0U;
-                     column < q;
-                     ++column) {
-                    diagonal.values_row_major[
-                        row * q +
-                        column] =
-                        evaluated.fugacity
-                            .d_residual(
-                                component_index,
-                                column);
-                }
-            }
+            write_fugacity_rows(evaluated.fugacity, nc, q, assembly, diagonal);
         } else {
             const auto& evaluated =
                 std::get<
@@ -2130,40 +2039,9 @@ private:
                         energy_linearization,
                         *previous_energy(input),
                         time_step_seconds_);
-            add_conservation(
-                component,
-                energy);
+            add_accumulation_rows(component, energy, nc, q, assembly, diagonal);
 
-            if (evaluated.fugacity.residual_count() !=
-                    2U * nc ||
-                evaluated.fugacity.input_count() !=
-                    q) {
-                throw std::invalid_argument(
-                    "three-phase fugacity shape mismatch in mixed dispatcher");
-            }
-            const auto values =
-                evaluated.fugacity.values();
-            const auto jacobian =
-                evaluated.fugacity.jacobian();
-            for (std::size_t local_row = 0U;
-                 local_row < values.size();
-                 ++local_row) {
-                const std::size_t row =
-                    nc + 1U +
-                    local_row;
-                assembly.residual[row] =
-                    values[local_row];
-                for (std::size_t column = 0U;
-                     column < q;
-                     ++column) {
-                    diagonal.values_row_major[
-                        row * q +
-                        column] =
-                        jacobian[
-                            local_row * q +
-                            column];
-                }
-            }
+            write_fugacity_rows(evaluated.fugacity, nc, q, assembly, diagonal);
         }
 
         if (source.has_value()) {

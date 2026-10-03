@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_LOCAL_COMPONENT_CONSERVATION_RESIDUAL_HPP
 #define MPMC_FLOW_DISCRETIZATION_LOCAL_COMPONENT_CONSERVATION_RESIDUAL_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/component_accumulation_time.hpp>
 #include <mpmc/flow_discretization/normalized_component_face_contribution.hpp>
 
@@ -160,37 +161,13 @@ namespace local_component_conservation_detail {
     double first,
     double second,
     double extra_scale = 0.0) {
-    if (!std::isfinite(first) ||
-        !std::isfinite(second) ||
-        !std::isfinite(extra_scale) ||
-        extra_scale < 0.0) {
-        return false;
-    }
-    const double scale =
-        std::max(
-            {1.0,
-             std::abs(first),
-             std::abs(second),
-             extra_scale});
-    return std::abs(first - second) <=
-        8192.0 *
-            std::numeric_limits<double>::epsilon() *
-            scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second, extra_scale);
 }
 
 [[nodiscard]] inline bool same_layout(
     const mpmc::flow::NaturalVariableLayoutDescriptor& first,
     const mpmc::flow::NaturalVariableLayoutDescriptor& second) {
-    return first.component_count() ==
-               second.component_count() &&
-        first.phase_count() ==
-            second.phase_count() &&
-        first.unknown_count() ==
-            second.unknown_count() &&
-        first.composition_pivot()
-                .dependent_components() ==
-            second.composition_pivot()
-                .dependent_components();
+    return mpmc::flow::validation_detail::same_layout(first, second);
 }
 
 inline void validate_state_identity(
@@ -305,50 +282,8 @@ inline void validate_state_identity(
 [[nodiscard]] inline bool same_state_identity(
     const mpmc::flow::NaturalVariableStateIdentity3P& first,
     const mpmc::flow::NaturalVariableStateIdentity3P& second) {
-    if (!same_layout(first.layout, second.layout) ||
-        first.component_ids != second.component_ids ||
-        !near_roundoff(
-            first.reference_pressure_pa,
-            second.reference_pressure_pa) ||
-        !near_roundoff(
-            first.temperature_k,
-            second.temperature_k)) {
-        return false;
-    }
-
-    for (std::size_t phase = 0U;
-         phase < first.layout.phase_count();
-         ++phase) {
-        if (!near_roundoff(
-                first.saturation[phase],
-                second.saturation[phase]) ||
-            first.phase_composition[phase].size() !=
-                second.phase_composition[phase].size()) {
-            return false;
-        }
-        for (std::size_t component = 0U;
-             component <
-             first.phase_composition[phase].size();
-             ++component) {
-            if (!near_roundoff(
-                    first.phase_composition[phase][component],
-                    second.phase_composition[phase][component])) {
-                return false;
-            }
-        }
-    }
-    for (std::size_t phase =
-             first.layout.phase_count();
-         phase < mpmc::flow::fixed_three_phase_count;
-         ++phase) {
-        if (first.saturation[phase] != 0.0 ||
-            second.saturation[phase] != 0.0 ||
-            !first.phase_composition[phase].empty() ||
-            !second.phase_composition[phase].empty()) {
-            return false;
-        }
-    }
-    return true;
+    return mpmc::flow::validation_detail::same_state_identity(
+        first, second, [](double left, double right) { return near_roundoff(left, right); });
 }
 
 inline void validate_accumulation(

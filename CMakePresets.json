@@ -7,10 +7,26 @@
       "displayName": "AD debug tests (default platform generator)",
       "binaryDir": "${sourceDir}/build/ad-debug",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "BUILD_TESTING": "ON" }
+    },
+    {
+      "name": "flash-libraries",
+      "displayName": "AD, thermodynamics and flash library targets (no tests)",
+      "binaryDir": "${sourceDir}/build/flash-libraries",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "OFF",
+        "MPMC_ENABLE_THERMODYNAMICS": "OFF",
+        "MPMC_ENABLE_FLASH": "ON",
+        "MPMC_ENABLE_MESH": "OFF",
+        "MPMC_ENABLE_DISCRETIZATION": "OFF",
+        "MPMC_ENABLE_FLOW_DISCRETIZATION": "OFF",
+        "MPMC_ENABLE_WELL_DISCRETIZATION": "OFF"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "ad-debug", "configurePreset": "ad-debug", "configuration": "Debug" }
+    { "name": "ad-debug", "configurePreset": "ad-debug", "configuration": "Debug" },
+    { "name": "flash-libraries", "configurePreset": "flash-libraries", "configuration": "Release" }
   ],
   "testPresets": [
     {

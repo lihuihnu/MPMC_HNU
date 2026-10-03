@@ -1,6 +1,7 @@
 #ifndef MPMC_FLOW_DISCRETIZATION_PETSC_POST_SNES_PT_FLASH_PHASE_TRANSITION_SCANNER_HPP
 #define MPMC_FLOW_DISCRETIZATION_PETSC_POST_SNES_PT_FLASH_PHASE_TRANSITION_SCANNER_HPP
 
+#include <mpmc/flow/detail/validation.hpp>
 #include <mpmc/flow/phase_set_transition_flash_adapter.hpp>
 #include <mpmc/flow_discretization_petsc/post_snes_phase_transition_controller.hpp>
 
@@ -55,12 +56,7 @@ struct PostSnesPtFlashPhaseTransitionScannerContext3D {
 namespace post_snes_pt_flash_scanner_detail {
 
 [[nodiscard]] inline bool near_roundoff(double first, double second) {
-    if (!std::isfinite(first) || !std::isfinite(second)) {
-        return false;
-    }
-    const double scale = std::max({1.0, std::abs(first), std::abs(second)});
-    return std::abs(first - second) <=
-        8192.0 * std::numeric_limits<double>::epsilon() * scale;
+    return mpmc::flow::validation_detail::near_roundoff<8192>(first, second);
 }
 
 [[nodiscard]] inline bool same_feed(
