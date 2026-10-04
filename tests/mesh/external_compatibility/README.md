@@ -164,7 +164,7 @@ Windows 使用同一 requirements 和脚本；venv Python 路径改为 `venv\Scr
 
 成功要求返回码 0 且总 PASS 为 `files=12 reports=6 negative_controls=5`。`result.json` 记录真实读取器版本、平台、Python、producer/oracle SHA256、逐文件结果、输出文件 SHA256 及失败原因。CI 另记录提交 SHA 并保存结果与文件为 artifact。本地运行需同时记录 checkout 的提交/dirty 状态及构建命令；文件 hash 不替代源码版本。
 
-PR 中央入口与原专项手动入口执行完全相同的步骤，仍由既有 external compatibility job 拥有，官方 Ubuntu runner、10 分钟上限和旧公共样例断言不变。失败返回码直接阻断 job，不能把成功生成文件算作读回成功。
+PR 中央入口与原专项手动入口执行完全相同的步骤，仍由既有 external compatibility job 拥有，官方 Ubuntu runner 和旧公共样例断言保留。加入固定 HDF5 源码构建后，上限为 20 分钟。失败返回码直接阻断 job，不能把成功生成文件算作读回成功。
 
 ## 命名分组独立完整链与计算准备规模验证
 
@@ -185,3 +185,34 @@ python3 -B tests/mesh/external_compatibility/run_computational_scale.py --produc
 ```
 
 已有 external owner 同时拥有新增 GRDECL、命名组和小规模计算准备步骤；保留旧公共样例、独立读回和全部负对照，不增加 workflow。新增头的真实 include 闭包纳入选测回归；运行证据分开保存。当前代码是否通过各平台以 PR 的当前 HEAD 结果为准。
+
+## MRST HDF5 / 一般多边形与多面体
+
+公开数据、方向、单位、几何策略与格式限制见 [FaceMesh v1](../../../modules/mesh/MRST_BRIDGE.md)。按该页显式构建可选 HDF5 converter 后，使用原 reader venv（固定 h5py/psutil 新增在原 requirements 中）：
+
+```powershell
+& $readerPython -B tests/mesh/external_compatibility/verify_face_mesh_bridge.py `
+  --converter $converter --output-dir $newEvidenceDirectory
+```
+
+官方 VTK 生成 polygon/quad 和 polyhedron/hex 共享连接，经过 HDF5、C++、VTU 及官方 reader/writer 完整链。验收解析面积/体积、标准 connectivity、稳定大 ID、signed fields、schema 逐 dataset 精确匹配和 14 个损坏负对照。预期汇总为 `[PASS] independent.face_mesh.hdf5_vtu dimensions=2 negative_controls=14`。evidence.json 记录软件版本、HEAD/dirty、程序/脚本/生成文件 hash；不把 dirty 运行冒充提交后的云端验证。
+
+本地 MRST startup 后运行：
+
+```matlab
+addpath('modules/mesh/matlab');
+addpath('tests/mesh/external_compatibility');
+verify_mrst_bridge('/absolute/new/local-artifacts/evidence');
+```
+
+MRST producer 覆盖 2D/3D cartGrid、PEBI、rock、UINT64_MAX、空/非空 NNC；独立 computeGeometry 复算与字段完整比较。其 HDF5 输出还应交给 converter 往返。没有 MATLAB 的云端不将此项标成通过，而以独立 VTK、小型核心解析及非法输入检查验证可移植部分。
+
+历史学习文件夹迁移审计：
+
+```powershell
+& $readerPython -B tests/mesh/external_compatibility/mrst_folder_audit.py `
+  --study-root $mrstStudyFolder --converter $converter `
+  --output-dir $newAuditDirectory --maximum-cells 3000000
+```
+
+不改源文件，记录每份 CSV 的 hash、未迁移条目、返回码、几何/图诊断及 HDF5 全 dataset 精确比较。100 ms 采样 RSS 是观测峰值，不是 OS 精确高水位或内存上限。脚本单算例异常留在 results.json 中，必须检查每项结果，不能仅凭脚本进程退出声明所有网格通过。地质文件不入库，云端保留旧 Gmsh/VTK/XTGeo 门禁，新增代表性面网格验证及 artifact。

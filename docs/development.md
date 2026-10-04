@@ -82,6 +82,8 @@ git fetch origin
 
 ## 与现有云端流程的边界
 
+MRST/HDF5 是新增可选适配。`local.py` 的基础 `legacy_mesh_core` 仍使用无 HDF5 配置；对本适配的改动必须额外按 [MRST 构建与验收](../modules/mesh/MRST_BRIDGE.md) 显式指定 `MPMC_MESH_WITH_HDF5=ON` 和本地 HDF5_ROOT，执行 HDF5 CTest、converter、独立 VTK 链及可用的 MATLAB 测试。默认核心通过不表示可选 HDF5 已验收。官方 mesh 多平台任务已显式准备固定依赖并开启该选项，原无依赖根构建仍另外验证。
+
 现有 63 个 workflow、平台矩阵、测试命令、私有 runner 白名单、发布及签名语义保留。PR 调度采用上述 Draft/Ready 节奏，新增 converted_to_draft 事件用于停止已过时的验收。本地入口的回归由原中央 impact job 调用，不新增独立 CI 入口。
 
 PETSc/MPI、外部格式样本、SW92/CPA/flash 专项、Clapeyron/ThermoPack、前端、gRPC、Android 和安装/发行等尚未接入本地适配。本地自动入口选中后仍列为 cloud-only，表示尚未封装，不表示本机不能执行。外部 Gmsh/VTK 已可按 [原生完整链命令](../tests/mesh/external_compatibility/README.md) 在隔离环境执行；其余按实际依赖能力选择原生命令或列为功能级云端验收待办。按实际开发需要逐项安装、固定和验证依赖后，才能扩展本地支持。基础工具安装不代表已具备所有专项环境。

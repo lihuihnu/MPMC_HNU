@@ -51,7 +51,10 @@ def assert_mesh_independent_readers(root, select):
              'Validate independent GRDECL complete chains',
              'Validate computational preparation through three formats',
              'Validate independent VTU named group chains',
-             'Preserve GRDECL and computational evidence')
+             'Preserve GRDECL and computational evidence',
+             'Prepare pinned optional HDF5 dependency',
+             'Validate MRST face mesh HDF5 and polyhedral VTU',
+             'Preserve MRST face mesh evidence')
     for name in names:
         left = [step for step in manual['steps'] if step.get('name') == name]
         right = [step for step in central['steps'] if step.get('name') == name]
@@ -83,7 +86,8 @@ def assert_mesh_independent_readers(root, select):
                      'convert_2d_file.cpp', 'verify_2d_chains.py',
                      'convert_grdecl_file.cpp', 'verify_grdecl_chains.py', 'requirements-grdecl-reader.txt',
                      'validate_computational_scale.cpp', 'convert_vtu_groups.cpp',
-                     'verify_vtu_group_chains.py', 'vtu_groups.py'):
+                     'verify_vtu_group_chains.py', 'vtu_groups.py',
+                     'verify_face_mesh_bridge.py', 'mrst_folder_audit.py'):
         path = (directory / filename).as_posix()
         for action in ('opened', 'synchronize', 'ready_for_review'):
             chosen, _, _ = select([path], action=action)
@@ -100,6 +104,21 @@ def assert_mesh_independent_readers(root, select):
         if line and not line.startswith('#'):
             assert re.fullmatch(r'[a-zA-Z0-9_-]+==[0-9][a-zA-Z0-9.]*', line), line
     assert 'gmsh==' in requirements and 'vtk==' in requirements
+    assert 'h5py==3.15.1' in requirements and 'psutil==7.1.0' in requirements
+    for job in (manual, central, root['jobs']['legacy_mesh_core__core']):
+        prep=next(step for step in job['steps'] if step.get('name')=='Prepare pinned optional HDF5 dependency')
+        assert 'tests/mesh/core/prepare_hdf5.py --root' in prep['run'] and not prep.get('continue-on-error')
+        commands='\n'.join(step.get('run','') for step in job['steps'])
+        assert '-DMPMC_MESH_WITH_HDF5=ON' in commands and '-DHDF5_USE_STATIC_LIBRARIES=ON' in commands
+    bridge=next(step for step in central['steps'] if step.get('name')=='Validate MRST face mesh HDF5 and polyhedral VTU')
+    for token in ('set -euo pipefail','verify_face_mesh_bridge.py --converter','negative_controls=14','grep -Fqx'):
+        assert token in bridge['run'], ('face bridge execution guard',token)
+    assert not bridge.get('continue-on-error')
+    for path in ('modules/mesh/src/face_mesh_hdf5.cpp','modules/mesh/tools/mesh_convert.cpp',
+                 'modules/mesh/matlab/export_mpmc_mesh.m','modules/mesh/include/mpmc/mesh/face_mesh.hpp',
+                 'tests/mesh/core/prepare_hdf5.py'):
+        gates=select([path])[0]
+        assert gates[owner] and gates['legacy_mesh_core'],path
     for name, script, marker in (
             ('Validate independent GRDECL complete chains', 'verify_grdecl_chains.py',
              'chains=2 reports=2 negative_controls=13'),

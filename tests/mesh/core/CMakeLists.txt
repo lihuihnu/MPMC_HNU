@@ -66,12 +66,33 @@ add_executable(mpmc_mesh_computational_tests
     mesh_exchange_document_header_self_contained.cpp)
 target_link_libraries(mpmc_mesh_computational_tests PRIVATE mpmc::mesh)
 
+add_executable(mpmc_mesh_face_tests face_mesh_test.cpp
+    face_mesh_header_self_contained.cpp
+    face_mesh_geometry_header_self_contained.cpp
+    face_mesh_vtu_header_self_contained.cpp
+    face_mesh_exchange_header_self_contained.cpp)
+target_link_libraries(mpmc_mesh_face_tests PRIVATE mpmc::mesh)
+if(MPMC_MESH_WITH_HDF5)
+    add_executable(mpmc_mesh_hdf5_tests face_mesh_hdf5_test.cpp)
+    target_link_libraries(mpmc_mesh_hdf5_tests PRIVATE mpmc::mesh_hdf5)
+    if(MSVC)
+        target_compile_options(mpmc_mesh_hdf5_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    else()
+        target_compile_options(mpmc_mesh_hdf5_tests PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror)
+    endif()
+    add_test(NAME mesh.core.face_mesh_hdf5 COMMAND mpmc_mesh_hdf5_tests "${CMAKE_CURRENT_BINARY_DIR}")
+    set_tests_properties(mesh.core.face_mesh_hdf5 PROPERTIES LABELS "mesh;mesh.core;hdf5;unit" TIMEOUT 60)
+endif()
+add_test(NAME mesh.core.face_mesh COMMAND mpmc_mesh_face_tests)
+set_tests_properties(mesh.core.face_mesh PROPERTIES LABELS "mesh;mesh.core;geometry;unit" TIMEOUT 60)
+
 foreach(target IN ITEMS
         mpmc_mesh_core_tests
         mpmc_mesh_io3d_tests
         mpmc_mesh_cartesian_structured_tests
         mpmc_mesh_exchange_io_tests
-        mpmc_mesh_computational_tests)
+        mpmc_mesh_computational_tests
+        mpmc_mesh_face_tests)
     set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
 
     if(MSVC)
@@ -89,12 +110,18 @@ if(MPMC_MESH_ENABLE_SANITIZERS)
        NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
         message(FATAL_ERROR "Mesh core sanitizers require Linux GCC/Clang")
     endif()
+    set(optional_sanitizer_targets)
+    if(MPMC_MESH_WITH_HDF5)
+        list(APPEND optional_sanitizer_targets mpmc_mesh_hdf5 mpmc_mesh_hdf5_tests mpmc_mesh_convert)
+    endif()
     foreach(target IN ITEMS
+            ${optional_sanitizer_targets}
             mpmc_mesh_core_tests
             mpmc_mesh_io3d_tests
             mpmc_mesh_cartesian_structured_tests
             mpmc_mesh_exchange_io_tests
-            mpmc_mesh_computational_tests)
+            mpmc_mesh_computational_tests
+        mpmc_mesh_face_tests)
         target_compile_options(${target} PRIVATE
             -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE
@@ -146,4 +173,9 @@ add_custom_target(
         mpmc_mesh_io3d_tests
         mpmc_mesh_cartesian_structured_tests
         mpmc_mesh_exchange_io_tests
-        mpmc_mesh_computational_tests)
+        mpmc_mesh_computational_tests
+        mpmc_mesh_face_tests)
+
+if(MPMC_MESH_WITH_HDF5)
+    add_dependencies(mpmc_mesh_core_all mpmc_mesh_hdf5_tests mpmc_mesh_convert)
+endif()

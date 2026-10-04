@@ -27,6 +27,7 @@ enum class MeshExchangeFormat : std::uint8_t {
     gmsh_4_1_ascii = 0,
     vtu_ascii = 1,
     grdecl = 2,
+    face_based = 3,
 };
 
 enum class ConversionDisposition : std::uint8_t {
