@@ -247,14 +247,18 @@ struct SimulationRunnerOptions3D {
             auto step_options = options.physical_timestep;
             step_options.initial_timestep_cap_seconds =
                 effective_cap_seconds;
-            if (effective_cap_seconds <
-                step_options.adaptive.minimum_timestep_seconds) {
-                // A hard schedule clip is allowed to be smaller than the
-                // normal adaptive floor. It becomes the retry floor for this
-                // physical call, matching the existing Flow target-time loop.
-                step_options.adaptive.minimum_timestep_seconds =
-                    effective_cap_seconds;
-            }
+
+            // Exact schedule clipping can commit a next suggested dt below
+            // the caller's normal adaptive minimum. On the following interval
+            // that authoritative suggestion must remain admissible long enough
+            // for Flow to hold/grow it again. Lower only this call's retry
+            // floor to the strictest already-authoritative constraint; never
+            // mutate the caller options or allow cutback below that floor.
+            step_options.adaptive.minimum_timestep_seconds =
+                std::min(
+                    {step_options.adaptive.minimum_timestep_seconds,
+                     effective_cap_seconds,
+                     next_timestep_before_seconds});
 
             lifecycle.record_physical_timestep_call();
 

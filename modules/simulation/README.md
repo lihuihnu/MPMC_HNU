@@ -156,9 +156,11 @@ the existing physical-timestep options. For each internal step it:
 1. reads the next unconsumed hard boundary;
 2. composes the boundary distance with any existing caller
    `initial_timestep_cap_seconds` using the stricter cap;
-3. lowers only the per-call adaptive minimum when an exact hard-boundary clip is
-   smaller than the normal floor, matching the existing Flow target-time
-   semantics;
+3. lowers only the per-call adaptive minimum to the strictest of the caller
+   floor, the current hard-boundary/caller cap and the authoritative
+   `clock.next_timestep_seconds()`; this admits a sub-minimum next-dt inherited
+   from a prior exact boundary clip without allowing a retry below that inherited
+   floor, and does not mutate the caller's persistent adaptive policy;
 4. calls `advance_one_physical_timestep_3d()` exactly once;
 5. validates the accepted record, adaptive report and authoritative clock
    against each other;

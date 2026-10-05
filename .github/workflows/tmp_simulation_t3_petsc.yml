@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - feat/simulation-timeline-runner
-    paths:
-      - '.github/workflows/tmp_simulation_t3_petsc.yml'
   workflow_dispatch:
 
 permissions:
