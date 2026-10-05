@@ -8,6 +8,9 @@ add_subdirectory(
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/../../../modules/well/discretization/petsc"
     well-discretization-petsc-library)
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/simulation/petsc"
+    simulation-petsc-library)
 enable_testing()
 
 add_executable(
@@ -61,6 +64,7 @@ add_executable(
     post_snes_pt_flash_phase_transition_scanner_header.cpp
     post_snes_sw92_profile_c_phase_transition_scanner_header.cpp
     sw92_transactional_phase_transition_restart_header.cpp
+    simulation_runner_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 # Private source fragments retain one translation unit and one fixture instance.
@@ -80,7 +84,8 @@ target_link_libraries(
     mpmc_flow_discretization_petsc_tests
     PRIVATE
         mpmc::flow_discretization_petsc
-        mpmc::well_discretization_petsc)
+        mpmc::well_discretization_petsc
+        mpmc::simulation_petsc)
 target_include_directories(
     mpmc_flow_discretization_petsc_tests
     PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")

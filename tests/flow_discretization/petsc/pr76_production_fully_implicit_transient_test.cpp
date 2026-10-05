@@ -13,6 +13,7 @@
 #include <mpmc/flow_discretization_petsc/post_snes_pt_flash_phase_transition_scanner.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_adaptive_timestep_attempt.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_handoff_initial_system.hpp>
+#include <mpmc/simulation_petsc/simulation_runner.hpp>
 
 #include <petscsys.h>
 
@@ -39,6 +40,8 @@ namespace fdp = mpmc::flow_discretization_petsc;
 namespace fl = mpmc::flash;
 namespace flow = mpmc::flow;
 namespace mesh = mpmc::mesh;
+namespace sim = mpmc::simulation;
+namespace simp = mpmc::simulation_petsc;
 namespace th = mpmc::thermodynamics;
 
 void require_real_collective(
@@ -3485,6 +3488,90 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 static_cast<double>(
                     rebased_norm)),
         "real PR76 accepted-history rebase did not permit a finite fresh next-step residual evaluation");
+
+    // Simulation lifecycle orchestration consumes the same production one-step
+    // driver without owning nonlinear/adaptive/phase-transition logic. Starting
+    // from accepted t=2.5, a caller cap of 0.4 forces internal substeps while
+    // hard boundaries at 3.0 and 3.5 remain exact accepted lifecycle events.
+    sim::SimulationCursor simulation_cursor{
+        sim::SimulationTimeline{{3.0, 3.5}},
+        physical_clock.accepted_time_seconds()};
+    simp::SimulationRunnerOptions3D simulation_options;
+    simulation_options.physical_timestep =
+        driver_options;
+    simulation_options.physical_timestep
+        .initial_timestep_cap_seconds =
+        0.4;
+
+    std::optional<sim::SimulationReport>
+        simulation_report;
+    error =
+        simp::advance_simulation_timeline_3d(
+            PETSC_COMM_WORLD,
+            &materialized->system,
+            driver_bindings,
+            simulation_options,
+            &physical_clock,
+            &simulation_cursor,
+            &simulation_report);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            simulation_report.has_value() &&
+            simulation_report->status() ==
+                sim::SimulationRunStatus::completed &&
+            simulation_report->terminal() &&
+            simulation_report
+                    ->diagnostics()
+                    .physical_timestep_calls ==
+                4U &&
+            simulation_report
+                    ->diagnostics()
+                    .accepted_steps ==
+                4U &&
+            simulation_report
+                    ->diagnostics()
+                    .reached_boundaries ==
+                2U &&
+            simulation_report
+                    ->last_accepted_step()
+                    .has_value() &&
+            simulation_report
+                    ->last_accepted_step()
+                    ->accepted_step_index ==
+                6U &&
+            simulation_report
+                    ->last_reached_boundary()
+                    .has_value() &&
+            simulation_report
+                    ->last_reached_boundary()
+                    ->boundary.index ==
+                1U &&
+            simulation_report
+                    ->last_reached_boundary()
+                    ->boundary.time_seconds ==
+                3.5 &&
+            simulation_cursor.complete() &&
+            physical_clock
+                    .accepted_step_count() ==
+                7U &&
+            physical_clock
+                    .accepted_time_seconds() ==
+                3.5,
+        "simulation PETSc runner did not preserve caller cap and land on both accepted hard boundaries");
+
+    bool simulation_history_matches = false;
+    error =
+        materialized
+            ->system
+            ->accepted_history_matches_state(
+                materialized
+                    ->system
+                    ->initial_state(),
+                &simulation_history_matches);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            simulation_history_matches,
+        "simulation PETSc runner did not leave accepted history on the terminal hard-boundary state");
 
     require_real_collective(
         VecDestroy(

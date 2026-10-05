@@ -142,6 +142,52 @@ T2 extends the standalone core suite to 18 CTests: seven timeline/cursor
 behaviors, seven report/status behaviors and four public-header self-contained
 probes.
 
+## Implemented T3 PETSc runner
+
+The first PETSc bridge is `mpmc::simulation_petsc`, an INTERFACE C++20 target
+that depends on `mpmc::simulation` and the existing
+`mpmc::flow_discretization_petsc` bridge.
+
+`advance_simulation_timeline_3d()` accepts an already materialized
+`PhaseTransitionRebuiltNaturalVariableSystem3D`, authoritative
+`AcceptedPhysicalTimeClock3D`, `SimulationCursor`, transition bindings and
+the existing physical-timestep options. For each internal step it:
+
+1. reads the next unconsumed hard boundary;
+2. composes the boundary distance with any existing caller
+   `initial_timestep_cap_seconds` using the stricter cap;
+3. lowers only the per-call adaptive minimum when an exact hard-boundary clip is
+   smaller than the normal floor, matching the existing Flow target-time
+   semantics;
+4. calls `advance_one_physical_timestep_3d()` exactly once;
+5. validates the accepted record, adaptive report and authoritative clock
+   against each other;
+6. projects the lower report into the bounded
+   `AcceptedSimulationStepSummary` and discards the detailed lower report;
+7. advances the `SimulationCursor` only when the accepted clock actually
+   reaches the next hard boundary;
+8. repeats until the terminal boundary is consumed.
+
+A normal lower-level terminal timestep rejection maps to
+`physical_timestep_rejected` only if accepted time, accepted step count and
+next suggested timestep are unchanged. A nonzero PETSc/MPI return maps to
+`execution_error` only when the accepted clock remains unchanged. Any
+contradiction between the lower report, accepted clock and hard-boundary
+contract terminates as `contract_violation`.
+
+The existing Flow `physical_time_loop.hpp` remains unchanged. It is a
+lower-layer single-target helper with an unbounded vector of detailed physical
+step reports; Simulation does not reuse that report container because the
+lifecycle contract is intentionally bounded and supports multiple hard
+boundaries.
+
+The current integration consumer extends the already-owned real PR76 transient
+fixture: from accepted `t=2.5`, hard boundaries `3.0/3.5` and caller cap
+`0.4` require four accepted internal physical steps, two reached boundaries,
+terminal clock `3.5`, and accepted-history rebase on the final state. The
+source is wired into the existing PETSc test target; runtime execution still
+requires the pinned PETSc/MPI environment.
+
 ## Accepted-state transaction
 
 The first implementation has three accepted authorities:
