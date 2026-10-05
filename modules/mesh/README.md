@@ -332,13 +332,29 @@ PETSc 可使用其已支持的 partitioner；核心模块不复制 ParMETIS/PT-S
 - 性能结论必须来自固定 workload 的 benchmark，不以单次 CI wall time 宣称加速；
 - 首个稳定实现建立内存/访问基线，后续无依据不得显著回退。
 
-### 7.1 固定大网格 memory/traversal baseline
+### 7.1 构建、内存与遍历基线
 
-固定性能基线使用独立 `tests/mesh/benchmark` 可执行程序，不混入 correctness CTest，也不设置共享 runner 上的速度阈值。workload 固定为 `64×64×64` structured Cartesian hexa grid（262,144 cells），附带一个 4-component cell `DenseFieldSnapshot`。benchmark 不计 mesh construction 吞吐，只在构造完成后执行顺序读取。
+`tests/mesh/benchmark` 仍是独立 benchmark，不混入 mesh correctness CTest，也不设置共享 runner 上的速度阈值。无参数时保持 `64×64×64` Cartesian hexa grid（262,144 cells）、4-component cell field、5 个遍历样本及原重复次数；输出继续使用 `mpmc.mesh.baseline.v1`，保留原有 key、逻辑 payload 与 checksum 定义。新增字段不改变默认 workload。
 
-memory footprint 同时报告两种口径：`logical_*_bytes` 精确统计公共 contract 可见的连续 payload（entity IDs、四类 CSR relation offsets/indices、vertex/cell/face geometry、face boundary arrays、field values），不把 allocator capacity/object/string overhead 冒充精确值；官方 Ubuntu runner 另以 Linux `getrusage(RUSAGE_SELF).ru_maxrss` 记录进程 peak RSS，作为环境相关实测值。topology traversal 每次顺序读取全部 stable entity IDs 与四类 CSR arrays；field traversal 顺序读取完整 4-component field。二者先 warm-up，再固定重复次数采 5 个样本并报告 median GiB/s 和 checksum，防止 dead-code elimination。
+本地可显式传入 `--grid NX NY NZ`，例如 `mpmc_mesh_baseline_benchmark --grid 128 128 128`（2,097,152 cells）。尺寸必须是正十进制整数；分配坐标轴之前检查维数乘积、LocalIndex 和 CSR capacity，拒绝零、负数、尾随字符、缺参数和溢出。规模仍须适合本机可用内存，capacity 检查不等于资源足够。构建和运行示例：
 
-`.github/workflows/mesh_baseline_benchmark.yml` 固定使用官方 `ubuntu-24.04` + GCC Release，并记录 runner/compiler/CPU 环境。该 workflow 只负责**记录 baseline**：不根据吞吐高低判定 pass/fail、不与不同 runner 的数字直接比较，也不把单次 CI wall time 声称为优化证据。只有 benchmark 自身不能构建/运行或输出契约缺失才失败。
+```sh
+cmake -S tests/mesh/benchmark -B /absolute/agent/build/mesh-benchmark -DCMAKE_BUILD_TYPE=Release
+cmake --build /absolute/agent/build/mesh-benchmark --config Release --parallel 2
+# 单配置 generator：
+/absolute/agent/build/mesh-benchmark/mpmc_mesh_baseline_benchmark --grid 128 128 128
+# Windows Visual Studio generator 的程序在该构建目录的 Release/ 下。
+```
+
+每次运行都验证配置解析的默认值、非对称尺寸、非法输入和容量边界；实际构建后根据 Cartesian 闭式计数检查 cells/vertices/faces、四类 CSR entry count、boundary face count 和单位网格 cell volume。这些判据在小规模云端与大规模本地相同。它们不替代通用非结构网格、corner-point 或 MPI correctness tests。
+
+新增 `mesh_construction_seconds` 测量轴坐标构造和完整 `make_cartesian_mesh_3d` 调用；`field_construction_seconds` 测量 field 初始化和 snapshot 创建。解析、自检、解析不变量核对和遍历均在这两个计时范围之外。每进程只构建一次；需要评估波动时重复启动相同参数的进程，报告中位数和范围，不能把这两个单样本构建时间当成已有 5 样本遍历中位数。
+
+`logical_*_bytes` 继续统计公开契约中的连续 payload，不包含 allocator capacity、对象、字符串和构建临时存储。`peak_rss_after_mesh_kib`、`peak_rss_after_field_kib`、`peak_rss_kib` 分别是在构建后、field 后和遍历后的**进程累计峰值**，不可相减解释为各阶段增量内存。`peak_rss_source` 明确来源：Linux 为 `getrusage(RUSAGE_SELF).ru_maxrss`；Windows 为 [GetProcessMemoryInfo](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getprocessmemoryinfo) 的 [PeakWorkingSetSize](https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-process_memory_counters)，从 bytes 转为 KiB；其他平台当前为 `unavailable`、数值 0，不代表实际零内存。不同系统的指标不能直接作性能排名。
+
+原 `.github/workflows/mesh_baseline_benchmark.yml` 继续在官方 `ubuntu-24.04` + GCC Release 执行无参数默认规模及原输出检查。新配置自检由同一 benchmark 程序执行，不新增测试 owner 或 workflow。本地大规模结果记录参数、提交/源码版本、工具链、重复次数、耗时、峰值内存及 checksum，保存在仓库外；云端只承担该代表性规模的构建、运行和正确性/可行性检查。
+
+本切片补齐优化所需的测量，未修改生产网格算法，不能宣称构建或求解已加速。Cartesian 路径的结果也不推定 Gmsh/VTU/GRDECL 导入、active corner-point 处理或完整求解器的性能。
 
 ## 8. 本 PR 合并条件
 

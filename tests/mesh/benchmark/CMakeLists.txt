@@ -31,3 +31,7 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
             -Wshadow
             -Werror)
 endif()
+
+if(WIN32)
+    target_link_libraries(mpmc_mesh_baseline_benchmark PRIVATE Psapi)
+endif()
