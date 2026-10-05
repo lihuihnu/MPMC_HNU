@@ -90,6 +90,28 @@ int main() {
         bad=m; for(auto& p:bad.points) p[0]=-p[0]; invalid([&]{(void)prepare_face_mesh_geometry(bad);});
         bad=m; bad.arrays["reference_cell_volumes"]={"cell","m3",1,std::vector<double>{2}};
         invalid([&]{(void)prepare_face_mesh_geometry(bad);});
+        auto references=m;
+        references.arrays["reference_face_areas"]={"face","m2",1,std::vector<double>(6,1)};
+        references.arrays["reference_face_normals"]={"face","m2",3,std::vector<double>(18,0)};
+        references.arrays["reference_face_centroids"]={"face","m",3,std::vector<double>(18,0)};
+        references.arrays["reference_cell_volumes"]={"cell","m3",1,std::vector<double>{1}};
+        references.arrays["reference_cell_centroids"]={"cell","m",3,std::vector<double>(3,0)};
+        (void)validate_face_mesh(references);
+        for(const auto* name:{"reference_face_areas","reference_face_normals",
+                              "reference_face_centroids","reference_cell_volumes",
+                              "reference_cell_centroids"}) {
+            bad=references; bad.arrays.at(name).location="metadata";
+            invalid([&]{(void)validate_face_mesh(bad);});
+        }
+        bad=references;
+        bad.arrays.at("reference_cell_volumes").components=2;
+        bad.arrays.at("reference_cell_volumes").values=std::vector<double>{1,1};
+        invalid([&]{(void)validate_face_mesh(bad);});
+        bad=references; bad.arrays.at("reference_cell_volumes").unit="m2";
+        invalid([&]{(void)validate_face_mesh(bad);});
+        bad=references;
+        bad.arrays.at("reference_cell_volumes").values=std::vector<std::int64_t>{1};
+        invalid([&]{(void)validate_face_mesh(bad);});
         // Translation stability; warped shared surface has scalar area distinct
         // from vector area. Divergence integration still gives positive volume.
         auto warped=m; warped.points[6][2]=1.2;

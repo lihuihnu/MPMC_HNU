@@ -111,7 +111,7 @@ def assert_mesh_independent_readers(root, select):
         commands='\n'.join(step.get('run','') for step in job['steps'])
         assert '-DMPMC_MESH_WITH_HDF5=ON' in commands and '-DHDF5_USE_STATIC_LIBRARIES=ON' in commands
     bridge=next(step for step in central['steps'] if step.get('name')=='Validate MRST face mesh HDF5 and polyhedral VTU')
-    for token in ('set -euo pipefail','verify_face_mesh_bridge.py --converter','negative_controls=14','grep -Fqx'):
+    for token in ('set -euo pipefail','verify_face_mesh_bridge.py --converter','negative_controls=16','grep -Fqx'):
         assert token in bridge['run'], ('face bridge execution guard',token)
     assert not bridge.get('continue-on-error')
     for path in ('modules/mesh/src/face_mesh_hdf5.cpp','modules/mesh/tools/mesh_convert.cpp',

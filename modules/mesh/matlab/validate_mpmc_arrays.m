@@ -19,6 +19,12 @@ for field=fieldnames(arrays)'
     else
         assert(strcmp(a.location,'metadata'), 'mpmc:Location','Unknown attribute location.');
     end
+    [reserved,location,components,unit]=reference_geometry_contract(name,dim);
+    if reserved
+        assert(strcmp(a.location,location) && isa(v,'double') && ...
+            size(v,2)==components && strcmp(a.unit,unit), ...
+            'mpmc:ReferenceGeometry','Invalid reserved reference-geometry array contract.');
+    end
 end
 if isfield(arrays,'mrst_index_map')
     a=arrays.mrst_index_map; v=a.values;
@@ -37,5 +43,28 @@ if isfield(arrays,'cart_dims')
     if isfield(arrays,'mrst_index_map')
         assert(all(arrays.mrst_index_map.values<=count), 'mpmc:IndexMap','indexMap exceeds logical grid.');
     end
+end
+end
+
+function [reserved,location,components,unit]=reference_geometry_contract(name,dim)
+reserved=true; location=''; components=0; unit='';
+if dim==2
+    face_measure='m'; cell_measure='m2';
+else
+    face_measure='m2'; cell_measure='m3';
+end
+switch name
+    case 'reference_face_areas'
+        location='face'; components=1; unit=face_measure;
+    case 'reference_face_normals'
+        location='face'; components=3; unit=face_measure;
+    case 'reference_face_centroids'
+        location='face'; components=3; unit='m';
+    case 'reference_cell_volumes'
+        location='cell'; components=1; unit=cell_measure;
+    case 'reference_cell_centroids'
+        location='cell'; components=3; unit='m';
+    otherwise
+        reserved=false;
 end
 end

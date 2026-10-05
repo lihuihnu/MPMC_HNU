@@ -195,7 +195,7 @@ python3 -B tests/mesh/external_compatibility/run_computational_scale.py --produc
   --converter $converter --output-dir $newEvidenceDirectory
 ```
 
-官方 VTK 生成 polygon/quad 和 polyhedron/hex 共享连接，经过 HDF5、C++、VTU 及官方 reader/writer 完整链。验收解析面积/体积、标准 connectivity、稳定大 ID、signed fields、schema 逐 dataset 精确匹配和 14 个损坏负对照。预期汇总为 `[PASS] independent.face_mesh.hdf5_vtu dimensions=2 negative_controls=14`。evidence.json 记录软件版本、HEAD/dirty、程序/脚本/生成文件 hash；不把 dirty 运行冒充提交后的云端验证。
+官方 VTK 生成 polygon/quad 和 polyhedron/hex 共享连接，经过 HDF5、C++、VTU 及官方 reader/writer 完整链。验收解析面积/体积、标准 connectivity、稳定大 ID、signed fields、schema 逐 dataset 精确匹配和 16 个损坏负对照。预期汇总为 `[PASS] independent.face_mesh.hdf5_vtu dimensions=2 negative_controls=16`。evidence.json 记录软件版本、HEAD/dirty、程序/脚本/生成文件 hash；不把 dirty 运行冒充提交后的云端验证。
 
 本地 MRST startup 后运行：
 

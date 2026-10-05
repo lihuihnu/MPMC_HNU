@@ -115,10 +115,10 @@ struct FaceMeshGeometry {
         for(auto x:g.cell_centroids[c]) require(std::isfinite(x),"nonfinite cell centroid");
     }
     if(compare_reference) {
-        const auto compare=[&](const char* name,const auto& values,std::size_t components,const char* unit) {
+        const auto compare=[&](const char* name,const auto& values) {
             const auto it=m.arrays.find(name); if(it==m.arrays.end()) return;
             const auto& a=it->second;
-            require(a.components==components && a.unit==unit && std::holds_alternative<std::vector<double>>(a.values),"invalid reference geometry metadata");
+            const auto components=a.components;
             const auto& expected=std::get<std::vector<double>>(a.values);
             require(expected.size()==values.size()*components,"reference geometry extent");
             for(std::size_t i=0;i<expected.size();++i) {
@@ -135,11 +135,11 @@ struct FaceMeshGeometry {
                 require(std::abs(actual-expected[i])<=allowed,"reference geometry mismatch in "+std::string(name)+" at "+std::to_string(i));
             }
         };
-        compare("reference_face_areas",g.face_areas,1,m.dimension==2?"m":"m2");
-        compare("reference_face_normals",g.area_vectors,3,m.dimension==2?"m":"m2");
-        compare("reference_face_centroids",g.face_centroids,3,"m");
-        compare("reference_cell_volumes",g.cell_volumes,1,m.dimension==2?"m2":"m3");
-        compare("reference_cell_centroids",g.cell_centroids,3,"m");
+        compare("reference_face_areas",g.face_areas);
+        compare("reference_face_normals",g.area_vectors);
+        compare("reference_face_centroids",g.face_centroids);
+        compare("reference_cell_volumes",g.cell_volumes);
+        compare("reference_cell_centroids",g.cell_centroids);
     }
     return g;
 }

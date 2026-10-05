@@ -35,6 +35,23 @@ for k=1:numel(grids)
     rejected=false; target=fullfile(outputDirectory,sprintf('invalid-%d.h5',k));
     try, export_mpmc_mesh(target,G,rock,bad); catch, rejected=true; end
     assert(rejected && ~isfile(target),'Invalid metadata must fail before writing.');
+    base=metadata.arrays.reference_cell_volumes;
+    bad=metadata; bad.arrays.reference_cell_volumes.location='metadata';
+    target=fullfile(outputDirectory,sprintf('invalid-reference-location-%d.h5',k)); rejected=false;
+    try, export_mpmc_mesh(target,G,rock,bad); catch, rejected=true; end
+    assert(rejected && ~isfile(target),'Reference geometry location must fail before writing.');
+    bad=metadata; bad.arrays.reference_cell_volumes.values=[base.values base.values];
+    target=fullfile(outputDirectory,sprintf('invalid-reference-components-%d.h5',k)); rejected=false;
+    try, export_mpmc_mesh(target,G,rock,bad); catch, rejected=true; end
+    assert(rejected && ~isfile(target),'Reference geometry components must fail before writing.');
+    bad=metadata; bad.arrays.reference_cell_volumes.unit='invalid';
+    target=fullfile(outputDirectory,sprintf('invalid-reference-unit-%d.h5',k)); rejected=false;
+    try, export_mpmc_mesh(target,G,rock,bad); catch, rejected=true; end
+    assert(rejected && ~isfile(target),'Reference geometry unit must fail before writing.');
+    bad=metadata; bad.arrays.reference_cell_volumes.values=int64(zeros(size(base.values)));
+    target=fullfile(outputDirectory,sprintf('invalid-reference-type-%d.h5',k)); rejected=false;
+    try, export_mpmc_mesh(target,G,rock,bad); catch, rejected=true; end
+    assert(rejected && ~isfile(target),'Reference geometry type must fail before writing.');
 end
-fprintf('[PASS] MATLAB MRST bridge: 2D/3D Cartesian, irregular PEBI, typed IDs, NNC, no-overwrite, invalid fields\n');
+fprintf('[PASS] MATLAB MRST bridge: 2D/3D Cartesian, irregular PEBI, typed IDs, NNC, no-overwrite, invalid fields/reference contracts\n');
 end

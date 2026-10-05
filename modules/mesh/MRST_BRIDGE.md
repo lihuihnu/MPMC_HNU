@@ -40,7 +40,7 @@
 
 - `mrst_index_map`：cell/UInt64/1 分量，保留 MRST **一基**活动→逻辑映射，与 stable cell ID 分离。`cart_dims` 为 metadata/UInt64，检查正值、维数、乘积溢出和 indexMap 范围。
 - `cell_face_tags`、`face_tags`、`mrst_*_global`：保留原值。global 若对应完整逻辑网格而非活动实体，关联 metadata，不截断或错绑。
-- `reference_face_areas/normals/centroids`、`reference_cell_volumes/centroids`：保留原始参考值。2D 面量 m、单元量 m²；3D m²/m³；坐标 m。normals 为面积向量。重算不覆盖参考。
+- `reference_face_areas/normals/centroids`、`reference_cell_volumes/centroids`：保留原始参考值。五个名称均为保留名，读取/写入前按名称强制 `location/components/unit/type`：face areas=`face/1/(m|m2)/Float64`、face normals=`face/3/(m|m2)/Float64`、face centroids=`face/3/m/Float64`、cell volumes=`cell/1/(m2|m3)/Float64`、cell centroids=`cell/3/m/Float64`（括号内按 2D/3D）。任何 association 或元数据不一致均在解释参考值前拒绝。normals 为面积向量，重算不覆盖参考。
 - `rock_*`：cell 属性；perm 为 m²、poro 为 1。其他未定义单位记 unspecified，物理计算前须明确。
 - `nnc_cells`：nnc/UInt64/2 分量，零基单元端点。其他 nnc_* 与其行数一致。NNC 单独进入相邻图，不伪造几何面/法向。
 

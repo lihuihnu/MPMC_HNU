@@ -87,6 +87,25 @@ inline MeshPoint cross(MeshPoint a, MeshPoint b) {
     return {a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};
 }
 inline double norm(MeshPoint a) { return std::sqrt(dot(a,a)); }
+
+inline void validate_reference_geometry_array_contract(
+    const std::string& name, const MeshArray& a, int dimension) {
+    const auto require_contract=[&](const char* location,std::size_t components,const char* unit) {
+        require(a.location==location && a.components==components && a.unit==unit &&
+                std::holds_alternative<std::vector<double>>(a.values),
+                "invalid reference geometry array contract for "+name);
+    };
+    if(name=="reference_face_areas")
+        require_contract("face",1,dimension==2 ? "m" : "m2");
+    else if(name=="reference_face_normals")
+        require_contract("face",3,dimension==2 ? "m" : "m2");
+    else if(name=="reference_face_centroids")
+        require_contract("face",3,"m");
+    else if(name=="reference_cell_volumes")
+        require_contract("cell",1,dimension==2 ? "m2" : "m3");
+    else if(name=="reference_cell_centroids")
+        require_contract("cell",3,"m");
+}
 }
 
 /// Checks transport invariants. Optional closed-boundary certification is a
@@ -216,6 +235,7 @@ inline double norm(MeshPoint a) { return std::sqrt(dot(a,a)); }
         else if(a.location=="incidence") require(rows==m.signs.size(),"incidence attribute extent");
         else if(a.location=="nnc") require(rows==nnc_count,"NNC attribute extent");
         else require(a.location=="metadata","unknown attribute location");
+        validate_reference_geometry_array_contract(name,a,m.dimension);
         if(const auto* v=std::get_if<std::vector<double>>(&a.values))
             for(auto x:*v) require(std::isfinite(x),"nonfinite attribute");
     }

@@ -128,6 +128,13 @@ def main():
             g['values']=np.array([999.,999.]);g['components']=np.array([1],dtype='uint64')
             for name,value in [('location','cell'),('unit','m2' if dim==2 else 'm3')]:g[name]=np.frombuffer(value.encode(),dtype='uint8')
         run(exe,directory,file.name,'bad-reference-out.h5',dim,expected=2);negatives+=1
+        file=directory/'bad-reference-association.h5';shutil.copyfile(directory/'mesh.h5',file)
+        with h5py.File(file,'r+') as h:
+            g=h.create_group('arrays/reference_cell_volumes')
+            g['values']=np.array([1.25,1.]);g['components']=np.array([1],dtype='uint64')
+            for name,value in [('location','metadata'),('unit','m2' if dim==2 else 'm3')]:
+                g[name]=np.frombuffer(value.encode(),dtype='uint8')
+        run(exe,directory,file.name,'bad-reference-association-out.h5',dim,expected=1);negatives+=1
         # Contradictory canonical incidence must not override the standard cells.
         tree=ET.parse(directory/'export.vtu');a=tree.find(".//FieldData/DataArray[@Name='mpmc_fm_signs']")
         tokens=a.text.split();tokens[0]=str(-int(tokens[0]));a.text=' '.join(tokens);tree.write(directory/'bad.vtu')
@@ -137,7 +144,7 @@ def main():
     evidence['files_sha256']={p.relative_to(args.output_dir).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
                               for p in args.output_dir.rglob('*') if p.is_file()}
     (args.output_dir/'evidence.json').write_text(json.dumps(evidence,indent=2),encoding='utf-8')
-    print('[PASS] independent.face_mesh.hdf5_vtu dimensions=2 negative_controls=14')
+    print('[PASS] independent.face_mesh.hdf5_vtu dimensions=2 negative_controls=16')
 
 
 if __name__=='__main__':main()
