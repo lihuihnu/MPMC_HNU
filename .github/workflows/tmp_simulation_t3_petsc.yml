@@ -1,0 +1,65 @@
+name: Temporary simulation T3 PETSc validation
+
+on:
+  push:
+    branches:
+      - feat/simulation-timeline-runner
+    paths:
+      - '.github/workflows/tmp_simulation_t3_petsc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-simulation-t3-petsc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: PETSc 3.19.6 simulation T3 on private runner
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned PETSc and MPI runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpetsc-real3.19-dev=3.19.6+dfsg1-2.2ubuntu2 \
+            openmpi-bin
+          test "$(pkg-config --modversion PETSc)" = "3.19.6"
+          command -v mpiexec
+          g++ --version
+          cmake --version
+
+      - name: Configure PETSc integration tests
+        run: |
+          cmake -S tests/flow_discretization/petsc \
+            -B build/flow-discretization-petsc \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -U CMAKE_CXX_FLAGS_RELEASE \
+            -DMPIEXEC_PREFLAGS=
+
+      - name: Build PETSc integration target
+        run: |
+          cmake --build build/flow-discretization-petsc \
+            --target mpmc_flow_discretization_petsc_tests \
+            --parallel 2
+
+      - name: Run PETSc integration CTest
+        run: |
+          ctest --test-dir build/flow-discretization-petsc \
+            -R '^flow_discretization[.]petsc[.]distributed_owner_targeted_conservation$' \
+            --verbose \
+            --no-tests=error
+
+      - name: Assert simulation T3 source is in tested executable
+        run: |
+          test -f modules/simulation/petsc/include/mpmc/simulation_petsc/simulation_runner.hpp
+          grep -Fq 'advance_simulation_timeline_3d' \
+            tests/flow_discretization/petsc/pr76_production_fully_implicit_transient_test.cpp
+          echo '[PASS] simulation.t3.petsc.source-wired'
