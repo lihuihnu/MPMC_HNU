@@ -35,6 +35,11 @@
 #include <utility>
 #include <vector>
 
+void linear_cell_mesh_2d_contract();
+void linear_cell_mesh_2d_invalid();
+void linear_cell_mesh_2d_import_parity();
+void linear_cell_mesh_2d_header();
+
 namespace {
 namespace mesh = mpmc::mesh;
 
@@ -2016,6 +2021,23 @@ void vtu_ascii_roundtrip() {
     const std::string exported =
         mesh::export_vtu_ascii(first);
 
+    // VTK's derived range cache must not become numeric tuples, change fields,
+    // or alter geometry. Exercise all arrays through the public 2D importer;
+    // the official-writer 3D chain covers the shared parser independently.
+    auto cached = vtu_mixed_triangle_quad_fixture();
+    const std::string cache = R"XML(
+<InformationKey name="L2_NORM_RANGE" location="vtkDataArray" length="2">
+  <Value index="0">0</Value><Value index="1">999</Value>
+</InformationKey>
+)XML";
+    std::size_t cursor = 0U;
+    while ((cursor = cached.find("</DataArray>", cursor)) != std::string::npos) {
+        cached.insert(cursor, cache);
+        cursor += cache.size() + std::string_view{"</DataArray>"}.size();
+    }
+    require(mesh::export_vtu_ascii(mesh::import_vtu_ascii(cached)) == exported,
+            "VTK derived cache must not change canonical array values or geometry");
+
     require(
         exported.find(
             "<VTKFile type=\"UnstructuredGrid\"") !=
@@ -2074,6 +2096,35 @@ void vtu_ascii_invalid() {
                 std::string{"expected invalid VTU rejection: "} +
                     std::string{label});
         };
+
+    const std::string valid_cache =
+        "<InformationKey name=\"L2_NORM_RANGE\" location=\"vtkDataArray\" length=\"2\">"
+        "<Value index=\"0\">0</Value><Value index=\"1\">8</Value></InformationKey>";
+    const auto replace_cache = [&](std::string_view from, std::string_view to) {
+        auto cache = valid_cache;
+        const auto position = cache.find(from);
+        require(position != std::string::npos, "cache mutation must apply");
+        cache.replace(position, from.size(), to);
+        return cache;
+    };
+    for (const auto& cache : {
+            replace_cache("L2_NORM_RANGE", "UNITS_LABEL"),
+            replace_cache("vtkDataArray", "other"),
+            replace_cache("length=\"2\"", "length=\"3\""),
+            replace_cache("index=\"1\"", "index=\"0\""),
+            replace_cache("<Value index=\"1\">8</Value>", ""),
+            replace_cache("<Value index=\"1\">8</Value>", "<Value index=\"1\">8 9</Value>"),
+            replace_cache("<Value index=\"1\">8</Value>", "<Value index=\"1\">nan</Value>"),
+            replace_cache("<Value index=\"1\">8</Value>", "<Value index=\"1\"><Bad/></Value>"),
+            replace_cache("<Value index=\"1\">8</Value>", "<Value index=\"1\"/>"),
+            replace_cache("</InformationKey>", ""),
+            valid_cache + valid_cache,
+            valid_cache + " 42",
+            std::string{"<Other>0</Other>"}}) {
+        auto content = valid;
+        content.insert(content.find("</DataArray>"), cache);
+        expect_import_invalid("unknown or malformed array metadata", content);
+    }
 
     {
         auto appended = valid;
@@ -2568,15 +2619,20 @@ void grdecl_invalid() {
         require(
             begin != std::string::npos &&
                 end != std::string::npos,
-            "GRDECL missing-required-keyword marker");
+            "GRDECL optional ACTNUM marker");
         missing.erase(
             begin,
             end - begin);
-        expect_throw<std::invalid_argument>(
-            [&] {
-                (void)mesh::import_grdecl(
-                    missing, options);
-            });
+        const auto all_active = mesh::import_grdecl(missing, options);
+        require(all_active.active == std::vector<std::uint8_t>{1U, 1U},
+                "omitted ACTNUM must default to all active");
+        auto missing_geometry = grdecl_two_cell_fixture();
+        const auto zcorn_start = missing_geometry.find("ZCORN");
+        const auto activity_start = missing_geometry.find("ACTNUM", zcorn_start);
+        missing_geometry.erase(zcorn_start, activity_start - zcorn_start);
+        expect_throw<std::invalid_argument>([&] {
+            (void)mesh::import_grdecl(missing_geometry, options);
+        });
     }
 
     {
@@ -5712,7 +5768,11 @@ int main(int argc, char** argv) {
     try {
         require(argc == 2, "provide one named mesh core test");
         const std::string_view name{argv[1]};
-        if (name == "strong_indices") { strong_indices(); }
+        if (name == "linear_cell_mesh_2d_contract") { linear_cell_mesh_2d_contract(); }
+        else if (name == "linear_cell_mesh_2d_invalid") { linear_cell_mesh_2d_invalid(); }
+        else if (name == "linear_cell_mesh_2d_import_parity") { linear_cell_mesh_2d_import_parity(); }
+        else if (name == "linear_cell_mesh_2d_header") { linear_cell_mesh_2d_header(); }
+        else if (name == "strong_indices") { strong_indices(); }
         else if (name == "two_cell_quad") { two_cell_quad(); }
         else if (name == "invalid_csr") { invalid_csr(); }
         else if (name == "topology_snapshot") { topology_snapshot(); }

@@ -1285,7 +1285,7 @@
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
           "permissions": null,
-          "timeout_minutes": 10
+          "timeout_minutes": 20
         }
       },
       "route_key": "legacy_mesh_core",
@@ -1297,7 +1297,11 @@
           "modules/mesh/include/**",
           "modules/mesh/CMakeLists.txt",
           "tests/mesh/core/**",
-          ".github/workflows/mesh_core.yml"
+          ".github/workflows/mesh_core.yml",
+          "modules/mesh/src/**",
+          "modules/mesh/tools/**",
+          "modules/mesh/matlab/**",
+          "modules/mesh/include/mpmc/mesh/face_mesh*.hpp"
         ]
       },
       "retained_hash": "3356dd04e0c23edd9c6fc40b648f18961cddd9bcd6ee3774a051506b93e1c01a",
@@ -1306,8 +1310,9 @@
         "core": "legacy_mesh_core__core"
       },
       "central_hashes": {
-        "legacy_mesh_core__core": "7913223e0275da9d3aed3a19d07e5b485ad03bcccc6db6b95fd0e431e9120136"
-      }
+        "legacy_mesh_core__core": "def8a6e8489d33cd6a6a76f21efe162cd2c0fccbc5c2824edb19b42d3a885ddc"
+      },
+      "retained_blob_sha": "398701abfc8e3b62bbc946319a42314d94b431c2"
     },
     ".github/workflows/mesh_external_compatibility.yml": {
       "name": "Mesh external format compatibility",
@@ -1334,6 +1339,7 @@
             "modules/mesh/include/mpmc/mesh/face_boundary.hpp",
             "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
             "modules/mesh/include/mpmc/mesh/geometry_2d.hpp",
+            "modules/mesh/include/mpmc/mesh/linear_cell_mesh_2d.hpp",
             "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
             "modules/mesh/include/mpmc/mesh/topology.hpp",
             "tests/mesh/external_compatibility/**",
@@ -1367,7 +1373,7 @@
           "condition": "needs.incremental-path-gate.outputs.affected == 'true'",
           "environment": null,
           "permissions": null,
-          "timeout_minutes": 10
+          "timeout_minutes": 20
         }
       },
       "route_key": "legacy_mesh_external_compatibility",
@@ -1393,20 +1399,37 @@
           "modules/mesh/include/mpmc/mesh/face_boundary.hpp",
           "modules/mesh/include/mpmc/mesh/face_geometry_3d.hpp",
           "modules/mesh/include/mpmc/mesh/geometry_2d.hpp",
+          "modules/mesh/include/mpmc/mesh/linear_cell_mesh_2d.hpp",
           "modules/mesh/include/mpmc/mesh/linear_cell_mesh_3d.hpp",
           "modules/mesh/include/mpmc/mesh/topology.hpp",
           "tests/mesh/external_compatibility/**",
-          ".github/workflows/mesh_external_compatibility.yml"
+          ".github/workflows/mesh_external_compatibility.yml",
+          "modules/mesh/include/mpmc/mesh/cartesian_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/cell_face_geometric_operator_3d.hpp",
+          "modules/mesh/include/mpmc/mesh/computational_mesh.hpp",
+          "modules/mesh/include/mpmc/mesh/dof_layout.hpp",
+          "modules/mesh/include/mpmc/mesh/dof_numbering.hpp",
+          "modules/mesh/include/mpmc/mesh/mesh_exchange_document.hpp",
+          "modules/mesh/include/mpmc/mesh/mesh_exchange_group.hpp",
+          "modules/mesh/include/mpmc/mesh/partition_snapshot.hpp",
+          "modules/mesh/include/mpmc/mesh/linear_cell_geometric_operator_3d.hpp",
+          "modules/mesh/src/**",
+          "modules/mesh/tools/**",
+          "modules/mesh/matlab/**",
+          "modules/mesh/include/mpmc/mesh/face_mesh*.hpp",
+          "tests/mesh/core/prepare_hdf5.py",
+          "modules/mesh/CMakeLists.txt"
         ]
       },
-      "retained_hash": "09b44ded0bc1e294e951168dbb99a0a635f71c0d71a412ad2449ea4b1afa9e0f",
+      "retained_hash": "c5162479b2d64304772ae25de981a2e641985f4961119a2bbe3f394d1a073564",
       "execution": "PR jobs hosted by central router; original manual/reusable semantics retained",
       "central_jobs": {
         "compatibility": "legacy_mesh_external_compatibility__compatibility"
       },
       "central_hashes": {
-        "legacy_mesh_external_compatibility__compatibility": "f6cf6002d03439c32e65c7914dbca088cce645e0387ba3edc4f8ab65577d9e4a"
-      }
+        "legacy_mesh_external_compatibility__compatibility": "a73947c9657779e114afca5dda3d02aa5cf1e99f452ab4388dea0e3e4efc36d7"
+      },
+      "retained_blob_sha": "dd5792e8656e4c5844102cbdb1a48dbdeeed11eb"
     },
     ".github/workflows/mesh_petsc.yml": {
       "name": "Mesh/discretization PETSc adapter correctness",

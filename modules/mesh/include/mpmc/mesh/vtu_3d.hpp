@@ -28,6 +28,7 @@ struct VtuImportResult3D {
     FaceBoundarySnapshot face_boundary;
     std::vector<DenseFieldSnapshot> point_fields;
     std::vector<DenseFieldSnapshot> cell_fields;
+    std::vector<MeshExchangeGroup> groups{};
 };
 
 [[nodiscard]] inline VtuImportResult3D
@@ -499,6 +500,10 @@ import_vtu_ascii_3d(
                 throw std::invalid_argument(
                     "mpmc::mesh::import_vtu_ascii_3d: duplicate PointData Name");
             }
+            if (name == global_vertex_id_name) {
+                vertex_ids = parse_vertex_ids(array, point_count);
+                continue;
+            }
             parsed_point_fields.push_back(
                 parse_field(
                     array,
@@ -521,11 +526,15 @@ import_vtu_ascii_3d(
                     cell_vertices[cell])});
     }
 
-    auto mesh =
-        make_linear_mesh_3d(
-            vertex_ids,
-            coordinates,
-            cells);
+    const auto identities = parse_face_identities(grid, piece, vertex_ids, 3);
+    std::vector<LinearFaceAnnotation3D> annotations;
+    if (identities) for (const auto& face : *identities) {
+        annotations.push_back({face.vertices, face.id, face.physical_tag});
+    }
+    auto mesh = make_linear_mesh_3d(vertex_ids, coordinates, cells, annotations);
+    if (identities && identities->size() != mesh.topology.entity_count(EntityKind::face)) {
+        throw std::invalid_argument("face identity table must cover every mesh face");
+    }
 
     std::vector<DenseFieldSnapshot>
         point_fields;
@@ -557,6 +566,7 @@ import_vtu_ascii_3d(
                 std::move(field.metadata)));
     }
 
+    auto groups = parse_groups(grid, mesh.topology, 3);
     return VtuImportResult3D{
         std::move(mesh.topology),
         std::move(
@@ -565,7 +575,8 @@ import_vtu_ascii_3d(
         std::move(mesh.face_geometry),
         std::move(mesh.face_boundary),
         std::move(point_fields),
-        std::move(cell_fields)};
+        std::move(cell_fields),
+        std::move(groups)};
 }
 
 [[nodiscard]] inline std::string
@@ -668,14 +679,16 @@ export_vtu_ascii_3d(
         std::numeric_limits<double>::max_digits10);
     output << "<?xml version=\"1.0\"?>\n"
            << "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">\n"
-           << "  <UnstructuredGrid>\n"
-           << "    <Piece NumberOfPoints=\""
+           << "  <UnstructuredGrid>\n";
+    write_face_identities(output, topology, mesh.face_boundary, 3, mesh.groups);
+    output << "    <Piece NumberOfPoints=\""
            << point_count
            << "\" NumberOfCells=\""
            << cell_count
            << "\">\n";
 
     output << "      <PointData>\n";
+    write_vertex_ids(output, topology);
     for (const auto& field :
          mesh.point_fields) {
         write_field(

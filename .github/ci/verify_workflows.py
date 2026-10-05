@@ -32,6 +32,123 @@ def workflow_run_text(path):
         for job in (workflow.get('jobs') or {}).values()
     )
 
+def assert_mesh_independent_readers(root, select):
+    owner = 'legacy_mesh_external_compatibility'
+    directory = Path('tests/mesh/external_compatibility')
+    manual = load('.github/workflows/mesh_external_compatibility.yml')['jobs']['compatibility']
+    central = root['jobs'][owner + '__compatibility']
+    # Check execution, not just a path match or a compiled-but-unused producer.
+    names = ('Install pinned independent mesh readers',
+             'Independently read 2D exports with Gmsh and VTK',
+             'Preserve independent reader evidence',
+             'Independently read 3D exports with Gmsh and VTK',
+             'Preserve 3D independent reader evidence',
+             'Validate externally generated 3D mixed mesh chains',
+             'Preserve 3D chain evidence',
+             'Validate externally generated 2D mixed mesh chains',
+             'Preserve 2D chain evidence',
+             'Install pinned independent GRDECL reader',
+             'Validate independent GRDECL complete chains',
+             'Validate computational preparation through three formats',
+             'Validate independent VTU named group chains',
+             'Preserve GRDECL and computational evidence',
+             'Prepare pinned optional HDF5 dependency',
+             'Validate MRST face mesh HDF5 and polyhedral VTU',
+             'Preserve MRST face mesh evidence')
+    for name in names:
+        left = [step for step in manual['steps'] if step.get('name') == name]
+        right = [step for step in central['steps'] if step.get('name') == name]
+        assert len(left) == len(right) == 1 and left == right, ('mesh reader step parity', name)
+    entry = (directory / 'external_mesh_compatibility.cpp').read_text(encoding='utf-8')
+    for dimension, marker in ((2, 'files=12 reports=6 negative_controls=5'),
+                              (3, 'files=24 reports=12 negative_controls=10')):
+        run = next(step for step in central['steps'] if step.get('name') ==
+                   f'Independently read {dimension}D exports with Gmsh and VTK')
+        assert not run.get('continue-on-error') and not central.get('continue-on-error')
+        for token in ('set -euo pipefail', f'verify_{dimension}d_readers.py --producer',
+                      '/mpmc_mesh_external_compatibility', '--output-dir', marker):
+            assert token in run['run'], ('mesh reader failure/execution guard', token)
+        assert f'emit_{dimension}d_exports.cpp' in (directory / 'CMakeLists.txt').read_text(encoding='utf-8')
+        assert f'--emit-{dimension}d' in entry and f'emit_{dimension}d_exports(argv[2])' in entry
+    for dimension, marker in ((2, 'inputs=2 chains=4 reports=4 disconnected_chains=4'),
+                              (3, 'inputs=4 chains=8 reports=8 disconnected_chains=8')):
+        chain = next(step for step in central['steps'] if step.get('name') ==
+                     f'Validate externally generated {dimension}D mixed mesh chains')
+        assert not chain.get('continue-on-error')
+        for token in ('set -euo pipefail', f'verify_{dimension}d_chains.py --producer',
+                      '/mpmc_mesh_external_compatibility', '--output-dir', marker):
+            assert token in chain['run'], ('chain execution/failure guard', token)
+        assert f'convert_{dimension}d_file.cpp' in (directory / 'CMakeLists.txt').read_text(encoding='utf-8')
+        assert f'--convert-{dimension}d' in entry and f'convert_{dimension}d_file(argv[2], argv[3], argv[4])' in entry
+    for filename in ('emit_2d_exports.cpp', 'verify_2d_readers.py', 'requirements-readers.txt',
+                     'emit_3d_exports.cpp', 'verify_3d_readers.py',
+                     'convert_3d_file.cpp', 'verify_3d_chains.py',
+                     'convert_2d_file.cpp', 'verify_2d_chains.py',
+                     'convert_grdecl_file.cpp', 'verify_grdecl_chains.py', 'requirements-grdecl-reader.txt',
+                     'validate_computational_scale.cpp', 'convert_vtu_groups.cpp',
+                     'verify_vtu_group_chains.py', 'vtu_groups.py',
+                     'verify_face_mesh_bridge.py', 'mrst_folder_audit.py'):
+        path = (directory / filename).as_posix()
+        for action in ('opened', 'synchronize', 'ready_for_review'):
+            chosen, _, _ = select([path], action=action)
+            assert chosen[owner] and not chosen['legacy_mesh_core'], (path, action)
+        before, _, _ = select([path])  # Deletion retains the old path.
+        renamed, _, _ = select([path, (directory / ('renamed_' + filename)).as_posix()])
+        assert all(not value or renamed[key] for key, value in before.items())
+    for header in ('gmsh_4_1.hpp', 'vtu.hpp', 'linear_cell_mesh_2d.hpp', 'mesh_exchange_io.hpp',
+                   'gmsh_4_1_3d.hpp', 'vtu_3d.hpp', 'linear_cell_mesh_3d.hpp', 'mesh_exchange.hpp'):
+        assert select(['modules/mesh/include/mpmc/mesh/' + header])[0][owner], header
+    assert not select(['modules/mesh/README.md'])[0][owner]
+    requirements = (directory / 'requirements-readers.txt').read_text(encoding='utf-8')
+    for line in requirements.splitlines():
+        if line and not line.startswith('#'):
+            assert re.fullmatch(r'[a-zA-Z0-9_-]+==[0-9][a-zA-Z0-9.]*', line), line
+    assert 'gmsh==' in requirements and 'vtk==' in requirements
+    assert 'h5py==3.15.1' in requirements and 'psutil==7.1.0' in requirements
+    for job in (manual, central, root['jobs']['legacy_mesh_core__core']):
+        prep=next(step for step in job['steps'] if step.get('name')=='Prepare pinned optional HDF5 dependency')
+        assert 'tests/mesh/core/prepare_hdf5.py --root' in prep['run'] and not prep.get('continue-on-error')
+        commands='\n'.join(step.get('run','') for step in job['steps'])
+        assert '-DMPMC_MESH_WITH_HDF5=ON' in commands and '-DHDF5_USE_STATIC_LIBRARIES=ON' in commands
+    bridge=next(step for step in central['steps'] if step.get('name')=='Validate MRST face mesh HDF5 and polyhedral VTU')
+    for token in ('set -euo pipefail','verify_face_mesh_bridge.py --converter','negative_controls=16','grep -Fqx'):
+        assert token in bridge['run'], ('face bridge execution guard',token)
+    assert not bridge.get('continue-on-error')
+    for path in ('modules/mesh/src/face_mesh_hdf5.cpp','modules/mesh/tools/mesh_convert.cpp',
+                 'modules/mesh/matlab/export_mpmc_mesh.m','modules/mesh/include/mpmc/mesh/face_mesh.hpp',
+                 'tests/mesh/core/prepare_hdf5.py'):
+        gates=select([path])[0]
+        assert gates[owner] and gates['legacy_mesh_core'],path
+    for name, script, marker in (
+            ('Validate independent GRDECL complete chains', 'verify_grdecl_chains.py',
+             'chains=2 reports=2 negative_controls=13'),
+            ('Validate independent VTU named group chains', 'verify_vtu_group_chains.py',
+             'chains=3 reports=3 negative_controls=15')):
+        step = next(step for step in central['steps'] if step.get('name') == name)
+        assert not step.get('continue-on-error')
+        for token in ('set -euo pipefail', script + ' --producer', '--output-dir', marker):
+            assert token in step['run'], ('new independent chain execution/failure guard', token)
+    scale = next(step for step in central['steps'] if step.get('name') ==
+                 'Validate computational preparation through three formats')
+    assert not scale.get('continue-on-error')
+    for token in ('set -euo pipefail', 'for format in gmsh vtu grdecl', '--computational-scale', 'cells=64'):
+        assert token in scale['run'], ('computational preparation scale guard', token)
+    # Protect the transitive header closure of the only external producer.
+    pending = list(directory.glob('*.cpp'))
+    visited = set()
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        for header in re.findall(r'#include\s+[<"](mpmc/mesh/[^>"]+)[>"]', path.read_text(encoding='utf-8')):
+            dependency = Path('modules/mesh/include') / header
+            assert select([dependency.as_posix()])[0][owner], dependency
+            pending.append(dependency)
+    for line in (directory / 'requirements-grdecl-reader.txt').read_text(encoding='utf-8').splitlines():
+        if line and not line.startswith('#'):
+            assert re.fullmatch(r'[a-zA-Z0-9_-]+==[0-9][a-zA-Z0-9.]*', line), line
+
 def assert_root_build_selection(select):
     direct = [
         'tests/build/root_libraries/CMakeLists.txt',
@@ -312,10 +429,25 @@ def main():
         petsc_entry_text,
     ), 'SW92 transactional restart header probe is compiled but not executed'
 
-    assert 'result' in root['jobs'] and root['jobs']['result']['if'] == '${{ always() }}'
+    cadence_tests = runpy.run_path('.github/ci/test_cloud_cadence.py')
+    cadence_tests['run_tests']()
     # Existing selector regression vectors are run when importing the planner.
     planner = runpy.run_path('.github/ci/plan.py')
     select = planner['select']
+    assert_mesh_independent_readers(root, select)
+    # Shared 2D geometry affects both importers and their downstream adapters.
+    # A deletion is represented by this path too; a rename contributes both sides.
+    mesh2d_path = 'modules/mesh/include/mpmc/mesh/linear_cell_mesh_2d.hpp'
+    for action in ('opened', 'synchronize', 'ready_for_review'):
+        selected, _, _ = select([mesh2d_path], action=action)
+        for owner in ('legacy_mesh_core', 'legacy_mesh_external_compatibility', 'legacy_mesh_petsc'):
+            assert selected[owner], ('shared 2D builder lost consumer coverage', owner, action)
+        assert not selected['legacy_frontend'] and not selected['flow_core']
+    before, _, _ = select([mesh2d_path])
+    renamed, _, _ = select([mesh2d_path, 'modules/mesh/include/mpmc/mesh/renamed_2d.hpp'])
+    assert all(not value or renamed[key] for key, value in before.items())
+    unrelated, _, _ = select(['modules/mesh/README.md'])
+    assert not unrelated['legacy_mesh_external_compatibility']
     assert_root_readme_selection(select)
     results, ad, thermo = select(['.github/AGENTS.md', 'tests/AGENTS.md'])
     assert not any(results.values()) and not ad and not thermo

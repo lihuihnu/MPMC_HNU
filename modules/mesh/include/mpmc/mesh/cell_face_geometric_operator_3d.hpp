@@ -17,7 +17,7 @@
 
 namespace mpmc::mesh {
 
-/// Vector from a cell centroid to a face centroid, in SI metres.
+/// Vector from a cell reference point to a face centroid, in SI metres.
 struct Displacement3D {
     double x_m;
     double y_m;
@@ -55,14 +55,15 @@ struct FaceConnectionGeometry3D {
 /// Immutable 3D cell/face geometric-operator snapshot.
 ///
 /// The snapshot is aligned to the supplied Topology local cell/face ordering.
-/// The current corner-point baseline defines each cell centroid as the
-/// arithmetic mean of its eight processed shared vertices. This is the same
-/// cell reference point used by the active corner-point processor to orient
-/// FaceGeometry3D owner normals; no alternative volumetric-centroid convention
-/// is introduced here.
+/// Cell reference points are supplied explicitly, or chosen as vertex means
+/// by the legacy eight-vertex factory and the LinearMesh3D convenience factory.
+/// A vertex mean is not generally a volume centroid. The reference-point
+/// accessor names this distinction; cell_centroid_m remains a compatibility
+/// alias for existing callers. No alternative volume-centroid convention is
+/// silently introduced into legacy corner-point calculations.
 ///
-/// Owner displacement is (face centroid - owner cell centroid). For an internal
-/// face, neighbour displacement is (face centroid - neighbour cell centroid).
+/// Owner displacement is (face centroid - owner reference point). For an
+/// internal face, neighbour displacement is (face centroid - neighbour point).
 /// With the owner-relative unit normal n:
 ///
 ///   d_owner     = dot(owner_to_face, n)
@@ -129,9 +130,15 @@ public:
     }
 
     [[nodiscard]] Coordinate3D
-    cell_centroid_m(LocalIndex cell) const {
+    cell_reference_point_m(LocalIndex cell) const {
         return cell_centroids_m_.at(
             static_cast<std::size_t>(cell.value()));
+    }
+
+    /// Compatibility alias; the stored point need not be a volume centroid.
+    [[nodiscard]] Coordinate3D
+    cell_centroid_m(LocalIndex cell) const {
+        return cell_reference_point_m(cell);
     }
 
     [[nodiscard]] LocalIndex
@@ -402,15 +409,22 @@ owner_to_neighbour(
 [[nodiscard]] inline Coordinate3D cell_vertex_mean(
     const Topology& topology,
     std::span<const Coordinate3D> vertex_coordinates_m,
-    LocalIndex cell) {
+    LocalIndex cell,
+    bool require_eight_vertices = true) {
     const auto vertices =
         topology.relation(
             EntityKind::cell,
             EntityKind::vertex)
             .adjacent(cell);
-    if (vertices.size() != 8U) {
+    if (require_eight_vertices && vertices.size() != 8U) {
         throw std::invalid_argument(
             "mpmc::mesh::make_cell_face_geometric_operator_3d: each 3D cell must have exactly eight vertices");
+    }
+    if (!require_eight_vertices &&
+        vertices.size() != 4U && vertices.size() != 5U &&
+        vertices.size() != 6U && vertices.size() != 8U) {
+        throw std::invalid_argument(
+            "mpmc::mesh::make_cell_face_geometric_operator_3d: unsupported linear 3D cell vertex count");
     }
 
     std::vector<LocalIndex> unique(
@@ -450,9 +464,10 @@ owner_to_neighbour(
         centroid.y_m += coordinate.y_m;
         centroid.z_m += coordinate.z_m;
     }
-    centroid.x_m /= 8.0;
-    centroid.y_m /= 8.0;
-    centroid.z_m /= 8.0;
+    const double count = static_cast<double>(vertices.size());
+    centroid.x_m /= count;
+    centroid.y_m /= count;
+    centroid.z_m /= count;
     return centroid;
 }
 
@@ -476,10 +491,18 @@ inline void require_positive_normal_distance(
 
 } // namespace cell_face_geometric_operator_3d_detail
 
+/// Construct method-neutral connection geometry using explicit cell reference
+/// points in SI metres, aligned with topology local cell order. Points must be
+/// finite and strictly inside the half-spaces of all incident oriented faces
+/// by the same scale-aware distance tolerance used for the legacy factory.
+/// This validates connection geometry, not the completeness/closure of an
+/// arbitrary topology or its suitability for a particular discretization.
+/// The caller supplies a validated mesh topology and FaceGeometry3D snapshot;
+/// changing reference points is an explicit numerical-model choice.
 [[nodiscard]] inline CellFaceGeometricOperator3D
-make_cell_face_geometric_operator_3d(
+make_cell_face_geometric_operator_3d_from_reference_points(
     const Topology& topology,
-    std::span<const Coordinate3D> vertex_coordinates_m,
+    std::span<const Coordinate3D> cell_reference_points_m,
     const FaceGeometry3D& face_geometry) {
     using namespace
         cell_face_geometric_operator_3d_detail;
@@ -488,13 +511,9 @@ make_cell_face_geometric_operator_3d(
         topology.entity_count(EntityKind::cell);
     const std::size_t face_count =
         topology.entity_count(EntityKind::face);
-    const std::size_t vertex_count =
-        topology.entity_count(EntityKind::vertex);
-
-    if (vertex_coordinates_m.size() !=
-        vertex_count) {
+    if (cell_reference_points_m.size() != cell_count) {
         throw std::invalid_argument(
-            "mpmc::mesh::make_cell_face_geometric_operator_3d: vertex coordinate count does not match topology");
+            "mpmc::mesh::make_cell_face_geometric_operator_3d: cell reference-point count does not match topology");
     }
     if (face_geometry.cell_count() !=
             cell_count ||
@@ -504,29 +523,20 @@ make_cell_face_geometric_operator_3d(
             "mpmc::mesh::make_cell_face_geometric_operator_3d: FaceGeometry3D counts do not match topology");
     }
     if (!topology.has_relation(
-            EntityKind::cell,
-            EntityKind::vertex) ||
-        !topology.has_relation(
             EntityKind::face,
             EntityKind::cell)) {
         throw std::invalid_argument(
-            "mpmc::mesh::make_cell_face_geometric_operator_3d: cell->vertex and face->cell relations are required");
+            "mpmc::mesh::make_cell_face_geometric_operator_3d: face->cell relation is required");
     }
 
-    std::vector<Coordinate3D>
-        cell_centroids_m;
-    cell_centroids_m.reserve(cell_count);
-    for (std::size_t cell = 0U;
-         cell < cell_count;
-         ++cell) {
-        cell_centroids_m.push_back(
-            cell_vertex_mean(
-                topology,
-                vertex_coordinates_m,
-                LocalIndex{
-                    static_cast<
-                        LocalIndex::value_type>(
-                            cell)}));
+    std::vector<Coordinate3D> cell_centroids_m(
+        cell_reference_points_m.begin(), cell_reference_points_m.end());
+    for (const auto point : cell_centroids_m) {
+        if (!std::isfinite(point.x_m) || !std::isfinite(point.y_m) ||
+            !std::isfinite(point.z_m)) {
+            throw std::invalid_argument(
+                "mpmc::mesh::make_cell_face_geometric_operator_3d: non-finite cell reference point");
+        }
     }
 
     const auto& face_cells =
@@ -744,6 +754,49 @@ make_cell_face_geometric_operator_3d(
         std::move(face_areas),
         std::move(face_normals)};
 }
+
+namespace cell_face_geometric_operator_3d_detail {
+
+[[nodiscard]] inline CellFaceGeometricOperator3D from_vertex_means(
+    const Topology& topology,
+    std::span<const Coordinate3D> vertex_coordinates_m,
+    const FaceGeometry3D& face_geometry,
+    bool require_eight_vertices) {
+    if (vertex_coordinates_m.size() !=
+        topology.entity_count(EntityKind::vertex)) {
+        throw std::invalid_argument(
+            "mpmc::mesh::make_cell_face_geometric_operator_3d: vertex coordinate count does not match topology");
+    }
+    if (!topology.has_relation(EntityKind::cell, EntityKind::vertex)) {
+        throw std::invalid_argument(
+            "mpmc::mesh::make_cell_face_geometric_operator_3d: cell->vertex relation is required");
+    }
+    std::vector<Coordinate3D> reference_points;
+    const std::size_t cells = topology.entity_count(EntityKind::cell);
+    reference_points.reserve(cells);
+    for (std::size_t cell = 0U; cell < cells; ++cell) {
+        reference_points.push_back(cell_vertex_mean(
+            topology, vertex_coordinates_m,
+            LocalIndex{static_cast<LocalIndex::value_type>(cell)},
+            require_eight_vertices));
+    }
+    return make_cell_face_geometric_operator_3d_from_reference_points(
+        topology, reference_points, face_geometry);
+}
+
+} // namespace cell_face_geometric_operator_3d_detail
+
+/// Legacy corner-point entry: retains the arithmetic mean of exactly eight
+/// vertices and its historical floating-point evaluation order.
+[[nodiscard]] inline CellFaceGeometricOperator3D
+make_cell_face_geometric_operator_3d(
+    const Topology& topology,
+    std::span<const Coordinate3D> vertex_coordinates_m,
+    const FaceGeometry3D& face_geometry) {
+    return cell_face_geometric_operator_3d_detail::from_vertex_means(
+        topology, vertex_coordinates_m, face_geometry, true);
+}
+
 
 } // namespace mpmc::mesh
 

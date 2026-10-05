@@ -1,7 +1,7 @@
 #ifndef MPMC_MESH_GRDECL_RECONSTRUCTION_HPP
 #define MPMC_MESH_GRDECL_RECONSTRUCTION_HPP
 
-#include <mpmc/mesh/mesh_exchange.hpp>
+#include <mpmc/mesh/mesh_exchange_document.hpp>
 
 #include <algorithm>
 #include <array>
