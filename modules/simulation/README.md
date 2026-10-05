@@ -71,6 +71,44 @@ If a caller already supplies a stricter physical-timestep cap, the runner must
 preserve it by using the minimum of the caller cap and the remaining distance
 to the next hard boundary.
 
+## Implemented T1 core API
+
+The PETSc-independent core now exposes:
+
+- `SimulationTimeline`: an immutable value object holding finite,
+  non-negative, numerically distinct and strictly increasing hard-boundary
+  times;
+- `SimulationCursor`: accepted lifecycle state with exactly one
+  next-unconsumed-boundary index;
+- `SimulationHardBoundary`: stable boundary index/time identity.
+
+A cursor initialized from an already accepted time treats boundaries at or
+before that accepted time as historical and emits no synthetic reach event.
+During forward execution, `accept_time()` advances at most one boundary and
+rejects an accepted time that would skip an unconsumed boundary.
+`cap_initial_timestep_seconds()` returns the stricter of the caller cap and
+the remaining distance to the next hard boundary.
+
+Time-point identity uses the same `64 * epsilon * max(1, |t_a|, |t_b|)`
+scale already used by the physical-time layer. This tolerance is only an
+identity guard for hard times; it is not a nonlinear, conservation or adaptive
+timestep tolerance.
+
+The core is an INTERFACE C++20 target `mpmc::simulation` with standard-library
+dependencies only. Its standalone regression project is
+`tests/simulation/core`.
+
+```sh
+cmake -S tests/simulation/core -B build/simulation-core -DCMAKE_BUILD_TYPE=Release
+cmake --build build/simulation-core --parallel 2
+ctest --test-dir build/simulation-core --output-on-failure
+```
+
+The current regression owns seven behavior cases plus independent
+self-contained probes for both public headers. Central CI ownership is not yet
+claimed in this Draft slice; it remains an explicit T6 completion item for the
+full PR.
+
 ## Accepted-state transaction
 
 The first implementation has three accepted authorities:
