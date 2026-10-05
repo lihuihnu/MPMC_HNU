@@ -1429,7 +1429,7 @@
       "central_hashes": {
         "legacy_mesh_external_compatibility__compatibility": "a73947c9657779e114afca5dda3d02aa5cf1e99f452ab4388dea0e3e4efc36d7"
       },
-      "retained_blob_sha": "2edb92e5566277a4ebab03f5a4e58310baf1d16d"
+      "retained_blob_sha": "dd5792e8656e4c5844102cbdb1a48dbdeeed11eb"
     },
     ".github/workflows/mesh_petsc.yml": {
       "name": "Mesh/discretization PETSc adapter correctness",

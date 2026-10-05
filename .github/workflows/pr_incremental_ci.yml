@@ -1064,7 +1064,7 @@ jobs:
         "$RUNNER_TEMP/mesh-readers/bin/python" -B tests/mesh/external_compatibility/verify_face_mesh_bridge.py --converter "$PWD/build/mesh-external/mesh-library/mpmc_mesh_convert"
         --output-dir "$RUNNER_TEMP/face-mesh-evidence" 2>&1 | tee build/face-mesh-validation.log
 
-        grep -Fqx "[PASS] independent.face_mesh.hdf5_vtu dimensions=2 negative_controls=14" build/face-mesh-validation.log
+        grep -Fqx "[PASS] independent.face_mesh.hdf5_vtu dimensions=2 negative_controls=16" build/face-mesh-validation.log
 
         '
     - name: Preserve MRST face mesh evidence
