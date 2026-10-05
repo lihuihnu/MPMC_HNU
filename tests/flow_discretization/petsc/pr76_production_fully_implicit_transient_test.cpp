@@ -3502,6 +3502,18 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
     simulation_options.physical_timestep
         .initial_timestep_cap_seconds =
         0.4;
+    // Make growth deterministic for this lifecycle test: successful stable
+    // solves always grow, so the accepted-step count is governed only by
+    // caller-cap and hard-boundary clipping rather than nonlinear effort.
+    simulation_options.physical_timestep.adaptive
+        .growth_nonlinear_iteration_limit =
+        1000;
+    simulation_options.physical_timestep.adaptive
+        .growth_line_search_direction_change_limit =
+        1000;
+    simulation_options.physical_timestep.adaptive
+        .growth_transition_restart_limit =
+        4U;
 
     std::optional<sim::SimulationReport>
         simulation_report;

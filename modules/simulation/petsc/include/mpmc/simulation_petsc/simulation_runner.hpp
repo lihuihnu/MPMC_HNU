@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -61,6 +62,7 @@ namespace sim = mpmc::simulation;
         record.decision == fdp::AdaptiveTimestepDecision3D::accept_and_hold;
 
     return accepted_decision &&
+        step_count_before != std::numeric_limits<std::size_t>::max() &&
         record.accepted_step_index == step_count_before &&
         clock.accepted_step_count() == step_count_before + 1U &&
         same_time(record.time_n_seconds, time_before_seconds) &&
