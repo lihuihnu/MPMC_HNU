@@ -109,6 +109,39 @@ self-contained probes for both public headers. Central CI ownership is not yet
 claimed in this Draft slice; it remains an explicit T6 completion item for the
 full PR.
 
+## Implemented T2 report/status API
+
+The PETSc-independent lifecycle report is intentionally a **bounded projection**
+rather than a solver-history container.
+
+- `AcceptedSimulationStepSummary` carries accepted step index, accepted time
+  interval, accepted/next timestep, retry count, attempt count and phase-restart
+  count. It does not contain residual vectors, nonlinear norms or KSP details.
+- `ReachedSimulationBoundary` binds one hard-boundary identity to the accepted
+  physical step that actually reached it.
+- `SimulationRunStatus` distinguishes `running`, `completed`, terminal
+  physical-timestep rejection, lower-layer execution error and lifecycle
+  contract violation without importing PETSc enums.
+- `SimulationReport` stores fixed-size lifecycle diagnostics, the **last**
+  accepted-step summary, the **last** reached boundary and an optional signed
+  lower-layer error code. It never accumulates an unbounded vector of steps,
+  attempts or solver diagnostics.
+
+A report starts from `SimulationReportAnchor` containing authoritative accepted
+time, accepted-step count and already-consumed boundary count. New accepted
+steps must be sequential in both step index and accepted time. Reached
+boundaries must be sequential from the anchor and match the endpoint of the
+last accepted step. Every accepted step must correspond to exactly one new
+physical-timestep call.
+
+The lower-layer error code is valid only for `execution_error`; other terminal
+states do not smuggle backend-specific diagnostics into the core contract.
+After any terminal status, further lifecycle records are rejected.
+
+T2 extends the standalone core suite to 18 CTests: seven timeline/cursor
+behaviors, seven report/status behaviors and four public-header self-contained
+probes.
+
 ## Accepted-state transaction
 
 The first implementation has three accepted authorities:

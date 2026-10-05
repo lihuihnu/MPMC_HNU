@@ -43,6 +43,11 @@ add_executable(
 configure_simulation_test_target(mpmc_simulation_timeline_tests)
 
 add_executable(
+    mpmc_simulation_report_tests
+    simulation_report_test.cpp)
+configure_simulation_test_target(mpmc_simulation_report_tests)
+
+add_executable(
     mpmc_simulation_timeline_header_self_contained
     simulation_timeline_header_self_contained.cpp)
 configure_simulation_test_target(mpmc_simulation_timeline_header_self_contained)
@@ -52,12 +57,25 @@ add_executable(
     simulation_cursor_header_self_contained.cpp)
 configure_simulation_test_target(mpmc_simulation_cursor_header_self_contained)
 
+add_executable(
+    mpmc_simulation_status_header_self_contained
+    simulation_status_header_self_contained.cpp)
+configure_simulation_test_target(mpmc_simulation_status_header_self_contained)
+
+add_executable(
+    mpmc_simulation_report_header_self_contained
+    simulation_report_header_self_contained.cpp)
+configure_simulation_test_target(mpmc_simulation_report_header_self_contained)
+
 add_custom_target(
     mpmc_simulation_core_all
     DEPENDS
         mpmc_simulation_timeline_tests
+        mpmc_simulation_report_tests
         mpmc_simulation_timeline_header_self_contained
-        mpmc_simulation_cursor_header_self_contained)
+        mpmc_simulation_cursor_header_self_contained
+        mpmc_simulation_status_header_self_contained
+        mpmc_simulation_report_header_self_contained)
 
 foreach(case IN ITEMS
     timeline_valid
@@ -77,6 +95,24 @@ foreach(case IN ITEMS
             TIMEOUT 30)
 endforeach()
 
+foreach(case IN ITEMS
+    status_contract
+    accepted_summary
+    accepted_summary_invalid
+    boundary_identity
+    boundary_identity_invalid
+    terminal_contract
+    bounded_diagnostics)
+    add_test(
+        NAME simulation.core.report.${case}
+        COMMAND mpmc_simulation_report_tests ${case})
+    set_tests_properties(
+        simulation.core.report.${case}
+        PROPERTIES
+            LABELS "simulation;simulation.core;report;unit"
+            TIMEOUT 30)
+endforeach()
+
 add_test(
     NAME simulation.core.timeline.header_self_contained
     COMMAND mpmc_simulation_timeline_header_self_contained)
@@ -90,3 +126,21 @@ add_test(
 set_tests_properties(
     simulation.core.cursor.header_self_contained
     PROPERTIES LABELS "simulation;simulation.core;cursor;header" TIMEOUT 30)
+
+add_test(
+    NAME simulation.core.status.header_self_contained
+    COMMAND mpmc_simulation_status_header_self_contained)
+set_tests_properties(
+    simulation.core.status.header_self_contained
+    PROPERTIES
+        LABELS "simulation;simulation.core;status;header"
+        TIMEOUT 30)
+
+add_test(
+    NAME simulation.core.report.header_self_contained
+    COMMAND mpmc_simulation_report_header_self_contained)
+set_tests_properties(
+    simulation.core.report.header_self_contained
+    PROPERTIES
+        LABELS "simulation;simulation.core;report;header"
+        TIMEOUT 30)
