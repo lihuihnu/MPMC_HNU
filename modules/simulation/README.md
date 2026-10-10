@@ -220,6 +220,32 @@ The bounded simulation report must contain two physical calls, two accepted
 steps, one accepted retry and one reached boundary. Accepted component/energy
 history must match the terminal committed state.
 
+## T5 transactional regression — terminal rejection slice
+
+The terminal-rejection regression continues from an accepted PR76/PETSc state
+at `t=3.6` with a single hard boundary at `3.7`. A test-only post-SNES
+scanner always returns `indeterminate`, so the production physical-timestep
+driver performs:
+
+- attempt 0 at `dt=0.1`: recoverable rejection;
+- cutback retry at `dt=0.05`: another recoverable rejection;
+- `maximum_retries=1`: terminal `retry_budget_exhausted`.
+
+At both scanner calls the test directly observes that accepted physical time,
+accepted step count, authoritative next dt and `SimulationCursor` all remain
+at their entry values.
+
+The simulation runner must map the lower terminal rejection to
+`physical_timestep_rejected` with exactly one physical-timestep call and zero
+accepted steps/reached boundaries. `last_accepted_step` and
+`last_reached_boundary` must both remain empty.
+
+Before entering the failed physical timestep, the test snapshots the accepted
+reservoir Vec. After terminal rejection it checks both exact accepted-history
+consistency and an L2 difference of that accepted state against the snapshot,
+while also requiring the rebuilt system trial timestep to be restored to the
+entry authoritative next dt.
+
 ## Accepted-state transaction
 
 The first implementation has three accepted authorities:
