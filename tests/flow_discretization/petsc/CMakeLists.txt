@@ -119,3 +119,48 @@ set_tests_properties(
         LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;newton_linear_system;snes;gmres;asm;physical_assembly;owner_targeted;adaptive_timestep"
         TIMEOUT 60
         ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1;OMPI_MCA_btl_vader_single_copy_mechanism=none")
+
+# The T5 terminal-rejection regression deliberately reuses the established
+# mixed-cardinality production fixtures in a separate owning executable.  It
+# tests one lifecycle failure path and does not re-own the main aggregate CTest.
+add_executable(
+    mpmc_simulation_t5_terminal_rejection_tests
+    simulation_t5_terminal_rejection_test.cpp)
+target_link_libraries(
+    mpmc_simulation_t5_terminal_rejection_tests
+    PRIVATE
+        mpmc::flow_discretization_petsc
+        mpmc::well_discretization_petsc
+        mpmc::simulation_petsc)
+target_include_directories(
+    mpmc_simulation_t5_terminal_rejection_tests
+    PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
+set_target_properties(
+    mpmc_simulation_t5_terminal_rejection_tests
+    PROPERTIES CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(
+        mpmc_simulation_t5_terminal_rejection_tests
+        PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wconversion
+            -Wshadow
+            -Werror)
+endif()
+
+add_test(
+    NAME simulation.petsc.terminal_rejection_transaction
+    COMMAND
+        ${MPIEXEC_EXECUTABLE}
+        ${MPIEXEC_NUMPROC_FLAG} 2
+        ${MPIEXEC_PREFLAGS}
+        $<TARGET_FILE:mpmc_simulation_t5_terminal_rejection_tests>
+        ${MPIEXEC_POSTFLAGS})
+set_tests_properties(
+    simulation.petsc.terminal_rejection_transaction
+    PROPERTIES
+        LABELS "simulation;simulation.petsc;mpi;transaction;terminal_rejection;retry_budget;accepted_history"
+        TIMEOUT 60
+        ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1;OMPI_MCA_btl_vader_single_copy_mechanism=none")
