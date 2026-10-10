@@ -8,6 +8,9 @@ add_subdirectory(
 add_subdirectory(
     "${CMAKE_CURRENT_LIST_DIR}/../../../modules/well/discretization/petsc"
     well-discretization-petsc-library)
+add_subdirectory(
+    "${CMAKE_CURRENT_LIST_DIR}/../../../modules/simulation/petsc"
+    simulation-petsc-library)
 enable_testing()
 
 add_executable(
@@ -61,6 +64,7 @@ add_executable(
     post_snes_pt_flash_phase_transition_scanner_header.cpp
     post_snes_sw92_profile_c_phase_transition_scanner_header.cpp
     sw92_transactional_phase_transition_restart_header.cpp
+    simulation_runner_header.cpp
     global_component_assembly_mapping_header.cpp
     fugacity_equilibrium_global_assembly_mapping_header.cpp)
 # Private source fragments retain one translation unit and one fixture instance.
@@ -80,7 +84,8 @@ target_link_libraries(
     mpmc_flow_discretization_petsc_tests
     PRIVATE
         mpmc::flow_discretization_petsc
-        mpmc::well_discretization_petsc)
+        mpmc::well_discretization_petsc
+        mpmc::simulation_petsc)
 target_include_directories(
     mpmc_flow_discretization_petsc_tests
     PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
@@ -112,5 +117,54 @@ set_tests_properties(
     flow_discretization.petsc.distributed_owner_targeted_conservation
     PROPERTIES
         LABELS "flow_discretization;flow_discretization.petsc;mpi;component_conservation;energy_conservation;global_assembly;complete_assembly;petsc_materialization;newton_linear_system;snes;gmres;asm;physical_assembly;owner_targeted;adaptive_timestep"
+        TIMEOUT 60
+        ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1;OMPI_MCA_btl_vader_single_copy_mechanism=none")
+
+# The T5 terminal-rejection regression deliberately reuses the established
+# mixed-cardinality production fixtures in a separate owning executable. It
+# tests one lifecycle failure path and does not re-own the main aggregate CTest.
+add_executable(
+    mpmc_simulation_t5_terminal_rejection_tests
+    simulation_t5_terminal_rejection_test.cpp)
+target_link_libraries(
+    mpmc_simulation_t5_terminal_rejection_tests
+    PRIVATE
+        mpmc::flow_discretization_petsc
+        mpmc::well_discretization_petsc
+        mpmc::simulation_petsc)
+target_include_directories(
+    mpmc_simulation_t5_terminal_rejection_tests
+    PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../support/sw92")
+set_target_properties(
+    mpmc_simulation_t5_terminal_rejection_tests
+    PROPERTIES CXX_EXTENSIONS OFF)
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(
+        mpmc_simulation_t5_terminal_rejection_tests
+        PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wconversion
+            -Wshadow
+            -Werror
+            # These pre-existing private fixture fragments intentionally carry
+            # neighboring test entrypoints that this focused executable does
+            # not invoke. Keep all other warnings strict for the new test.
+            -Wno-unused-function)
+endif()
+
+add_test(
+    NAME simulation.petsc.terminal_rejection_transaction
+    COMMAND
+        ${MPIEXEC_EXECUTABLE}
+        ${MPIEXEC_NUMPROC_FLAG} 2
+        ${MPIEXEC_PREFLAGS}
+        $<TARGET_FILE:mpmc_simulation_t5_terminal_rejection_tests>
+        ${MPIEXEC_POSTFLAGS})
+set_tests_properties(
+    simulation.petsc.terminal_rejection_transaction
+    PROPERTIES
+        LABELS "simulation;simulation.petsc;mpi;transaction;terminal_rejection;retry_budget;accepted_history"
         TIMEOUT 60
         ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1;OMPI_MCA_btl_vader_single_copy_mechanism=none")

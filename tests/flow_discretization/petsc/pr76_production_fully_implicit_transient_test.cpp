@@ -13,6 +13,7 @@
 #include <mpmc/flow_discretization_petsc/post_snes_pt_flash_phase_transition_scanner.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_adaptive_timestep_attempt.hpp>
 #include <mpmc/flow_discretization_petsc/single_phase_handoff_initial_system.hpp>
+#include <mpmc/simulation_petsc/simulation_runner.hpp>
 
 #include <petscsys.h>
 
@@ -39,6 +40,8 @@ namespace fdp = mpmc::flow_discretization_petsc;
 namespace fl = mpmc::flash;
 namespace flow = mpmc::flow;
 namespace mesh = mpmc::mesh;
+namespace sim = mpmc::simulation;
+namespace simp = mpmc::simulation_petsc;
 namespace th = mpmc::thermodynamics;
 
 void require_real_collective(
@@ -2361,6 +2364,197 @@ PetscErrorCode force_indeterminate_real_pr76_scan(
     return PETSC_SUCCESS;
 }
 
+struct RealPr76SimulationRetryScanContext {
+    fdp::PostSnesPhaseTransitionScanner3D delegate{};
+    void* delegate_context{};
+    const fdp::AcceptedPhysicalTimeClock3D* clock{};
+    const sim::SimulationCursor* cursor{};
+    double entry_time_seconds{};
+    std::size_t entry_step_count{};
+    std::size_t entry_consumed_boundaries{};
+    std::size_t calls{};
+    bool first_trial_observed_uncommitted{};
+    bool retry_observed_uncommitted{};
+    bool next_physical_step_observed_unconsumed_boundary{};
+};
+
+struct RealPr76SimulationTerminalScanContext {
+    const fdp::AcceptedPhysicalTimeClock3D* clock{};
+    const sim::SimulationCursor* cursor{};
+    double entry_time_seconds{};
+    std::size_t entry_step_count{};
+    double entry_next_timestep_seconds{};
+    std::size_t entry_consumed_boundaries{};
+    double expected_boundary_time_seconds{};
+    std::size_t calls{};
+    bool all_attempts_observed_uncommitted{true};
+};
+
+PetscErrorCode force_always_indeterminate_observe_terminal_rollback(
+    const fdp::PhaseTransitionRebuiltNaturalVariableSystem3D&,
+    Vec,
+    const fdp::VariableCardinalityNaturalVariableSnesSolveReport3D&,
+    void* raw_context,
+    fdp::PostSnesPhaseTransitionScanStatus3D*
+        scan_status,
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>*
+            proposals) {
+    if (raw_context == nullptr ||
+        scan_status == nullptr ||
+        proposals == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<RealPr76SimulationTerminalScanContext*>(
+            raw_context);
+    if (context->clock == nullptr ||
+        context->cursor == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    const auto same_time =
+        [](double first, double second) {
+            const double scale =
+                std::max(
+                    {1.0,
+                     std::abs(first),
+                     std::abs(second)});
+            return std::isfinite(first) &&
+                std::isfinite(second) &&
+                std::abs(first - second) <=
+                    64.0 *
+                        std::numeric_limits<double>::
+                            epsilon() *
+                        scale;
+        };
+    const auto next_boundary =
+        context->cursor->next_hard_boundary();
+    const bool uncommitted =
+        same_time(
+            context->clock->accepted_time_seconds(),
+            context->entry_time_seconds) &&
+        context->clock->accepted_step_count() ==
+            context->entry_step_count &&
+        same_time(
+            context->clock->next_timestep_seconds(),
+            context->entry_next_timestep_seconds) &&
+        context->cursor->consumed_boundary_count() ==
+            context->entry_consumed_boundaries &&
+        next_boundary.has_value() &&
+        next_boundary->index ==
+            context->entry_consumed_boundaries &&
+        same_time(
+            next_boundary->time_seconds,
+            context->expected_boundary_time_seconds);
+    context->all_attempts_observed_uncommitted =
+        context->all_attempts_observed_uncommitted &&
+        uncommitted;
+    ++context->calls;
+
+    *scan_status =
+        fdp::PostSnesPhaseTransitionScanStatus3D::
+            indeterminate;
+    proposals->clear();
+    return PETSC_SUCCESS;
+}
+
+PetscErrorCode force_first_indeterminate_then_real_pr76_scan(
+    const fdp::PhaseTransitionRebuiltNaturalVariableSystem3D& system,
+    Vec converged_state,
+    const fdp::VariableCardinalityNaturalVariableSnesSolveReport3D&
+        solve_report,
+    void* raw_context,
+    fdp::PostSnesPhaseTransitionScanStatus3D*
+        scan_status,
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>*
+            proposals) {
+    if (raw_context == nullptr ||
+        scan_status == nullptr ||
+        proposals == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<RealPr76SimulationRetryScanContext*>(
+            raw_context);
+    if (context->delegate == nullptr ||
+        context->clock == nullptr ||
+        context->cursor == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    const auto next_boundary =
+        context->cursor->next_hard_boundary();
+    const auto same_time =
+        [](double first, double second) {
+            const double scale =
+                std::max(
+                    {1.0,
+                     std::abs(first),
+                     std::abs(second)});
+            return std::isfinite(first) &&
+                std::isfinite(second) &&
+                std::abs(first - second) <=
+                    64.0 *
+                        std::numeric_limits<double>::
+                            epsilon() *
+                        scale;
+        };
+    const bool cursor_still_unconsumed =
+        context->cursor->consumed_boundary_count() ==
+            context->entry_consumed_boundaries &&
+        next_boundary.has_value() &&
+        next_boundary->index ==
+            context->entry_consumed_boundaries &&
+        same_time(
+            next_boundary->time_seconds,
+            3.6);
+
+    if (context->calls == 0U) {
+        context->first_trial_observed_uncommitted =
+            same_time(
+                context->clock->accepted_time_seconds(),
+                context->entry_time_seconds) &&
+            context->clock->accepted_step_count() ==
+                context->entry_step_count &&
+            cursor_still_unconsumed;
+    } else if (context->calls == 1U) {
+        context->retry_observed_uncommitted =
+            same_time(
+                context->clock->accepted_time_seconds(),
+                context->entry_time_seconds) &&
+            context->clock->accepted_step_count() ==
+                context->entry_step_count &&
+            cursor_still_unconsumed;
+    } else if (context->calls == 2U) {
+        context
+            ->next_physical_step_observed_unconsumed_boundary =
+            same_time(
+                context->clock->accepted_time_seconds(),
+                context->entry_time_seconds + 0.05) &&
+            context->clock->accepted_step_count() ==
+                context->entry_step_count + 1U &&
+            cursor_still_unconsumed;
+    }
+    ++context->calls;
+
+    if (context->calls == 1U) {
+        *scan_status =
+            fdp::PostSnesPhaseTransitionScanStatus3D::
+                indeterminate;
+        proposals->clear();
+        return PETSC_SUCCESS;
+    }
+    return context->delegate(
+        system,
+        converged_state,
+        solve_report,
+        context->delegate_context,
+        scan_status,
+        proposals);
+}
+
 template <typename Closure>
 void check_real_pr76_one_to_two_fully_implicit_restart(
     int rank,
@@ -3485,6 +3679,400 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
                 static_cast<double>(
                     rebased_norm)),
         "real PR76 accepted-history rebase did not permit a finite fresh next-step residual evaluation");
+
+    // Simulation lifecycle orchestration consumes the same production one-step
+    // driver without owning nonlinear/adaptive/phase-transition logic. Starting
+    // from accepted t=2.5, a caller cap of 0.4 forces internal substeps while
+    // hard boundaries at 3.0 and 3.5 remain exact accepted lifecycle events.
+    sim::SimulationCursor simulation_cursor{
+        sim::SimulationTimeline{{3.0, 3.5}},
+        physical_clock.accepted_time_seconds()};
+    simp::SimulationRunnerOptions3D simulation_options;
+    simulation_options.physical_timestep =
+        driver_options;
+    simulation_options.physical_timestep
+        .initial_timestep_cap_seconds =
+        0.4;
+    // Make growth deterministic for this lifecycle test: successful stable
+    // solves always grow, so the accepted-step count is governed only by
+    // caller-cap and hard-boundary clipping rather than nonlinear effort.
+    simulation_options.physical_timestep.adaptive
+        .growth_nonlinear_iteration_limit =
+        1000;
+    simulation_options.physical_timestep.adaptive
+        .growth_line_search_direction_change_limit =
+        1000;
+    simulation_options.physical_timestep.adaptive
+        .growth_transition_restart_limit =
+        4U;
+
+    std::optional<sim::SimulationReport>
+        simulation_report;
+    error =
+        simp::advance_simulation_timeline_3d(
+            PETSC_COMM_WORLD,
+            &materialized->system,
+            driver_bindings,
+            simulation_options,
+            &physical_clock,
+            &simulation_cursor,
+            &simulation_report);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            simulation_report.has_value() &&
+            simulation_report->status() ==
+                sim::SimulationRunStatus::completed &&
+            simulation_report->terminal() &&
+            simulation_report
+                    ->diagnostics()
+                    .physical_timestep_calls ==
+                4U &&
+            simulation_report
+                    ->diagnostics()
+                    .accepted_steps ==
+                4U &&
+            simulation_report
+                    ->diagnostics()
+                    .reached_boundaries ==
+                2U &&
+            simulation_report
+                    ->last_accepted_step()
+                    .has_value() &&
+            simulation_report
+                    ->last_accepted_step()
+                    ->accepted_step_index ==
+                6U &&
+            simulation_report
+                    ->last_reached_boundary()
+                    .has_value() &&
+            simulation_report
+                    ->last_reached_boundary()
+                    ->boundary.index ==
+                1U &&
+            simulation_report
+                    ->last_reached_boundary()
+                    ->boundary.time_seconds ==
+                3.5 &&
+            simulation_cursor.complete() &&
+            physical_clock
+                    .accepted_step_count() ==
+                7U &&
+            physical_clock
+                    .accepted_time_seconds() ==
+                3.5,
+        "simulation PETSc runner did not preserve caller cap and land on both accepted hard boundaries");
+
+    bool simulation_history_matches = false;
+    error =
+        materialized
+            ->system
+            ->accepted_history_matches_state(
+                materialized
+                    ->system
+                    ->initial_state(),
+                &simulation_history_matches);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            simulation_history_matches,
+        "simulation PETSc runner did not leave accepted history on the terminal hard-boundary state");
+
+    const double retry_entry_time_seconds =
+        physical_clock.accepted_time_seconds();
+    const std::size_t retry_entry_step_count =
+        physical_clock.accepted_step_count();
+
+    sim::SimulationCursor retry_cursor{
+        sim::SimulationTimeline{{3.6}},
+        retry_entry_time_seconds};
+
+    RealPr76SimulationRetryScanContext
+        retry_scan_context{
+            driver_bindings.scanner,
+            driver_bindings.scanner_context,
+            &physical_clock,
+            &retry_cursor,
+            retry_entry_time_seconds,
+            retry_entry_step_count,
+            retry_cursor.consumed_boundary_count()};
+
+    fdp::PostSnesPhaseTransitionControllerBindings3D
+        retry_bindings{
+            &force_first_indeterminate_then_real_pr76_scan,
+            &retry_scan_context,
+            driver_bindings.rebuild_factory,
+            driver_bindings.rebuild_context};
+
+    auto retry_simulation_options =
+        simulation_options;
+    retry_simulation_options.physical_timestep
+        .initial_timestep_cap_seconds =
+        0.1;
+    retry_simulation_options.physical_timestep.adaptive
+        .minimum_timestep_seconds =
+        0.025;
+    retry_simulation_options.physical_timestep.adaptive
+        .cutback_factor =
+        0.5;
+    retry_simulation_options.physical_timestep.adaptive
+        .maximum_retries =
+        2U;
+
+    std::optional<sim::SimulationReport>
+        retry_simulation_report;
+    error =
+        simp::advance_simulation_timeline_3d(
+            PETSC_COMM_WORLD,
+            &materialized->system,
+            retry_bindings,
+            retry_simulation_options,
+            &physical_clock,
+            &retry_cursor,
+            &retry_simulation_report);
+
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            retry_simulation_report.has_value() &&
+            retry_simulation_report->status() ==
+                sim::SimulationRunStatus::completed &&
+            retry_simulation_report
+                    ->diagnostics()
+                    .physical_timestep_calls ==
+                2U &&
+            retry_simulation_report
+                    ->diagnostics()
+                    .accepted_steps ==
+                2U &&
+            retry_simulation_report
+                    ->diagnostics()
+                    .accepted_retries ==
+                1U &&
+            retry_simulation_report
+                    ->diagnostics()
+                    .reached_boundaries ==
+                1U &&
+            retry_scan_context.calls ==
+                3U &&
+            retry_scan_context
+                .first_trial_observed_uncommitted &&
+            retry_scan_context
+                .retry_observed_uncommitted &&
+            retry_scan_context
+                .next_physical_step_observed_unconsumed_boundary &&
+            retry_simulation_report
+                    ->last_reached_boundary()
+                    .has_value() &&
+            retry_simulation_report
+                    ->last_reached_boundary()
+                    ->boundary.index ==
+                0U &&
+            retry_simulation_report
+                    ->last_reached_boundary()
+                    ->boundary.time_seconds ==
+                3.6 &&
+            retry_simulation_report
+                    ->last_reached_boundary()
+                    ->accepted_step_index ==
+                retry_entry_step_count + 1U &&
+            retry_cursor.complete() &&
+            physical_clock.accepted_step_count() ==
+                retry_entry_step_count + 2U &&
+            physical_clock.accepted_time_seconds() ==
+                3.6,
+        "simulation retry/cutback transaction advanced accepted clock/cursor before the accepted boundary commit");
+
+    bool retry_history_matches = false;
+    error =
+        materialized
+            ->system
+            ->accepted_history_matches_state(
+                materialized
+                    ->system
+                    ->initial_state(),
+                &retry_history_matches);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            retry_history_matches,
+        "simulation retry/cutback transaction did not finish on committed accepted history");
+
+    const double terminal_entry_time_seconds =
+        physical_clock.accepted_time_seconds();
+    const std::size_t terminal_entry_step_count =
+        physical_clock.accepted_step_count();
+    const double terminal_entry_next_timestep_seconds =
+        physical_clock.next_timestep_seconds();
+
+    Vec terminal_entry_state = nullptr;
+    require_real_collective(
+        VecDuplicate(
+            materialized
+                ->system
+                ->initial_state(),
+            &terminal_entry_state) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                materialized
+                    ->system
+                    ->initial_state(),
+                terminal_entry_state) ==
+                PETSC_SUCCESS,
+        "failed to snapshot accepted reservoir state before terminal simulation rejection");
+
+    sim::SimulationCursor terminal_cursor{
+        sim::SimulationTimeline{{3.7}},
+        terminal_entry_time_seconds};
+
+    RealPr76SimulationTerminalScanContext
+        terminal_scan_context{
+            &physical_clock,
+            &terminal_cursor,
+            terminal_entry_time_seconds,
+            terminal_entry_step_count,
+            terminal_entry_next_timestep_seconds,
+            terminal_cursor.consumed_boundary_count(),
+            3.7};
+
+    fdp::PostSnesPhaseTransitionControllerBindings3D
+        terminal_bindings{
+            &force_always_indeterminate_observe_terminal_rollback,
+            &terminal_scan_context,
+            driver_bindings.rebuild_factory,
+            driver_bindings.rebuild_context};
+
+    auto terminal_simulation_options =
+        simulation_options;
+    terminal_simulation_options.physical_timestep
+        .initial_timestep_cap_seconds =
+        0.1;
+    terminal_simulation_options.physical_timestep.adaptive
+        .minimum_timestep_seconds =
+        0.025;
+    terminal_simulation_options.physical_timestep.adaptive
+        .cutback_factor =
+        0.5;
+    terminal_simulation_options.physical_timestep.adaptive
+        .maximum_retries =
+        1U;
+
+    std::optional<sim::SimulationReport>
+        terminal_simulation_report;
+    error =
+        simp::advance_simulation_timeline_3d(
+            PETSC_COMM_WORLD,
+            &materialized->system,
+            terminal_bindings,
+            terminal_simulation_options,
+            &physical_clock,
+            &terminal_cursor,
+            &terminal_simulation_report);
+
+    Vec terminal_state_difference = nullptr;
+    require_real_collective(
+        VecDuplicate(
+            materialized
+                ->system
+                ->initial_state(),
+            &terminal_state_difference) ==
+                PETSC_SUCCESS &&
+            VecCopy(
+                materialized
+                    ->system
+                    ->initial_state(),
+                terminal_state_difference) ==
+                PETSC_SUCCESS &&
+            VecAXPY(
+                terminal_state_difference,
+                PetscScalar{-1.0},
+                terminal_entry_state) ==
+                PETSC_SUCCESS,
+        "failed to form terminal rejection accepted-state difference");
+    PetscReal terminal_state_difference_norm = 0.0;
+    require_real_collective(
+        VecNorm(
+            terminal_state_difference,
+            NORM_2,
+            &terminal_state_difference_norm) ==
+                PETSC_SUCCESS,
+        "failed to norm terminal rejection accepted-state difference");
+
+    bool terminal_history_matches = false;
+    PetscErrorCode terminal_history_error =
+        materialized
+            ->system
+            ->accepted_history_matches_state(
+                materialized
+                    ->system
+                    ->initial_state(),
+                &terminal_history_matches);
+
+    const auto terminal_next_boundary =
+        terminal_cursor.next_hard_boundary();
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            terminal_simulation_report.has_value() &&
+            terminal_simulation_report->status() ==
+                sim::SimulationRunStatus::
+                    physical_timestep_rejected &&
+            terminal_simulation_report->terminal() &&
+            terminal_simulation_report
+                    ->diagnostics()
+                    .physical_timestep_calls ==
+                1U &&
+            terminal_simulation_report
+                    ->diagnostics()
+                    .accepted_steps ==
+                0U &&
+            terminal_simulation_report
+                    ->diagnostics()
+                    .accepted_retries ==
+                0U &&
+            terminal_simulation_report
+                    ->diagnostics()
+                    .reached_boundaries ==
+                0U &&
+            !terminal_simulation_report
+                 ->last_accepted_step()
+                 .has_value() &&
+            !terminal_simulation_report
+                 ->last_reached_boundary()
+                 .has_value() &&
+            terminal_scan_context.calls ==
+                2U &&
+            terminal_scan_context
+                .all_attempts_observed_uncommitted &&
+            physical_clock.accepted_step_count() ==
+                terminal_entry_step_count &&
+            physical_clock.accepted_time_seconds() ==
+                terminal_entry_time_seconds &&
+            physical_clock.next_timestep_seconds() ==
+                terminal_entry_next_timestep_seconds &&
+            !terminal_cursor.complete() &&
+            terminal_cursor.consumed_boundary_count() ==
+                0U &&
+            terminal_next_boundary.has_value() &&
+            terminal_next_boundary->index ==
+                0U &&
+            terminal_next_boundary->time_seconds ==
+                3.7 &&
+            terminal_history_error ==
+                PETSC_SUCCESS &&
+            terminal_history_matches &&
+            static_cast<double>(
+                terminal_state_difference_norm) <=
+                1.0e-14 &&
+            materialized
+                    ->system
+                    ->time_step_seconds() ==
+                terminal_entry_next_timestep_seconds,
+        "simulation terminal rejection changed accepted reservoir/history/clock/cursor or fabricated a reached boundary");
+
+    require_real_collective(
+        VecDestroy(
+            &terminal_state_difference) ==
+                PETSC_SUCCESS &&
+            VecDestroy(
+                &terminal_entry_state) ==
+                PETSC_SUCCESS,
+        "terminal simulation rejection state-snapshot cleanup failed");
 
     require_real_collective(
         VecDestroy(
