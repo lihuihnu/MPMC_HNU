@@ -121,7 +121,7 @@ set_tests_properties(
         ENVIRONMENT "OMPI_MCA_rmaps_base_oversubscribe=1;OMPI_MCA_btl_vader_single_copy_mechanism=none")
 
 # The T5 terminal-rejection regression deliberately reuses the established
-# mixed-cardinality production fixtures in a separate owning executable.  It
+# mixed-cardinality production fixtures in a separate owning executable. It
 # tests one lifecycle failure path and does not re-own the main aggregate CTest.
 add_executable(
     mpmc_simulation_t5_terminal_rejection_tests
@@ -147,7 +147,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
             -Wpedantic
             -Wconversion
             -Wshadow
-            -Werror)
+            -Werror
+            # These pre-existing private fixture fragments intentionally carry
+            # neighboring test entrypoints that this focused executable does
+            # not invoke. Keep all other warnings strict for the new test.
+            -Wno-unused-function)
 endif()
 
 add_test(
