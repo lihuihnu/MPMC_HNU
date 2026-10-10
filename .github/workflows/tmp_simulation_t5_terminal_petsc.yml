@@ -1,0 +1,66 @@
+name: Temporary simulation T5 terminal validation
+
+on:
+  push:
+    branches:
+      - feat/simulation-timeline-runner
+    paths:
+      - '.github/workflows/tmp_simulation_t5_terminal_petsc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-simulation-t5-terminal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: PETSc 3.19.6 simulation T5 terminal on private runner
+    runs-on: [self-hosted, linux, x64, mpmc_hnu]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned PETSc and MPI runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpetsc-real3.19-dev=3.19.6+dfsg1-2.2ubuntu2 \
+            openmpi-bin
+          test "$(pkg-config --modversion PETSc)" = "3.19.6"
+          command -v mpiexec
+
+      - name: Configure PETSc integration tests
+        run: |
+          cmake -S tests/flow_discretization/petsc \
+            -B build/flow-discretization-petsc \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -U CMAKE_CXX_FLAGS_RELEASE \
+            -DMPIEXEC_PREFLAGS=
+
+      - name: Build owning and terminal targets
+        run: |
+          cmake --build build/flow-discretization-petsc \
+            --target \
+              mpmc_flow_discretization_petsc_tests \
+              mpmc_simulation_t5_terminal_rejection_tests \
+            --parallel 2
+
+      - name: Run owning and terminal CTests
+        run: |
+          ctest --test-dir build/flow-discretization-petsc \
+            -R '^(flow_discretization[.]petsc[.]distributed_owner_targeted_conservation|simulation[.]petsc[.]terminal_rejection_transaction)$' \
+            --verbose \
+            --no-tests=error
+
+      - name: Assert T5 terminal source is wired
+        run: |
+          grep -Fq 'physical_timestep_rejected' \
+            tests/flow_discretization/petsc/simulation_t5_terminal_rejection_test.cpp
+          grep -Fq 'VecEqual' \
+            tests/flow_discretization/petsc/simulation_t5_terminal_rejection_test.cpp
+          echo '[PASS] simulation.t5.terminal-rejection.source-wired'
