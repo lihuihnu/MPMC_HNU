@@ -222,29 +222,41 @@ history must match the terminal committed state.
 
 ## T5 transactional regression — terminal rejection slice
 
-The terminal-rejection regression continues from an accepted PR76/PETSc state
-at `t=3.6` with a single hard boundary at `3.7`. A test-only post-SNES
-scanner always returns `indeterminate`, so the production physical-timestep
-driver performs:
+This slice uses a separate two-rank executable built from the established
+mixed-cardinality production fixtures. It starts from authoritative accepted
+time `t=0`, accepted step count `0`, next suggested timestep `1.0`, and one
+unconsumed hard boundary at `t=1.0`.
 
-- attempt 0 at `dt=0.1`: recoverable rejection;
-- cutback retry at `dt=0.05`: another recoverable rejection;
-- `maximum_retries=1`: terminal `retry_budget_exhausted`.
+The fixture's production scanner is configured to return `indeterminate` for
+every converged candidate. With minimum timestep `0.25`, cutback factor `0.5`
+and `maximum_retries=1`, the lower physical-timestep driver performs:
+
+- attempt 0 at `dt=1.0`: recoverable rejection and cutback;
+- retry at `dt=0.5`: another recoverable rejection;
+- retry budget exhausted: terminal rejection with no accepted commit.
 
 At both scanner calls the test directly observes that accepted physical time,
-accepted step count, authoritative next dt and `SimulationCursor` all remain
-at their entry values.
+accepted step count, authoritative next timestep and `SimulationCursor` all
+remain at their entry values. The test also requires the same accepted-system
+object to survive and its trial timestep to be restored to `1.0`.
 
 The simulation runner must map the lower terminal rejection to
-`physical_timestep_rejected` with exactly one physical-timestep call and zero
-accepted steps/reached boundaries. `last_accepted_step` and
-`last_reached_boundary` must both remain empty.
+`physical_timestep_rejected` with one physical-timestep call, zero accepted
+steps and zero reached boundaries. `last_accepted_step`,
+`last_reached_boundary` and the lower-layer error code must all remain empty.
 
 Before entering the failed physical timestep, the test snapshots the accepted
-reservoir Vec. After terminal rejection it checks both exact accepted-history
-consistency and an L2 difference of that accepted state against the snapshot,
-while also requiring the rebuilt system trial timestep to be restored to the
-entry authoritative next dt.
+reservoir Vec with `VecDuplicate`/`VecCopy`. After terminal rejection it requires
+exact `VecEqual` identity with the current accepted state and independently
+requires `accepted_history_matches_state()` to remain true. Thus reservoir
+state/history, `AcceptedPhysicalTimeClock3D` and `SimulationCursor` are all
+proven unchanged, and no reached-boundary event can be fabricated.
+
+The private-runner validation builds both the pre-existing owning executable
+and this focused executable, then runs both two-rank CTests. The focused target
+keeps all normal strict warnings; only `-Wunused-function` is suppressed for
+pre-existing private `.inc` fixture entrypoints that are included but not
+called by this narrower executable.
 
 ## Accepted-state transaction
 
@@ -264,7 +276,7 @@ On terminal rejection or PETSc/MPI error:
 - accepted reservoir history remains unchanged according to the existing flow
   contract;
 - accepted physical time remains unchanged;
-- the timeline cursor remains unchanged;
+- the simulation cursor remains unchanged;
 - no hard boundary is reported as reached.
 
 Phase-transition restarts inside one physical timestep are invisible to the
