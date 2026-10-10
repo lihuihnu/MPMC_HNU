@@ -190,6 +190,36 @@ terminal clock `3.5`, and accepted-history rebase on the final state. The
 source is wired into the existing PETSc test target; runtime execution still
 requires the pinned PETSc/MPI environment.
 
+## T5 transactional regression — retry/cutback slice
+
+The first T5 slice uses the existing real PR76/PETSc production fixture rather
+than a mock solver. A test-only scanner wrapper makes the first converged trial
+return `indeterminate`, forcing the existing physical-timestep driver to
+discard that trial and execute its normal adaptive cutback.
+
+The wrapper directly observes the authoritative physical clock and
+`SimulationCursor` at three scanner points:
+
+1. the first trial before the forced rejection;
+2. the cutback retry before its accepted commit;
+3. the next physical step after the cutback step was accepted but before the
+   hard boundary is reached.
+
+The first two observations must retain the entry accepted time, entry accepted
+step count and unconsumed hard-boundary cursor. The third must show exactly one
+accepted physical step of progress while the boundary is still unconsumed.
+
+For the frozen regression, accepted `t=3.5`, hard boundary `3.6`, initial cap
+`0.1`, minimum dt `0.025` and cutback factor `0.5` produce:
+
+- first trial `dt=0.1`: forced recoverable rejection, no accepted commit;
+- retry `dt=0.05`: accepted at `t=3.55`, cursor still unconsumed;
+- next physical step `dt=0.05`: accepted at `t=3.6`, cursor advances once.
+
+The bounded simulation report must contain two physical calls, two accepted
+steps, one accepted retry and one reached boundary. Accepted component/energy
+history must match the terminal committed state.
+
 ## Accepted-state transaction
 
 The first implementation has three accepted authorities:

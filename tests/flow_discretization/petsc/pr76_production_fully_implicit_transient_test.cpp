@@ -2364,6 +2364,116 @@ PetscErrorCode force_indeterminate_real_pr76_scan(
     return PETSC_SUCCESS;
 }
 
+struct RealPr76SimulationRetryScanContext {
+    fdp::PostSnesPhaseTransitionScanner3D delegate{};
+    void* delegate_context{};
+    const fdp::AcceptedPhysicalTimeClock3D* clock{};
+    const sim::SimulationCursor* cursor{};
+    double entry_time_seconds{};
+    std::size_t entry_step_count{};
+    std::size_t entry_consumed_boundaries{};
+    std::size_t calls{};
+    bool first_trial_observed_uncommitted{};
+    bool retry_observed_uncommitted{};
+    bool next_physical_step_observed_unconsumed_boundary{};
+};
+
+PetscErrorCode force_first_indeterminate_then_real_pr76_scan(
+    const fdp::PhaseTransitionRebuiltNaturalVariableSystem3D& system,
+    Vec converged_state,
+    const fdp::VariableCardinalityNaturalVariableSnesSolveReport3D&
+        solve_report,
+    void* raw_context,
+    fdp::PostSnesPhaseTransitionScanStatus3D*
+        scan_status,
+    std::vector<
+        fdp::PostSnesPhaseTransitionProposal3D>*
+            proposals) {
+    if (raw_context == nullptr ||
+        scan_status == nullptr ||
+        proposals == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+    auto* context =
+        static_cast<RealPr76SimulationRetryScanContext*>(
+            raw_context);
+    if (context->delegate == nullptr ||
+        context->clock == nullptr ||
+        context->cursor == nullptr) {
+        return PETSC_ERR_ARG_NULL;
+    }
+
+    const auto next_boundary =
+        context->cursor->next_hard_boundary();
+    const auto same_time =
+        [](double first, double second) {
+            const double scale =
+                std::max(
+                    {1.0,
+                     std::abs(first),
+                     std::abs(second)});
+            return std::isfinite(first) &&
+                std::isfinite(second) &&
+                std::abs(first - second) <=
+                    64.0 *
+                        std::numeric_limits<double>::
+                            epsilon() *
+                        scale;
+        };
+    const bool cursor_still_unconsumed =
+        context->cursor->consumed_boundary_count() ==
+            context->entry_consumed_boundaries &&
+        next_boundary.has_value() &&
+        next_boundary->index ==
+            context->entry_consumed_boundaries &&
+        same_time(
+            next_boundary->time_seconds,
+            3.6);
+
+    if (context->calls == 0U) {
+        context->first_trial_observed_uncommitted =
+            same_time(
+                context->clock->accepted_time_seconds(),
+                context->entry_time_seconds) &&
+            context->clock->accepted_step_count() ==
+                context->entry_step_count &&
+            cursor_still_unconsumed;
+    } else if (context->calls == 1U) {
+        context->retry_observed_uncommitted =
+            same_time(
+                context->clock->accepted_time_seconds(),
+                context->entry_time_seconds) &&
+            context->clock->accepted_step_count() ==
+                context->entry_step_count &&
+            cursor_still_unconsumed;
+    } else if (context->calls == 2U) {
+        context
+            ->next_physical_step_observed_unconsumed_boundary =
+            same_time(
+                context->clock->accepted_time_seconds(),
+                context->entry_time_seconds + 0.05) &&
+            context->clock->accepted_step_count() ==
+                context->entry_step_count + 1U &&
+            cursor_still_unconsumed;
+    }
+    ++context->calls;
+
+    if (context->calls == 1U) {
+        *scan_status =
+            fdp::PostSnesPhaseTransitionScanStatus3D::
+                indeterminate;
+        proposals->clear();
+        return PETSC_SUCCESS;
+    }
+    return context->delegate(
+        system,
+        converged_state,
+        solve_report,
+        context->delegate_context,
+        scan_status,
+        proposals);
+}
+
 template <typename Closure>
 void check_real_pr76_one_to_two_fully_implicit_restart(
     int rank,
@@ -3584,6 +3694,124 @@ void check_real_pr76_one_to_two_fully_implicit_restart(
         error == PETSC_SUCCESS &&
             simulation_history_matches,
         "simulation PETSc runner did not leave accepted history on the terminal hard-boundary state");
+
+    const double retry_entry_time_seconds =
+        physical_clock.accepted_time_seconds();
+    const std::size_t retry_entry_step_count =
+        physical_clock.accepted_step_count();
+
+    sim::SimulationCursor retry_cursor{
+        sim::SimulationTimeline{{3.6}},
+        retry_entry_time_seconds};
+
+    RealPr76SimulationRetryScanContext
+        retry_scan_context{
+            driver_bindings.scanner,
+            driver_bindings.scanner_context,
+            &physical_clock,
+            &retry_cursor,
+            retry_entry_time_seconds,
+            retry_entry_step_count,
+            retry_cursor.consumed_boundary_count()};
+
+    fdp::PostSnesPhaseTransitionControllerBindings3D
+        retry_bindings{
+            &force_first_indeterminate_then_real_pr76_scan,
+            &retry_scan_context,
+            driver_bindings.rebuild_factory,
+            driver_bindings.rebuild_context};
+
+    auto retry_simulation_options =
+        simulation_options;
+    retry_simulation_options.physical_timestep
+        .initial_timestep_cap_seconds =
+        0.1;
+    retry_simulation_options.physical_timestep.adaptive
+        .minimum_timestep_seconds =
+        0.025;
+    retry_simulation_options.physical_timestep.adaptive
+        .cutback_factor =
+        0.5;
+    retry_simulation_options.physical_timestep.adaptive
+        .maximum_retries =
+        2U;
+
+    std::optional<sim::SimulationReport>
+        retry_simulation_report;
+    error =
+        simp::advance_simulation_timeline_3d(
+            PETSC_COMM_WORLD,
+            &materialized->system,
+            retry_bindings,
+            retry_simulation_options,
+            &physical_clock,
+            &retry_cursor,
+            &retry_simulation_report);
+
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            retry_simulation_report.has_value() &&
+            retry_simulation_report->status() ==
+                sim::SimulationRunStatus::completed &&
+            retry_simulation_report
+                    ->diagnostics()
+                    .physical_timestep_calls ==
+                2U &&
+            retry_simulation_report
+                    ->diagnostics()
+                    .accepted_steps ==
+                2U &&
+            retry_simulation_report
+                    ->diagnostics()
+                    .accepted_retries ==
+                1U &&
+            retry_simulation_report
+                    ->diagnostics()
+                    .reached_boundaries ==
+                1U &&
+            retry_scan_context.calls ==
+                3U &&
+            retry_scan_context
+                .first_trial_observed_uncommitted &&
+            retry_scan_context
+                .retry_observed_uncommitted &&
+            retry_scan_context
+                .next_physical_step_observed_unconsumed_boundary &&
+            retry_simulation_report
+                    ->last_reached_boundary()
+                    .has_value() &&
+            retry_simulation_report
+                    ->last_reached_boundary()
+                    ->boundary.index ==
+                0U &&
+            retry_simulation_report
+                    ->last_reached_boundary()
+                    ->boundary.time_seconds ==
+                3.6 &&
+            retry_simulation_report
+                    ->last_reached_boundary()
+                    ->accepted_step_index ==
+                retry_entry_step_count + 1U &&
+            retry_cursor.complete() &&
+            physical_clock.accepted_step_count() ==
+                retry_entry_step_count + 2U &&
+            physical_clock.accepted_time_seconds() ==
+                3.6,
+        "simulation retry/cutback transaction advanced accepted clock/cursor before the accepted boundary commit");
+
+    bool retry_history_matches = false;
+    error =
+        materialized
+            ->system
+            ->accepted_history_matches_state(
+                materialized
+                    ->system
+                    ->initial_state(),
+                &retry_history_matches);
+    require_real_collective(
+        error == PETSC_SUCCESS &&
+            retry_history_matches,
+        "simulation retry/cutback transaction did not finish on committed accepted history");
 
     require_real_collective(
         VecDestroy(
